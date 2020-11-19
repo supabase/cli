@@ -1,0 +1,28 @@
+version: '3.6'
+services:
+  gateway:
+    image: supabase/emulator-gateway:v0.0.1
+    ports:
+    - 8000:8000/tcp
+  auth:
+    image: supabase/emulator-auth:v0.0.1
+    depends_on:
+    - database
+  api:
+    image: supabase/emulator-api:v0.0.1
+    restart: always
+    depends_on:
+    - database
+  realtime:
+    image: supabase/emulator-realtime:v0.0.1
+    restart: on-failure
+    depends_on:
+    - database
+  database:
+    image: supabase/emulator-database:v0.0.1
+    ports:
+    - 5432:5432
+    command:
+    - postgres
+    - -c
+    - wal_level=logical

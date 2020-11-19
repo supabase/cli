@@ -1,2 +1,3 @@
-# cli
-Developer tools and helpers
+# Supabase CLI [WIP]
+
+Developer tools and helpers.
