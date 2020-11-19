@@ -10,6 +10,8 @@ module.exports = {
       print: { info }
     } = toolbox
 
+    toolbox.filesystem.append('.gitignore', '\n\n.supabase')
+
     await generate({
       template: 'init/config.json',
       target: `./.supabase/config.json`
