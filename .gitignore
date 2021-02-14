@@ -6,7 +6,6 @@ coverage
 dist
 build
 .vscode
-tmp
 
 
 # Logs

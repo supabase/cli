@@ -1,11 +1,11 @@
 {
   "name": "supabase",
-  "version": "0.0.4",
+  "version": "0.0.3",
   "description": "Supabase CLI",
   "private": false,
   "types": "build/types/types.d.ts",
   "bin": {
-    "supa": "bin/supabase"
+    "supabase": "bin/supabase"
   },
   "scripts": {
     "format": "prettier --write **/*.{js,ts,tsx,json}",
@@ -31,7 +31,6 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@supabase/postgres-meta": "^0.15.3",
     "gluegun": "latest"
   },
   "devDependencies": {
