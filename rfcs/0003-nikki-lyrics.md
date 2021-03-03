@@ -2,7 +2,7 @@
 feature: nikki-lyrics
 start-date: 2020-01-28
 author: kiwicopple
-co-authors: 
+co-authors: kris10_burgess
 related-issues: 
 ---
 
