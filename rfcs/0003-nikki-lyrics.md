@@ -9,7 +9,11 @@ related-issues:
 # Summary
 [summary]: #summary
 
-[@kris10_burgess](https://twitter.com/kris10_burgess) would [like to see Nikki Minaj lyrics](https://twitter.com/kris10_burgess/status/1354601237585518602) inside the CLI
+[@kris10_burgess](https://twitter.com/kris10_burgess) would [like to see Nikki Minaj lyrics](https://twitter.com/kris10_burgess/status/1354601237585518602) inside the CLI.
+
+- Spec: https://github.com/supabase/cli/pull/4/files
+- PR: https://github.com/supabase/cli/pull/4
+  
 
 # Motivation
 [motivation]: #motivation
