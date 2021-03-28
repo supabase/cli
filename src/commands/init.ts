@@ -1,30 +1,42 @@
 import { GluegunToolbox } from 'gluegun'
+import ignore from 'ignore'
 
-module.exports = {
+export default {
   name: 'init',
-  alias: ['i'],
-  run: async (toolbox: GluegunToolbox) => {
-    const {
-      // parameters,
-      template: { generate },
-      print: { info }
-    } = toolbox
+  run: async ({
+    filesystem: { append, read, exists },
+    template: { generate },
+    print: {
+      colors: { highlight },
+      spin,
+    },
+  }: GluegunToolbox) => {
+    const spinner = spin('Initializing project...')
 
-    toolbox.filesystem.append('.gitignore', '\n\n.supabase')
+    if (exists('.supabase')) {
+      spinner.fail(`Project already initialized. Remove ${highlight('.supabase')} to reinitialize.`)
+      process.exit(1)
+    }
 
-    await generate({
-      template: 'init/config.json',
-      target: `./.supabase/config.json`
-    })
-    await generate({
-      template: 'init/emulator.yml',
-      target: `./.supabase/emulator.yml`
-    })
-    await generate({
-      template: 'init/README.txt',
-      target: `./.supabase/README.txt`
-    })
+    // Add .supabase to .gitignore
+    const gitignore = read('.gitignore')
+    if (gitignore) {
+      const ig = ignore().add(gitignore)
+      if (!ig.ignores('.supabase')) {
+        append('.gitignore', '\n# Supabase\n.supabase\n')
+      }
+    }
 
-    info(`Project initialised.`)
-  }
+    // Write templates
+    await Promise.all(
+      ['README.md', 'config.json', 'emulator.yml'].map((f) =>
+        generate({
+          template: `init/${f}`,
+          target: `.supabase/${f}`,
+        })
+      )
+    )
+
+    spinner.succeed('Project initialized.')
+  },
 }
