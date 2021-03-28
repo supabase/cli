@@ -7,15 +7,14 @@ module.exports = {
     const {
       // parameters,
       template: { generate },
-      print: { info }
+      print: { info },
     } = toolbox
-
 
     await generate({
       template: 'init/emulator.yml',
-      target: `./docker-compose.yml`
+      target: `./docker-compose.yml`,
     })
 
     info(`Ejected.`)
-  }
+  },
 }
