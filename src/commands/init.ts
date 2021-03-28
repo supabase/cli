@@ -29,7 +29,7 @@ export default {
 
     // Write templates
     await Promise.all(
-      ['README.md', 'config.json', 'emulator.yml'].map((f) =>
+      ['README.txt', 'config.json', 'emulator.yml'].map((f) =>
         generate({
           template: `init/${f}`,
           target: `.supabase/${f}`,
