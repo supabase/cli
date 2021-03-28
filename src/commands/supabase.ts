@@ -15,7 +15,7 @@ export default {
     const printHelp = () =>
       fancy(`${muted(`Supabase CLI ${version()}`)}
 
-  ${bold(green('ϟ supabase'))} [options] [<command>]
+  ${bold(`${green('ϟ')} supabase`)} [options] [<command>]
 
   Commands:
 
