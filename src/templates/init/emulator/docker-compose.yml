@@ -1,0 +1,69 @@
+version: '3.6'
+services:
+  kong:
+    build:
+      context: ./kong
+    environment:
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_PLUGINS: request-transformer,cors,key-auth,http-log
+    ports:
+      - 8000:8000/tcp
+  auth:
+    image: supabase/gotrue:latest
+    environment:
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DB_DRIVER: postgres
+      DB_NAMESPACE: auth
+      API_EXTERNAL_URL: localhost
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: 9999
+      GOTRUE_DISABLE_SIGNUP: 'false'
+      GOTRUE_SITE_URL: localhost
+      GOTRUE_MAILER_AUTOCONFIRM: 'true'
+      GOTRUE_LOG_LEVEL: DEBUG
+      GOTRUE_OPERATOR_TOKEN: super-secret-operator-token
+      DATABASE_URL: 'postgres://postgres:postgres@db:5432/postgres?sslmode=disable'
+    depends_on:
+      - db
+  rest:
+    image: postgrest/postgrest:latest
+    depends_on:
+      - db
+    restart: always
+    environment:
+      PGRST_DB_URI: postgres://postgres:postgres@db:5432/postgres
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: postgres
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+  realtime:
+    image: supabase/realtime:latest
+    depends_on:
+      - db
+    restart: on-failure
+    environment:
+      DB_HOST: db
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+      PORT: 4000
+      HOSTNAME: localhost
+      # Disable JWT Auth locally. The JWT_SECRET will be ignored.
+      SECURE_CHANNELS: 'false'
+      JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+  db:
+    build:
+      context: ./postgres
+    ports:
+      - 5432:5432
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_PORT: 5432

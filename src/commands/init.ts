@@ -29,10 +29,18 @@ export default {
 
     // Write templates
     await Promise.all(
-      ['README.txt', 'config.json', 'emulator.yml'].map((f) =>
+      [
+        'emulator/kong/Dockerfile',
+        'emulator/kong/kong.yml',
+        'emulator/postgres/00-initial-schema.sql',
+        'emulator/postgres/Dockerfile',
+        'emulator/postgres/auth-schema.sql',
+        'emulator/docker-compose.yml',
+        'README.md',
+      ].map((f) =>
         generate({
           template: `init/${f}`,
-          target: `.supabase/${f}`,
+          target: `.supabase/emulator/${f}`,
         })
       )
     )

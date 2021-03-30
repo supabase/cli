@@ -17,7 +17,7 @@ export default {
       process.exit(1)
     }
 
-    await run('docker-compose -f .supabase/emulator.yml up -d')
+    await run('docker-compose -f .supabase/emulator/docker-compose.yml up -d')
 
     spinner.succeed('Started local emulator.')
   },
