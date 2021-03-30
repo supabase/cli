@@ -7,16 +7,17 @@
   "license": "MIT",
   "author": "Supabase",
   "files": [
+    "bin",
     "dist"
   ],
-  "bin": "dist/cli.js",
+  "bin": "bin/supabase",
   "repository": "supabase/cli",
   "scripts": {
     "dev": "ts-node src/cli.ts",
     "clean": "rimraf dist",
     "format": "prettier --write \"{src,test}/**/*.ts\"",
     "build": "npm run clean && tsc --project tsconfig.json && cpy src/templates dist/templates",
-    "start": "node dist/cli.js",
+    "start": "bin/supabase",
     "test": "jest"
   },
   "dependencies": {
