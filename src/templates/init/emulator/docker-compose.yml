@@ -7,7 +7,7 @@ services:
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
       KONG_PLUGINS: request-transformer,cors,key-auth,http-log
     ports:
-      - 8000:8000/tcp
+      - <%= props.kongPort %>:8000/tcp
   auth:
     image: supabase/gotrue:latest
     environment:
@@ -57,7 +57,7 @@ services:
     build:
       context: ./postgres
     ports:
-      - 5432:5432
+      - <%= props.dbPort %>:5432
     command:
       - postgres
       - -c
