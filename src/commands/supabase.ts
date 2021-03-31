@@ -9,7 +9,7 @@ export default {
       error,
       info,
       fancy,
-      colors: { bold, green, muted },
+      colors: { bold, green, muted, highlight },
     },
   }: GluegunToolbox) => {
     const printHelp = () =>
@@ -22,6 +22,12 @@ export default {
     init                  Initialize project
     start                 Start local emulator
     stop                  Stop local emulator
+    eject                 Create a ${highlight(
+      'docker'
+    )} directory with the Docker setup for the emulator.
+                          See ${highlight(
+                            'https://supabase.io/docs/guides/self-hosting'
+                          )} for details.
 
   Options:
 
