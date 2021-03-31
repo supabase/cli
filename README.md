@@ -24,15 +24,15 @@ For full documentation, visit [supabase.io/docs](https://supabase.io/docs/refere
 - [Email Support](https://supabase.io/docs/support#business-support). Best for: problems with your database or infrastructure.
 
 
-### Getting started
+## Getting started
 
-Install
+### Install
 
 ```sh
 npm install supabase -g
 ```
 
-Commands:
+### Commands:
 
 - [`supabase init`](https://supabase.io/docs/reference/cli/supabase-init): Initialize project
 - [`supabase start`](https://supabase.io/docs/reference/cli/supabase-start): Start Supabase locally
