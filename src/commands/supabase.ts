@@ -20,11 +20,11 @@ export default {
   Commands:
 
     init                  Initialize project
-    start                 Start local emulator
-    stop                  Stop local emulator
+    start                 Start local Supabase
+    stop                  Stop local Supabase
     eject                 Create a ${highlight(
       'docker'
-    )} directory with the Docker setup for the emulator.
+    )} directory with the Docker setup for Supabase.
                           See ${highlight(
                             'https://supabase.io/docs/guides/self-hosting'
                           )} for details.

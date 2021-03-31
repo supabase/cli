@@ -51,12 +51,12 @@ export default {
     // Write templates
     await Promise.all(
       [
-        'emulator/kong/Dockerfile',
-        'emulator/kong/kong.yml',
-        'emulator/postgres/00-initial-schema.sql',
-        'emulator/postgres/Dockerfile',
-        'emulator/postgres/auth-schema.sql',
-        'emulator/docker-compose.yml',
+        'docker/kong/Dockerfile',
+        'docker/kong/kong.yml',
+        'docker/postgres/00-initial-schema.sql',
+        'docker/postgres/Dockerfile',
+        'docker/postgres/auth-schema.sql',
+        'docker/docker-compose.yml',
         'README.md',
       ].map((f) =>
         generate({
@@ -76,7 +76,7 @@ export default {
 Supabase Key: ${highlight(apiKey)}
 Database URL: ${highlight(`postgres://postgres:postgres@localhost:${dbPort}/postgres`)}
 
-Run ${highlight('supabase start')} to start the local emulator.
+Run ${highlight('supabase start')} to start local Supabase.
 `)
   },
 }

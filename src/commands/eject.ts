@@ -49,7 +49,7 @@ export default {
         'docker-compose.yml',
       ].map((f) =>
         generate({
-          template: `init/emulator/${f}`,
+          template: `init/docker/${f}`,
           target: `docker/${f}`,
           props: {
             kongPort,
