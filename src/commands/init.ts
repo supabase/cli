@@ -43,20 +43,22 @@ export default {
       },
     ])
 
-    const apiKey =
-      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJhdWQiOiIiLCJzdWIiOiIiLCJSb2xlIjoicG9zdGdyZXMifQ.magCcozTMKNrl76Tj2dsM7XTl_YH0v0ilajzAvIlw3U'
+    const anonApiKey =
+      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew'
+    const serviceRoleApiKey =
+      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI'
 
     const spinner = spin('Initializing project...')
 
     // Write templates
     await Promise.all(
       [
-        'emulator/kong/Dockerfile',
-        'emulator/kong/kong.yml',
-        'emulator/postgres/00-initial-schema.sql',
-        'emulator/postgres/Dockerfile',
-        'emulator/postgres/auth-schema.sql',
-        'emulator/docker-compose.yml',
+        'docker/kong/Dockerfile',
+        'docker/kong/kong.yml',
+        'docker/postgres/00-initial-schema.sql',
+        'docker/postgres/Dockerfile',
+        'docker/postgres/auth-schema.sql',
+        'docker/docker-compose.yml',
         'README.md',
       ].map((f) =>
         generate({
@@ -65,7 +67,8 @@ export default {
           props: {
             kongPort,
             dbPort,
-            apiKey,
+            anonApiKey,
+            serviceRoleApiKey,
           },
         })
       )
@@ -73,10 +76,11 @@ export default {
 
     spinner.succeed('Project initialized.')
     fancy(`Supabase URL: ${highlight(`http://localhost:${kongPort}`)}
-Supabase Key: ${highlight(apiKey)}
+Supabase Key (anon, public): ${highlight(anonApiKey)}
+Supabase Key (service_role, private): ${highlight(anonApiKey)}
 Database URL: ${highlight(`postgres://postgres:postgres@localhost:${dbPort}/postgres`)}
 
-Run ${highlight('supabase start')} to start the local emulator.
+Run ${highlight('supabase start')} to start local Supabase.
 `)
   },
 }

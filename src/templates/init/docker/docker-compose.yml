@@ -1,6 +1,7 @@
 version: '3.6'
 services:
   kong:
+    container_name: supabase-kong
     build:
       context: ./kong
     environment:
@@ -9,6 +10,7 @@ services:
     ports:
       - <%= props.kongPort %>:8000/tcp
   auth:
+    container_name: supabase-auth
     image: supabase/gotrue:latest
     environment:
       GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
@@ -28,6 +30,7 @@ services:
     depends_on:
       - db
   rest:
+    container_name: supabase-rest
     image: postgrest/postgrest:latest
     depends_on:
       - db
@@ -38,6 +41,7 @@ services:
       PGRST_DB_ANON_ROLE: postgres
       PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
   realtime:
+    container_name: supabase-realtime
     image: supabase/realtime:latest
     depends_on:
       - db
@@ -54,6 +58,7 @@ services:
       SECURE_CHANNELS: 'false'
       JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
   db:
+    container_name: supabase-db
     build:
       context: ./postgres
     ports:

@@ -9,7 +9,7 @@ export default {
     },
     system: { run, which },
   }: GluegunToolbox) => {
-    const spinner = spin('Stopping local emulator...')
+    const spinner = spin('Stopping local Supabase...')
 
     const dockerCompose = which('docker-compose')
     if (!dockerCompose) {
@@ -17,8 +17,8 @@ export default {
       process.exit(1)
     }
 
-    await run('docker-compose -f .supabase/emulator/docker-compose.yml down')
+    await run('docker-compose --file .supabase/docker/docker-compose.yml down')
 
-    spinner.succeed('Stopped local emulator.')
+    spinner.succeed('Stopped local Supabase.')
   },
 }
