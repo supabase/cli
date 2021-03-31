@@ -15,7 +15,7 @@
     "dev": "ts-node src/cli.ts",
     "clean": "rimraf dist",
     "format": "prettier --write \"{src,test}/**/*.ts\"",
-    "build": "npm run clean && tsc --project tsconfig.json && cpy --parents src/templates dist/templates",
+    "build": "npm run clean && tsc --project tsconfig.json && cpy --cwd=src --parents templates ../dist/",
     "start": "node dist/cli.js",
     "test": "jest"
   },
