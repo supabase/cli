@@ -13,9 +13,16 @@ export default {
       spin,
     },
     prompt: { ask },
+    system: { run, which },
   }: GluegunToolbox) => {
     if (exists('.supabase')) {
       error(`Project already initialized. Remove ${highlight('.supabase')} to reinitialize.`)
+      process.exit(1)
+    }
+
+    const dockerCompose = which('docker-compose')
+    if (!dockerCompose) {
+      error(`Cannot find ${highlight('docker-compose')} executable in PATH.`)
       process.exit(1)
     }
 
@@ -72,6 +79,10 @@ export default {
           },
         })
       )
+    )
+
+    await run(
+      'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase build --no-cache --parallel --quiet'
     )
 
     spinner.succeed('Project initialized.')
