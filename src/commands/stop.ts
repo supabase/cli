@@ -17,7 +17,7 @@ export default {
       process.exit(1)
     }
 
-    await run('docker-compose --file .supabase/docker/docker-compose.yml down')
+    await run('docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase down')
 
     spinner.succeed('Stopped local Supabase.')
   },
