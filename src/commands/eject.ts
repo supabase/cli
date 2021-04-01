@@ -58,7 +58,10 @@ export default {
           },
         })
       )
-    )
+    ).catch(() => {
+      spinner.fail('Error writing Docker setup files.')
+      process.exit(1)
+    })
 
     spinner.succeed('Supabase Docker ejected.')
   },

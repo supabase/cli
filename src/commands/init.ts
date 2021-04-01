@@ -79,11 +79,17 @@ export default {
           },
         })
       )
-    )
+    ).catch(() => {
+      spinner.fail('Error writing Docker setup files.')
+      process.exit(1)
+    })
 
     await run(
       'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase build --no-cache --parallel --quiet'
-    )
+    ).catch(() => {
+      spinner.fail('Error running docker-compose.')
+      process.exit(1)
+    })
 
     spinner.succeed('Project initialized.')
     fancy(`Supabase URL: ${highlight(`http://localhost:${kongPort}`)}
