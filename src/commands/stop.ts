@@ -29,7 +29,7 @@ export default {
     const spinner = spin('Stopping local Supabase...')
 
     await run(
-      'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase down'
+      'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase stop'
     ).catch(() => {
       spinner.fail('Error running docker-compose.')
       process.exit(1)
