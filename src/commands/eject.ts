@@ -9,6 +9,7 @@ export default {
     print: {
       colors: { highlight },
       error,
+      fancy,
       spin,
     },
     prompt: { ask },
@@ -33,8 +34,10 @@ export default {
       },
     ])
 
-    const apiKey =
-      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJhdWQiOiIiLCJzdWIiOiIiLCJSb2xlIjoicG9zdGdyZXMifQ.magCcozTMKNrl76Tj2dsM7XTl_YH0v0ilajzAvIlw3U'
+    const anonApiKey =
+      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew'
+    const serviceRoleApiKey =
+      'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI'
 
     const spinner = spin('Ejecting...')
 
@@ -54,7 +57,7 @@ export default {
           props: {
             kongPort,
             dbPort,
-            apiKey,
+            anonApiKey,
           },
         })
       )
@@ -64,5 +67,10 @@ export default {
     })
 
     spinner.succeed('Supabase Docker ejected.')
+    fancy(`Supabase URL: ${highlight(`http://localhost:${kongPort}`)}
+Supabase Key (anon, public): ${highlight(anonApiKey)}
+Supabase Key (service_role, private): ${highlight(serviceRoleApiKey)}
+Database URL: ${highlight(`postgres://postgres:postgres@localhost:${dbPort}/postgres`)}
+`)
   },
 }
