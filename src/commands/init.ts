@@ -85,7 +85,7 @@ export default {
     })
 
     await run(
-      'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase build --no-cache --parallel --quiet'
+      'docker-compose --file .supabase/docker/docker-compose.yml build --no-cache && docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --no-start --renew-anon-volumes'
     ).catch(() => {
       spinner.fail('Error running docker-compose.')
       process.exit(1)
