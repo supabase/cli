@@ -94,7 +94,7 @@ export default {
     spinner.succeed('Project initialized.')
     fancy(`Supabase URL: ${highlight(`http://localhost:${kongPort}`)}
 Supabase Key (anon, public): ${highlight(anonApiKey)}
-Supabase Key (service_role, private): ${highlight(anonApiKey)}
+Supabase Key (service_role, private): ${highlight(serviceRoleApiKey)}
 Database URL: ${highlight(`postgres://postgres:postgres@localhost:${dbPort}/postgres`)}
 
 Run ${highlight('supabase start')} to start local Supabase.
