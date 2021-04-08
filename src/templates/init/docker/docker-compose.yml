@@ -7,6 +7,7 @@ services:
     environment:
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
       KONG_PLUGINS: request-transformer,cors,key-auth,http-log
+      KONG_DNS_ORDER: LAST,A,CNAME
     ports:
       - <%= props.kongPort %>:8000/tcp
   auth:
