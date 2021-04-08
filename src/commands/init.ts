@@ -4,7 +4,7 @@ import ignore from 'ignore'
 export default {
   name: 'init',
   run: async ({
-    filesystem: { append, read, exists },
+    filesystem: { append, read, exists, remove },
     template: { generate },
     print: {
       colors: { highlight },
@@ -19,6 +19,13 @@ export default {
       error(`Project already initialized. Remove ${highlight('.supabase')} to reinitialize.`)
       process.exit(1)
     }
+
+    // Cleanup on Ctrl+C
+    process.on('SIGINT', () => {
+      remove('.supabase')
+      error(`Aborted ${highlight('supabase init')}.`)
+      process.exit(1)
+    })
 
     const dockerCompose = which('docker-compose')
     if (!dockerCompose) {
@@ -78,15 +85,18 @@ export default {
           },
         })
       )
-    ).catch(() => {
-      spinner.fail('Error writing Docker setup files.')
+    ).catch((err) => {
+      remove('.supabase')
+      spinner.fail(`Error writing Docker setup files: ${err.message}`)
       process.exit(1)
     })
 
     await run(
-      'docker-compose --file .supabase/docker/docker-compose.yml build --no-cache && docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --no-start --renew-anon-volumes'
-    ).catch(() => {
-      spinner.fail('Error running docker-compose.')
+      'docker-compose --file .supabase/docker/docker-compose.yml build --no-cache && docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --no-start --renew-anon-volumes',
+      { trim: true }
+    ).catch((err) => {
+      remove('.supabase')
+      spinner.fail(`Error running docker-compose: ${err.stderr}`)
       process.exit(1)
     })
 
