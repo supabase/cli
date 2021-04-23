@@ -82,6 +82,7 @@ export default {
             kongPort,
             dbPort,
             anonApiKey,
+            serviceRoleApiKey,
           },
         })
       )

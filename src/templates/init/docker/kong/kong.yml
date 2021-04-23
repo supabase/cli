@@ -43,3 +43,4 @@ consumers:
   - username: 'private-key'
     keyauth_credentials:
       - key: <%= props.anonApiKey %>
+      - key: <%= props.serviceRoleApiKey %>
