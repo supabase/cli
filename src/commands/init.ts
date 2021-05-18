@@ -42,7 +42,7 @@ export default {
       }
     }
 
-    const { kongPort, dbPort } = await ask([
+    const { kongPort, dbPort, mailPort } = await ask([
       {
         type: 'input',
         name: 'kongPort',
@@ -54,6 +54,12 @@ export default {
         name: 'dbPort',
         message: 'Port for PostgreSQL database:',
         initial: '5432',
+      },
+      {
+        type: 'input',
+        name: 'mailPort',
+        message: 'Port for email testing interface:',
+        initial: '9000',
       },
     ])
 
@@ -81,6 +87,7 @@ export default {
           props: {
             kongPort,
             dbPort,
+            mailPort,
             anonApiKey,
             serviceRoleApiKey,
           },
@@ -106,6 +113,7 @@ export default {
 Supabase Key (anon, public): ${highlight(anonApiKey)}
 Supabase Key (service_role, private): ${highlight(serviceRoleApiKey)}
 Database URL: ${highlight(`postgres://postgres:postgres@localhost:${dbPort}/postgres`)}
+Email testing interface URL: ${highlight(`http://localhost:${mailPort}`)}
 
 Run ${highlight('supabase start')} to start local Supabase.
 `)

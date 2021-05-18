@@ -20,17 +20,30 @@ services:
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_DB_DRIVER: postgres
       DB_NAMESPACE: auth
-      API_EXTERNAL_URL: localhost
-      GOTRUE_API_HOST: 0.0.0.0
+      API_EXTERNAL_URL: http://localhost:8000
+      GOTRUE_API_HOST: auth
       PORT: 9999
       GOTRUE_DISABLE_SIGNUP: 'false'
-      GOTRUE_SITE_URL: localhost
-      GOTRUE_MAILER_AUTOCONFIRM: 'true'
+      GOTRUE_SITE_URL: http://localhost:8000
+      GOTRUE_SMTP_HOST: mail
+      GOTRUE_SMTP_PORT: 2500
+      GOTRUE_SMTP_USER: GOTRUE_SMTP_USER
+      GOTRUE_SMTP_PASS: GOTRUE_SMTP_PASS
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@email.com
+      GOTRUE_MAILER_AUTOCONFIRM: 'false'
+      GOTRUE_MAILER_SUBJECTS_CONFIRMATION: Confirm Your Signup
+      GOTRUE_MAILER_SUBJECTS_INVITE: You have been invited
+      GOTRUE_MAILER_SUBJECTS_MAGIC_LINK: Your Magic Link
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: Reset Your Password
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
       GOTRUE_LOG_LEVEL: DEBUG
       GOTRUE_OPERATOR_TOKEN: super-secret-operator-token
-      DATABASE_URL: 'postgres://postgres:postgres@db:5432/postgres?sslmode=disable'
+      DATABASE_URL: postgres://postgres:postgres@db:5432/postgres?sslmode=disable
     depends_on:
       - db
+      - mail
   rest:
     container_name: supabase-rest
     image: postgrest/postgrest:latest
@@ -74,3 +87,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_PORT: 5432
+  mail:
+    container_name: supabase-mail
+    image: inbucket/inbucket:stable
+    ports:
+      - <%= props.mailPort %>:9000

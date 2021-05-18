@@ -1,10 +1,20 @@
 _format_version: '1.1'
 services:
+  - name: auth-v1-open
+    _comment: 'GoTrue: /auth/v1/verify* -> http://auth:9999/verify*'
+    url: http://auth:9999/verify
+    routes:
+      - name: auth-v1-open
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
   - name: auth-v1
     _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
     url: http://auth:9999/
     routes:
-      - name: auth-v1-all
+      - name: auth-v1
         strip_path: true
         paths:
           - /auth/v1/
