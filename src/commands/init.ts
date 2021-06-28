@@ -100,7 +100,7 @@ export default {
     })
 
     await run(
-      'docker-compose --file .supabase/docker/docker-compose.yml build --no-cache && docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --no-start --renew-anon-volumes',
+      'docker-compose --file .supabase/docker/docker-compose.yml build --no-cache && docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --build --no-start --renew-anon-volumes',
       { trim: true }
     ).catch((err) => {
       remove('.supabase')
