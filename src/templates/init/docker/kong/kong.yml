@@ -10,6 +10,26 @@ services:
           - /auth/v1/verify
     plugins:
       - name: cors
+  - name: auth-v1-callback
+    _comment: 'GoTrue: /auth/v1/callback* -> http://auth:9999/callback*'
+    url: http://auth:9999/callback
+    routes:
+      - name: auth-v1-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+  - name: auth-v1-authorize
+    _comment: 'GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*'
+    url: http://auth:9999/authorize
+    routes:
+      - name: auth-v1-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
   - name: auth-v1
     _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
     url: http://auth:9999/
