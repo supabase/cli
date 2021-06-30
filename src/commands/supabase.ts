@@ -35,24 +35,21 @@ export default {
     -v, --version         Show version number
 `)
 
-    for (const opt in options) {
-      if (opt === 'h' || opt === 'help') {
-        printHelp()
-        return
-      }
-
-      if (opt === 'v' || opt === 'version') {
-        info(version())
-        return
-      }
-
-      // unrecognized opt
+    const keyNotFound = (opt: string) => {
       printHelp()
       error(`Unknown or unexpected option: ${opt}.`)
       process.exit(1)
     }
-
-    // options.length === 0
+    const versionSupa = () => info(version())
+    for (const opt in options) {
+      let options_functions: any = {
+        h: printHelp,
+        help: printHelp,
+        version: versionSupa,
+        v: versionSupa,
+      }
+      options_functions[opt] || keyNotFound(opt)
+    }
     printHelp()
   },
 }
