@@ -2,41 +2,25 @@ package start
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/fsnotify/fsnotify"
 	"github.com/supabase/cli/internal/utils"
 )
 
 const (
-	rolesSetupSql = `
-BEGIN;
-
--- Developer roles
-create role anon                nologin noinherit;
-create role authenticated       nologin noinherit; -- "logged in" user: web_user, app_user, etc
-create role service_role        nologin noinherit bypassrls; -- allow developers to create JWT's that bypass their policies
-
-create user authenticator noinherit;
-grant anon              to authenticator;
-grant authenticated     to authenticator;
-grant service_role      to authenticator;
-
-END;
-`
-	pgbouncerConfigTemplate = `
-[databases]
-postgres = host=%s port=5432 user=postgres password=postgres dbname=%s
+	// Args: projectId, currBranch.
+	pgbouncerConfigFmt = `[databases]
+postgres = host=supabase_db_%[1]s port=5432 dbname=%[2]s
 
 [pgbouncer]
 listen_addr = 0.0.0.0
@@ -45,8 +29,15 @@ auth_file = /etc/pgbouncer/userlist.txt
 server_fast_close = 1
 ignore_startup_parameters = extra_float_digits
 `
-	kongConfigTemplate = `
-_format_version: '1.1'
+	pgbouncerUserlist = `"postgres" "postgres"
+"authenticator" "postgres"
+"pgbouncer" "postgres"
+"supabase_admin" "postgres"
+"supabase_auth_admin" "postgres"
+"supabase_storage_admin" "postgres"
+`
+	// Args: projectId.
+	kongConfigFmt = `_format_version: '1.1'
 services:
   - name: auth-v1-authorize
     _comment: 'GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*'
@@ -125,312 +116,355 @@ consumers:
 `
 )
 
-var projectId = "TODO"
+var ctx = context.TODO()
 
-// TODO: Make the whole thing concurrent.
-func Start() {
-	if _, err := os.ReadDir("supabase"); os.IsNotExist(err) {
-		log.Fatalln("Cannot find `supabase` in the current directory. Perhaps you meant to run `supabase init` first?")
+// FIXME: Make the whole thing concurrent.
+// FIXME: warn when a migration fails
+func Start() error {
+	// Sanity checks.
+	{
+		if _, err := os.ReadDir("supabase"); errors.Is(err, os.ErrNotExist) {
+			return errors.New("Cannot find `supabase` in the current directory. Perhaps you meant to run `supabase init` first?")
+		} else if err != nil {
+			return err
+		}
+
+		utils.AssertDockerIsRunning()
+		utils.LoadConfig()
 	}
 
-	// set up graceful termination
+	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
+	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId)
 
+	defer utils.DockerRemoveAll()
+
+	// Handle SIGINT/SIGTERM.
 	termCh := make(chan os.Signal, 1)
 	signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+	errCh := make(chan error)
 
-	log.Println("Starting...")
+	fmt.Println("Starting...")
 
-	// set up watcher
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		panic(err)
-	}
-	defer watcher.Close()
-
-	err = watcher.Add(".git/HEAD")
-	if err != nil {
-		panic(err)
-	}
+	// Set up watcher.
 
 	branchCh := make(chan string)
 
-	go func() {
-		for {
-			select {
-			case _, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-
-				branch, err := utils.GetCurrentBranch()
-				if err != nil {
-					panic(err)
-				}
-				if branch != nil {
-					branchCh <- *branch
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-
-				panic(err)
-			}
+	{
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			return err
 		}
-	}()
+		defer watcher.Close()
+
+		if err := watcher.Add(".git/HEAD"); err != nil {
+			return err
+		}
+
+		go func() {
+			for {
+				select {
+				case _, ok := <-watcher.Events:
+					if !ok {
+						return
+					}
+
+					branch, err := utils.GetCurrentBranch()
+					if err != nil {
+						errCh <- errors.New("Error getting current branch name.")
+						signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+						return
+					}
+					if branch != nil {
+						branchCh <- *branch
+					}
+				case err, ok := <-watcher.Errors:
+					if !ok {
+						return
+					}
+
+					errCh <- err
+					signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+					return
+				}
+			}
+		}()
+	}
 
 	// init branch name
 
-	currBranchPtr, err := utils.GetCurrentBranch()
-	if err != nil {
-		panic(err)
+	var currBranch string
+	if currBranchPtr, err := utils.GetCurrentBranch(); err != nil {
+		return err
 	} else if currBranchPtr == nil {
-		panic("You are currently in a detached HEAD. Checkout a local branch and try again.")
+		return errors.New("You are currently in a detached HEAD. Checkout a local branch and try again.")
+	} else {
+		currBranch = *currBranchPtr
 	}
-	currBranch := *currBranchPtr
 
 	// init watched dbs
 
-	dbs := []string{currBranch}
-
-	// init docker client
-
-	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		panic(err)
-	}
-
-	ctx := context.Background()
+	initializedDbs := []string{currBranch}
 
 	// pull images
 
-	log.Println("Pulling images...")
+	fmt.Println("Pulling images...")
 
-	readCloser, err := docker.ImagePull(ctx, "docker.io/supabase/postgres:0.14.0", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
+	{
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DbImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgbouncerImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PgbouncerImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.KongImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.GotrueImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.RealtimeImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PostgrestImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DifferImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
 	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/edoburu/pgbouncer:1.15.0", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/library/kong:2.1", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/supabase/gotrue:v1.8.1", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/supabase/realtime:v0.15.0", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/postgrest/postgrest:v7.0.1", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
-	readCloser, err = docker.ImagePull(ctx, "docker.io/supabase/pgadmin-schema-diff:cli-0.0.2", types.ImagePullOptions{})
-	if err != nil {
-		panic(err)
-	}
-	io.Copy(os.Stdout, readCloser)
 
-	log.Println("Done pulling images.")
-	log.Println("Starting containers...")
-
-	// create network
-
-	net, err := docker.NetworkCreate(ctx, fmt.Sprintf("supabase_network_%s", projectId), types.NetworkCreate{})
-	defer docker.NetworkRemove(ctx, fmt.Sprintf("supabase_network_%s", projectId))
+	fmt.Println("Done pulling images.")
+	fmt.Println("Starting containers...")
 
 	// start postgres
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-
-	hostConfig := &container.HostConfig{
-		Binds: []string{fmt.Sprintf("%s/supabase/migrations:/docker-entrypoint-initdb.d", cwd)},
-	}
-
-	dbName := fmt.Sprintf("supabase_db_%s", projectId)
-	db, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "supabase/postgres:0.14.0",
-		Env:   []string{"POSTGRES_PASSWORD=postgres", fmt.Sprintf("POSTGRES_DB=%s", currBranch)},
-		Cmd: []string{
-			"postgres", "-c", "wal_level=logical",
-		},
-	}, hostConfig, nil, nil, dbName)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, db.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
+	{
+		if err := utils.DockerRun(
+			ctx,
+			utils.DbId,
+			&container.Config{
+				Image: utils.DbImage,
+				Env:   []string{"POSTGRES_PASSWORD=postgres", "POSTGRES_DB=" + currBranch},
+				Cmd:   []string{"postgres", "-c", "wal_level=logical"},
+			},
+			&container.HostConfig{
+				NetworkMode: container.NetworkMode(utils.NetId),
+			},
+		); err != nil {
+			return err
 		}
-	}()
 
-	if err := docker.NetworkConnect(ctx, net.ID, db.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
+		globalsSql := utils.FallbackGlobalsSql
+		if content, err := os.ReadFile("supabase/.globals.sql"); err == nil {
+			globalsSql = string(content)
+		}
+
+		out, err := utils.DockerExec(ctx, utils.DbId, []string{
+			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
+				`&& psql --username postgres <<'EOSQL'
+BEGIN;
+` + globalsSql + `
+COMMIT;
+EOSQL
+`,
+		})
+		if err != nil {
+			return err
+		}
+		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+
+		migrations, err := os.ReadDir("supabase/migrations")
+		if err != nil {
+			return err
+		}
+
+		for _, migration := range migrations {
+			fmt.Println("Applying migration " + migration.Name() + "...")
+
+			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			if err != nil {
+				return err
+			}
+
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+			})
+			if err != nil {
+				return err
+			}
+			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		}
+
+		fmt.Println("Applying seed...")
+
+		content, err := os.ReadFile("supabase/seed.sql")
+		if errors.Is(err, os.ErrNotExist) {
+			// skip
+		} else if err != nil {
+			return err
+		} else {
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+			})
+			if err != nil {
+				return err
+			}
+			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		}
 	}
 
-	if err := docker.ContainerStart(ctx, db.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
+	if err := os.Mkdir("supabase/.temp", 0755); err != nil {
+		return err
 	}
+	defer os.RemoveAll("supabase/.temp")
 
 	// start pgbouncer
 
-	err = os.WriteFile("supabase/.temp/pgbouncer.ini", []byte(fmt.Sprintf(pgbouncerConfigTemplate, dbName, currBranch)), 0644)
-	if err != nil {
-		panic(err)
-	}
-
-	hostConfig = &container.HostConfig{
-		Binds:        []string{fmt.Sprintf("%s/supabase/.temp/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro", cwd)},
-		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: "5432"}}},
-	}
-
-	pgbouncerName := fmt.Sprintf("supabase_pgbouncer_%s", projectId)
-	pgbouncer, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "edoburu/pgbouncer:1.15.0",
-		Env:   []string{"DB_USER=postgres", "DB_PASSWORD=postgres"},
-	}, hostConfig, nil, nil, pgbouncerName)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, pgbouncer.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
+	{
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
 		}
-	}()
 
-	if err := docker.NetworkConnect(ctx, net.ID, pgbouncer.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
-	}
+		if err := os.WriteFile(
+			"supabase/.temp/pgbouncer.ini", []byte(fmt.Sprintf(pgbouncerConfigFmt, utils.ProjectId, currBranch)), 0644,
+		); err != nil {
+			return err
+		}
+		if err := os.WriteFile("supabase/.temp/userlist.txt", []byte(pgbouncerUserlist), 0644); err != nil {
+			return err
+		}
 
-	if err := docker.ContainerStart(ctx, pgbouncer.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
+		if err := utils.DockerRun(
+			ctx,
+			utils.PgbouncerId,
+			&container.Config{
+				Image: utils.PgbouncerImage,
+				Env:   []string{"DB_USER=postgres", "DB_PASSWORD=postgres"},
+			},
+			&container.HostConfig{
+				Binds: []string{
+					cwd + "/supabase/.temp/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro",
+					cwd + "/supabase/.temp/userlist.txt:/etc/pgbouncer/userlist.txt:ro",
+				},
+				PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
+				NetworkMode:  container.NetworkMode(utils.NetId),
+			},
+		); err != nil {
+			return err
+		}
 	}
 
 	// start kong
 
-	err = os.WriteFile("supabase/.temp/kong.yml", []byte(fmt.Sprintf(kongConfigTemplate, projectId)), 0644)
-	if err != nil {
-		panic(err)
-	}
-
-	hostConfig = &container.HostConfig{
-		Binds:        []string{fmt.Sprintf("%s/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro", cwd)},
-		PortBindings: nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: "8000"}}},
-	}
-
-	kong, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "kong:2.1",
-		Env: []string{
-			"KONG_DATABASE=off",
-			"KONG_PLUGINS=request-transformer,cors,key-auth,http-log",
-			"KONG_DECLARATIVE_CONFIG=/var/lib/kong/kong.yml",
-			"KONG_DNS_ORDER=LAST,A,CNAME",
-		},
-	}, hostConfig, nil, nil, fmt.Sprintf("supabase_kong_%s", projectId))
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, kong.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
+	{
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
 		}
-	}()
 
-	if err := docker.NetworkConnect(ctx, net.ID, kong.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
-	}
+		if err := os.WriteFile("supabase/.temp/kong.yml", []byte(fmt.Sprintf(kongConfigFmt, utils.ProjectId)), 0644); err != nil {
+			return err
+		}
 
-	if err := docker.ContainerStart(ctx, kong.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
+		if err := utils.DockerRun(
+			ctx,
+			utils.KongId,
+			&container.Config{
+				Image: utils.KongImage,
+				Env: []string{
+					"KONG_DATABASE=off",
+					"KONG_PLUGINS=request-transformer,cors,key-auth,http-log",
+					"KONG_DECLARATIVE_CONFIG=/var/lib/kong/kong.yml",
+					"KONG_DNS_ORDER=LAST,A,CNAME",
+				},
+			},
+			&container.HostConfig{
+				Binds:        []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro")},
+				PortBindings: nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: utils.ApiPort}}},
+				NetworkMode:  container.NetworkMode(utils.NetId),
+			},
+		); err != nil {
+			return err
+		}
 	}
 
 	// start gotrue
 
-	gotrueName := fmt.Sprintf("supabase_auth_%s", projectId)
-	gotrue, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "supabase/gotrue:v1.8.1",
-		Env: []string{
-			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-			"GOTRUE_JWT_AUD=authenticated",
-			"GOTRUE_JWT_EXP=3600",
-			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
-			"GOTRUE_DB_DRIVER=postgres",
-			"DB_NAMESPACE=auth",
-			"API_EXTERNAL_URL=http://localhost:8000",
-			fmt.Sprintf("GOTRUE_API_HOST=%s", gotrueName),
-			"PORT=9999",
-			"GOTRUE_DISABLE_SIGNUP=false",
-			"GOTRUE_SITE_URL=http://localhost:8000",
-			// "GOTRUE_SMTP_HOST=mail",
-			// "GOTRUE_SMTP_PORT=2500",
-			// "GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
-			// "GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
-			// "GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
-			// "GOTRUE_MAILER_AUTOCONFIRM=false",
-			// "GOTRUE_MAILER_SUBJECTS_CONFIRMATION=Confirm Your Signup",
-			// "GOTRUE_MAILER_SUBJECTS_INVITE=You have been invited",
-			// "GOTRUE_MAILER_SUBJECTS_MAGIC_LINK=Your Magic Link",
-			// "GOTRUE_MAILER_SUBJECTS_RECOVERY=Reset Your Password",
-			// "GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
-			// "GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
-			// "GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
-			"GOTRUE_LOG_LEVEL=DEBUG",
-			"GOTRUE_OPERATOR_TOKEN=super-secret-operator-token",
-			fmt.Sprintf("DATABASE_URL=postgres://postgres:postgres@%s:5432/postgres?sslmode=disable", pgbouncerName),
+	if err := utils.DockerRun(
+		ctx,
+		utils.GotrueId,
+		&container.Config{
+			Image: utils.GotrueImage,
+			Env: []string{
+				"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"GOTRUE_JWT_AUD=authenticated",
+				"GOTRUE_JWT_EXP=3600",
+				"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+				"GOTRUE_DB_DRIVER=postgres",
+				"DB_NAMESPACE=auth",
+				"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
+				"GOTRUE_API_HOST=" + utils.GotrueId,
+				"PORT=9999",
+				"GOTRUE_DISABLE_SIGNUP=false",
+				// TODO: Change dynamically.
+				"GOTRUE_SITE_URL=http://localhost:8000",
+				"GOTRUE_LOG_LEVEL=DEBUG",
+				"GOTRUE_OPERATOR_TOKEN=super-secret-operator-token",
+				"DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
+			},
 		},
-	}, &container.HostConfig{}, nil, nil, gotrueName)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, gotrue.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
-		}
-	}()
-
-	if err := docker.NetworkConnect(ctx, net.ID, gotrue.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
+		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
 	}
 
-	if err := docker.ContainerStart(ctx, gotrue.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
-	}
+	// Start Realtime.
 
-	// Start Realtime. It's handled differently since it doesn't work with pgbouncer for some reason.
-
-	realtime, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "supabase/realtime:v0.15.0",
+	if err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
+		Image: utils.RealtimeImage,
 		Env: []string{
-			// connect to db directly instead of pgbouncer
-			fmt.Sprintf("DB_HOST=%s", dbName),
-			fmt.Sprintf("DB_NAME=%s", currBranch),
+			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+			"DB_HOST=" + utils.DbId,
+			"DB_NAME=" + currBranch,
 			"DB_USER=postgres",
 			"DB_PASSWORD=postgres",
 			"DB_PORT=5432",
@@ -440,100 +474,67 @@ func Start() {
 			"SECURE_CHANNELS=false",
 			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 		},
-	}, &container.HostConfig{}, nil, nil, fmt.Sprintf("supabase_realtime_%s", projectId))
-	if err != nil {
-		panic(err)
-	}
-
-	if err := docker.NetworkConnect(ctx, net.ID, realtime.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
-	}
-
-	if err := docker.ContainerStart(ctx, realtime.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
+	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
+		return err
 	}
 
 	// start postgrest
 
-	postgrest, err := docker.ContainerCreate(ctx, &container.Config{
-		Image: "postgrest/postgrest:v7.0.1",
-		Env: []string{
-			fmt.Sprintf("PGRST_DB_URI=postgres://postgres:postgres@%s:5432/postgres", pgbouncerName),
-			"PGRST_DB_SCHEMA=public",
-			"PGRST_DB_ANON_ROLE=postgres",
-			"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+	if err := utils.DockerRun(
+		ctx,
+		utils.RestId,
+		&container.Config{
+			Image: utils.PostgrestImage,
+			Env: []string{
+				"PGRST_DB_URI=postgres://postgres:postgres@" + utils.PgbouncerId + ":5432/postgres",
+				"PGRST_DB_SCHEMA=public",
+				"PGRST_DB_ANON_ROLE=postgres",
+				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			},
 		},
-	}, &container.HostConfig{}, nil, nil, fmt.Sprintf("supabase_rest_%s", projectId))
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, postgrest.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
-		}
-	}()
-
-	if err := docker.NetworkConnect(ctx, net.ID, postgrest.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
-	}
-
-	if err := docker.ContainerStart(ctx, postgrest.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
+		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
 	}
 
 	// start differ
 
-	differ, err := docker.ContainerCreate(ctx, &container.Config{
-		Image:        "supabase/pgadmin-schema-diff",
-		Entrypoint:   []string{"sleep", "infinity"},
-	}, nil, nil, nil, fmt.Sprintf("supabase_differ_%s", projectId))
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := docker.ContainerRemove(ctx, differ.ID, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			panic(err)
-		}
-	}()
-
-	if err := docker.NetworkConnect(ctx, fmt.Sprintf("supabase_network_%s", projectId), differ.ID, &network.EndpointSettings{}); err != nil {
-		panic(err)
+	if err := utils.DockerRun(
+		ctx,
+		utils.DifferId,
+		&container.Config{
+			Image:      utils.DifferImage,
+			Entrypoint: []string{"sleep", "infinity"},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
 	}
 
-	if err := docker.ContainerStart(ctx, differ.ID, types.ContainerStartOptions{}); err != nil {
-		panic(err)
-	}
-
-	log.Println("Started.")
+	fmt.Println("Started.")
 
 	// switch db on switch branch
 
 	for {
 		select {
 		case <-termCh:
-			log.Println("Shutting down...")
-			if err := docker.ContainerRemove(ctx, fmt.Sprintf("supabase_realtime_%s", projectId), types.ContainerRemoveOptions{
-				RemoveVolumes: true,
-				Force:         true,
-			}); err != nil {
-				panic(err)
+			fmt.Println("Shutting down...")
+
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return nil
 			}
-			return
 		case currBranch = <-branchCh:
 		}
 
-		log.Printf("Switched to branch: %s. Switching database...", currBranch)
+		fmt.Println("Switched to branch: " + currBranch + ". Switching database...")
 
 		// if it's a new branch, create database with the same name as the branch
 
 		isNewBranch := true
-		for _, e := range dbs {
+		for _, e := range initializedDbs {
 			if currBranch == e {
 				isNewBranch = false
 				break
@@ -541,92 +542,97 @@ func Start() {
 		}
 
 		if isNewBranch {
-			log.Println("New branch detected. Creating database...")
+			fmt.Println("New branch detected. Creating database...")
 
-			dbs = append(dbs, currBranch)
+			initializedDbs = append(initializedDbs, currBranch)
 
 			// create db
 
-			exec, err := docker.ContainerExecCreate(ctx, db.ID, types.ExecConfig{
-				Cmd: []string{
-					"psql",
-					"--username", "postgres",
-					"--command", fmt.Sprintf(`CREATE DATABASE %s;`, currBranch),
-				},
-				AttachStderr: true,
-				AttachStdout: true,
-			})
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{"createdb", "--username", "postgres", currBranch})
 			if err != nil {
-				panic(err)
+				// return err
 			}
-			if err := docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
-				panic(err)
-			}
-			resp, err := docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-			if err != nil {
-				panic(err)
-			}
-			io.Copy(os.Stdout, resp.Reader)
+			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 
 			// restore migrations
 
 			migrations, err := os.ReadDir("supabase/migrations")
 			if err != nil {
-				panic(err)
+				return err
 			}
 
 			for _, migration := range migrations {
-				log.Printf("Applying migration %s...\n", migration.Name())
-				exec, err = docker.ContainerExecCreate(ctx, db.ID, types.ExecConfig{
-					Cmd: []string{
-						"psql",
-						"--username", "postgres",
-						"--dbname", currBranch,
-						"--file", fmt.Sprintf("/docker-entrypoint-initdb.d/%s", migration.Name()),
-					},
-					AttachStderr: true,
-					AttachStdout: true,
+				fmt.Println("Applying migration " + migration.Name() + "...")
+
+				content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+				if err != nil {
+					return err
+				}
+
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
 				})
 				if err != nil {
-					panic(err)
+					return err
 				}
-				if err := docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
-
-				}
-				resp, err := docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-				if err != nil {
-					panic(err)
-				}
-				io.Copy(os.Stdout, resp.Reader)
+				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 			}
 
-			log.Printf("Finished creating database %s.\n", currBranch)
+			fmt.Println("Applying seed...")
+
+			if content, err := os.ReadFile("supabase/seed.sql"); errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					return err
+				}
+				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			}
+
+			fmt.Println("Finished creating database " + currBranch + ".")
 		}
 
 		// reload pgbouncer
 
-		content := fmt.Sprintf(pgbouncerConfigTemplate, dbName, currBranch)
-		os.WriteFile("supabase/.temp/pgbouncer.ini", []byte(content), 0644)
+		content := fmt.Sprintf(pgbouncerConfigFmt, utils.ProjectId, currBranch)
+		if err := os.WriteFile("supabase/.temp/pgbouncer.ini", []byte(content), 0644); err != nil {
+			return err
+		}
 
-		if err := docker.ContainerKill(ctx, pgbouncer.ID, "SIGHUP"); err != nil {
-			panic(err)
+		if err := utils.Docker.ContainerKill(ctx, utils.PgbouncerId, "SIGHUP"); err != nil {
+			return err
 		}
 
 		// restart realtime, since the current db changed and it doesn't use pgbouncer
 
-		if err := docker.ContainerRemove(ctx, realtime.ID, types.ContainerRemoveOptions{
+		if err := utils.Docker.ContainerRemove(ctx, utils.RealtimeId, types.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		}); err != nil {
-			panic(err)
+			return err
 		}
 
-		realtime, err = docker.ContainerCreate(ctx, &container.Config{
-			Image: "supabase/realtime:v0.15.0",
+		if err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
+			Image: utils.RealtimeImage,
 			Env: []string{
 				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
-				fmt.Sprintf("DB_HOST=%s", dbName),
-				fmt.Sprintf("DB_NAME=%s", currBranch),
+				"DB_HOST=" + utils.DbId,
+				"DB_NAME=" + currBranch,
 				"DB_USER=postgres",
 				"DB_PASSWORD=postgres",
 				"DB_PORT=5432",
@@ -636,19 +642,10 @@ func Start() {
 				"SECURE_CHANNELS=false",
 				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 			},
-		}, &container.HostConfig{}, nil, nil, fmt.Sprintf("supabase_realtime_%s", projectId))
-		if err != nil {
-			panic(err)
+		}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
+			return err
 		}
 
-		if err := docker.NetworkConnect(ctx, net.ID, realtime.ID, &network.EndpointSettings{}); err != nil {
-			panic(err)
-		}
-
-		if err := docker.ContainerStart(ctx, realtime.ID, types.ContainerStartOptions{}); err != nil {
-			panic(err)
-		}
-
-		log.Println("Finished switching database.")
+		fmt.Println("Finished switching database.")
 	}
 }

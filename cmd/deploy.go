@@ -7,10 +7,10 @@ import (
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "TODO",
-	Long:  `TODO`,
-	Run: func(cmd *cobra.Command, args []string) {
-		deploy.Deploy()
+	Short: "FIXME",
+	Long:  `FIXME`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return deploy.Deploy()
 	},
 }
 

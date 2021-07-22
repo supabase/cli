@@ -7,10 +7,10 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "TODO",
-	Long:  `TODO`,
-	Run: func(cmd *cobra.Command, args []string) {
-		_init.Init()
+	Short: "FIXME",
+	Long:  `FIXME`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return _init.Init()
 	},
 }
 

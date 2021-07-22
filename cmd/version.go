@@ -11,10 +11,10 @@ var version string
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "TODO",
-	Long: `TODO`,
+	Short: "FIXME",
+	Long: `FIXME`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(version)
+		fmt.Print(version)
 	},
 }
 
