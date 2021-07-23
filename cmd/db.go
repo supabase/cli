@@ -5,31 +5,38 @@ import (
 	"github.com/supabase/cli/internal/db"
 )
 
-var dbCmd = &cobra.Command{
-	Use:   "db",
-	Short: "TODO",
-	Long:  `TODO`,
-}
+var (
+	migrationName string
 
-var dbDumpCmd = &cobra.Command{
-	Use:   "dump",
-	Short: "TODO",
-	Long:  `TODO`,
-	Run: func(cmd *cobra.Command, args []string) {
-		db.DbDump()
-	},
-}
+	dbCmd = &cobra.Command{
+		Use:   "db",
+		Short: "FIXME",
+		Long:  `FIXME`,
+	}
 
-var dbRestoreCmd = &cobra.Command{
-	Use:   "restore",
-	Short: "TODO",
-	Long:  `TODO`,
-	Run: func(cmd *cobra.Command, args []string) {
-		db.DbRestore()
-	},
-}
+	dbDumpCmd = &cobra.Command{
+		Use:   "dump",
+		Short: "FIXME",
+		Long:  `FIXME`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return db.DbDump(migrationName)
+		},
+	}
+
+	dbRestoreCmd = &cobra.Command{
+		Use:   "restore",
+		Short: "FIXME",
+		Long:  `FIXME`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return db.DbRestore()
+		},
+	}
+)
 
 func init() {
+	dbDumpCmd.Flags().StringVar(&migrationName, "name", "", "FIXME")
+	dbDumpCmd.MarkFlagRequired("name")
+
 	dbCmd.AddCommand(dbDumpCmd)
 	dbCmd.AddCommand(dbRestoreCmd)
 	rootCmd.AddCommand(dbCmd)
