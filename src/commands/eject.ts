@@ -55,6 +55,7 @@ export default {
         'postgres/00-initial-schema.sql',
         'postgres/Dockerfile',
         'postgres/auth-schema.sql',
+        'postgres/storage-schema.sql',
         'docker-compose.yml',
       ].map((f) =>
         generate({

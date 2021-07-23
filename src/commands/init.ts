@@ -78,6 +78,7 @@ export default {
         'docker/postgres/00-initial-schema.sql',
         'docker/postgres/Dockerfile',
         'docker/postgres/auth-schema.sql',
+        'docker/postgres/storage-schema.sql',
         'docker/docker-compose.yml',
         'README.md',
       ].map((f) =>
