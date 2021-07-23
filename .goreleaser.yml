@@ -1,0 +1,29 @@
+project_name: supabase
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: supabase
+    binary: supabase
+    ldflags:
+      - -X github.com/supabase/cli/cmd.version=v{{.Version}}
+    goos:
+      - darwin
+      - linux
+      - windows
+changelog:
+  skip: true
+brews:
+  - tap:
+      owner: supabase
+      name: homebrew-tap
+    description: Supabase CLI
+    homepage: https://supabase.io
+    license: MIT
+scoop:
+  bucket:
+    owner: supabase
+    name: scoop-bucket
+  description: Supabase CLI
+  homepage: https://supabase.io
+  license: MIT
