@@ -1,3 +1,7 @@
+🚧 **The NodeJS CLI is being replaced by the (WIP) [Go CLI](https://github.com/supabase/cli/tree/new). It's still unstable, so we don't recommend it for production.** 🚧️
+
+---
+
 # Supabase CLI
 
 [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
