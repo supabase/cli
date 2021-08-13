@@ -259,6 +259,13 @@ func Start() error {
 			}
 			io.Copy(os.Stdout, out)
 		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgMetaImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PgMetaImage, types.ImagePullOptions{})
+			if err != nil {
+				return err
+			}
+			io.Copy(os.Stdout, out)
+		}
 	}
 
 	fmt.Println("Done pulling images.")
@@ -512,6 +519,26 @@ EOSQL
 	}
 
 	fmt.Println("Started.")
+
+	// Start pg-meta.
+
+	if err := utils.DockerRun(
+		ctx,
+		utils.PgMetaId,
+		&container.Config{
+			Image: utils.PgMetaImage,
+			Env: []string{
+				"PG_META_PORT=8080",
+				"PG_META_DB_HOST=" + utils.DbId,
+			},
+		},
+		&container.HostConfig{
+			PortBindings: nat.PortMap{"8080/tcp": []nat.PortBinding{{HostPort: utils.PgMetaPort}}},
+			NetworkMode:  container.NetworkMode(utils.NetId),
+		},
+	); err != nil {
+		return err
+	}
 
 	// switch db on switch branch
 

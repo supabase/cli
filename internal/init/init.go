@@ -1046,7 +1046,8 @@ ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO postgres;
   "projectId": "%[1]s",
   "ports": {
     "api": 8000,
-    "db": 5432
+    "db": 5432,
+    "pgMeta": 3000
   },
   "dbVersion": "120007",
   "excludeSchemas": ["extensions"]
