@@ -1,4 +1,10 @@
-🚧 **The NodeJS CLI is being replaced by the (WIP) [Go CLI](https://github.com/supabase/cli/tree/new). It's still unstable, so we don't recommend it for production.** 🚧️
+<div align="center">
+  <h1>
+    :warning:
+  </h1>
+  
+  The NodeJS CLI is being replaced by the (WIP) [Go CLI](https://github.com/supabase/cli/tree/new). It's still unstable, so we don't recommend it for production.
+</div>
 
 ---
 
