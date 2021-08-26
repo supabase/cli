@@ -47,14 +47,6 @@ var (
 func Init() error {
 	// Sanity checks.
 	{
-		if _, err := os.ReadDir(".git"); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(
-				os.Stderr,
-				"❌ Cannot find `.git` in the current directory. Make sure you run the command in the root of a git repository.",
-			)
-			os.Exit(1)
-		}
-
 		if _, err := os.ReadDir("supabase"); err == nil {
 			fmt.Fprintln(
 				os.Stderr,
@@ -72,6 +64,25 @@ func Init() error {
 	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 	defer utils.DockerRemoveAll()
+
+	// Handle cleanup on SIGINT/SIGTERM.
+	{
+		termCh := make(chan os.Signal, 1)
+		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-termCh
+
+			utils.DockerRemoveAll()
+			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
+
+			_ = os.RemoveAll("supabase")
+
+			fmt.Fprintln(os.Stderr, "Aborted `supabase init`.")
+			os.Exit(1)
+		}()
+	}
+
+	fmt.Println("Pulling images...")
 
 	// Pull images.
 	{
@@ -104,20 +115,8 @@ func Init() error {
 		}
 	}
 
-	// Handle cleanup on SIGINT/SIGTERM.
-	{
-		termCh := make(chan os.Signal, 1)
-		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-termCh
-
-			utils.DockerRemoveAll()
-			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
-
-			fmt.Fprintln(os.Stderr, "Aborted `supabase init`.")
-			os.Exit(1)
-		}()
-	}
+	fmt.Println("Done pulling images.")
+	fmt.Println("Generating initial migration...")
 
 	if err := os.Mkdir("supabase", 0755); err != nil {
 		return err
@@ -366,6 +365,8 @@ func Init() error {
 			}
 		}
 	}
+
+	fmt.Println("Done.")
 
 	return nil
 }
