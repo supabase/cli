@@ -33,7 +33,6 @@ func DbDump(name string) error {
 
 	fmt.Println("Created shadow db.")
 
-	// FIXME: Abort when a migration fails.
 	migrations, err := os.ReadDir("supabase/migrations")
 	if err != nil {
 		return err
@@ -56,6 +55,13 @@ EOSQL
 `,
 		})
 		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		var errBuf bytes.Buffer
+
+		if errBuf.Len() > 0 {
+			return errors.New(
+				"Error running migration " + migration.Name() + ": " + errBuf.String(),
+			)
+		}
 	}
 
 	fmt.Println("Finished running migrations on shadow db.")
@@ -274,7 +280,6 @@ func DbRestore() error {
 		return err
 	}
 
-	// FIXME: Abort when migration fails.
 	for _, migration := range migrations {
 		fmt.Println("Applying migration " + migration.Name() + "...")
 
@@ -295,6 +300,13 @@ EOSQL
 			return err
 		}
 		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		var errBuf bytes.Buffer
+
+		if errBuf.Len() > 0 {
+			return errors.New(
+				"Error running migration " + migration.Name() + ": " + errBuf.String(),
+			)
+		}
 	}
 
 	fmt.Println("Applying seed...")
@@ -317,6 +329,11 @@ EOSQL
 			return err
 		}
 		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		var errBuf bytes.Buffer
+
+		if errBuf.Len() > 0 {
+			return errors.New("Error running seed: " + errBuf.String())
+		}
 	}
 
 	fmt.Println("Finished db restore on " + currBranch + ".")

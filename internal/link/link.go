@@ -259,6 +259,11 @@ EOSQL
 					return err
 				}
 				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+				var errBuf bytes.Buffer
+
+				if errBuf.Len() > 0 {
+					return errors.New("Error running migration " + migration.Name() + ": " + errBuf.String())
+				}
 			}
 		}
 

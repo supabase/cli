@@ -33,8 +33,7 @@ var (
 	ctx = context.TODO()
 )
 
-// FIXME: Make the whole thing concurrent.
-// FIXME: warn when a migration fails
+// TODO: Make the whole thing concurrent.
 func Start() error {
 	// Sanity checks.
 	{
@@ -256,6 +255,11 @@ EOSQL
 			return err
 		}
 		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		var errBuf bytes.Buffer
+
+		if errBuf.Len() > 0 {
+			return errors.New("Error running globals.sql: " + errBuf.String())
+		}
 
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
@@ -282,6 +286,13 @@ EOSQL
 				return err
 			}
 			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			var errBuf bytes.Buffer
+
+			if errBuf.Len() > 0 {
+				return errors.New(
+					"Error running migration " + migration.Name() + ": " + errBuf.String(),
+				)
+			}
 		}
 
 		fmt.Println("Applying seed...")
@@ -304,6 +315,11 @@ EOSQL
 				return err
 			}
 			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			var errBuf bytes.Buffer
+
+			if errBuf.Len() > 0 {
+				return errors.New("Error running seed: " + errBuf.String())
+			}
 		}
 	}
 
@@ -573,6 +589,13 @@ EOSQL
 					return err
 				}
 				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+				var errBuf bytes.Buffer
+
+				if errBuf.Len() > 0 {
+					return errors.New(
+						"Error running migration " + migration.Name() + ": " + errBuf.String(),
+					)
+				}
 			}
 
 			fmt.Println("Applying seed...")
@@ -594,6 +617,11 @@ EOSQL
 					return err
 				}
 				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+				var errBuf bytes.Buffer
+
+				if errBuf.Len() > 0 {
+					return errors.New("Error running seed: " + errBuf.String())
+				}
 			}
 
 			fmt.Println("Finished creating database " + currBranch + ".")
