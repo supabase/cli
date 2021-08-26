@@ -5,9 +5,9 @@
 This repository contains all the functionality for our CLI. It is still under heavy development.
 
 - [x] Running Supabase locally
-- [ ] Self-hosting
 - [ ] Managing database migrations (in progress)
-- [ ] Pushing your local changes to production
+- [ ] Pushing your local changes to production (in progress)
+- [ ] Self-hosting
 - [ ] Manage your Supabase Account
 - [ ] Manage your Supabase Projects
 - [ ] Generating types directly from your database schema
@@ -15,16 +15,62 @@ This repository contains all the functionality for our CLI. It is still under he
 
 ## Getting started
 
+### Install the CLI
+
+#### macOS
+
 ```sh
-go run main.go help # Go >= v1.16
+brew install supabase/tap/supabase
 ```
 
-### Commands:
+#### Windows
 
-- `supabase init`: Initialize project
-- `supabase start`: Start Supabase locally
-- `supabase db pull`: Dump schema and create a new migration file
-- `supabase db push`: Recreate local database with current migration history
+```
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase/supabase
+```
+
+<!-- TODO: Waiting for `new` to be merged to `main` -->
+<!-- #### Go (>= 1.16) -->
+
+<!-- ```sh -->
+<!-- go get github.com/supabase/cli -->
+<!-- ``` -->
+
+### Run the CLI
+
+```sh
+supabase help
+```
+
+## Command reference
+
+```
+Usage:
+  supabase [command]
+
+Available Commands:
+  db dump         Diffs the local database with current migrations, writing it as a new migration, and writes a new structured dump.
+  db restore      Restores the local database to reflect current migrations. Any changes on the local database that is not dumped will be lost.
+  deploy          Deploy current migrations to prod.
+  help            Help about any command
+  init            Initialize a project to use Supabase CLI.
+  link            Link the current project to a remote deploy database.
+  start           Start the Supabase local development setup.
+
+Flags:
+  -h, --help      help for supabase
+  -v, --version   version for supabase
+```
+
+## Developing
+
+To run from source:
+
+```sh
+# Go >= 1.16
+go run -ldflags "-X github.com/supabase/cli/cmd.version=0.0.0" main.go help
+```
 
 ---
 
