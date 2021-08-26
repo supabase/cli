@@ -67,7 +67,11 @@ func Link(url string) error {
 	// Pull images.
 	{
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DbImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.DbImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
@@ -118,14 +122,16 @@ func Link(url string) error {
 			return err
 		}
 
-		conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.")
+		conflictErr := errors.New(
+			"supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.",
+		)
 
 		if len(versions) > len(migrations) {
 			return conflictErr
 		}
 
+		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 		for i, version := range versions {
-			re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 			migrationTimestamp := re.FindStringSubmatch(migrations[i].Name())[1]
 
 			if version == migrationTimestamp {
@@ -212,13 +218,13 @@ func Link(url string) error {
 
 			globalsSql := utils.FallbackGlobalsSql
 			if content, err := os.ReadFile("supabase/.globals.sql"); err == nil {
-				globalsSql = string(content)
+				globalsSql = content
 			}
 
 			out, err = utils.DockerExec(ctx, dbId, []string{
 				"sh", "-c", `psql --username postgres --dbname postgres <<'EOSQL'
 BEGIN;
-` + globalsSql + `
+` + string(globalsSql) + `
 COMMIT;
 EOSQL
 `,

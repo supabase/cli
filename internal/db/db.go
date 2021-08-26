@@ -13,11 +13,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-// Args: dbname
-const terminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
-`
-
 var ctx = context.TODO()
 
 func DbDump(name string) error {
@@ -26,8 +21,15 @@ func DbDump(name string) error {
 
 	// 1. Create shadow db and run migrations
 
-	out, err := utils.DockerExec(ctx, utils.DbId, []string{"createdb", "--username", "postgres", utils.ShadowDbName})
 	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	out, err := utils.DockerExec(
+		ctx,
+		utils.DbId,
+		[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
+	)
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("Created shadow db.")
 
@@ -83,7 +85,9 @@ EOSQL
 			return err
 		}
 
-		f, err := os.Create("supabase/migrations/" + utils.GetCurrentTimestamp() + "_" + name + ".sql")
+		f, err := os.Create(
+			"supabase/migrations/" + utils.GetCurrentTimestamp() + "_" + name + ".sql",
+		)
 		if err != nil {
 			return err
 		}
@@ -211,7 +215,11 @@ EOSQL
 	}
 
 	// 4. Drop shadow db.
-	out, err = utils.DockerExec(ctx, utils.DbId, []string{"dropdb", "--username", "postgres", utils.ShadowDbName})
+	out, err = utils.DockerExec(
+		ctx,
+		utils.DbId,
+		[]string{"dropdb", "--username", "postgres", utils.ShadowDbName},
+	)
 	if err != nil {
 		return err
 	}
@@ -251,15 +259,9 @@ func DbRestore() error {
 	// 2. Recreate db.
 
 	// https://dba.stackexchange.com/a/11895
-	// TODO: Use dropdb --force instead in Postgres 13
 	out, err := utils.DockerExec(ctx, utils.DbId, []string{
-		"sh", "-c", "psql --username postgres <<'EOSQL' " +
-			"&& dropdb --username postgres '" + currBranch + "' && createdb --username postgres '" + currBranch + `'
-BEGIN;
-` + fmt.Sprintf(terminateDbSqlFmt, currBranch) + `
-COMMIT;
-EOSQL
-`,
+		"sh", "-c", "dropdb --force --username postgres '" + currBranch + "' " +
+			"&& createdb --username postgres '" + currBranch + "'",
 	})
 	if err != nil {
 		return err

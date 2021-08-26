@@ -39,7 +39,9 @@ func Start() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir("supabase"); errors.Is(err, os.ErrNotExist) {
-			return errors.New("Cannot find `supabase` in the current directory. Perhaps you meant to run `supabase init` first?")
+			return errors.New(
+				"Cannot find `supabase` in the current directory. Perhaps you meant to run `supabase init` first?",
+			)
 		} else if err != nil {
 			return err
 		}
@@ -126,56 +128,88 @@ func Start() error {
 
 	{
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DbImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.DbImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgbouncerImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PgbouncerImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.PgbouncerImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.KongImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.KongImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.GotrueImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.GotrueImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.RealtimeImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.RealtimeImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PostgrestImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.PostgrestImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DifferImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.DifferImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgMetaImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.PgMetaImage, types.ImagePullOptions{})
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.PgmetaImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
@@ -451,16 +485,16 @@ EOSQL
 
 	if err := utils.DockerRun(
 		ctx,
-		utils.PgMetaId,
+		utils.PgmetaId,
 		&container.Config{
-			Image: utils.PgMetaImage,
+			Image: utils.PgmetaImage,
 			Env: []string{
 				"PG_META_PORT=8080",
 				"PG_META_DB_HOST=" + utils.DbId,
 			},
 		},
 		&container.HostConfig{
-			PortBindings: nat.PortMap{"8080/tcp": []nat.PortBinding{{HostPort: utils.PgMetaPort}}},
+			PortBindings: nat.PortMap{"8080/tcp": []nat.PortBinding{{HostPort: utils.PgmetaPort}}},
 			NetworkMode:  container.NetworkMode(utils.NetId),
 		},
 	); err != nil {
@@ -502,7 +536,11 @@ EOSQL
 
 			// create db
 
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{"createdb", "--username", "postgres", currBranch})
+			out, err := utils.DockerExec(
+				ctx,
+				utils.DbId,
+				[]string{"createdb", "--username", "postgres", currBranch},
+			)
 			if err != nil {
 				// return err
 			}

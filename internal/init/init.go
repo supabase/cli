@@ -48,12 +48,18 @@ func Init() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir(".git"); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, "❌ Cannot find `.git` in the current directory. Make sure you run the command in the root of a git repository.")
+			fmt.Fprintln(
+				os.Stderr,
+				"❌ Cannot find `.git` in the current directory. Make sure you run the command in the root of a git repository.",
+			)
 			os.Exit(1)
 		}
 
 		if _, err := os.ReadDir("supabase"); err == nil {
-			fmt.Fprintln(os.Stderr, "❌ Project already initialized. Remove `supabase` directory to reinitialize.")
+			fmt.Fprintln(
+				os.Stderr,
+				"❌ Project already initialized. Remove `supabase` directory to reinitialize.",
+			)
 			os.Exit(1)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -70,15 +76,23 @@ func Init() error {
 	// Pull images.
 	{
 		// Don't know deploy db's version yet, so use latest image.
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.LatestDbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.LatestDbImage, types.ImagePullOptions{})
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+latestDbImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+latestDbImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
 			io.Copy(os.Stdout, out)
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DifferImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.DifferImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
@@ -154,7 +168,7 @@ func Init() error {
 			ctx,
 			dbId,
 			&container.Config{
-				Image: utils.LatestDbImage,
+				Image: latestDbImage,
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd: []string{
 					"postgres", "-c", "wal_level=logical",
@@ -180,7 +194,11 @@ func Init() error {
 		}); err != nil {
 			return err
 		}
-		statusCh, errCh := utils.Docker.ContainerWait(ctx, differId, container.WaitConditionNotRunning)
+		statusCh, errCh := utils.Docker.ContainerWait(
+			ctx,
+			differId,
+			container.WaitConditionNotRunning,
+		)
 		select {
 		case err := <-errCh:
 			if err != nil {
@@ -189,7 +207,11 @@ func Init() error {
 		case <-statusCh:
 		}
 
-		out, err := utils.Docker.ContainerLogs(ctx, differId, types.ContainerLogsOptions{ShowStdout: true})
+		out, err := utils.Docker.ContainerLogs(
+			ctx,
+			differId,
+			types.ContainerLogsOptions{ShowStdout: true},
+		)
 		if err != nil {
 			return err
 		}

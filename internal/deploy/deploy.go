@@ -41,7 +41,9 @@ func Deploy() error {
 		return err
 	}
 
-	conflictErr := errors.New("❌ supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.")
+	conflictErr := errors.New(
+		"❌ supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.",
+	)
 
 	if len(versions) > len(migrations) {
 		return conflictErr

@@ -33,13 +33,11 @@ const (
 	ShadowDbName   = "supabase_shadow"
 	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
-	GotrueImage    = "supabase/gotrue:v2.0.5"
+	GotrueImage    = "supabase/gotrue:v2.0.11"
 	RealtimeImage  = "supabase/realtime:v0.15.0"
-	PostgrestImage = "postgrest/postgrest:v7.0.1"
+	PostgrestImage = "postgrest/postgrest:v8.0.0"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.2"
-	PgMetaImage    = "supabase/postgres-meta:v0.24.1"
-	// Latest supabase/postgres image *on hosted platform*.
-	LatestDbImage = "supabase/postgres:0.14.0"
+	PgmetaImage    = "supabase/postgres-meta:v0.24.3"
 )
 
 var (
@@ -57,9 +55,10 @@ var (
 		}
 		return docker
 	}()
+
 	ApiPort     string
 	DbPort      string
-	PgMetaPort  string
+	PgmetaPort  string
 	DbImage     string
 	ProjectId   string
 	NetId       string
@@ -70,7 +69,7 @@ var (
 	RealtimeId  string
 	RestId      string
 	DifferId    string
-	PgMetaId    string
+	PgmetaId    string
 )
 
 func GetCurrentTimestamp() string {
@@ -109,11 +108,13 @@ func LoadConfig() {
 
 	ApiPort = fmt.Sprint(viper.GetUint("ports.api"))
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
-	PgMetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
+	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
 	dbVersion := viper.GetString("dbVersion")
 	switch dbVersion {
 	case "120007":
 		DbImage = "supabase/postgres:0.14.0"
+	case "130003":
+		DbImage = "supabase/postgres:13.3.0"
 	default:
 		fmt.Fprintln(os.Stderr, "❌ Failed reading config: Invalid `dbVersion` "+dbVersion+".")
 		os.Exit(1)
@@ -127,7 +128,7 @@ func LoadConfig() {
 	RealtimeId = "supabase_realtime_" + ProjectId
 	RestId = "supabase_rest_" + ProjectId
 	DifferId = "supabase_differ_" + ProjectId
-	PgMetaId = "supabase_pg_meta_" + ProjectId
+	PgmetaId = "supabase_pg_meta_" + ProjectId
 }
 
 func AssertSupabaseStartIsRunning() {
@@ -138,7 +139,11 @@ func AssertSupabaseStartIsRunning() {
 }
 
 func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
-	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{Cmd: cmd, AttachStderr: true, AttachStdout: true})
+	exec, err := Docker.ContainerExecCreate(
+		ctx,
+		container,
+		types.ExecConfig{Cmd: cmd, AttachStderr: true, AttachStdout: true},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +165,12 @@ func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader,
 // same thread, this is fine.
 var containers []string
 
-func DockerRun(ctx context.Context, name string, config *container.Config, hostConfig *container.HostConfig) error {
+func DockerRun(
+	ctx context.Context,
+	name string,
+	config *container.Config,
+	hostConfig *container.HostConfig,
+) error {
 	if _, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name); err != nil {
 		return err
 	}
