@@ -32,7 +32,9 @@ func Deploy() error {
 	versions := []string{}
 	for rows.Next() {
 		var version string
-		rows.Scan(&version)
+		if err := rows.Scan(&version); err != nil {
+			return err
+		}
 		versions = append(versions, version)
 	}
 

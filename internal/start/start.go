@@ -50,7 +50,7 @@ func Start() error {
 	}
 
 	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
-	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId)
+	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId) //nolint:errcheck
 
 	defer utils.DockerRemoveAll()
 
@@ -135,7 +135,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgbouncerImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -146,7 +148,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -157,7 +161,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -168,7 +174,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -179,7 +187,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -190,7 +200,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -201,7 +213,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -212,7 +226,9 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -254,8 +270,10 @@ EOSQL
 		if err != nil {
 			return err
 		}
-		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			return err
+		}
 
 		if errBuf.Len() > 0 {
 			return errors.New("Error running globals.sql: " + errBuf.String())
@@ -285,8 +303,10 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+				return err
+			}
 
 			if errBuf.Len() > 0 {
 				return errors.New(
@@ -314,8 +334,10 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+				return err
+			}
 
 			if errBuf.Len() > 0 {
 				return errors.New("Error running seed: " + errBuf.String())
@@ -558,9 +580,11 @@ EOSQL
 				[]string{"createdb", "--username", "postgres", currBranch},
 			)
 			if err != nil {
-				// return err
+				return err
 			}
-			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+				return err
+			}
 
 			// restore migrations
 
@@ -588,8 +612,10 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+					return err
+				}
 
 				if errBuf.Len() > 0 {
 					return errors.New(
@@ -616,8 +642,10 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+					return err
+				}
 
 				if errBuf.Len() > 0 {
 					return errors.New("Error running seed: " + errBuf.String())

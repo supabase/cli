@@ -21,13 +21,15 @@ func DbDump(name string) error {
 
 	// 1. Create shadow db and run migrations
 
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 	out, err := utils.DockerExec(
 		ctx,
 		utils.DbId,
 		[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
 	)
 	if err != nil {
+		return err
+	}
+	if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
 		return err
 	}
 
@@ -54,8 +56,13 @@ COMMIT;
 EOSQL
 `,
 		})
-		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		if err != nil {
+			return err
+		}
 		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			return err
+		}
 
 		if errBuf.Len() > 0 {
 			return errors.New(
@@ -216,8 +223,12 @@ EOSQL
 			}
 		}
 
-		os.RemoveAll("supabase/database")
-		os.Rename("supabase/.temp/database", "supabase/database")
+		if err := os.RemoveAll("supabase/database"); err != nil {
+			return err
+		}
+		if err := os.Rename("supabase/.temp/database", "supabase/database"); err != nil {
+			return err
+		}
 	}
 
 	// 4. Drop shadow db.
@@ -229,7 +240,9 @@ EOSQL
 	if err != nil {
 		return err
 	}
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+		return err
+	}
 
 	fmt.Println("Finished db dump on " + currBranch + ".")
 
@@ -272,7 +285,9 @@ func DbRestore() error {
 	if err != nil {
 		return err
 	}
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+		return err
+	}
 
 	// 3. Apply migrations + seed.
 	migrations, err := os.ReadDir("supabase/migrations")
@@ -299,8 +314,10 @@ EOSQL
 		if err != nil {
 			return err
 		}
-		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			return err
+		}
 
 		if errBuf.Len() > 0 {
 			return errors.New(
@@ -328,8 +345,10 @@ EOSQL
 		if err != nil {
 			return err
 		}
-		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			return err
+		}
 
 		if errBuf.Len() > 0 {
 			return errors.New("Error running seed: " + errBuf.String())

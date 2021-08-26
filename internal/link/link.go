@@ -1,6 +1,7 @@
 package link
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ func Link(url string) error {
 	utils.AssertDockerIsRunning()
 
 	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
-	defer utils.Docker.NetworkRemove(context.Background(), netId)
+	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 	defer utils.DockerRemoveAll()
 
@@ -52,9 +53,14 @@ func Link(url string) error {
 		return err
 	}
 	o := orderedmap.New()
-	json.Unmarshal(oldConfig, &o)
+	if err := json.Unmarshal(oldConfig, &o); err != nil {
+		return err
+	}
 	o.Set("dbVersion", dbVersion)
 	newConfig, err := json.Marshal(o)
+	if err != nil {
+		return err
+	}
 
 	if err := os.WriteFile("supabase/config.json", newConfig, 0644); err != nil {
 		return err
@@ -75,14 +81,22 @@ func Link(url string) error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, "docker.io/"+utils.DifferImage, types.ImagePullOptions{})
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.DifferImage,
+				types.ImagePullOptions{},
+			)
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -94,7 +108,7 @@ func Link(url string) error {
 			<-termCh
 
 			utils.DockerRemoveAll()
-			utils.Docker.NetworkRemove(context.Background(), netId)
+			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 			fmt.Println("Aborted `supabase link`.")
 			os.Exit(1)
@@ -113,7 +127,9 @@ func Link(url string) error {
 		versions := []string{}
 		for rows.Next() {
 			var version string
-			rows.Scan(&version)
+			if err := rows.Scan(&version); err != nil {
+				return err
+			}
 			versions = append(versions, version)
 		}
 
@@ -160,7 +176,9 @@ func Link(url string) error {
 		if err != nil {
 			return err
 		}
-		stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+			return err
+		}
 
 		out, err = utils.DockerExec(ctx, dbId, []string{
 			"sh", "-c", "pg_dumpall --dbname '" + url + "' --globals-only --no-role-passwords " +
@@ -214,7 +232,9 @@ func Link(url string) error {
 			if err != nil {
 				return err
 			}
-			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+				return err
+			}
 
 			globalsSql := utils.FallbackGlobalsSql
 			if content, err := os.ReadFile("supabase/.globals.sql"); err == nil {
@@ -232,7 +252,9 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+				return err
+			}
 
 			migrations, err := os.ReadDir("supabase/migrations")
 			if err != nil {
@@ -258,8 +280,10 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+					return err
+				}
 
 				if errBuf.Len() > 0 {
 					return errors.New("Error running migration " + migration.Name() + ": " + errBuf.String())
@@ -320,7 +344,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			defer tx.Rollback(context.Background())
+			defer tx.Rollback(context.Background()) //nolint:errcheck
 
 			if _, err := tx.Exec(
 				ctx,

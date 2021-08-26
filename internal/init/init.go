@@ -69,7 +69,7 @@ func Init() error {
 	}
 
 	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
-	defer utils.Docker.NetworkRemove(context.Background(), netId)
+	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 	defer utils.DockerRemoveAll()
 
@@ -85,7 +85,9 @@ func Init() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -96,7 +98,9 @@ func Init() error {
 			if err != nil {
 				return err
 			}
-			io.Copy(os.Stdout, out)
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -108,7 +112,7 @@ func Init() error {
 			<-termCh
 
 			utils.DockerRemoveAll()
-			utils.Docker.NetworkRemove(context.Background(), netId)
+			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 			fmt.Fprintln(os.Stderr, "Aborted `supabase init`.")
 			os.Exit(1)
