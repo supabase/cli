@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	godotenv.Load("supabase/.env")
+	_ = godotenv.Load("supabase/.env")
 
 	cmd.Execute()
 }
