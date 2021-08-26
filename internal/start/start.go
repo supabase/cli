@@ -1,13 +1,16 @@
 package start
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"syscall"
+	"text/template"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -17,106 +20,18 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	// Args: projectId, currBranch.
-	pgbouncerConfigFmt = `[databases]
-postgres = host=supabase_db_%[1]s port=5432 dbname=%[2]s
+var (
+	//go:embed templates/pgbouncer_config
+	pgbouncerConfigEmbed       string
+	pgbouncerConfigTemplate, _ = template.New("pgbouncerConfig").Parse(pgbouncerConfigEmbed)
+	//go:embed templates/pgbouncer_userlist
+	pgbouncerUserlist []byte
+	//go:embed templates/kong_config
+	kongConfigEmbed       string
+	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 
-[pgbouncer]
-listen_addr = 0.0.0.0
-listen_port = 5432
-auth_file = /etc/pgbouncer/userlist.txt
-server_fast_close = 1
-ignore_startup_parameters = extra_float_digits
-`
-	pgbouncerUserlist = `"postgres" "postgres"
-"authenticator" "postgres"
-"pgbouncer" "postgres"
-"supabase_admin" "postgres"
-"supabase_auth_admin" "postgres"
-"supabase_storage_admin" "postgres"
-`
-	// Args: projectId.
-	kongConfigFmt = `_format_version: '1.1'
-services:
-  - name: auth-v1-authorize
-    _comment: 'GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*'
-    url: http://supabase_auth_%[1]s:9999/authorize
-    routes:
-      - name: auth-v1-authorize
-        strip_path: true
-        paths:
-          - /auth/v1/authorize
-    plugins:
-      - name: cors
-  - name: auth-v1-callback
-    _comment: 'GoTrue: /auth/v1/callback* -> http://auth:9999/callback*'
-    url: http://supabase_auth_%[1]s:9999/callback
-    routes:
-      - name: auth-v1-callback
-        strip_path: true
-        paths:
-          - /auth/v1/callback
-    plugins:
-      - name: cors
-  - name: auth-v1-verify
-    _comment: 'GoTrue: /auth/v1/verify* -> http://auth:9999/verify*'
-    url: http://supabase_auth_%[1]s:9999/verify
-    routes:
-      - name: auth-v1-verify
-        strip_path: true
-        paths:
-          - /auth/v1/verify
-    plugins:
-      - name: cors
-  - name: auth-v1
-    _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
-    url: http://supabase_auth_%[1]s:9999/
-    routes:
-      - name: auth-v1
-        strip_path: true
-        paths:
-          - /auth/v1/
-    plugins:
-      - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
-  - name: realtime-v1
-    _comment: 'Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*'
-    url: http://supabase_realtime_%[1]s:4000/socket/
-    routes:
-      - name: realtime-v1-all
-        strip_path: true
-        paths:
-          - /realtime/v1/
-    plugins:
-      - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
-  - name: rest-v1
-    _comment: 'PostgREST: /rest/v1/* -> http://rest:3000/*'
-    url: http://supabase_rest_%[1]s:3000/
-    routes:
-      - name: rest-v1-all
-        strip_path: true
-        paths:
-          - /rest/v1/
-    plugins:
-      - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
-consumers:
-  - username: apikey
-    keyauth_credentials:
-      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew
-      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI
-`
+	ctx = context.TODO()
 )
-
-var ctx = context.TODO()
 
 // FIXME: Make the whole thing concurrent.
 // FIXME: warn when a migration fails
@@ -291,14 +206,14 @@ func Start() error {
 
 		globalsSql := utils.FallbackGlobalsSql
 		if content, err := os.ReadFile("supabase/.globals.sql"); err == nil {
-			globalsSql = string(content)
+			globalsSql = content
 		}
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
 				`&& psql --username postgres <<'EOSQL'
 BEGIN;
-` + globalsSql + `
+` + string(globalsSql) + `
 COMMIT;
 EOSQL
 `,
@@ -371,12 +286,20 @@ EOSQL
 			return err
 		}
 
-		if err := os.WriteFile(
-			"supabase/.temp/pgbouncer.ini", []byte(fmt.Sprintf(pgbouncerConfigFmt, utils.ProjectId, currBranch)), 0644,
+		var pgbouncerConfigBuf bytes.Buffer
+		if err := pgbouncerConfigTemplate.Execute(
+			&pgbouncerConfigBuf,
+			struct{ ProjectId, DbName string }{
+				ProjectId: utils.ProjectId,
+				DbName:    currBranch,
+			},
 		); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.temp/userlist.txt", []byte(pgbouncerUserlist), 0644); err != nil {
+		if err := os.WriteFile("supabase/.temp/pgbouncer.ini", pgbouncerConfigBuf.Bytes(), 0644); err != nil {
+			return err
+		}
+		if err := os.WriteFile("supabase/.temp/userlist.txt", pgbouncerUserlist, 0644); err != nil {
 			return err
 		}
 
@@ -408,7 +331,11 @@ EOSQL
 			return err
 		}
 
-		if err := os.WriteFile("supabase/.temp/kong.yml", []byte(fmt.Sprintf(kongConfigFmt, utils.ProjectId)), 0644); err != nil {
+		var kongConfigBuf bytes.Buffer
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.ProjectId}); err != nil {
+			return err
+		}
+		if err := os.WriteFile("supabase/.temp/kong.yml", kongConfigBuf.Bytes(), 0644); err != nil {
 			return err
 		}
 
@@ -636,8 +563,17 @@ EOSQL
 
 		// reload pgbouncer
 
-		content := fmt.Sprintf(pgbouncerConfigFmt, utils.ProjectId, currBranch)
-		if err := os.WriteFile("supabase/.temp/pgbouncer.ini", []byte(content), 0644); err != nil {
+		var pgbouncerConfigBuf bytes.Buffer
+		if err := pgbouncerConfigTemplate.Execute(
+			&pgbouncerConfigBuf,
+			struct{ ProjectId, DbName string }{
+				ProjectId: utils.ProjectId,
+				DbName:    currBranch,
+			},
+		); err != nil {
+			return err
+		}
+		if err := os.WriteFile("supabase/.temp/pgbouncer.ini", pgbouncerConfigBuf.Bytes(), 0644); err != nil {
 			return err
 		}
 

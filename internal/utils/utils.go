@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -28,94 +29,7 @@ type (
 	}
 )
 
-// pg_dumpall --dbname $DB_URL --globals-only --no-role-passwords | sed '/^CREATE ROLE postgres;/d' | sed '/^ALTER ROLE postgres WITH /d' | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
 const (
-	FallbackGlobalsSql = `--
--- PostgreSQL database cluster dump
---
-
-SET default_transaction_read_only = off;
-
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-
---
--- Roles
---
-
-CREATE ROLE anon;
-ALTER ROLE anon WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE authenticated;
-ALTER ROLE authenticated WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-CREATE ROLE authenticator;
-ALTER ROLE authenticator WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
-CREATE ROLE dashboard_user;
-ALTER ROLE dashboard_user WITH NOSUPERUSER INHERIT CREATEROLE CREATEDB NOLOGIN REPLICATION NOBYPASSRLS;
-CREATE ROLE pgbouncer;
-ALTER ROLE pgbouncer WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
-CREATE ROLE service_role;
-ALTER ROLE service_role WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION BYPASSRLS;
-CREATE ROLE supabase_admin;
-ALTER ROLE supabase_admin WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION BYPASSRLS PASSWORD 'postgres';
-CREATE ROLE supabase_auth_admin;
-ALTER ROLE supabase_auth_admin WITH NOSUPERUSER NOINHERIT CREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
-CREATE ROLE supabase_storage_admin;
-ALTER ROLE supabase_storage_admin WITH NOSUPERUSER NOINHERIT CREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
---
--- User Configurations
---
-
---
--- User Config "postgres"
---
-
-ALTER ROLE postgres SET search_path TO E'\\$user', 'public', 'extensions';
---
--- User Configurations
---
-
---
--- User Config "supabase_admin"
---
-
-ALTER ROLE supabase_admin SET search_path TO '$user', 'public', 'auth', 'extensions';
---
--- User Configurations
---
-
---
--- User Config "supabase_auth_admin"
---
-
-ALTER ROLE supabase_auth_admin SET search_path TO 'auth';
---
--- User Configurations
---
-
---
--- User Config "supabase_storage_admin"
---
-
-ALTER ROLE supabase_storage_admin SET search_path TO 'storage';
-
-
---
--- Role memberships
---
-
-GRANT anon TO authenticator GRANTED BY postgres;
-GRANT authenticated TO authenticator GRANTED BY postgres;
-GRANT service_role TO authenticator GRANTED BY postgres;
-GRANT supabase_admin TO authenticator GRANTED BY postgres;
-
-
-
-
---
--- PostgreSQL database cluster dump complete
---
-
-`
 	ShadowDbName   = "supabase_shadow"
 	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
@@ -129,6 +43,12 @@ GRANT supabase_admin TO authenticator GRANTED BY postgres;
 )
 
 var (
+	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
+	// | sed '/^CREATE ROLE postgres;/d' \
+	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
+	//go:embed templates/fallback_globals_sql
+	FallbackGlobalsSql []byte
+
 	Docker = func() *client.Client {
 		docker, err := client.NewClientWithOpts(client.FromEnv)
 		if err != nil {

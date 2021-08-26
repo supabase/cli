@@ -1,0 +1,6 @@
+"postgres" "postgres"
+"authenticator" "postgres"
+"pgbouncer" "postgres"
+"supabase_admin" "postgres"
+"supabase_auth_admin" "postgres"
+"supabase_storage_admin" "postgres"

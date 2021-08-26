@@ -1,0 +1,76 @@
+_format_version: '1.1'
+services:
+  - name: auth-v1-authorize
+    _comment: 'GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*'
+    url: http://supabase_auth_{{ .ProjectId }}:9999/authorize
+    routes:
+      - name: auth-v1-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
+  - name: auth-v1-callback
+    _comment: 'GoTrue: /auth/v1/callback* -> http://auth:9999/callback*'
+    url: http://supabase_auth_{{ .ProjectId }}:9999/callback
+    routes:
+      - name: auth-v1-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+  - name: auth-v1-verify
+    _comment: 'GoTrue: /auth/v1/verify* -> http://auth:9999/verify*'
+    url: http://supabase_auth_{{ .ProjectId }}:9999/verify
+    routes:
+      - name: auth-v1-verify
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
+  - name: auth-v1
+    _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
+    url: http://supabase_auth_{{ .ProjectId }}:9999/
+    routes:
+      - name: auth-v1
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+  - name: realtime-v1
+    _comment: 'Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*'
+    url: http://supabase_realtime_{{ .ProjectId }}:4000/socket/
+    routes:
+      - name: realtime-v1-all
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+  - name: rest-v1
+    _comment: 'PostgREST: /rest/v1/* -> http://rest:3000/*'
+    url: http://supabase_rest_{{ .ProjectId }}:3000/
+    routes:
+      - name: rest-v1-all
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+consumers:
+  - username: apikey
+    keyauth_credentials:
+      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew
+      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI
