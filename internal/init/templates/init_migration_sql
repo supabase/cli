@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 12.7 (Ubuntu 12.7-1.pgdg18.04+1)
--- Dumped by pg_dump version 13.3
+-- Dumped from database version 13.3
+-- Dumped by pg_dump version 13.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -63,7 +63,7 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
 -- Name: EXTENSION pg_stat_statements; Type: COMMENT; Schema: -; Owner:
 --
 
-COMMENT ON EXTENSION pg_stat_statements IS 'track execution statistics of all SQL statements executed';
+COMMENT ON EXTENSION pg_stat_statements IS 'track planning and execution statistics of all SQL statements executed';
 
 
 --
@@ -461,7 +461,7 @@ CREATE TABLE auth.users (
     role character varying(255),
     email character varying(255),
     encrypted_password character varying(255),
-    confirmed_at timestamp with time zone,
+    email_confirmed_at timestamp with time zone,
     invited_at timestamp with time zone,
     confirmation_token character varying(255),
     confirmation_sent_at timestamp with time zone,
@@ -475,7 +475,13 @@ CREATE TABLE auth.users (
     raw_user_meta_data jsonb,
     is_super_admin boolean,
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    phone character varying(15) DEFAULT NULL::character varying,
+    phone_confirmed_at timestamp with time zone,
+    phone_change character varying(15) DEFAULT ''::character varying,
+    phone_change_token character varying(255) DEFAULT ''::character varying,
+    phone_change_sent_at timestamp with time zone,
+    confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED
 );
 
 
@@ -582,6 +588,14 @@ ALTER TABLE ONLY auth.schema_migrations
 
 ALTER TABLE ONLY auth.users
     ADD CONSTRAINT users_email_key UNIQUE (email);
+
+
+--
+-- Name: users users_phone_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.users
+    ADD CONSTRAINT users_phone_key UNIQUE (phone);
 
 
 --
@@ -742,6 +756,9 @@ ALTER PUBLICATION supabase_realtime OWNER TO postgres;
 -- Name: SCHEMA auth; Type: ACL; Schema: -; Owner: supabase_admin
 --
 
+GRANT USAGE ON SCHEMA auth TO anon;
+GRANT USAGE ON SCHEMA auth TO authenticated;
+GRANT USAGE ON SCHEMA auth TO service_role;
 GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
 GRANT ALL ON SCHEMA auth TO dashboard_user;
 GRANT ALL ON SCHEMA auth TO postgres;
