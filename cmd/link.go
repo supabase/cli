@@ -10,8 +10,7 @@ var (
 
 	linkCmd = &cobra.Command{
 		Use:   "link",
-		Short: "FIXME",
-		Long:  `FIXME`,
+		Short: "Link the current project to a remote deploy database.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return link.Link(deployDbUrl)
 		},
@@ -19,8 +18,9 @@ var (
 )
 
 func init() {
-	linkCmd.Flags().StringVar(&deployDbUrl, "url", "", "FIXME")
-	linkCmd.MarkFlagRequired("url")
+	linkCmd.Flags().
+		StringVar(&deployDbUrl, "url", "", "Postgres connection string of the deploy database.")
+	cobra.CheckErr(linkCmd.MarkFlagRequired("url"))
 
 	rootCmd.AddCommand(linkCmd)
 }

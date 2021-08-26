@@ -7,8 +7,7 @@ import (
 
 var startCmd = &cobra.Command{
 	Use:   "start",
-	Short: "FIXME",
-	Long:  `FIXME`,
+	Short: "Start the Supabase local development setup.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return start.Start()
 	},

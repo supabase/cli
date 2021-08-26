@@ -7,8 +7,7 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "FIXME",
-	Long:  `FIXME`,
+	Short: "Initialize a project to use Supabase CLI.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return _init.Init()
 	},

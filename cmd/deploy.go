@@ -7,8 +7,7 @@ import (
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "FIXME",
-	Long:  `FIXME`,
+	Short: "Deploy current migrations to prod.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return deploy.Deploy()
 	},
