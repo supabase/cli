@@ -13,6 +13,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+// Args: dbname
+const terminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
+`
+
 var ctx = context.TODO()
 
 func DbDump(name string) error {
@@ -279,8 +284,14 @@ func DbRestore() error {
 
 	// https://dba.stackexchange.com/a/11895
 	out, err := utils.DockerExec(ctx, utils.DbId, []string{
-		"sh", "-c", "dropdb --force --username postgres '" + currBranch + "' " +
-			"&& createdb --username postgres '" + currBranch + "'",
+		"sh", "-c", "psql --username postgres <<'EOSQL' " +
+			"&& dropdb --force --username postgres '" + currBranch + "' " +
+			"&& createdb --username postgres '" + currBranch + `'
+BEGIN;
+` + fmt.Sprintf(terminateDbSqlFmt, currBranch) + `
+COMMIT;
+EOSQL
+`,
 	})
 	if err != nil {
 		return err
