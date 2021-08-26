@@ -26,6 +26,7 @@ var (
 	pgbouncerConfigTemplate, _ = template.New("pgbouncerConfig").Parse(pgbouncerConfigEmbed)
 	//go:embed templates/pgbouncer_userlist
 	pgbouncerUserlist []byte
+	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed       string
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
@@ -517,7 +518,12 @@ EOSQL
 		return err
 	}
 
-	fmt.Println("Started.")
+	// TODO: Unhardcode keys
+	fmt.Println(`Started local development setup.
+API URL: http://localhost:` + utils.ApiPort + `
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+anon key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew
+service_role key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI`)
 
 	// Start pg-meta.
 
