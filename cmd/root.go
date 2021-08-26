@@ -4,10 +4,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+var version string
+
 var rootCmd = &cobra.Command{
 	Use:           "supabase",
-	Short:         "FIXME",
-	Long:          `FIXME`,
+	Short:         "Supabase CLI " + version,
 	Version:       version,
 	SilenceErrors: true,
 	SilenceUsage:  true,

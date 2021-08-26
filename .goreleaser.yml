@@ -6,7 +6,7 @@ builds:
   - id: supabase
     binary: supabase
     ldflags:
-      - -X github.com/supabase/cli/cmd.version=v{{.Version}}
+      - -X github.com/supabase/cli/cmd.version={{.Version}}
     goos:
       - darwin
       - linux
