@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 
@@ -23,7 +24,6 @@ func Deploy() error {
 	}
 	defer conn.Close(context.Background())
 
-	// apply unapplied migrations based on `schema_migrations` table and `migrations` dir
 	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations")
 	if err != nil {
 		return errors.New("❌ supabase_migrations.schema_migrations table does not exist.")
@@ -50,6 +50,8 @@ func Deploy() error {
 	if len(versions) > len(migrations) {
 		return conflictErr
 	}
+
+	fmt.Println("Applying unapplied migrations...")
 
 	for i, migration := range migrations {
 		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
@@ -78,6 +80,8 @@ func Deploy() error {
 			return err
 		}
 	}
+
+	fmt.Println("Finished supabase deploy.")
 
 	return nil
 }

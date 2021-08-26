@@ -26,6 +26,8 @@ func DbDump(name string) error {
 
 	// 1. Create shadow db and run migrations
 
+	fmt.Println("Creating shadow database...")
+
 	out, err := utils.DockerExec(
 		ctx,
 		utils.DbId,
@@ -37,8 +39,6 @@ func DbDump(name string) error {
 	if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
 		return err
 	}
-
-	fmt.Println("Created shadow db.")
 
 	migrations, err := os.ReadDir("supabase/migrations")
 	if err != nil {
@@ -76,9 +76,7 @@ EOSQL
 		}
 	}
 
-	fmt.Println("Finished running migrations on shadow db.")
-
-	fmt.Println("Diffing...")
+	fmt.Println("Diffing local database with current migrations...")
 
 	var currBranch string
 	branchPtr, err := utils.GetCurrentBranch()
@@ -117,7 +115,8 @@ EOSQL
 		}
 	}
 
-	fmt.Println("Wrote new migration file.")
+	fmt.Println("Wrote a new migration file.")
+	fmt.Println("Writing structured dump to supabase/database...")
 
 	// 3. Dump to `database`.
 	{
@@ -236,6 +235,8 @@ EOSQL
 		}
 	}
 
+	fmt.Println("Done generating structured dump.")
+
 	// 4. Drop shadow db.
 	out, err = utils.DockerExec(
 		ctx,
@@ -282,6 +283,8 @@ func DbRestore() error {
 
 	// 2. Recreate db.
 
+	fmt.Println("Resetting database...")
+
 	// https://dba.stackexchange.com/a/11895
 	out, err := utils.DockerExec(ctx, utils.DbId, []string{
 		"sh", "-c", "psql --username postgres <<'EOSQL' " +
@@ -301,6 +304,7 @@ EOSQL
 	}
 
 	// 3. Apply migrations + seed.
+
 	migrations, err := os.ReadDir("supabase/migrations")
 	if err != nil {
 		return err

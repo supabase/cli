@@ -70,6 +70,23 @@ func Link(url string) error {
 		return err
 	}
 
+	// Handle cleanup on interrupt/termination.
+	{
+		termCh := make(chan os.Signal, 1)
+		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-termCh
+
+			utils.DockerRemoveAll()
+			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
+
+			fmt.Println("Aborted `supabase link`.")
+			os.Exit(1)
+		}()
+	}
+
+	fmt.Println("Pulling images...")
+
 	// Pull images.
 	{
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
@@ -100,24 +117,12 @@ func Link(url string) error {
 		}
 	}
 
-	// Handle cleanup on interrupt/termination.
-	{
-		termCh := make(chan os.Signal, 1)
-		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-termCh
-
-			utils.DockerRemoveAll()
-			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
-
-			fmt.Println("Aborted `supabase link`.")
-			os.Exit(1)
-		}()
-	}
+	fmt.Println("Done pulling images.")
 
 	// sync `migrations`
 	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations"); err == nil {
 		// supabase_migrations.schema_migrations exists.
+		fmt.Println("supabase_migrations.schema_migrations exists on the deploy database.")
 
 		// if `migrations` is a "prefix" of list of migrations in repo:
 		// - dump `.env`, `.globals.sql`
@@ -156,6 +161,8 @@ func Link(url string) error {
 
 			return conflictErr
 		}
+
+		fmt.Println("Generating .globals.sql, .env, and updating dbVersion config...")
 
 		// .globals.sql
 		if err := utils.DockerRun(
@@ -211,6 +218,9 @@ func Link(url string) error {
 		}
 	} else {
 		// supabase_migrations.schema_migrations doesn't exist.
+		fmt.Println("supabase_migrations.schema_migrations doesn't exist on the deploy database.")
+
+		fmt.Println("Creating shadow database...")
 
 		// 1. Create shadow db and run migrations.
 		{
@@ -291,6 +301,8 @@ EOSQL
 			}
 		}
 
+		fmt.Println("Syncing current migrations with the deploy database...")
+
 		// 2. Diff deploy db (source) & shadow db (target) and write it as a new migration.
 		{
 			if err := utils.DockerRun(
@@ -338,6 +350,8 @@ EOSQL
 			}
 		}
 
+		fmt.Println("Creating supabase_migrations.schema_migrations on the deploy database...")
+
 		// 3. Generate `schema_migrations` up to the new migration.
 		{
 			tx, err := conn.BeginTx(ctx, pgx.TxOptions{})
@@ -377,6 +391,8 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			}
 		}
 
+		fmt.Println("Generating .globals.sql, .env, and updating dbVersion config...")
+
 		// 4. Persist .globals.sql, .env, and new config w/ updated dbVersion.
 		{
 			// .globals.sql
@@ -410,6 +426,8 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 				return err
 			}
 		}
+
+		fmt.Println("Finished supabase link.")
 	}
 
 	return nil
