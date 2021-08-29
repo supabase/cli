@@ -30,9 +30,14 @@ export default {
 
     await run(
       'docker-compose --file .supabase/docker/docker-compose.yml --project-name supabase up --detach'
-    ).catch(() => {
-      spinner.fail('Error running docker-compose.')
-      process.exit(1)
+    ).catch((err: unknown) => {
+      if (err instanceof Error) {
+        spinner.fail(`Error running docker-compose: ${err.message}`)
+        process.exit(1)
+      } else {
+        spinner.fail('Error running docker-compose.')
+        process.exit(1)
+      }
     })
 
     spinner.succeed('Started local Supabase.')
