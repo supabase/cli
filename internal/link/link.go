@@ -123,7 +123,7 @@ func Link(url string) error {
 	fmt.Println("Done pulling images.")
 
 	// sync `migrations`
-	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations"); err == nil {
+	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err == nil {
 		// supabase_migrations.schema_migrations exists.
 		fmt.Println("supabase_migrations.schema_migrations exists on the deploy database.")
 

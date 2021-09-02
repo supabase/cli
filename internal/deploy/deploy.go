@@ -24,7 +24,7 @@ func Deploy() error {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations")
+	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
 	if err != nil {
 		return errors.New("❌ supabase_migrations.schema_migrations table does not exist.")
 	}
