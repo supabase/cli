@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,10 +94,13 @@ func GetCurrentBranch() (*string, error) {
 	return nil, nil
 }
 
-func AssertDockerIsRunning() {
+func AssertDockerIsRunning() error {
 	if _, err := Docker.Ping(context.Background()); err != nil {
-		fmt.Fprintln(os.Stderr, "❌ Failed to connect to Docker daemon. Is Docker running?")
-		os.Exit(1)
+		return errors.New("❌ Failed to connect to Docker daemon. Is Docker running?")
+	}
+
+	return nil
+}
 	}
 }
 

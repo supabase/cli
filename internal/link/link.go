@@ -30,7 +30,9 @@ const (
 var ctx = context.TODO()
 
 func Link(url string) error {
-	utils.AssertDockerIsRunning()
+	if err := utils.AssertDockerIsRunning(); err != nil {
+		return err
+	}
 
 	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
 	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck

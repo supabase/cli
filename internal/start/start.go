@@ -46,7 +46,10 @@ func Start() error {
 			return err
 		}
 
-		utils.AssertDockerIsRunning()
+		if err := utils.AssertDockerIsRunning(); err != nil {
+			return err
+		}
+
 		utils.LoadConfig()
 	}
 

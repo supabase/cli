@@ -57,7 +57,9 @@ func Init() error {
 			return err
 		}
 
-		utils.AssertDockerIsRunning()
+		if err := utils.AssertDockerIsRunning(); err != nil {
+			return err
+		}
 	}
 
 	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
