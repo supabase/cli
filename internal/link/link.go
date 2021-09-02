@@ -59,10 +59,11 @@ func Link(url string) error {
 		return err
 	}
 	o.Set("dbVersion", dbVersion)
-	newConfig, err := json.Marshal(o)
+	newConfig, err := json.MarshalIndent(o, "", "  ")
 	if err != nil {
 		return err
 	}
+	newConfig = append(newConfig, '\n')
 
 	if err := os.WriteFile("supabase/config.json", newConfig, 0644); err != nil {
 		return err
