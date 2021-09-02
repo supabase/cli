@@ -467,7 +467,7 @@ CREATE TABLE auth.users (
     confirmation_sent_at timestamp with time zone,
     recovery_token character varying(255),
     recovery_sent_at timestamp with time zone,
-    email_change_token character varying(255),
+    email_change_token_new character varying(255),
     email_change character varying(255),
     email_change_sent_at timestamp with time zone,
     last_sign_in_at timestamp with time zone,
@@ -481,7 +481,10 @@ CREATE TABLE auth.users (
     phone_change character varying(15) DEFAULT ''::character varying,
     phone_change_token character varying(255) DEFAULT ''::character varying,
     phone_change_sent_at timestamp with time zone,
-    confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED
+    confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED,
+    email_change_token_current character varying(255) DEFAULT ''::character varying,
+    email_change_confirm_status smallint DEFAULT 0,
+    CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
 
@@ -548,6 +551,95 @@ ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
 --
 
 ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.refresh_tokens_id_seq'::regclass);
+
+
+--
+-- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+COPY auth.audit_log_entries (instance_id, id, payload, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: instances; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+COPY auth.instances (id, uuid, raw_base_config, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: refresh_tokens; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+COPY auth.schema_migrations (version) FROM stdin;
+20171026211738
+20171026211808
+20171026211834
+20180103212743
+20180108183307
+20180119214651
+20180125194653
+20210710035447
+20210722035447
+20210730183235
+\.
+
+
+--
+-- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+COPY auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, invited_at, confirmation_token, confirmation_sent_at, recovery_token, recovery_sent_at, email_change_token_new, email_change, email_change_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at, phone, phone_confirmed_at, phone_change, phone_change_token, phone_change_sent_at, email_change_token_current, email_change_confirm_status) FROM stdin;
+\.
+
+
+--
+-- Data for Name: buckets; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
+--
+
+COPY storage.buckets (id, name, owner, created_at, updated_at, public) FROM stdin;
+\.
+
+
+--
+-- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
+--
+
+COPY storage.migrations (id, name, hash, executed_at) FROM stdin;
+0	create-migrations-table	e18db593bcde2aca2a408c4d1100f6abba2195df	2021-09-01 17:54:09.027156
+1	initialmigration	6ab16121fbaa08bbd11b712d05f358f9b555d777	2021-09-01 17:54:09.030898
+2	pathtoken-column	49756be03be4c17bb85fe70d4a861f27de7e49ad	2021-09-01 17:54:09.034129
+3	add-migrations-rls	bb5d124c53d68635a883e399426c6a5a25fc893d	2021-09-01 17:54:09.136981
+4	add-size-functions	6d79007d04f5acd288c9c250c42d2d5fd286c54d	2021-09-01 17:54:09.140306
+5	change-column-name-in-get-size	fd65688505d2ffa9fbdc58a944348dd8604d688c	2021-09-01 17:54:09.143781
+6	add-rls-to-buckets	63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6	2021-09-01 17:54:09.14739
+7	add-public-to-buckets	82568934f8a4d9e0a85f126f6fb483ad8214c418	2021-09-01 17:54:09.15175
+\.
+
+
+--
+-- Data for Name: objects; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
+--
+
+COPY storage.objects (id, bucket_id, name, owner, created_at, updated_at, last_accessed_at, metadata) FROM stdin;
+\.
+
+
+--
+-- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
+--
+
+SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
 
 
 --

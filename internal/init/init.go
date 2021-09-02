@@ -30,7 +30,7 @@ const (
 )
 
 var (
-	// pg_dump --dbname $DB_URL --schema-only
+	// pg_dump --dbname $DB_URL
 	//go:embed templates/init_migration_sql
 	initMigrationSql []byte
 	//go:embed templates/init_seed_sql
