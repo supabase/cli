@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -101,7 +102,17 @@ func AssertDockerIsRunning() error {
 
 	return nil
 }
+
+func AssertPortIsAvailable(port string) error {
+	listener, err := net.Listen("tcp4", ":"+port)
+	if err != nil {
+		return err
 	}
+
+	if err := listener.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func LoadConfig() {

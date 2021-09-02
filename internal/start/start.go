@@ -51,6 +51,16 @@ func Start() error {
 		}
 
 		utils.LoadConfig()
+
+		if err := utils.AssertPortIsAvailable(utils.ApiPort); err != nil {
+			return err
+		}
+		if err := utils.AssertPortIsAvailable(utils.DbPort); err != nil {
+			return err
+		}
+		if err := utils.AssertPortIsAvailable(utils.PgmetaPort); err != nil {
+			return err
+		}
 	}
 
 	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
