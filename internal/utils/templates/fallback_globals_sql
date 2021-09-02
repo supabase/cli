@@ -34,6 +34,24 @@ ALTER ROLE supabase_storage_admin WITH NOSUPERUSER NOINHERIT CREATEROLE NOCREATE
 --
 
 --
+-- User Config "anon"
+--
+
+ALTER ROLE anon SET statement_timeout TO '3s';
+--
+-- User Configurations
+--
+
+--
+-- User Config "authenticated"
+--
+
+ALTER ROLE authenticated SET statement_timeout TO '8s';
+--
+-- User Configurations
+--
+
+--
 -- User Config "postgres"
 --
 
