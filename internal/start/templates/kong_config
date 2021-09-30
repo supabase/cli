@@ -1,40 +1,40 @@
-_format_version: '1.1'
+_format_version: "1.1"
 services:
-  - name: auth-v1-authorize
-    _comment: 'GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*'
-    url: http://supabase_auth_{{ .ProjectId }}:9999/authorize
-    routes:
-      - name: auth-v1-authorize
-        strip_path: true
-        paths:
-          - /auth/v1/authorize
-    plugins:
-      - name: cors
-  - name: auth-v1-callback
-    _comment: 'GoTrue: /auth/v1/callback* -> http://auth:9999/callback*'
-    url: http://supabase_auth_{{ .ProjectId }}:9999/callback
-    routes:
-      - name: auth-v1-callback
-        strip_path: true
-        paths:
-          - /auth/v1/callback
-    plugins:
-      - name: cors
-  - name: auth-v1-verify
-    _comment: 'GoTrue: /auth/v1/verify* -> http://auth:9999/verify*'
+  - name: auth-v1-open
+    _comment: "GoTrue: /auth/v1/verify* -> http://auth:9999/verify*"
     url: http://supabase_auth_{{ .ProjectId }}:9999/verify
     routes:
-      - name: auth-v1-verify
+      - name: auth-v1-open
         strip_path: true
         paths:
           - /auth/v1/verify
     plugins:
       - name: cors
+  - name: auth-v1-open-callback
+    _comment: "GoTrue: /auth/v1/callback* -> http://auth:9999/callback*"
+    url: http://supabase_auth_{{ .ProjectId }}:9999/callback
+    routes:
+      - name: auth-v1-open-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+  - name: auth-v1-open-authorize
+    _comment: "GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*"
+    url: http://supabase_auth_{{ .ProjectId }}:9999/authorize
+    routes:
+      - name: auth-v1-open-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
   - name: auth-v1
-    _comment: 'GoTrue: /auth/v1/* -> http://auth:9999/*'
+    _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
     url: http://supabase_auth_{{ .ProjectId }}:9999/
     routes:
-      - name: auth-v1
+      - name: auth-v1-all
         strip_path: true
         paths:
           - /auth/v1/
@@ -42,22 +42,9 @@ services:
       - name: cors
       - name: key-auth
         config:
-          hide_credentials: true
-  - name: realtime-v1
-    _comment: 'Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*'
-    url: http://supabase_realtime_{{ .ProjectId }}:4000/socket/
-    routes:
-      - name: realtime-v1-all
-        strip_path: true
-        paths:
-          - /realtime/v1/
-    plugins:
-      - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
+          hide_credentials: false
   - name: rest-v1
-    _comment: 'PostgREST: /rest/v1/* -> http://rest:3000/*'
+    _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
     url: http://supabase_rest_{{ .ProjectId }}:3000/
     routes:
       - name: rest-v1-all
@@ -69,8 +56,33 @@ services:
       - name: key-auth
         config:
           hide_credentials: true
+  - name: realtime-v1
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
+    url: http://supabase_realtime_{{ .ProjectId }}:4000/socket/
+    routes:
+      - name: realtime-v1-all
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+  - name: storage-v1
+    _comment: "Storage: /storage/v1/* -> http://storage-api:5000/*"
+    url: http://supabase_storage_{{ .ProjectId }}:5000/
+    routes:
+      - name: storage-v1-all
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors
 consumers:
-  - username: apikey
+  - username: anon
     keyauth_credentials:
-      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew
-      - key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+  - username: service_role
+    keyauth_credentials:
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE

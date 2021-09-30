@@ -449,9 +449,9 @@ EOSQL
 				Image: utils.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
-					"KONG_PLUGINS=request-transformer,cors,key-auth,http-log",
 					"KONG_DECLARATIVE_CONFIG=/var/lib/kong/kong.yml",
-					"KONG_DNS_ORDER=LAST,A,CNAME",
+					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
+					"KONG_PLUGINS=request-transformer,cors,key-auth",
 				},
 			},
 			&container.HostConfig{
@@ -472,21 +472,24 @@ EOSQL
 		&container.Config{
 			Image: utils.GotrueImage,
 			Env: []string{
+				"GOTRUE_API_HOST=0.0.0.0",
+				"GOTRUE_API_PORT=9999",
+
+				"GOTRUE_DB_DRIVER=postgres",
+				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable&search_path=auth",
+
+				"GOTRUE_SITE_URL=http://localhost:8000",
+				"GOTRUE_DISABLE_SIGNUP=false",
+
 				"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"GOTRUE_JWT_AUD=authenticated",
 				"GOTRUE_JWT_EXP=3600",
 				"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
-				"GOTRUE_DB_DRIVER=postgres",
-				"DB_NAMESPACE=auth",
-				"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
-				"GOTRUE_API_HOST=" + utils.GotrueId,
-				"PORT=9999",
-				"GOTRUE_DISABLE_SIGNUP=false",
-				// TODO: Change dynamically.
-				"GOTRUE_SITE_URL=http://localhost:8000",
-				"GOTRUE_LOG_LEVEL=DEBUG",
-				"GOTRUE_OPERATOR_TOKEN=super-secret-operator-token",
-				"DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
+
+				"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
+				"GOTRUE_MAILER_AUTOCONFIRM=true",
+
+				"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
+				"GOTRUE_SMS_AUTOCONFIRM=true",
 			},
 		},
 		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
@@ -501,14 +504,13 @@ EOSQL
 		Env: []string{
 			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
 			"DB_HOST=" + utils.DbId,
-			"DB_NAME=" + currBranch,
+			"DB_PORT=5432",
 			"DB_USER=postgres",
 			"DB_PASSWORD=postgres",
-			"DB_PORT=5432",
+			"DB_NAME=" + currBranch,
 			"SLOT_NAME=supabase_realtime",
 			"PORT=4000",
-			"HOSTNAME=localhost",
-			"SECURE_CHANNELS=false",
+			"SECURE_CHANNELS=true",
 			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 		},
 	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
@@ -524,8 +526,9 @@ EOSQL
 			Image: utils.PostgrestImage,
 			Env: []string{
 				"PGRST_DB_URI=postgres://postgres:postgres@" + utils.PgbouncerId + ":5432/postgres",
-				"PGRST_DB_SCHEMA=public",
-				"PGRST_DB_ANON_ROLE=postgres",
+				"PGRST_DB_SCHEMA=public,storage",
+				"PGRST_DB_ANON_ROLE=anon",
+				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 			},
 		},
 		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
@@ -575,13 +578,6 @@ EOSQL
 		return err
 	}
 
-	// TODO: Unhardcode keys
-	fmt.Println(`Started local development setup.
-API URL: http://localhost:` + utils.ApiPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-anon key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoiYW5vbiJ9.36fUebxgx1mcBo4s19v0SzqmzunP--hm_hep0uLX0ew
-service_role key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMzk2ODgzNCwiZXhwIjoyNTUwNjUzNjM0LCJyb2xlIjoic2VydmljZV9yb2xlIn0.necIJaiP7X2T2QjGeV-FhpkizcNTX8HjDDBAxpgQTEI`)
-
 	// Start pg-meta.
 
 	if err := utils.DockerRun(
@@ -601,6 +597,13 @@ service_role key: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 	); err != nil {
 		return err
 	}
+
+	// TODO: Unhardcode keys
+	fmt.Println(`Started local development setup.
+API URL: http://localhost:` + utils.ApiPort + `
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`)
 
 	// switch db on switch branch
 
@@ -752,14 +755,13 @@ EOSQL
 			Env: []string{
 				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
 				"DB_HOST=" + utils.DbId,
-				"DB_NAME=" + currBranch,
+				"DB_PORT=5432",
 				"DB_USER=postgres",
 				"DB_PASSWORD=postgres",
-				"DB_PORT=5432",
+				"DB_NAME=" + currBranch,
 				"SLOT_NAME=supabase_realtime",
 				"PORT=4000",
-				"HOSTNAME=localhost",
-				"SECURE_CHANNELS=false",
+				"SECURE_CHANNELS=true",
 				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 			},
 		}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
