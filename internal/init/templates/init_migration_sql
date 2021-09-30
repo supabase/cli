@@ -672,14 +672,14 @@ COPY storage.buckets (id, name, owner, created_at, updated_at, public) FROM stdi
 --
 
 COPY storage.migrations (id, name, hash, executed_at) FROM stdin;
-0	create-migrations-table	e18db593bcde2aca2a408c4d1100f6abba2195df	2021-09-23 17:50:05.148367
-1	initialmigration	6ab16121fbaa08bbd11b712d05f358f9b555d777	2021-09-23 17:50:05.151301
-2	pathtoken-column	49756be03be4c17bb85fe70d4a861f27de7e49ad	2021-09-23 17:50:05.153342
-3	add-migrations-rls	bb5d124c53d68635a883e399426c6a5a25fc893d	2021-09-23 17:50:05.223179
-4	add-size-functions	6d79007d04f5acd288c9c250c42d2d5fd286c54d	2021-09-23 17:50:05.225321
-5	change-column-name-in-get-size	fd65688505d2ffa9fbdc58a944348dd8604d688c	2021-09-23 17:50:05.227642
-6	add-rls-to-buckets	63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6	2021-09-23 17:50:05.229935
-7	add-public-to-buckets	82568934f8a4d9e0a85f126f6fb483ad8214c418	2021-09-23 17:50:05.231859
+0	create-migrations-table	e18db593bcde2aca2a408c4d1100f6abba2195df	2021-09-30 20:55:35.74232
+1	initialmigration	6ab16121fbaa08bbd11b712d05f358f9b555d777	2021-09-30 20:55:35.748059
+2	pathtoken-column	49756be03be4c17bb85fe70d4a861f27de7e49ad	2021-09-30 20:55:35.75109
+3	add-migrations-rls	bb5d124c53d68635a883e399426c6a5a25fc893d	2021-09-30 20:55:35.90032
+4	add-size-functions	6d79007d04f5acd288c9c250c42d2d5fd286c54d	2021-09-30 20:55:35.902647
+5	change-column-name-in-get-size	fd65688505d2ffa9fbdc58a944348dd8604d688c	2021-09-30 20:55:35.905409
+6	add-rls-to-buckets	63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6	2021-09-30 20:55:35.907987
+7	add-public-to-buckets	82568934f8a4d9e0a85f126f6fb483ad8214c418	2021-09-30 20:55:35.910782
 \.
 
 
@@ -908,7 +908,6 @@ GRANT USAGE ON SCHEMA auth TO anon;
 GRANT USAGE ON SCHEMA auth TO authenticated;
 GRANT USAGE ON SCHEMA auth TO service_role;
 GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
-GRANT USAGE ON SCHEMA auth TO supabase_metrics;
 GRANT ALL ON SCHEMA auth TO dashboard_user;
 GRANT ALL ON SCHEMA auth TO postgres;
 
@@ -917,7 +916,6 @@ GRANT ALL ON SCHEMA auth TO postgres;
 -- Name: SCHEMA extensions; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT USAGE ON SCHEMA extensions TO supabase_metrics;
 GRANT USAGE ON SCHEMA extensions TO anon;
 GRANT USAGE ON SCHEMA extensions TO authenticated;
 GRANT USAGE ON SCHEMA extensions TO service_role;
@@ -942,7 +940,6 @@ GRANT USAGE ON SCHEMA storage TO anon;
 GRANT USAGE ON SCHEMA storage TO authenticated;
 GRANT USAGE ON SCHEMA storage TO service_role;
 GRANT ALL ON SCHEMA storage TO supabase_storage_admin;
-GRANT USAGE ON SCHEMA storage TO supabase_metrics;
 GRANT ALL ON SCHEMA storage TO dashboard_user;
 
 
@@ -1455,7 +1452,6 @@ GRANT ALL ON TABLE auth.schema_migrations TO postgres;
 -- Name: TABLE users; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
-GRANT SELECT ON TABLE auth.users TO supabase_metrics;
 GRANT ALL ON TABLE auth.users TO dashboard_user;
 GRANT ALL ON TABLE auth.users TO postgres;
 
@@ -1494,7 +1490,6 @@ GRANT ALL ON TABLE storage.migrations TO postgres;
 GRANT ALL ON TABLE storage.objects TO anon;
 GRANT ALL ON TABLE storage.objects TO authenticated;
 GRANT ALL ON TABLE storage.objects TO service_role;
-GRANT SELECT ON TABLE storage.objects TO supabase_metrics;
 GRANT ALL ON TABLE storage.objects TO postgres;
 
 
