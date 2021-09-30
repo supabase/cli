@@ -1,4 +1,4 @@
 # Supabase
-supabase/.temp
-supabase/.env
-supabase/.globals.sql
+**/supabase/.temp
+**/supabase/.env
+**/supabase/.globals.sql
