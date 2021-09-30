@@ -476,7 +476,7 @@ EOSQL
 				"GOTRUE_API_PORT=9999",
 
 				"GOTRUE_DB_DRIVER=postgres",
-				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable&search_path=auth",
+				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
 
 				"GOTRUE_SITE_URL=http://localhost:8000",
 				"GOTRUE_DISABLE_SIGNUP=false",
