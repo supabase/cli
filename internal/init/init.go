@@ -349,7 +349,9 @@ func Init() error {
 	{
 		gitignore, err := os.ReadFile(".gitignore")
 		if errors.Is(err, os.ErrNotExist) {
-			// skip
+			if err := os.WriteFile(".gitignore", initGitignore, 0644); err != nil {
+				return err
+			}
 		} else if err != nil {
 			return err
 		} else if bytes.Contains(gitignore, initGitignore) {
@@ -359,7 +361,7 @@ func Init() error {
 			if err != nil {
 				return err
 			}
-			if _, err := f.Write(initGitignore); err != nil {
+			if _, err := f.Write(append([]byte("\n"), initGitignore...)); err != nil {
 				return err
 			}
 			if err := f.Close(); err != nil {
