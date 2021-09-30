@@ -26,7 +26,7 @@ supabase init
 This will create a `supabase` directory which is managed by the CLI. Then we need to link the current project with the deploy database. Use the connection string from your Supabase project here.
 
 ```sh
-supabase link --url 'postgresql://postgres:<your_password>@db.<your_project_ref>.supabase.co:5432/postgres'
+supabase link --url <<< 'postgresql://postgres:<your_password>@db.<your_project_ref>.supabase.co:5432/postgres'
 ```
 
 Why do we need to do this? Because if we want to manage a database with a migration tool, we need a _baseline_ where both the migration tool and the database have consistent schemas. `supabase link` does this synchronization between the two.
