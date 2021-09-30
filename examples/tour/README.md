@@ -19,7 +19,6 @@ You also need a new Supabase project. Take note of the DB connection string in `
 The first thing we need to do is to initialize the Supabase CLI on the current project:
 
 ```sh
-git init .    # the CLI only works in git root
 supabase init
 ```
 
