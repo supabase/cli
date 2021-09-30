@@ -81,7 +81,11 @@ func GetCurrentTimestamp() string {
 }
 
 func GetCurrentBranch() (*string, error) {
-	content, err := os.ReadFile(".git/HEAD")
+	gitRoot, err := GetGitRoot()
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(*gitRoot+"/.git/HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -229,4 +233,27 @@ func DockerRemoveAll() {
 	}
 
 	wg.Wait()
+}
+
+func GetGitRoot() (*string, error) {
+	origWd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		_, err := os.ReadDir(".git")
+		if err == nil {
+			gitRoot, err := os.Getwd()
+			if err != nil {
+				return nil, err
+			}
+			if err := os.Chdir(origWd); err != nil {
+				return nil, err
+			}
+			return &gitRoot, nil
+		}
+		if err := os.Chdir(".."); err != nil {
+			return nil, err
+		}
+	}
 }

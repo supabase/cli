@@ -86,7 +86,11 @@ func Start() error {
 		}
 		defer watcher.Close()
 
-		if err := watcher.Add(".git/HEAD"); err != nil {
+		gitRoot, err := utils.GetGitRoot()
+		if err != nil {
+			return err
+		}
+		if err := watcher.Add(*gitRoot + "/.git/HEAD"); err != nil {
 			return err
 		}
 

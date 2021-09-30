@@ -50,11 +50,15 @@ func Init() error {
 		if _, err := os.ReadDir("supabase"); err == nil {
 			fmt.Fprintln(
 				os.Stderr,
-				"❌ Project already initialized. Remove `supabase` directory to reinitialize.",
+				"Project already initialized. Remove `supabase` directory to reinitialize.",
 			)
 			os.Exit(1)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
+		}
+
+		if _, err := utils.GetGitRoot(); err != nil {
+			return errors.New("Error finding Git root. Are you in a Git repository?")
 		}
 
 		if err := utils.AssertDockerIsRunning(); err != nil {
@@ -347,9 +351,14 @@ func Init() error {
 
 	// 6. Append to `.gitignore`.
 	{
-		gitignore, err := os.ReadFile(".gitignore")
+		gitRoot, err := utils.GetGitRoot()
+		if err != nil {
+			return err
+		}
+		gitignorePath := *gitRoot + "/.gitignore"
+		gitignore, err := os.ReadFile(gitignorePath)
 		if errors.Is(err, os.ErrNotExist) {
-			if err := os.WriteFile(".gitignore", initGitignore, 0644); err != nil {
+			if err := os.WriteFile(gitignorePath, initGitignore, 0644); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -357,7 +366,7 @@ func Init() error {
 		} else if bytes.Contains(gitignore, initGitignore) {
 			// skip
 		} else {
-			f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				return err
 			}
