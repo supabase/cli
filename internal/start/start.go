@@ -222,6 +222,19 @@ func Start() error {
 				return err
 			}
 		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StorageImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.StorageImage,
+				types.ImagePullOptions{},
+			)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(os.Stdout, out); err != nil {
+				return err
+			}
+		}
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -513,7 +526,34 @@ EOSQL
 				"PGRST_DB_URI=postgres://postgres:postgres@" + utils.PgbouncerId + ":5432/postgres",
 				"PGRST_DB_SCHEMA=public",
 				"PGRST_DB_ANON_ROLE=postgres",
+			},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
+	}
+
+	// start storage
+
+	if err := utils.DockerRun(
+		ctx,
+		utils.StorageId,
+		&container.Config{
+			Image: utils.StorageImage,
+			Env: []string{
+				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI",
+				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE",
+				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"DATABASE_URL=postgres://supabase_storage_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable&search_path=storage",
+				"FILE_SIZE_LIMIT=52428800",
+				"STORAGE_BACKEND=file",
+				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
+				// TODO: https://github.com/supabase/storage-api/commit/a836fc9666c2434d89ca4b31402f74772d50fb6d
+				"PROJECT_REF=stub",
+				// TODO: https://github.com/supabase/storage-api/issues/55
+				"REGION=stub",
+				"GLOBAL_S3_BUCKET=stub",
 			},
 		},
 		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},

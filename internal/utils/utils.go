@@ -38,6 +38,7 @@ const (
 	GotrueImage    = "supabase/gotrue:v2.0.11"
 	RealtimeImage  = "supabase/realtime:v0.15.0"
 	PostgrestImage = "postgrest/postgrest:v8.0.0"
+	StorageImage   = "supabase/storage-api:v0.9.3"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.2"
 	PgmetaImage    = "supabase/postgres-meta:v0.24.3"
 )
@@ -71,6 +72,7 @@ var (
 	GotrueId    string
 	RealtimeId  string
 	RestId      string
+	StorageId   string
 	DifferId    string
 	PgmetaId    string
 )
@@ -85,7 +87,7 @@ func GetCurrentBranch() (*string, error) {
 	if err != nil {
 		return nil, err
 	}
-	content, err := os.ReadFile(*gitRoot+"/.git/HEAD")
+	content, err := os.ReadFile(*gitRoot + "/.git/HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +160,7 @@ func LoadConfig() {
 	GotrueId = "supabase_auth_" + ProjectId
 	RealtimeId = "supabase_realtime_" + ProjectId
 	RestId = "supabase_rest_" + ProjectId
+	StorageId = "supabase_storage_" + ProjectId
 	DifferId = "supabase_differ_" + ProjectId
 	PgmetaId = "supabase_pg_meta_" + ProjectId
 }
