@@ -170,8 +170,8 @@ EOSQL
 		}
 
 		for _, diffEntry := range diffJson {
-			if diffEntry.GroupName == "extensions" ||
-				(diffEntry.SourceSchemaName != nil && *diffEntry.SourceSchemaName == "extensions") {
+			if utils.IsSchemaIgnoredFromDump(diffEntry.GroupName) ||
+				(diffEntry.SourceSchemaName != nil && utils.IsSchemaIgnoredFromDump(*diffEntry.SourceSchemaName)) {
 				continue
 			}
 

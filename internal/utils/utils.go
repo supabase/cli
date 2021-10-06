@@ -260,3 +260,13 @@ func GetGitRoot() (*string, error) {
 		}
 	}
 }
+
+func IsSchemaIgnoredFromDump(schema string) bool {
+	ignoredSchemas := []string{"auth", "extensions", "pgbouncer", "storage"}
+	for _, s := range ignoredSchemas {
+		if s == schema {
+			return true
+		}
+	}
+	return false
+}
