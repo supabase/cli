@@ -316,9 +316,7 @@ EOSQL
 					Entrypoint: []string{
 						"sh", "-c", "/venv/bin/python3 -u cli.py " +
 							"'" + url + "' " +
-							"'postgres://postgres:postgres@" + dbId + ":5432/postgres' " +
-							// Filter out BEGIN & END because we already wrap migrations in a transaction.
-							`| awk '!x{x=sub("^BEGIN;$","")}{print}' | tac | awk '!x{x=sub("^END;$","")}{print}' | tac`,
+							"'postgres://postgres:postgres@" + dbId + ":5432/postgres'",
 					},
 				},
 				&container.HostConfig{NetworkMode: container.NetworkMode(netId)},
@@ -345,8 +343,17 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			if _, err := stdcopy.StdCopy(f, os.Stdout, out); err != nil {
-				return err
+			// TODO: Revert when https://github.com/supabase/pgadmin4/issues/24 is fixed.
+			// if _, err := stdcopy.StdCopy(f, os.Stdout, out); err != nil {
+			// 	return err
+			// }
+			{
+				var diffBytesBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
+					return err
+				}
+				diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
+				f.Write(diffBytes)
 			}
 			if err := f.Close(); err != nil {
 				return err

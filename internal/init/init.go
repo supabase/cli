@@ -226,12 +226,15 @@ func Init() error {
 		}
 
 		var diffBytesBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stderr, out); err != nil {
+		if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
 			return err
 		}
 
+		// TODO: Remove when https://github.com/supabase/pgadmin4/issues/24 is fixed.
+		diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
+
 		var diffJson []utils.DiffEntry
-		if err := json.Unmarshal(diffBytesBuf.Bytes(), &diffJson); err != nil {
+		if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
 			return err
 		}
 

@@ -39,7 +39,7 @@ const (
 	RealtimeImage  = "supabase/realtime:v0.15.0"
 	PostgrestImage = "postgrest/postgrest:v8.0.0"
 	StorageImage   = "supabase/storage-api:v0.9.3"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.2"
+	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.3"
 	PgmetaImage    = "supabase/postgres-meta:v0.26.1"
 )
 
