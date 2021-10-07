@@ -45,6 +45,15 @@ var (
 )
 
 func Init() error {
+	if err := init_(); err != nil {
+		_ = os.RemoveAll("supabase")
+		return err
+	}
+
+	return nil
+}
+
+func init_() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir("supabase"); err == nil {
