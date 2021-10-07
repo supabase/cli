@@ -79,7 +79,7 @@ func Init() error {
 			<-termCh
 
 			utils.DockerRemoveAll()
-			utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
+			_ = utils.Docker.NetworkRemove(context.Background(), netId)
 
 			_ = os.RemoveAll("supabase")
 
