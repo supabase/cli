@@ -231,7 +231,8 @@ func DockerRemoveAll() {
 				RemoveVolumes: true,
 				Force:         true,
 			}); err != nil {
-				fmt.Fprintln(os.Stderr, "⚠️", err)
+				// TODO: Handle errors
+				// fmt.Fprintln(os.Stderr, err)
 			}
 
 			wg.Done()
