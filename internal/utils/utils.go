@@ -326,11 +326,11 @@ func ProcessPullOutput(out io.ReadCloser, p *tea.Program) error {
 				sumCurrent += percentage.current
 				sumTotal += percentage.total
 			}
-			if sumTotal == 0 {
-				continue
-			}
 
-			overallProgress := float64(sumCurrent) / float64(sumTotal)
+			var overallProgress float64
+			if sumTotal != 0 {
+				overallProgress = float64(sumCurrent) / float64(sumTotal)
+			}
 			p.Send(ProgressMsg(&overallProgress))
 		}
 	}
@@ -357,6 +357,12 @@ func ProcessDiffOutput(p *tea.Program, out io.Reader) ([]byte, error) {
 			}
 
 			line := scanner.Text()
+
+			if line == "Starting schema diff..." {
+				percentage := 0.0
+				p.Send(ProgressMsg(&percentage))
+			}
+
 			matches := re.FindStringSubmatch(line)
 			if len(matches) != 3 {
 				continue
