@@ -147,7 +147,6 @@ var (
 func run(p *tea.Program, name string) error {
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
-	// TODO: Process psql output.
 	// 1. Create shadow db and run migrations
 	{
 		out, err := utils.DockerExec(

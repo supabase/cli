@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
-	"os/signal"
 	"regexp"
-	"syscall"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -21,19 +23,131 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+// TODO: Handle cleanup on SIGINT/SIGTERM.
+func Link(url string) error {
+	// Sanity checks.
+	{
+		if err := utils.AssertDockerIsRunning(); err != nil {
+			return err
+		}
+	}
+
+	s := spinner.NewModel()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	p := tea.NewProgram(model{spinner: s})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(p, url)
+		p.Send(tea.Quit())
+	}()
+
+	if err := p.Start(); err != nil {
+		return err
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return errors.New("Aborted `supabase link`.")
+	}
+	if err := <-errCh; err != nil {
+		return err
+	}
+
+	fmt.Println("Finished `supabase link`.")
+	return nil
+}
+
+type model struct {
+	spinner     spinner.Model
+	status      string
+	progress    *progress.Model
+	psqlOutputs []string
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			// Stop future runs
+			cancelCtx()
+			// Stop current runs
+			utils.DockerRemoveAll()
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	case utils.PsqlMsg:
+		if msg == nil {
+			m.psqlOutputs = []string{}
+			return m, nil
+		}
+
+		m.psqlOutputs = append(m.psqlOutputs, *msg)
+		if len(m.psqlOutputs) > 5 {
+			m.psqlOutputs = m.psqlOutputs[1:]
+		}
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	var psqlOutputs string
+	if len(m.psqlOutputs) > 0 {
+		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
+	}
+
+	return m.spinner.View() + m.status + progress + psqlOutputs
+}
+
 const (
 	netId    = "supabase_link_network"
 	dbId     = "supabase_link_db"
 	differId = "supabase_link_differ"
 )
 
-var ctx = context.TODO()
+var ctx, cancelCtx = context.WithCancel(context.Background())
 
-func Link(url string) error {
-	if err := utils.AssertDockerIsRunning(); err != nil {
-		return err
-	}
-
+func run(p *tea.Program, url string) error {
 	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
 	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
@@ -73,22 +187,7 @@ func Link(url string) error {
 		return err
 	}
 
-	// Handle cleanup on interrupt/termination.
-	{
-		termCh := make(chan os.Signal, 1)
-		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-termCh
-
-			utils.DockerRemoveAll()
-			_ = utils.Docker.NetworkRemove(context.Background(), netId)
-
-			fmt.Println("Aborted `supabase link`.")
-			os.Exit(1)
-		}()
-	}
-
-	fmt.Println("Pulling images...")
+	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
 	{
@@ -101,7 +200,7 @@ func Link(url string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -114,18 +213,15 @@ func Link(url string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
 	}
 
-	fmt.Println("Done pulling images.")
-
-	// sync `migrations`
+	// Sync migrations.
 	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err == nil {
-		// supabase_migrations.schema_migrations exists.
-		fmt.Println("supabase_migrations.schema_migrations exists on the deploy database.")
+		// A. supabase_migrations.schema_migrations exists on the deploy database.
 
 		// if `migrations` is a "prefix" of list of migrations in repo:
 		// - dump `.env`, `.globals.sql`
@@ -165,7 +261,7 @@ func Link(url string) error {
 			return conflictErr
 		}
 
-		fmt.Println("Generating .globals.sql, .env, and updating dbVersion config...")
+		p.Send(utils.StatusMsg("`supabase_migrations.schema_migrations` exists on the deploy database. Generating .globals.sql, .env, and updating dbVersion config..."))
 
 		// .globals.sql
 		if _, err := utils.DockerRun(
@@ -186,8 +282,12 @@ func Link(url string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
+		}
+		if errBuf.Len() > 0 {
+			return errors.New("Error starting database: " + errBuf.String())
 		}
 
 		out, err = utils.DockerExec(ctx, dbId, []string{
@@ -206,8 +306,11 @@ func Link(url string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := stdcopy.StdCopy(f, os.Stderr, out); err != nil {
+		if _, err := stdcopy.StdCopy(f, &errBuf, out); err != nil {
 			return err
+		}
+		if errBuf.Len() > 0 {
+			return errors.New("Error running pg_dumpall: " + errBuf.String())
 		}
 		if err := f.Close(); err != nil {
 			return err
@@ -220,10 +323,9 @@ func Link(url string) error {
 			return err
 		}
 	} else {
-		// supabase_migrations.schema_migrations doesn't exist.
-		fmt.Println("supabase_migrations.schema_migrations doesn't exist on the deploy database.")
+		// B. supabase_migrations.schema_migrations doesn't exist on the deploy database.
 
-		fmt.Println("Creating shadow database...")
+		p.Send(utils.StatusMsg("`supabase_migrations.schema_migrations` doesn't exist on the deploy database. Creating shadow database..."))
 
 		// 1. Create shadow db and run migrations.
 		{
@@ -245,14 +347,20 @@ func Link(url string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error starting database: " + errBuf.String())
 			}
 
 			globalsSql := utils.FallbackGlobalsSql
 			if content, err := os.ReadFile("supabase/.globals.sql"); err == nil {
 				globalsSql = content
 			}
+
+			p.Send(utils.StatusMsg("Applying .globals.sql..."))
 
 			out, err = utils.DockerExec(ctx, dbId, []string{
 				"sh", "-c", `psql --username postgres --dbname postgres <<'EOSQL'
@@ -265,7 +373,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
 				return err
 			}
 
@@ -275,7 +383,7 @@ EOSQL
 			}
 
 			for _, migration := range migrations {
-				log.Println("Applying migration " + migration.Name() + "...")
+				p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
 
 				content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 				if err != nil {
@@ -293,22 +401,17 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
 					return err
-				}
-
-				if errBuf.Len() > 0 {
-					return errors.New("Error running migration " + migration.Name() + ": " + errBuf.String())
 				}
 			}
 		}
 
-		fmt.Println("Syncing current migrations with the deploy database...")
+		p.Send(utils.StatusMsg("Syncing current migrations with the deploy database..."))
 
 		// 2. Diff deploy db (source) & shadow db (target) and write it as a new migration.
 		{
-			if _, err := utils.DockerRun(
+			out, err := utils.DockerRun(
 				ctx,
 				differId,
 				&container.Config{
@@ -320,47 +423,30 @@ EOSQL
 					},
 				},
 				&container.HostConfig{NetworkMode: container.NetworkMode(netId)},
-			); err != nil {
-				return err
-			}
-			statusCh, errCh := utils.Docker.ContainerWait(ctx, differId, container.WaitConditionNotRunning)
-			select {
-			case err := <-errCh:
-				if err != nil {
-					return err
-				}
-			case <-statusCh:
-			}
-
-			currentTimestamp := utils.GetCurrentTimestamp()
-
-			out, err := utils.Docker.ContainerLogs(ctx, differId, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+			)
 			if err != nil {
 				return err
 			}
+
+			currentTimestamp := utils.GetCurrentTimestamp()
 
 			f, err := os.Create("supabase/migrations/" + currentTimestamp + "_link.sql")
 			if err != nil {
 				return err
 			}
-			// TODO: Revert when https://github.com/supabase/pgadmin4/issues/24 is fixed.
-			// if _, err := stdcopy.StdCopy(f, os.Stdout, out); err != nil {
-			// 	return err
-			// }
-			{
-				var diffBytesBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
-					return err
-				}
-				diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
-				f.Write(diffBytes)
+
+			diffBytes, err := utils.ProcessDiffOutput(p, out)
+			if err != nil {
+				return err
 			}
+			f.Write(diffBytes)
+
 			if err := f.Close(); err != nil {
 				return err
 			}
 		}
 
-		fmt.Println("Creating supabase_migrations.schema_migrations on the deploy database...")
+		p.Send(utils.StatusMsg("Creating `supabase_migrations.schema_migrations` on the deploy database..."))
 
 		// 3. Generate `schema_migrations` up to the new migration.
 		{
@@ -401,7 +487,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			}
 		}
 
-		fmt.Println("Generating .globals.sql, .env, and updating dbVersion config...")
+		p.Send(utils.StatusMsg("Generating .globals.sql, .env, and updating dbVersion config..."))
 
 		// 4. Persist .globals.sql, .env, and new config w/ updated dbVersion.
 		{
@@ -422,8 +508,12 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			if err != nil {
 				return err
 			}
-			if _, err := stdcopy.StdCopy(f, os.Stderr, out); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(f, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error running pg_dumpall: " + errBuf.String())
 			}
 			if err := f.Close(); err != nil {
 				return err
@@ -436,8 +526,6 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 				return err
 			}
 		}
-
-		fmt.Println("Finished supabase link.")
 	}
 
 	return nil
