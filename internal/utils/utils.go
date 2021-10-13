@@ -132,23 +132,26 @@ func LoadConfig() {
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
 	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
 	dbVersion := viper.GetString("dbVersion")
-	if dbVersion == "120000" ||
-		dbVersion == "120001" ||
-		dbVersion == "120002" ||
-		dbVersion == "120003" ||
-		dbVersion == "120004" ||
-		dbVersion == "120005" ||
-		dbVersion == "120006" ||
-		dbVersion == "120007" ||
-		dbVersion == "120008" {
+	switch dbVersion {
+	case
+		"120000",
+		"120001",
+		"120002",
+		"120003",
+		"120004",
+		"120005",
+		"120006",
+		"120007",
+		"120008":
 		DbImage = "supabase/postgres:0.14.0"
-	} else if dbVersion == "130000" ||
-		dbVersion == "130001" ||
-		dbVersion == "130002" ||
-		dbVersion == "130003" ||
-		dbVersion == "130004" {
+	case
+		"130000",
+		"130001",
+		"130002",
+		"130003",
+		"130004":
 		DbImage = "supabase/postgres:13.3.0"
-	} else {
+	default:
 		fmt.Fprintln(os.Stderr, "❌ Failed reading config: Invalid dbVersion "+dbVersion+".")
 		os.Exit(1)
 	}
