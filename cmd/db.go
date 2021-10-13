@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/db"
+	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/restore"
 )
 
 var (
@@ -17,7 +18,7 @@ var (
 		Use:   "dump",
 		Short: "Diffs the local database with current migrations, writing it as a new migration, and writes a new structured dump.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return db.DbDump(migrationName)
+			return dump.DbDump(migrationName)
 		},
 	}
 
@@ -25,7 +26,7 @@ var (
 		Use:   "restore",
 		Short: "Restores the local database to reflect current migrations. Any changes on the local database that is not dumped will be lost.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return db.DbRestore()
+			return restore.DbRestore()
 		},
 	}
 )
