@@ -49,25 +49,25 @@ With that, we can do... absolutely nothing, because we haven't set up your schem
 To change the schema for the local database, simply run some SQL against the `DB URL` shown by `supabase start`. For the tour, we'll run these changes using a Postgres client of your choice:
 
 ```sql
-CREATE TABLE my_table(
+CREATE TABLE boarders(
 	id int4 PRIMARY KEY,
 	name text
 );
 ```
 
-Now we have the `my_table` table in the local database, but how do we incorporate this into migrations? If you've used other migration tools, you might be used to writing the migrations manually, but here we just need to run:
+Now we have the `boarders` table in the local database, but how do we incorporate this into migrations? If you've used other migration tools, you might be used to writing the migrations manually, but here we just need to run:
 
 ```sh
-supabase db dump --name add_my_table
+supabase db dump --name add_boarders
 ```
 
-This will create a new migration named `<timestamp>_add_my_table.sql` that represents any changes we've done to the local database since `supabase start`.
+This will create a new migration named `<timestamp>_add_boarders.sql` that represents any changes we've done to the local database since `supabase start`.
 
 It won't be interesting without sample data in the table, but instead of inserting it directly, we use the seed script in `supabase/seed.sql`. This way we don't have to run it manually every time we run `supabase start`.
 
 ```sql
 -- in supabase/seed.sql
-INSERT INTO my_table(id, name) VALUES (1, 'Arthur Dent'), (2, 'Ford Prefect');
+INSERT INTO boarders(id, name) VALUES (1, 'Arthur Dent'), (2, 'Ford Prefect');
 ```
 
 Now run the following to rerun the migration scripts and the seed script:
@@ -83,7 +83,7 @@ npm clean-install
 npm run start
 ```
 
-You should now see the contents of `my_table`. Hooray!
+You should now see the contents of `boarders`. Hooray!
 
 ## 3. Resetting schema changes
 
@@ -91,7 +91,7 @@ What if we ran some nasty SQL on the local database and want to wipe it all clea
 
 ```sql
 -- run on local database
-ALTER TABLE my_table ADD occupation text DEFAULT 'Hitchhiker';
+ALTER TABLE boarders ADD occupation text DEFAULT 'Hitchhiker';
 ```
 
 No need to rerun `supabase start` here, just run:

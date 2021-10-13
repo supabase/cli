@@ -4,6 +4,6 @@ const supabase = createClient(
   '<your_anon_key>'
 )
 supabase
-  .from('my_table')
+  .from('boarders')
   .select()
   .then(({ data }) => console.log(data))
