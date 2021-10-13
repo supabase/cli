@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"syscall"
+	"strings"
 	"text/template"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -20,21 +23,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var (
-	//go:embed templates/pgbouncer_config
-	pgbouncerConfigEmbed       string
-	pgbouncerConfigTemplate, _ = template.New("pgbouncerConfig").Parse(pgbouncerConfigEmbed)
-	//go:embed templates/pgbouncer_userlist
-	pgbouncerUserlist []byte
-	// TODO: Unhardcode keys
-	//go:embed templates/kong_config
-	kongConfigEmbed       string
-	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
-
-	ctx = context.TODO()
-)
-
-// TODO: Make the whole thing concurrent.
+// TODO: Handle cleanup on SIGINT/SIGTERM.
 func Start() error {
 	// Sanity checks.
 	{
@@ -63,17 +52,153 @@ func Start() error {
 		}
 	}
 
-	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
+	s := spinner.NewModel()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	p := tea.NewProgram(model{spinner: s})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(p)
+		p.Send(tea.Quit())
+	}()
+
+	if err := p.Start(); err != nil {
+		return err
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		fmt.Println("Stopped `supabase start`.")
+		return nil
+	}
+	if err := <-errCh; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type model struct {
+	spinner     spinner.Model
+	status      string
+	progress    *progress.Model
+	psqlOutputs []string
+	started     bool
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			// Stop future runs
+			cancelCtx()
+			termCh <- struct{}{}
+			// Stop current runs
+			utils.DockerRemoveAll()
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	case utils.PsqlMsg:
+		if msg == nil {
+			m.psqlOutputs = []string{}
+			return m, nil
+		}
+
+		m.psqlOutputs = append(m.psqlOutputs, *msg)
+		if len(m.psqlOutputs) > 5 {
+			m.psqlOutputs = m.psqlOutputs[1:]
+		}
+		return m, nil
+	case startedMsg:
+		m.started = bool(msg)
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	if m.started {
+		return `Started local development setup.
+API URL: http://localhost:` + utils.ApiPort + `
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
+	}
+
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	var psqlOutputs string
+	if len(m.psqlOutputs) > 0 {
+		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
+	}
+
+	return m.spinner.View() + m.status + progress + psqlOutputs
+}
+
+type startedMsg bool
+
+var (
+	ctx, cancelCtx = context.WithCancel(context.Background())
+	termCh         = make(chan struct{}, 1)
+
+	//go:embed templates/pgbouncer_config
+	pgbouncerConfigEmbed       string
+	pgbouncerConfigTemplate, _ = template.New("pgbouncerConfig").Parse(pgbouncerConfigEmbed)
+	//go:embed templates/pgbouncer_userlist
+	pgbouncerUserlist []byte
+	// TODO: Unhardcode keys
+	//go:embed templates/kong_config
+	kongConfigEmbed       string
+	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
+)
+
+func run(p *tea.Program) error {
 	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId) //nolint:errcheck
+	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
 
 	defer utils.DockerRemoveAll()
 
-	// Handle SIGINT/SIGTERM.
-	termCh := make(chan os.Signal, 1)
-	signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+	// // Handle SIGINT/SIGTERM.
+	// termCh := make(chan os.Signal, 1)
+	// signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
 	errCh := make(chan error)
-
-	fmt.Println("Starting...")
 
 	// Set up watcher.
 
@@ -105,7 +230,7 @@ func Start() error {
 					branch, err := utils.GetCurrentBranch()
 					if err != nil {
 						errCh <- errors.New("Error getting current branch name.")
-						termCh <- nil
+						termCh <- struct{}{}
 						return
 					}
 					if branch != nil {
@@ -117,14 +242,14 @@ func Start() error {
 					}
 
 					errCh <- err
-					termCh <- nil
+					termCh <- struct{}{}
 					return
 				}
 			}
 		}()
 	}
 
-	// init branch name
+	// Bookkeeping.
 
 	var currBranch string
 	if currBranchPtr, err := utils.GetCurrentBranch(); err != nil {
@@ -135,14 +260,16 @@ func Start() error {
 		currBranch = *currBranchPtr
 	}
 
-	// init watched dbs
-
 	initializedDbs := []string{currBranch}
 
-	// pull images
+	if err := os.Mkdir("supabase/.temp", 0755); err != nil {
+		return err
+	}
+	defer os.RemoveAll("supabase/.temp")
 
-	fmt.Println("Pulling images...")
+	p.Send(utils.StatusMsg("Pulling images..."))
 
+	// Pull images.
 	{
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
 			out, err := utils.Docker.ImagePull(
@@ -153,7 +280,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -166,7 +293,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -179,7 +306,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -192,7 +319,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -205,7 +332,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -218,7 +345,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -231,7 +358,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -244,7 +371,7 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -257,17 +384,13 @@ func Start() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
 	}
 
-	fmt.Println("Done pulling images.")
-	fmt.Println("Starting containers...")
-
-	// start postgres
-
+	// Start postgres.
 	{
 		if _, err := utils.DockerRun(
 			ctx,
@@ -302,12 +425,11 @@ EOSQL
 			return err
 		}
 		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
 		}
-
 		if errBuf.Len() > 0 {
-			return errors.New("Error running globals.sql: " + errBuf.String())
+			return errors.New("Error waiting for database to start: " + errBuf.String())
 		}
 
 		migrations, err := os.ReadDir("supabase/migrations")
@@ -316,7 +438,7 @@ EOSQL
 		}
 
 		for _, migration := range migrations {
-			fmt.Println("Applying migration " + migration.Name() + "...")
+			p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {
@@ -334,19 +456,12 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
 				return err
-			}
-
-			if errBuf.Len() > 0 {
-				return errors.New(
-					"Error running migration " + migration.Name() + ": " + errBuf.String(),
-				)
 			}
 		}
 
-		fmt.Println("Applying seed...")
+		p.Send(utils.StatusMsg("Applying seed..."))
 
 		content, err := os.ReadFile("supabase/seed.sql")
 		if errors.Is(err, os.ErrNotExist) {
@@ -365,24 +480,15 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
 				return err
-			}
-
-			if errBuf.Len() > 0 {
-				return errors.New("Error running seed: " + errBuf.String())
 			}
 		}
 	}
 
-	if err := os.Mkdir("supabase/.temp", 0755); err != nil {
-		return err
-	}
-	defer os.RemoveAll("supabase/.temp")
+	p.Send(utils.StatusMsg("Starting containers..."))
 
-	// start pgbouncer
-
+	// Start pgbouncer.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -426,8 +532,7 @@ EOSQL
 		}
 	}
 
-	// start kong
-
+	// Start kong.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -464,7 +569,7 @@ EOSQL
 		}
 	}
 
-	// start gotrue
+	// Start gotrue.
 
 	if _, err := utils.DockerRun(
 		ctx,
@@ -498,7 +603,6 @@ EOSQL
 	}
 
 	// Start Realtime.
-
 	if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
 		Image: utils.RealtimeImage,
 		Env: []string{
@@ -518,7 +622,6 @@ EOSQL
 	}
 
 	// start postgrest
-
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.RestId,
@@ -537,7 +640,6 @@ EOSQL
 	}
 
 	// start storage
-
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.StorageId,
@@ -565,7 +667,6 @@ EOSQL
 	}
 
 	// start differ
-
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.DifferId,
@@ -579,7 +680,6 @@ EOSQL
 	}
 
 	// Start pg-meta.
-
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.PgmetaId,
@@ -599,18 +699,14 @@ EOSQL
 	}
 
 	// TODO: Unhardcode keys
-	fmt.Println(`Started local development setup.
-API URL: http://localhost:` + utils.ApiPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
-service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`)
+	p.Send(startedMsg(true))
 
 	// switch db on switch branch
 
 	for {
 		select {
 		case <-termCh:
-			fmt.Println("Shutting down...")
+			p.Send(startedMsg(false))
 
 			select {
 			case err := <-errCh:
@@ -621,7 +717,8 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb
 		case currBranch = <-branchCh:
 		}
 
-		fmt.Println("Switched to branch: " + currBranch + ". Switching database...")
+		p.Send(startedMsg(false))
+		p.Send(utils.StatusMsg("Switched to branch: " + currBranch + ". Switching database..."))
 
 		// if it's a new branch, create database with the same name as the branch
 
@@ -634,7 +731,7 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb
 		}
 
 		if isNewBranch {
-			fmt.Println("New branch detected. Creating database...")
+			p.Send(utils.StatusMsg("New branch detected. Creating database..."))
 
 			initializedDbs = append(initializedDbs, currBranch)
 
@@ -648,8 +745,12 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb
 			if err != nil {
 				return err
 			}
-			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error creating database: " + errBuf.String())
 			}
 
 			// restore migrations
@@ -660,7 +761,7 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb
 			}
 
 			for _, migration := range migrations {
-				fmt.Println("Applying migration " + migration.Name() + "...")
+				p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
 
 				content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 				if err != nil {
@@ -678,19 +779,12 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
 					return err
-				}
-
-				if errBuf.Len() > 0 {
-					return errors.New(
-						"Error running migration " + migration.Name() + ": " + errBuf.String(),
-					)
 				}
 			}
 
-			fmt.Println("Applying seed...")
+			p.Send(utils.StatusMsg("Applying seed..."))
 
 			if content, err := os.ReadFile("supabase/seed.sql"); errors.Is(err, os.ErrNotExist) {
 				// skip
@@ -708,18 +802,13 @@ EOSQL
 				if err != nil {
 					return err
 				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
 					return err
 				}
-
-				if errBuf.Len() > 0 {
-					return errors.New("Error running seed: " + errBuf.String())
-				}
 			}
-
-			fmt.Println("Finished creating database " + currBranch + ".")
 		}
+
+		p.Send(utils.StatusMsg("Reloading containers..."))
 
 		// reload pgbouncer
 
@@ -768,6 +857,6 @@ EOSQL
 			return err
 		}
 
-		fmt.Println("Finished switching database.")
+		p.Send(startedMsg(true))
 	}
 }
