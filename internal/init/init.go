@@ -59,10 +59,11 @@ func Init() error {
 		_ = os.RemoveAll("supabase")
 		return err
 	}
-	if err := <-errCh; errors.Is(err, context.Canceled) {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		_ = os.RemoveAll("supabase")
 		return errors.New("Aborted `supabase init`.")
-	} else if err != nil {
+	}
+	if err := <-errCh; err != nil {
 		_ = os.RemoveAll("supabase")
 		return err
 	}
@@ -145,6 +146,8 @@ const (
 )
 
 var (
+	ctx, cancelCtx = context.WithCancel(context.Background())
+
 	// pg_dump --dbname $DB_URL
 	//go:embed templates/init_migration_sql
 	initMigrationSql []byte
@@ -155,8 +158,6 @@ var (
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
 	//go:embed templates/init_gitignore
 	initGitignore []byte
-
-	ctx, cancelCtx = context.WithCancel(context.Background())
 )
 
 func run(p *tea.Program) error {
