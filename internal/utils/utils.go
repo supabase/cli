@@ -292,6 +292,7 @@ func IsSchemaIgnoredFromDump(schema string) bool {
 type (
 	StatusMsg   string
 	ProgressMsg *float64
+	PsqlMsg     *string
 )
 
 func ProcessPullOutput(out io.ReadCloser, p *tea.Program) error {
@@ -389,4 +390,37 @@ func ProcessDiffOutput(p *tea.Program, out io.Reader) ([]byte, error) {
 	diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
 
 	return diffBytes, nil
+}
+
+func ProcessPsqlOutput(out io.Reader, p *tea.Program) error {
+	r, w := io.Pipe()
+	doneCh := make(chan struct{}, 1)
+
+	go func() {
+		scanner := bufio.NewScanner(r)
+
+		for scanner.Scan() {
+			select {
+			case <-doneCh:
+				return
+			default:
+			}
+
+			line := scanner.Text()
+			p.Send(PsqlMsg(&line))
+		}
+	}()
+
+	var errBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(w, &errBuf, out); err != nil {
+		return err
+	}
+	if errBuf.Len() > 0 {
+		return errors.New("Error running SQL: " + errBuf.String())
+	}
+
+	doneCh <- struct{}{}
+	p.Send(PsqlMsg(nil))
+
+	return nil
 }

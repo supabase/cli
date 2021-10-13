@@ -9,86 +9,196 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/supabase/cli/internal/utils"
 )
 
-var ctx = context.TODO()
-
+// TODO: Handle cleanup on SIGINT/SIGTERM.
 func DbDump(name string) error {
-	utils.LoadConfig()
-	utils.AssertSupabaseStartIsRunning()
+	// Sanity checks.
+	{
+		utils.LoadConfig()
+		utils.AssertSupabaseStartIsRunning()
 
+		if branchPtr, err := utils.GetCurrentBranch(); err != nil {
+			return err
+		} else if branchPtr != nil {
+			currBranch = *branchPtr
+		}
+	}
+
+	s := spinner.NewModel()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	p := tea.NewProgram(model{spinner: s})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(p, name)
+		p.Send(tea.Quit())
+	}()
+
+	if err := p.Start(); err != nil {
+		return err
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return errors.New("Aborted `supabase db dump`.")
+	}
+	if err := <-errCh; err != nil {
+		return err
+	}
+
+	fmt.Println("Finished `supabase db dump` on `" + currBranch + "`.")
+	return nil
+}
+
+type model struct {
+	spinner     spinner.Model
+	status      string
+	progress    *progress.Model
+	psqlOutputs []string
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			// Stop future runs
+			cancelCtx()
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	case utils.PsqlMsg:
+		if msg == nil {
+			m.psqlOutputs = []string{}
+			return m, nil
+		}
+
+		m.psqlOutputs = append(m.psqlOutputs, *msg)
+		if len(m.psqlOutputs) > 5 {
+			m.psqlOutputs = m.psqlOutputs[1:]
+		}
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	var psqlOutputs string
+	if len(m.psqlOutputs) > 0 {
+		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
+	}
+
+	return m.spinner.View() + m.status + progress + psqlOutputs
+}
+
+var (
+	ctx, cancelCtx = context.WithCancel(context.Background())
+
+	currBranch string
+)
+
+func run(p *tea.Program, name string) error {
+	p.Send(utils.StatusMsg("Creating shadow database..."))
+
+	// TODO: Process psql output.
 	// 1. Create shadow db and run migrations
+	{
+		out, err := utils.DockerExec(
+			ctx,
+			utils.DbId,
+			[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
+		)
+		if err != nil {
+			return err
+		}
+		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+			return err
+		}
+		if errBuf.Len() > 0 {
+			return errors.New("Error creating shadow database: " + errBuf.String())
+		}
 
-	fmt.Println("Creating shadow database...")
-
-	out, err := utils.DockerExec(
-		ctx,
-		utils.DbId,
-		[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
-	)
-	if err != nil {
-		return err
-	}
-	var errBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-		return err
-	}
-	if errBuf.Len() > 0 {
-		return errors.New("Error creating shadow database: " + errBuf.String())
-	}
-
-	migrations, err := os.ReadDir("supabase/migrations")
-	if err != nil {
-		return err
-	}
-
-	for _, migration := range migrations {
-		fmt.Println("Applying migration " + migration.Name() + "...")
-
-		content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err
 		}
 
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "psql --username postgres --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
+		for _, migration := range migrations {
+			p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
+
+			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			if err != nil {
+				return err
+			}
+
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
 EOSQL
 `,
-		})
-		if err != nil {
-			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(os.Stdout, &errBuf, out); err != nil {
-			return err
-		}
-
-		if errBuf.Len() > 0 {
-			return errors.New(
-				"Error running migration " + migration.Name() + ": " + errBuf.String(),
-			)
+			})
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				return err
+			}
 		}
 	}
 
-	fmt.Println("Diffing local database with current migrations...")
-
-	var currBranch string
-	branchPtr, err := utils.GetCurrentBranch()
-	if err != nil {
-		return err
-	}
-	if branchPtr != nil {
-		currBranch = *branchPtr
-	}
+	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
 
 	// 2. Diff it (target) with local db (source), write it as a new migration.
-
 	{
 		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
 			"sh", "-c", "/venv/bin/python3 -u cli.py " +
@@ -105,25 +215,19 @@ EOSQL
 		if err != nil {
 			return err
 		}
-		// TODO: Revert when https://github.com/supabase/pgadmin4/issues/24 is fixed.
-		// if _, err := stdcopy.StdCopy(f, os.Stdout, out); err != nil {
-		// 	return err
-		// }
-		{
-			var diffBytesBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
-				return err
-			}
-			diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
-			f.Write(diffBytes)
+
+		if diffBytes, err := utils.ProcessDiffOutput(p, out); err != nil {
+			return err
+		} else if _, err := f.Write(diffBytes); err != nil {
+			return err
 		}
+
 		if err := f.Close(); err != nil {
 			return err
 		}
 	}
 
-	fmt.Println("Wrote a new migration file.")
-	fmt.Println("Writing structured dump to supabase/database...")
+	p.Send(utils.StatusMsg("Writing structured dump to supabase/database..."))
 
 	// 3. Dump to `database`.
 	{
@@ -156,13 +260,10 @@ EOSQL
 			return err
 		}
 
-		var diffBytesBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
+		diffBytes, err := utils.ProcessDiffOutput(p, out)
+		if err != nil {
 			return err
 		}
-
-		// TODO: Remove when https://github.com/supabase/pgadmin4/issues/24 is fixed.
-		diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
 
 		var diffJson []utils.DiffEntry
 		if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
@@ -245,22 +346,26 @@ EOSQL
 		}
 	}
 
-	fmt.Println("Done generating structured dump.")
+	p.Send(utils.StatusMsg("Dropping shadow database..."))
 
 	// 4. Drop shadow db.
-	out, err = utils.DockerExec(
-		ctx,
-		utils.DbId,
-		[]string{"dropdb", "--username", "postgres", utils.ShadowDbName},
-	)
-	if err != nil {
-		return err
+	{
+		out, err := utils.DockerExec(
+			ctx,
+			utils.DbId,
+			[]string{"dropdb", "--username", "postgres", utils.ShadowDbName},
+		)
+		if err != nil {
+			return err
+		}
+		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+			return err
+		}
+		if errBuf.Len() > 0 {
+			return errors.New("Error dropping shadow database: " + errBuf.String())
+		}
 	}
-	if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
-		return err
-	}
-
-	fmt.Println("Finished db dump on " + currBranch + ".")
 
 	return nil
 }
