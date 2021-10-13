@@ -1,20 +1,28 @@
 package utils
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
 )
 
@@ -207,17 +215,23 @@ func DockerRun(
 	name string,
 	config *container.Config,
 	hostConfig *container.HostConfig,
-) error {
-	if _, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name); err != nil {
-		return err
+) (io.Reader, error) {
+	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
+	if err != nil {
+		return nil, err
 	}
 	containers = append(containers, name)
 
-	if err := Docker.ContainerStart(ctx, name, types.ContainerStartOptions{}); err != nil {
-		return err
+	resp, err := Docker.ContainerAttach(ctx, container.ID, types.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	if err := Docker.ContainerStart(ctx, container.ID, types.ContainerStartOptions{}); err != nil {
+		return nil, err
+	}
+
+	return resp.Reader, nil
 }
 
 func DockerRemoveAll() {
@@ -273,4 +287,100 @@ func IsSchemaIgnoredFromDump(schema string) bool {
 		}
 	}
 	return false
+}
+
+type (
+	StatusMsg   string
+	ProgressMsg *float64
+)
+
+func ProcessPullOutput(out io.ReadCloser, p *tea.Program) error {
+	dec := json.NewDecoder(out)
+
+	downloads := make(map[string]struct{ current, total int64 })
+
+	for {
+		var progress jsonmessage.JSONMessage
+
+		if err := dec.Decode(&progress); err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+
+		if strings.HasPrefix(progress.Status, "Pulling from") {
+			p.Send(StatusMsg(progress.Status + "..."))
+		} else if progress.Status == "Pulling fs layer" || progress.Status == "Waiting" {
+			downloads[progress.ID] = struct{ current, total int64 }{
+				current: 0,
+				total:   0,
+			}
+		} else if progress.Status == "Downloading" {
+			downloads[progress.ID] = struct{ current, total int64 }{
+				current: progress.Progress.Current,
+				total:   progress.Progress.Total,
+			}
+
+			var sumCurrent, sumTotal int64
+			for _, percentage := range downloads {
+				sumCurrent += percentage.current
+				sumTotal += percentage.total
+			}
+			if sumTotal == 0 {
+				continue
+			}
+
+			overallProgress := float64(sumCurrent) / float64(sumTotal)
+			p.Send(ProgressMsg(&overallProgress))
+		}
+	}
+
+	p.Send(ProgressMsg(nil))
+
+	return nil
+}
+
+func ProcessDiffOutput(p *tea.Program, out io.Reader) ([]byte, error) {
+	var diffBytesBuf bytes.Buffer
+	r, w := io.Pipe()
+	doneCh := make(chan struct{}, 1)
+
+	go func() {
+		scanner := bufio.NewScanner(r)
+		re := regexp.MustCompile(`(.*)([[:digit:]]{2,3})%`)
+
+		for scanner.Scan() {
+			select {
+			case <-doneCh:
+				return
+			default:
+			}
+
+			line := scanner.Text()
+			matches := re.FindStringSubmatch(line)
+			if len(matches) != 3 {
+				continue
+			}
+
+			p.Send(StatusMsg(matches[1]))
+			percentage, err := strconv.ParseFloat(matches[2], 64)
+			if err != nil {
+				continue
+			}
+			percentage = percentage / 100
+			p.Send(ProgressMsg(&percentage))
+		}
+	}()
+
+	if _, err := stdcopy.StdCopy(&diffBytesBuf, w, out); err != nil {
+		return nil, err
+	}
+
+	doneCh <- struct{}{}
+	p.Send(ProgressMsg(nil))
+
+	// TODO: Remove when https://github.com/supabase/pgadmin4/issues/24 is fixed.
+	diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
+
+	return diffBytes, nil
 }

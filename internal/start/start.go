@@ -105,7 +105,7 @@ func Start() error {
 					branch, err := utils.GetCurrentBranch()
 					if err != nil {
 						errCh <- errors.New("Error getting current branch name.")
-						signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+						termCh <- nil
 						return
 					}
 					if branch != nil {
@@ -117,7 +117,7 @@ func Start() error {
 					}
 
 					errCh <- err
-					signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
+					termCh <- nil
 					return
 				}
 			}
@@ -269,7 +269,7 @@ func Start() error {
 	// start postgres
 
 	{
-		if err := utils.DockerRun(
+		if _, err := utils.DockerRun(
 			ctx,
 			utils.DbId,
 			&container.Config{
@@ -406,7 +406,7 @@ EOSQL
 			return err
 		}
 
-		if err := utils.DockerRun(
+		if _, err := utils.DockerRun(
 			ctx,
 			utils.PgbouncerId,
 			&container.Config{
@@ -442,7 +442,7 @@ EOSQL
 			return err
 		}
 
-		if err := utils.DockerRun(
+		if _, err := utils.DockerRun(
 			ctx,
 			utils.KongId,
 			&container.Config{
@@ -466,7 +466,7 @@ EOSQL
 
 	// start gotrue
 
-	if err := utils.DockerRun(
+	if _, err := utils.DockerRun(
 		ctx,
 		utils.GotrueId,
 		&container.Config{
@@ -499,7 +499,7 @@ EOSQL
 
 	// Start Realtime.
 
-	if err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
+	if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
 		Image: utils.RealtimeImage,
 		Env: []string{
 			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
@@ -519,7 +519,7 @@ EOSQL
 
 	// start postgrest
 
-	if err := utils.DockerRun(
+	if _, err := utils.DockerRun(
 		ctx,
 		utils.RestId,
 		&container.Config{
@@ -538,7 +538,7 @@ EOSQL
 
 	// start storage
 
-	if err := utils.DockerRun(
+	if _, err := utils.DockerRun(
 		ctx,
 		utils.StorageId,
 		&container.Config{
@@ -566,7 +566,7 @@ EOSQL
 
 	// start differ
 
-	if err := utils.DockerRun(
+	if _, err := utils.DockerRun(
 		ctx,
 		utils.DifferId,
 		&container.Config{
@@ -580,7 +580,7 @@ EOSQL
 
 	// Start pg-meta.
 
-	if err := utils.DockerRun(
+	if _, err := utils.DockerRun(
 		ctx,
 		utils.PgmetaId,
 		&container.Config{
@@ -750,7 +750,7 @@ EOSQL
 			return err
 		}
 
-		if err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
+		if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
 			Image: utils.RealtimeImage,
 			Env: []string{
 				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason

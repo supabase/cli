@@ -7,53 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
-	"syscall"
 	"text/template"
 
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	latestDbImage   = "supabase/postgres:13.3.0" // Latest supabase/postgres image on hosted platform.
-	latestDbVersion = "130003"
-	netId           = "supabase_init_net"
-	dbId            = "supabase_init_db"
-	differId        = "supabase_init_differ"
-)
-
-var (
-	// pg_dump --dbname $DB_URL
-	//go:embed templates/init_migration_sql
-	initMigrationSql []byte
-	//go:embed templates/init_seed_sql
-	initSeedSql []byte
-	//go:embed templates/init_config
-	initConfigEmbed       string
-	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
-	//go:embed templates/init_gitignore
-	initGitignore []byte
-
-	ctx = context.TODO()
-)
-
+// TODO: Handle cleanup on SIGINT/SIGTERM.
 func Init() error {
-	if err := init_(); err != nil {
-		_ = os.RemoveAll("supabase")
-		return err
-	}
-
-	return nil
-}
-
-func init_() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir("supabase"); err == nil {
@@ -75,29 +44,128 @@ func init_() error {
 		}
 	}
 
-	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
+	s := spinner.NewModel()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	p := tea.NewProgram(model{spinner: s})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(p)
+		p.Send(tea.Quit())
+	}()
+
+	if err := p.Start(); err != nil {
+		_ = os.RemoveAll("supabase")
+		return err
+	}
+	if err := <-errCh; errors.Is(err, context.Canceled) {
+		_ = os.RemoveAll("supabase")
+		return errors.New("Aborted `supabase init`.")
+	} else if err != nil {
+		_ = os.RemoveAll("supabase")
+		return err
+	}
+
+	fmt.Println("Finished `supabase init`.")
+	return nil
+}
+
+type model struct {
+	spinner  spinner.Model
+	status   string
+	progress *progress.Model
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			// Stop future runs
+			cancelCtx()
+			// Stop current runs
+			utils.DockerRemoveAll()
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	return m.spinner.View() + m.status + progress
+}
+
+const (
+	latestDbImage   = "supabase/postgres:13.3.0" // Latest supabase/postgres image on hosted platform.
+	latestDbVersion = "130003"
+	netId           = "supabase_init_net"
+	dbId            = "supabase_init_db"
+	differId        = "supabase_init_differ"
+)
+
+var (
+	// pg_dump --dbname $DB_URL
+	//go:embed templates/init_migration_sql
+	initMigrationSql []byte
+	//go:embed templates/init_seed_sql
+	initSeedSql []byte
+	//go:embed templates/init_config
+	initConfigEmbed       string
+	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
+	//go:embed templates/init_gitignore
+	initGitignore []byte
+
+	ctx, cancelCtx = context.WithCancel(context.Background())
+)
+
+func run(p *tea.Program) error {
 	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
+	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
 
 	defer utils.DockerRemoveAll()
 
-	// Handle cleanup on SIGINT/SIGTERM.
-	{
-		termCh := make(chan os.Signal, 1)
-		signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-termCh
-
-			utils.DockerRemoveAll()
-			_ = utils.Docker.NetworkRemove(context.Background(), netId)
-
-			_ = os.RemoveAll("supabase")
-
-			fmt.Fprintln(os.Stderr, "Aborted `supabase init`.")
-			os.Exit(1)
-		}()
-	}
-
-	fmt.Println("Pulling images...")
+	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
 	{
@@ -111,7 +179,7 @@ func init_() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
@@ -124,21 +192,19 @@ func init_() error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(os.Stdout, out); err != nil {
+			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
 		}
 	}
 
-	fmt.Println("Done pulling images.")
-	fmt.Println("Generating initial migration...")
-
-	if err := os.Mkdir("supabase", 0755); err != nil {
-		return err
-	}
+	p.Send(utils.StatusMsg("Generating initial migration..."))
 
 	// 1. Write `database`.
 	{
+		if err := os.Mkdir("supabase", 0755); err != nil {
+			return err
+		}
 		if err := os.Mkdir("supabase/database", 0755); err != nil {
 			return err
 		}
@@ -182,7 +248,7 @@ func init_() error {
 			return err
 		}
 
-		if err := utils.DockerRun(
+		if _, err := utils.DockerRun(
 			ctx,
 			dbId,
 			&container.Config{
@@ -200,7 +266,7 @@ func init_() error {
 			return err
 		}
 
-		if err := utils.DockerRun(ctx, differId, &container.Config{
+		out, err := utils.DockerRun(ctx, differId, &container.Config{
 			Image: utils.DifferImage,
 			Cmd: []string{
 				"--json-diff",
@@ -209,38 +275,15 @@ func init_() error {
 			},
 		}, &container.HostConfig{
 			NetworkMode: netId,
-		}); err != nil {
-			return err
-		}
-		statusCh, errCh := utils.Docker.ContainerWait(
-			ctx,
-			differId,
-			container.WaitConditionNotRunning,
-		)
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return err
-			}
-		case <-statusCh:
-		}
-
-		out, err := utils.Docker.ContainerLogs(
-			ctx,
-			differId,
-			types.ContainerLogsOptions{ShowStdout: true},
-		)
+		})
 		if err != nil {
 			return err
 		}
 
-		var diffBytesBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(&diffBytesBuf, os.Stdout, out); err != nil {
+		diffBytes, err := utils.ProcessDiffOutput(p, out)
+		if err != nil {
 			return err
 		}
-
-		// TODO: Remove when https://github.com/supabase/pgadmin4/issues/24 is fixed.
-		diffBytes := bytes.TrimPrefix(diffBytesBuf.Bytes(), []byte("NOTE: Configuring authentication for DESKTOP mode.\n"))
 
 		var diffJson []utils.DiffEntry
 		if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
@@ -390,8 +433,6 @@ func init_() error {
 			}
 		}
 	}
-
-	fmt.Println("Done.")
 
 	return nil
 }

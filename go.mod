@@ -3,6 +3,9 @@ module github.com/supabase/cli
 go 1.16
 
 require (
+	github.com/charmbracelet/bubbles v0.9.0
+	github.com/charmbracelet/bubbletea v0.17.0
+	github.com/charmbracelet/lipgloss v0.3.0
 	github.com/containerd/containerd v1.5.2 // indirect
 	github.com/docker/docker v20.10.7+incompatible
 	github.com/docker/go-connections v0.4.0

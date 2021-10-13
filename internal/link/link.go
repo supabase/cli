@@ -168,7 +168,7 @@ func Link(url string) error {
 		fmt.Println("Generating .globals.sql, .env, and updating dbVersion config...")
 
 		// .globals.sql
-		if err := utils.DockerRun(
+		if _, err := utils.DockerRun(
 			ctx,
 			dbId,
 			&container.Config{
@@ -227,7 +227,7 @@ func Link(url string) error {
 
 		// 1. Create shadow db and run migrations.
 		{
-			if err := utils.DockerRun(
+			if _, err := utils.DockerRun(
 				ctx,
 				dbId,
 				&container.Config{
@@ -308,7 +308,7 @@ EOSQL
 
 		// 2. Diff deploy db (source) & shadow db (target) and write it as a new migration.
 		{
-			if err := utils.DockerRun(
+			if _, err := utils.DockerRun(
 				ctx,
 				differId,
 				&container.Config{
