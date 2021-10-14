@@ -10,7 +10,7 @@ This tour assumes you have the following installed in your environment:
 - Node.js
 - Docker (make sure the daemon is up and running)
 - A Postgres client (can be psql, SQL IDEs, etc.)
-- Supabase CLI (follow the instructions [here](https://github.com/supabase/cli/tree/new) to install)
+- Supabase CLI (follow the instructions [here](https://github.com/supabase/cli) to install)
 
 You also need a new Supabase project. Take note of the DB connection string in `Settings > Database > Connection string`. Once you have it set up, clone this repository and `cd` to `examples/tour`.
 

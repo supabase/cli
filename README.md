@@ -30,13 +30,6 @@ scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
 scoop install supabase/supabase
 ```
 
-<!-- TODO: Waiting for `new` to be merged to `main` -->
-<!-- #### Go (>= 1.16) -->
-
-<!-- ```sh -->
-<!-- go get github.com/supabase/cli -->
-<!-- ``` -->
-
 ### Run the CLI
 
 ```sh
