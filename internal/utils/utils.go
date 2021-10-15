@@ -60,7 +60,7 @@ var (
 	FallbackGlobalsSql []byte
 
 	Docker = func() *client.Client {
-		docker, err := client.NewClientWithOpts(client.FromEnv)
+		docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "❌ Failed to initialize Docker client.")
 			os.Exit(1)
