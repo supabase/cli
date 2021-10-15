@@ -262,10 +262,10 @@ func run(p *tea.Program) error {
 
 	initializedDbs := []string{currBranch}
 
+	_ = os.RemoveAll("supabase/.temp")
 	if err := os.Mkdir("supabase/.temp", 0755); err != nil {
 		return err
 	}
-	defer os.RemoveAll("supabase/.temp")
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
