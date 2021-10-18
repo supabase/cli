@@ -36,7 +36,7 @@ func Init() error {
 		}
 
 		if _, err := utils.GetGitRoot(); err != nil {
-			return errors.New("Error finding Git root. Are you in a Git repository?")
+			return err
 		}
 
 		if err := utils.AssertDockerIsRunning(); err != nil {

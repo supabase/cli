@@ -261,18 +261,29 @@ func GetGitRoot() (*string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	for {
 		_, err := os.ReadDir(".git")
+
 		if err == nil {
 			gitRoot, err := os.Getwd()
 			if err != nil {
 				return nil, err
 			}
+
 			if err := os.Chdir(origWd); err != nil {
 				return nil, err
 			}
+
 			return &gitRoot, nil
 		}
+
+		if cwd, err := os.Getwd(); err != nil {
+			return nil, err
+		} else if cwd == "/" {
+			return nil, errors.New("Cannot find Git root. Are you in a Git repository?")
+		}
+
 		if err := os.Chdir(".."); err != nil {
 			return nil, err
 		}
