@@ -247,6 +247,7 @@ func DockerRemoveAll() {
 			}); err != nil {
 				// TODO: Handle errors
 				// fmt.Fprintln(os.Stderr, err)
+				_ = err
 			}
 
 			wg.Done()

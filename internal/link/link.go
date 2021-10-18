@@ -439,7 +439,9 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			f.Write(diffBytes)
+			if _, err := f.Write(diffBytes); err != nil {
+				return err
+			}
 
 			if err := f.Close(); err != nil {
 				return err
