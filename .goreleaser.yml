@@ -33,3 +33,9 @@ scoop:
   homepage: https://supabase.io
   description: Supabase CLI
   license: MIT
+snapcrafts:
+  -
+    publish: true
+    summary: Command Line Interface tool for managing a local Supabase instance.
+    confinement: strict 
+    grade: stable
