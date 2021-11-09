@@ -390,6 +390,8 @@ func run(p *tea.Program) error {
 		}
 	}
 
+	p.Send(utils.StatusMsg("Starting db container..."))
+
 	// Start postgres.
 	{
 		if _, err := utils.DockerRun(
