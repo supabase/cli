@@ -23,6 +23,11 @@ brews:
     homepage: https://supabase.io
     description: Supabase CLI
     license: MIT
+    install: |
+      bin.install "supabase"
+      (bash_completion/"supabase").write `#{bin}/supabase completion bash`
+      (fish_completion/"supabase.fish").write `#{bin}/supabase completion fish`
+      (zsh_completion/"_supabase").write `#{bin}/supabase completion zsh`
 scoop:
   bucket:
     owner: supabase
