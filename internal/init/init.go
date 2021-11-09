@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"text/template"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -17,7 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -141,8 +138,6 @@ const (
 	latestDbImage   = "supabase/postgres:13.3.0" // Latest supabase/postgres image on hosted platform.
 	latestDbVersion = "130003"
 	netId           = "supabase_init_net"
-	dbId            = "supabase_init_db"
-	differId        = "supabase_init_differ"
 )
 
 var (
@@ -199,168 +194,13 @@ func run(p *tea.Program) error {
 		}
 	}
 
-	p.Send(utils.StatusMsg("Generating initial migration..."))
-
-	// 1. Write `database`.
-	{
-		if err := os.Mkdir("supabase", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database/functions", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database/materialized_views", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database/tables", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database/types", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/database/views", 0755); err != nil {
-			return err
-		}
-
-		if err := os.Mkdir("supabase/.temp", 0755); err != nil {
-			return err
-		}
-		defer os.RemoveAll("supabase/.temp")
-		if err := os.WriteFile(
-			"supabase/.temp/0_globals.sql",
-			utils.FallbackGlobalsSql,
-			0644,
-		); err != nil {
-			return err
-		}
-		if err := os.WriteFile(
-			"supabase/.temp/1_init.sql",
-			initMigrationSql,
-			0644,
-		); err != nil {
-			return err
-		}
-
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
-		if _, err := utils.DockerRun(
-			ctx,
-			dbId,
-			&container.Config{
-				Image: latestDbImage,
-				Env:   []string{"POSTGRES_PASSWORD=postgres"},
-				Cmd: []string{
-					"postgres", "-c", "wal_level=logical",
-				},
-			},
-			&container.HostConfig{
-				Binds:       []string{cwd + "/supabase/.temp:/docker-entrypoint-initdb.d"},
-				NetworkMode: netId,
-			},
-		); err != nil {
-			return err
-		}
-
-		out, err := utils.DockerRun(ctx, differId, &container.Config{
-			Image: utils.DifferImage,
-			Cmd: []string{
-				"--json-diff",
-				"postgres://postgres:postgres@" + dbId + ":5432/postgres",
-				"postgres://postgres:postgres@" + dbId + ":5432/template1",
-			},
-		}, &container.HostConfig{
-			NetworkMode: netId,
-		})
-		if err != nil {
-			return err
-		}
-
-		diffBytes, err := utils.ProcessDiffOutput(p, out)
-		if err != nil {
-			return err
-		}
-
-		var diffJson []utils.DiffEntry
-		if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
-			return err
-		}
-
-		for _, diffEntry := range diffJson {
-			if utils.IsSchemaIgnoredFromDump(diffEntry.GroupName) ||
-				(diffEntry.SourceSchemaName != nil && utils.IsSchemaIgnoredFromDump(*diffEntry.SourceSchemaName)) {
-				continue
-			}
-
-			switch diffEntry.Type {
-			case "function":
-				re := regexp.MustCompile(`(.+)\(.*\)`)
-				name := re.FindStringSubmatch(diffEntry.Title)[1]
-				if err := os.WriteFile(
-					"supabase/database/functions/"+diffEntry.GroupName+"."+name+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "mview":
-				if err := os.WriteFile(
-					"supabase/database/materialized_views/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "table":
-				if err := os.WriteFile(
-					"supabase/database/tables/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "trigger_function":
-				re := regexp.MustCompile(`(.+)\(.*\)`)
-				var schema string
-				if diffEntry.SourceSchemaName == nil {
-					schema = "public"
-				} else {
-					schema = *diffEntry.SourceSchemaName
-				}
-				name := re.FindStringSubmatch(diffEntry.Title)[1]
-				if err := os.WriteFile(
-					"supabase/database/functions/"+schema+"."+name+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "type":
-				if err := os.WriteFile(
-					"supabase/database/types/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "view":
-				if err := os.WriteFile(
-					"supabase/database/views/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			}
-		}
+	if err := os.Mkdir("supabase", 0755); err != nil {
+		return err
 	}
 
-	// 2. Write `migrations`.
+	p.Send(utils.StatusMsg("Generating initial migration..."))
+
+	// 1. Write `migrations`.
 	if err := os.Mkdir("supabase/migrations", 0755); err != nil {
 		return err
 	}
@@ -372,12 +212,12 @@ func run(p *tea.Program) error {
 		return err
 	}
 
-	// 3. Write `.globals.sql`.
+	// 2. Write `.globals.sql`.
 	if err := os.WriteFile("supabase/.globals.sql", utils.FallbackGlobalsSql, 0644); err != nil {
 		return err
 	}
 
-	// 4. Write `config.json`.
+	// 3. Write `config.json`.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -400,12 +240,12 @@ func run(p *tea.Program) error {
 		}
 	}
 
-	// 5. Write `seed.sql`.
+	// 4. Write `seed.sql`.
 	if err := os.WriteFile("supabase/seed.sql", initSeedSql, 0644); err != nil {
 		return err
 	}
 
-	// 6. Append to `.gitignore`.
+	// 5. Append to `.gitignore`.
 	{
 		gitRoot, err := utils.GetGitRoot()
 		if err != nil {

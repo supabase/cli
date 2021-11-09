@@ -3,12 +3,10 @@ package dump
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -226,128 +224,9 @@ EOSQL
 		}
 	}
 
-	p.Send(utils.StatusMsg("Writing structured dump to supabase/database..."))
-
-	// 3. Dump to `database`.
-	{
-		os.RemoveAll("supabase/.temp/database")
-		if err := os.Mkdir("supabase/.temp/database", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/.temp/database/functions", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/.temp/database/materialized_views", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/.temp/database/tables", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/.temp/database/types", 0755); err != nil {
-			return err
-		}
-		if err := os.Mkdir("supabase/.temp/database/views", 0755); err != nil {
-			return err
-		}
-
-		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
-			"/venv/bin/python3", "-u", "cli.py", "--json-diff",
-			"postgres://postgres:postgres@" + utils.DbId + ":5432/" + currBranch,
-			"postgres://postgres:postgres@" + utils.DbId + ":5432/template1",
-		})
-		if err != nil {
-			return err
-		}
-
-		diffBytes, err := utils.ProcessDiffOutput(p, out)
-		if err != nil {
-			return err
-		}
-
-		var diffJson []utils.DiffEntry
-		if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
-			return err
-		}
-
-		for _, diffEntry := range diffJson {
-			if utils.IsSchemaIgnoredFromDump(diffEntry.GroupName) ||
-				(diffEntry.SourceSchemaName != nil && utils.IsSchemaIgnoredFromDump(*diffEntry.SourceSchemaName)) {
-				continue
-			}
-
-			switch diffEntry.Type {
-			case "function":
-				re := regexp.MustCompile(`(.+)\(.*\)`)
-				name := re.FindStringSubmatch(diffEntry.Title)[1]
-				if err := os.WriteFile(
-					"supabase/.temp/database/functions/"+diffEntry.GroupName+"."+name+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "mview":
-				if err := os.WriteFile(
-					"supabase/.temp/database/materialized_views/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "table":
-				if err := os.WriteFile(
-					"supabase/.temp/database/tables/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "trigger_function":
-				re := regexp.MustCompile(`(.+)\(.*\)`)
-				var schema string
-				if diffEntry.SourceSchemaName == nil {
-					schema = "public"
-				} else {
-					schema = *diffEntry.SourceSchemaName
-				}
-				name := re.FindStringSubmatch(diffEntry.Title)[1]
-				if err := os.WriteFile(
-					"supabase/.temp/database/functions/"+schema+"."+name+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "type":
-				if err := os.WriteFile(
-					"supabase/.temp/database/types/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			case "view":
-				if err := os.WriteFile(
-					"supabase/.temp/database/views/"+diffEntry.GroupName+"."+diffEntry.Title+".sql",
-					[]byte(diffEntry.SourceDdl),
-					0644,
-				); err != nil {
-					return err
-				}
-			}
-		}
-
-		if err := os.RemoveAll("supabase/database"); err != nil {
-			return err
-		}
-		if err := os.Rename("supabase/.temp/database", "supabase/database"); err != nil {
-			return err
-		}
-	}
-
 	p.Send(utils.StatusMsg("Dropping shadow database..."))
 
-	// 4. Drop shadow db.
+	// 3. Drop shadow db.
 	{
 		out, err := utils.DockerExec(
 			ctx,
