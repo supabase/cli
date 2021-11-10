@@ -30,6 +30,10 @@ scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
 scoop install supabase/supabase
 ```
 
+#### Linux
+
+Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm` file depending on your package manager and run `sudo apk add --allow-untrusted <...>.apk`/`sudo dpkg -i <...>.deb`/`sudo rpm -i <...>.rpm` respectively.
+
 ### Run the CLI
 
 ```sh

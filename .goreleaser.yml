@@ -38,3 +38,12 @@ scoop:
   homepage: https://supabase.io
   description: Supabase CLI
   license: MIT
+nfpms:
+  - maintainer: Supabase
+    description: Supabase CLI
+    homepage: https://github.com/supabase/cli
+    license: MIT
+    formats:
+      - apk
+      - deb
+      - rpm
