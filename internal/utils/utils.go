@@ -43,12 +43,12 @@ const (
 	ShadowDbName   = "supabase_shadow"
 	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
-	GotrueImage    = "supabase/gotrue:v2.1.8"
-	RealtimeImage  = "supabase/realtime:v0.15.0"
+	GotrueImage    = "supabase/gotrue:v2.2.3"
+	RealtimeImage  = "supabase/realtime:v0.17.1"
 	PostgrestImage = "postgrest/postgrest:v8.0.0"
 	StorageImage   = "supabase/storage-api:v0.9.3"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.3"
-	PgmetaImage    = "supabase/postgres-meta:v0.26.1"
+	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
+	PgmetaImage    = "supabase/postgres-meta:v0.27.3"
 )
 
 var (
