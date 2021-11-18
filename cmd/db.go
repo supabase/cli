@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/db/changes"
 	"github.com/supabase/cli/internal/db/commit"
 	"github.com/supabase/cli/internal/db/reset"
 )
@@ -12,6 +13,14 @@ var (
 	dbCmd = &cobra.Command{
 		Use:   "db",
 		Short: "Commit or reset the local database.",
+	}
+
+	dbChangesCmd = &cobra.Command{
+		Use:   "changes",
+		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return changes.Run()
+		},
 	}
 
 	dbCommitCmd = &cobra.Command{
@@ -35,6 +44,7 @@ func init() {
 	dbCommitCmd.Flags().StringVar(&migrationName, "name", "", "Name of the migration.")
 	cobra.CheckErr(dbCommitCmd.MarkFlagRequired("name"))
 
+	dbCmd.AddCommand(dbChangesCmd)
 	dbCmd.AddCommand(dbCommitCmd)
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
