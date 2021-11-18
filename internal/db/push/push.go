@@ -1,4 +1,4 @@
-package deploy
+package push
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 	pgx "github.com/jackc/pgx/v4"
 )
 
-var ctx = context.TODO()
+var ctx = context.Background()
 
-func Deploy() error {
-	url := os.Getenv("SUPABASE_DEPLOY_DB_URL")
+func Run() error {
+	url := os.Getenv("SUPABASE_REMOTE_DB_URL")
 	if url == "" {
-		return errors.New("❌ SUPABASE_DEPLOY_DB_URL is not set.")
+		return errors.New("SUPABASE_REMOTE_DB_URL is not set.")
 	}
 
 	conn, err := pgx.Connect(ctx, url)
@@ -24,9 +24,11 @@ func Deploy() error {
 	}
 	defer conn.Close(context.Background())
 
+	// `schema_migrations` must be a "prefix" of `supabase/migrations`.
+
 	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
 	if err != nil {
-		return errors.New("❌ supabase_migrations.schema_migrations table does not exist.")
+		return errors.New("supabase_migrations.schema_migrations table does not exist.")
 	}
 
 	versions := []string{}
@@ -44,7 +46,7 @@ func Deploy() error {
 	}
 
 	conflictErr := errors.New(
-		"❌ supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.",
+		"supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.",
 	)
 
 	if len(versions) > len(migrations) {
@@ -81,7 +83,7 @@ func Deploy() error {
 		}
 	}
 
-	fmt.Println("Finished supabase deploy.")
+	fmt.Println("Finished `supabase db push`.")
 
 	return nil
 }
