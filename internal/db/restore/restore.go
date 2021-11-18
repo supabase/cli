@@ -24,10 +24,10 @@ func DbRestore() error {
 		utils.LoadConfig()
 		utils.AssertSupabaseStartIsRunning()
 
-		if branchPtr, err := utils.GetCurrentBranch(); err != nil {
+		if branch, err := utils.GetCurrentBranch(); err != nil {
 			return err
-		} else if branchPtr != nil {
-			currBranch = *branchPtr
+		} else {
+			currBranch = branch
 		}
 	}
 
