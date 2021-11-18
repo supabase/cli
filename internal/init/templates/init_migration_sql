@@ -1315,13 +1315,6 @@ GRANT ALL ON FUNCTION extensions.sign(payload json, secret text, algorithm text)
 
 
 --
--- Name: FUNCTION try_cast_double(inp text); Type: ACL; Schema: extensions; Owner: postgres
---
-
-GRANT ALL ON FUNCTION extensions.try_cast_double(inp text) TO dashboard_user;
-
-
---
 -- Name: FUNCTION url_decode(data text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
