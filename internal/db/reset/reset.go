@@ -1,4 +1,4 @@
-package restore
+package reset
 
 import (
 	"bytes"
@@ -18,17 +18,17 @@ import (
 )
 
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func DbRestore() error {
+func Run() error {
 	// Sanity checks.
 	{
 		utils.LoadConfig()
 		utils.AssertSupabaseStartIsRunning()
 
-		if branch, err := utils.GetCurrentBranch(); err != nil {
+		branch, err := utils.GetCurrentBranch()
+		if err != nil {
 			return err
-		} else {
-			currBranch = branch
 		}
+		currBranch = branch
 	}
 
 	s := spinner.NewModel()
@@ -46,13 +46,13 @@ func DbRestore() error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted `supabase db restore`.")
+		return errors.New("Aborted `supabase db reset`.")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
-	fmt.Println("Finished `supabase db restore` on `" + currBranch + "`.")
+	fmt.Println("Finished `supabase db reset` on branch " + currBranch + ".")
 	return nil
 }
 
@@ -188,10 +188,11 @@ EOSQL
 		}
 	}
 
-	// 3. Apply migrations + seed.
+	// 3. Apply migrations + extensions + seed.
 	{
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
+			_ = os.RemoveAll("supabase/.branches/" + currBranch)
 			return err
 		}
 
@@ -200,6 +201,7 @@ EOSQL
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 
@@ -212,34 +214,70 @@ EOSQL
 `,
 			})
 			if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 		}
 
-		p.Send(utils.StatusMsg("Applying seed..."))
+		p.Send(utils.StatusMsg("Applying extensions.sql..."))
 
-		content, err := os.ReadFile("supabase/seed.sql")
-		if errors.Is(err, os.ErrNotExist) {
-			// skip
-		} else if err != nil {
-			return err
-		} else {
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+		{
+			content, err := os.ReadFile("supabase/extensions.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
 EOSQL
 `,
-			})
-			if err != nil {
-				return err
+				})
+				if err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+		}
+
+		p.Send(utils.StatusMsg("Applying seed.sql..."))
+
+		{
+			content, err := os.ReadFile("supabase/seed.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
 			}
 		}
 	}

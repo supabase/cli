@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/db/dump"
-	"github.com/supabase/cli/internal/db/restore"
+	"github.com/supabase/cli/internal/db/commit"
+	"github.com/supabase/cli/internal/db/reset"
 )
 
 var (
@@ -11,31 +11,31 @@ var (
 
 	dbCmd = &cobra.Command{
 		Use:   "db",
-		Short: "Dump or restore the local database.",
+		Short: "Commit or reset the local database.",
 	}
 
-	dbDumpCmd = &cobra.Command{
-		Use:   "dump",
-		Short: "Diffs the local database with current migrations, writing it as a new migration, and writes a new structured dump.",
+	dbCommitCmd = &cobra.Command{
+		Use:   "commit",
+		Short: "Diffs the local database with current migrations, writing it as a new migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dump.DbDump(migrationName)
+			return commit.Run(migrationName)
 		},
 	}
 
-	dbRestoreCmd = &cobra.Command{
-		Use:   "restore",
-		Short: "Restores the local database to reflect current migrations. Any changes on the local database that is not dumped will be lost.",
+	dbResetCmd = &cobra.Command{
+		Use:   "reset",
+		Short: "Resets the local database to reflect current migrations. Any changes on the local database that is not committed will be lost.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return restore.DbRestore()
+			return reset.Run()
 		},
 	}
 )
 
 func init() {
-	dbDumpCmd.Flags().StringVar(&migrationName, "name", "", "Name of the migration.")
-	cobra.CheckErr(dbDumpCmd.MarkFlagRequired("name"))
+	dbCommitCmd.Flags().StringVar(&migrationName, "name", "", "Name of the migration.")
+	cobra.CheckErr(dbCommitCmd.MarkFlagRequired("name"))
 
-	dbCmd.AddCommand(dbDumpCmd)
-	dbCmd.AddCommand(dbRestoreCmd)
+	dbCmd.AddCommand(dbCommitCmd)
+	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
 }

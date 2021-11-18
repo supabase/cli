@@ -1,4 +1,4 @@
-package dump
+package commit
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 )
 
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func DbDump(name string) error {
+func Run(name string) error {
 	// Sanity checks.
 	{
 		utils.LoadConfig()
@@ -46,13 +46,13 @@ func DbDump(name string) error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted `supabase db dump`.")
+		return errors.New("Aborted `supabase db commit`.")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
-	fmt.Println("Finished `supabase db dump` on `" + currBranch + "`.")
+	fmt.Println("Finished `supabase db commit` on branch " + currBranch + ".")
 	return nil
 }
 
