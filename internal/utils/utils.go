@@ -90,23 +90,13 @@ func GetCurrentTimestamp() string {
 	return time.Now().UTC().Format("20060102150405")
 }
 
-func GetCurrentBranch() (*string, error) {
-	gitRoot, err := GetGitRoot()
+func GetCurrentBranch() (string, error) {
+	branch, err := os.ReadFile("supabase/.branches/_current_branch")
 	if err != nil {
-		return nil, err
-	}
-	content, err := os.ReadFile(*gitRoot + "/.git/HEAD")
-	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	prefix := "ref: refs/heads/"
-	if content := strings.TrimSpace(string(content)); strings.HasPrefix(content, prefix) {
-		branchName := content[len(prefix):]
-		return &branchName, nil
-	}
-
-	return nil, nil
+	return string(branch), nil
 }
 
 func AssertDockerIsRunning() error {
