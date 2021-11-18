@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/db/changes"
 	"github.com/supabase/cli/internal/db/commit"
+	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/reset"
 )
 
@@ -31,6 +32,14 @@ var (
 		},
 	}
 
+	dbPushCmd = &cobra.Command{
+		Use:   "push",
+		Short: "Push new migrations to the remote database.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return push.Run()
+		},
+	}
+
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to reflect current migrations. Any changes on the local database that is not committed will be lost.",
@@ -46,6 +55,7 @@ func init() {
 
 	dbCmd.AddCommand(dbChangesCmd)
 	dbCmd.AddCommand(dbCommitCmd)
+	dbCmd.AddCommand(dbPushCmd)
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
 }
