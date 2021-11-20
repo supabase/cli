@@ -71,6 +71,7 @@ var (
 	ApiPort     string
 	DbPort      string
 	PgmetaPort  string
+	DbVersion   string
 	DbImage     string
 	ProjectId   string
 	NetId       string
@@ -129,8 +130,8 @@ func LoadConfig() {
 	ApiPort = fmt.Sprint(viper.GetUint("ports.api"))
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
 	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
-	dbVersion := viper.GetString("dbVersion")
-	switch dbVersion {
+	DbVersion = viper.GetString("dbVersion")
+	switch DbVersion {
 	case
 		"120000",
 		"120001",
@@ -150,7 +151,7 @@ func LoadConfig() {
 		"130004":
 		DbImage = "supabase/postgres:13.3.0"
 	default:
-		fmt.Fprintln(os.Stderr, "❌ Failed reading config: Invalid dbVersion "+dbVersion+".")
+		fmt.Fprintln(os.Stderr, "Failed reading config: Invalid dbVersion: "+DbVersion+".")
 		os.Exit(1)
 	}
 	ProjectId = viper.GetString("projectId")

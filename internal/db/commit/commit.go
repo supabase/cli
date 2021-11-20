@@ -206,20 +206,12 @@ EOSQL
 			return err
 		}
 
-		f, err := os.Create(
-			"supabase/migrations/" + utils.GetCurrentTimestamp() + "_" + name + ".sql",
-		)
+		diffBytes, err := utils.ProcessDiffOutput(p, out)
 		if err != nil {
 			return err
 		}
 
-		if diffBytes, err := utils.ProcessDiffOutput(p, out); err != nil {
-			return err
-		} else if _, err := f.Write(diffBytes); err != nil {
-			return err
-		}
-
-		if err := f.Close(); err != nil {
+		if err := os.WriteFile("supabase/migrations/"+utils.GetCurrentTimestamp()+"_"+name+".sql", diffBytes, 0644); err != nil {
 			return err
 		}
 	}
