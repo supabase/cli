@@ -15,7 +15,7 @@ var (
 	}
 
 	migrationNewCmd = &cobra.Command{
-		Use:   "new",
+		Use:   "new <migration name>",
 		Short: "Create an empty migration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

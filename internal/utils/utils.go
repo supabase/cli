@@ -49,16 +49,14 @@ const (
 	StorageImage   = "supabase/storage-api:v0.9.3"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
 	PgmetaImage    = "supabase/postgres-meta:v0.28.0"
+
+	// Args: dbname
+	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
+`
 )
 
 var (
-	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
-	// | sed '/^CREATE ROLE postgres;/d' \
-	// | sed '/^ALTER ROLE postgres WITH /d' \
-	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
-	//go:embed templates/fallback_globals_sql
-	FallbackGlobalsSql []byte
-
 	Docker = func() *client.Client {
 		docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 		if err != nil {
@@ -123,7 +121,7 @@ func AssertPortIsAvailable(port string) error {
 func LoadConfig() {
 	viper.SetConfigFile("supabase/config.json")
 	if err := viper.ReadInConfig(); err != nil {
-		fmt.Fprintln(os.Stderr, "❌ Failed to read config:", err)
+		fmt.Fprintln(os.Stderr, "Failed to read config:", err)
 		os.Exit(1)
 	}
 
@@ -168,8 +166,9 @@ func LoadConfig() {
 }
 
 func AssertSupabaseStartIsRunning() {
+	LoadConfig()
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		fmt.Fprintln(os.Stderr, "❌ `supabase start` is not running.")
+		fmt.Fprintln(os.Stderr, "`supabase start` is not running.")
 		os.Exit(1)
 	}
 }
@@ -426,4 +425,13 @@ func ProcessPsqlOutput(out io.Reader, p *tea.Program) error {
 	p.Send(PsqlMsg(nil))
 
 	return nil
+}
+
+func IsBranchNameReserved(branch string) bool {
+	switch branch {
+	case "_current_branch", "main", "supabase_shadow", "postgres", "template0", "template1":
+		return true
+	default:
+		return false
+	}
 }

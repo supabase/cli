@@ -17,6 +17,10 @@ const latestDbVersion = "130003" // Server version of latest supabase/postgres i
 var (
 	//go:embed templates/extensions_sql
 	extensionsSql []byte
+	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
+	// | sed '/^CREATE ROLE postgres;/d' \
+	// | sed '/^ALTER ROLE postgres WITH /d' \
+	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
 	//go:embed templates/globals_sql
 	globalsSql []byte
 	// pg_dump --dbname $DB_URL

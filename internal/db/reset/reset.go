@@ -21,7 +21,6 @@ import (
 func Run() error {
 	// Sanity checks.
 	{
-		utils.LoadConfig()
 		utils.AssertSupabaseStartIsRunning()
 
 		branch, err := utils.GetCurrentBranch()
@@ -136,11 +135,6 @@ func (m model) View() string {
 	return m.spinner.View() + m.status + progress + psqlOutputs
 }
 
-// Args: dbname
-const terminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
-`
-
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
 
@@ -171,7 +165,7 @@ func run(p *tea.Program) (err error) {
 				"&& dropdb --force --username postgres '" + currBranch + "' " +
 				"&& createdb --username postgres '" + currBranch + `'
 BEGIN;
-` + fmt.Sprintf(terminateDbSqlFmt, currBranch) + `
+` + fmt.Sprintf(utils.TerminateDbSqlFmt, currBranch) + `
 COMMIT;
 EOSQL
 `,
