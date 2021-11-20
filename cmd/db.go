@@ -2,17 +2,52 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/db/branch/create"
+	"github.com/supabase/cli/internal/db/branch/delete"
+	"github.com/supabase/cli/internal/db/branch/list"
 	"github.com/supabase/cli/internal/db/changes"
 	"github.com/supabase/cli/internal/db/commit"
 	"github.com/supabase/cli/internal/db/push"
 	remoteCommit "github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/remote/set"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/switch_"
 )
 
 var (
 	dbCmd = &cobra.Command{
 		Use: "db",
+	}
+
+	dbBranchCmd = &cobra.Command{
+		Use:   "branch",
+		Short: "Manage branches. Each branch is associated with a separate database.",
+	}
+
+	dbBranchCreateCmd = &cobra.Command{
+		Use:   "create <branch name>",
+		Short: "Create a branch.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return create.Run(args[0])
+		},
+	}
+
+	dbBranchDeleteCmd = &cobra.Command{
+		Use:   "delete <branch name>",
+		Short: "Delete a branch.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return delete.Run(args[0])
+		},
+	}
+
+	dbBranchListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List branches.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return list.Run()
+		},
 	}
 
 	dbChangesCmd = &cobra.Command{
@@ -25,8 +60,9 @@ var (
 
 	migrationName string
 	dbCommitCmd   = &cobra.Command{
-		Use:   "commit",
+		Use:   "commit <migration name>",
 		Short: "Diffs the local database with current migrations, writing it as a new migration.",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return commit.Run(migrationName)
 		},
@@ -44,12 +80,12 @@ var (
 		Use: "remote",
 	}
 
-	remoteDbUrl    string
 	dbRemoteSetCmd = &cobra.Command{
-		Use:   "set",
+		Use:   "set <remote database url>",
 		Short: "Set the remote database to push migrations to.",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return set.Run(remoteDbUrl)
+			return set.Run(args[0])
 		},
 	}
 
@@ -68,15 +104,22 @@ var (
 			return reset.Run()
 		},
 	}
+
+	dbSwitchCmd = &cobra.Command{
+		Use:   "switch <branch name>",
+		Short: "Switch branches.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return switch_.Run(args[0])
+		},
+	}
 )
 
 func init() {
-	dbCommitCmd.Flags().StringVar(&migrationName, "name", "", "Name of the migration.")
-	cobra.CheckErr(dbCommitCmd.MarkFlagRequired("name"))
-	dbRemoteSetCmd.Flags().
-		StringVar(&remoteDbUrl, "url", "", "Postgres connection string of the remote database.")
-	cobra.CheckErr(dbRemoteSetCmd.MarkFlagRequired("url"))
-
+	dbBranchCmd.AddCommand(dbBranchCreateCmd)
+	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
+	dbBranchCmd.AddCommand(dbBranchListCmd)
+	dbCmd.AddCommand(dbBranchCmd)
 	dbCmd.AddCommand(dbChangesCmd)
 	dbCmd.AddCommand(dbCommitCmd)
 	dbCmd.AddCommand(dbPushCmd)
@@ -84,5 +127,6 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
 	dbCmd.AddCommand(dbResetCmd)
+	dbCmd.AddCommand(dbSwitchCmd)
 	rootCmd.AddCommand(dbCmd)
 }
