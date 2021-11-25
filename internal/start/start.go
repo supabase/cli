@@ -596,13 +596,15 @@ EOSQL
 		&container.Config{
 			Image: utils.GotrueImage,
 			Env: []string{
+				"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
+
 				"GOTRUE_API_HOST=0.0.0.0",
 				"GOTRUE_API_PORT=9999",
 
 				"GOTRUE_DB_DRIVER=postgres",
 				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
 
-				"GOTRUE_SITE_URL=http://localhost:8000",
+				"GOTRUE_SITE_URL=http://localhost:3000",
 				"GOTRUE_DISABLE_SIGNUP=false",
 
 				"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
@@ -615,6 +617,10 @@ EOSQL
 				"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
 				"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
 				"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
+				"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
 
 				"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 				"GOTRUE_SMS_AUTOCONFIRM=true",
