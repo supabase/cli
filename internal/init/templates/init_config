@@ -3,7 +3,8 @@
   "ports": {
     "api": 54321,
     "db": 54322,
-    "pgMeta": 54323
+    "pgMeta": 54323,
+    "inbucket": 54324
   },
   "dbVersion": "{{ .DbVersion }}",
   "excludeSchemas": ["extensions"]

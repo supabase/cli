@@ -50,6 +50,9 @@ func Start() error {
 		if err := utils.AssertPortIsAvailable(utils.PgmetaPort); err != nil {
 			return err
 		}
+		if err := utils.AssertPortIsAvailable(utils.InbucketPort); err != nil {
+			return err
+		}
 	}
 
 	s := spinner.NewModel()
@@ -154,6 +157,7 @@ func (m model) View() string {
 	if m.started {
 		return `Started local development setup.
 API URL: http://localhost:` + utils.ApiPort + `
+Inbucket URL: http://localhost:` + utils.InbucketPort + `
 DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
 anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
 service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
@@ -314,6 +318,19 @@ func run(p *tea.Program) error {
 			out, err := utils.Docker.ImagePull(
 				ctx,
 				"docker.io/"+utils.GotrueImage,
+				types.ImagePullOptions{},
+			)
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.InbucketImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -592,14 +609,30 @@ EOSQL
 				"GOTRUE_JWT_EXP=3600",
 				"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 
-				"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
-				"GOTRUE_MAILER_AUTOCONFIRM=true",
+				"GOTRUE_MAILER_AUTOCONFIRM=false",
+				"GOTRUE_SMTP_HOST=" + utils.InbucketId,
+				"GOTRUE_SMTP_PORT=2500",
+				"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
+				"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
+				"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
 
 				"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 				"GOTRUE_SMS_AUTOCONFIRM=true",
 			},
 		},
 		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
+	}
+
+	// Start Inbucket.
+	if _, err := utils.DockerRun(ctx, utils.InbucketId, &container.Config{
+		Image: utils.InbucketImage,
+		}, 
+		&container.HostConfig{
+			PortBindings: nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
+			NetworkMode:  container.NetworkMode(utils.NetId),
+		},
 	); err != nil {
 		return err
 	}
