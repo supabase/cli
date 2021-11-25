@@ -353,7 +353,7 @@ EOSQL
 			&container.Config{
 				Image: utils.DifferImage,
 				Entrypoint: []string{
-					"sh", "-c", "/venv/bin/python3 -u cli.py " +
+					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " +
 						"'" + url + "' " +
 						"'postgres://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
