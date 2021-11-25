@@ -15,7 +15,7 @@ var ctx = context.Background()
 func Run() error {
 	url := os.Getenv("SUPABASE_REMOTE_DB_URL")
 	if url == "" {
-		return errors.New("SUPABASE_REMOTE_DB_URL is not set.")
+		return errors.New("Remote database is not set. Run `supabase db remote set` first.")
 	}
 
 	conn, err := pgx.Connect(ctx, url)

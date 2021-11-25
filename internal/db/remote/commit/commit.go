@@ -266,7 +266,7 @@ func run(p *tea.Program, url string) error {
 		{
 			globalsSql, err := os.ReadFile("supabase/globals.sql")
 			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find `supabase/globals.sql`. If you set up the project with an older version of the CLI, follow the migration steps on https://github.com/supabase/cli/releases.")
+				return errors.New("Cannot find `supabase/globals.sql`.")
 			} else if err != nil {
 				return err
 			}
@@ -290,7 +290,7 @@ EOSQL
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find `supabase/extensions.sql`. If you set up the project with an older version of the CLI, follow the migration steps on https://github.com/supabase/cli/releases.")
+				return errors.New("Cannot find `supabase/extensions.sql`.")
 			} else if err != nil {
 				return err
 			}
