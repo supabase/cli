@@ -58,13 +58,12 @@ var (
 		},
 	}
 
-	migrationName string
 	dbCommitCmd   = &cobra.Command{
 		Use:   "commit <migration name>",
 		Short: "Diffs the local database with current migrations, writing it as a new migration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return commit.Run(migrationName)
+			return commit.Run(args[0])
 		},
 	}
 
