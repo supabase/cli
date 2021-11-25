@@ -197,7 +197,7 @@ EOSQL
 	// 2. Diff it (target) with local db (source), write it as a new migration.
 	{
 		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
-			"sh", "-c", "/venv/bin/python3 -u cli.py " +
+			"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " +
 				"'postgres://postgres:postgres@" + utils.DbId + ":5432/" + currBranch + "' " +
 				"'postgres://postgres:postgres@" + utils.DbId + ":5432/" + utils.ShadowDbName + "'",
 		})
