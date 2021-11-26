@@ -129,7 +129,9 @@ func LoadConfig() {
 	}
 
 	ApiPort = fmt.Sprint(viper.GetUint("ports.api"))
-	InbucketPort = fmt.Sprint(viper.GetUint("ports.inbucket"))
+	if viper.IsSet("ports.inbucket") {
+		InbucketPort = fmt.Sprint(viper.GetUint("ports.inbucket"))
+	}
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
 	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
 	DbVersion = viper.GetString("dbVersion")

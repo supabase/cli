@@ -706,29 +706,35 @@ EOSQL
 
 	// Start gotrue.
 
-	if _, err := utils.DockerRun(
-		ctx,
-		utils.GotrueId,
-		&container.Config{
-			Image: utils.GotrueImage,
-			Env: []string{
-				"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
+	{
+		env := []string{
+			"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
 
-				"GOTRUE_API_HOST=0.0.0.0",
-				"GOTRUE_API_PORT=9999",
+			"GOTRUE_API_HOST=0.0.0.0",
+			"GOTRUE_API_PORT=9999",
 
-				"GOTRUE_DB_DRIVER=postgres",
-				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
+			"GOTRUE_DB_DRIVER=postgres",
+			"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
 
-				"GOTRUE_SITE_URL=http://localhost:3000",
-				"GOTRUE_DISABLE_SIGNUP=false",
+			"GOTRUE_SITE_URL=http://localhost:3000",
+			"GOTRUE_DISABLE_SIGNUP=false",
 
-				"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"GOTRUE_JWT_EXP=3600",
-				"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"GOTRUE_JWT_EXP=3600",
+			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 
+			"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
+
+			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
+			"GOTRUE_SMS_AUTOCONFIRM=true",
+		}
+
+		if utils.InbucketPort == "" {
+			env = append(env, "GOTRUE_MAILER_AUTOCONFIRM=true")
+		} else {
+			env = append(env,
 				"GOTRUE_MAILER_AUTOCONFIRM=false",
-				"GOTRUE_SMTP_HOST=" + utils.InbucketId,
+				"GOTRUE_SMTP_HOST="+utils.InbucketId,
 				"GOTRUE_SMTP_PORT=2500",
 				"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
 				"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
@@ -737,14 +743,20 @@ EOSQL
 				"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
 				"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
 				"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+			)
+		}
 
-				"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
-				"GOTRUE_SMS_AUTOCONFIRM=true",
+		if _, err := utils.DockerRun(
+			ctx,
+			utils.GotrueId,
+			&container.Config{
+				Image: utils.GotrueImage,
+				Env:   env,
 			},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
-	); err != nil {
-		return err
+			&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Inbucket.
