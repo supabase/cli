@@ -750,7 +750,7 @@ EOSQL
 	// Start Inbucket.
 	if _, err := utils.DockerRun(ctx, utils.InbucketId, &container.Config{
 		Image: utils.InbucketImage,
-		}, 
+	},
 		&container.HostConfig{
 			PortBindings: nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
 			NetworkMode:  container.NetworkMode(utils.NetId),

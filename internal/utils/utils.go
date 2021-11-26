@@ -71,7 +71,7 @@ var (
 	InbucketPort string
 	DbPort       string
 	PgmetaPort   string
-  DbVersion    string
+	DbVersion    string
 	DbImage      string
 	ProjectId    string
 	NetId        string

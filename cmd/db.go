@@ -58,7 +58,7 @@ var (
 		},
 	}
 
-	dbCommitCmd   = &cobra.Command{
+	dbCommitCmd = &cobra.Command{
 		Use:   "commit <migration name>",
 		Short: "Diffs the local database with current migrations, writing it as a new migration.",
 		Args:  cobra.ExactArgs(1),
