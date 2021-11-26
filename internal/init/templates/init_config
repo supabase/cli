@@ -6,6 +6,5 @@
     "pgMeta": 54323,
     "inbucket": 54324
   },
-  "dbVersion": "{{ .DbVersion }}",
-  "excludeSchemas": ["extensions"]
+  "dbVersion": "{{ .DbVersion }}"
 }

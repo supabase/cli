@@ -1,13 +1,12 @@
-# Supabase CLI MkII (WIP)
+# Supabase CLI (WIP)
 
 [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
 This repository contains all the functionality for our CLI. It is still under heavy development.
 
 - [x] Running Supabase locally
-- [ ] Managing database migrations (in progress)
-- [ ] Pushing your local changes to production (in progress)
-- [ ] Self-hosting
+- [x] Managing database migrations
+- [x] Pushing your local changes to production
 - [ ] Manage your Supabase Account
 - [ ] Manage your Supabase Projects
 - [ ] Generating types directly from your database schema
@@ -40,25 +39,9 @@ Linux packages are provided in [Releases](https://github.com/supabase/cli/releas
 supabase help
 ```
 
-## Command reference
+## Breaking changes
 
-```
-Usage:
-  supabase [command]
-
-Available Commands:
-  db dump         Diffs the local database with current migrations, writing it as a new migration, and writes a new structured dump.
-  db restore      Restores the local database to reflect current migrations. Any changes on the local database that is not dumped will be lost.
-  deploy          Deploy current migrations to prod.
-  help            Help about any command
-  init            Initialize a project to use Supabase CLI.
-  link            Link the current project to a remote deploy database.
-  start           Start the Supabase local development setup.
-
-Flags:
-  -h, --help      help for supabase
-  -v, --version   version for supabase
-```
+The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Feel free to file an issue if these steps don't work.
 
 ## Developing
 
@@ -66,7 +49,7 @@ To run from source:
 
 ```sh
 # Go >= 1.16
-go run -ldflags "-X github.com/supabase/cli/cmd.version=0.0.0" main.go help
+go run -ldflags "-X github.com/supabase/cli/cmd.version=0.0.0" . help
 ```
 
 ---

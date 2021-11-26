@@ -1,4 +1,4 @@
-package dump
+package reset
 
 import (
 	"bytes"
@@ -18,17 +18,16 @@ import (
 )
 
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func DbDump(name string) error {
+func Run() error {
 	// Sanity checks.
 	{
-		utils.LoadConfig()
 		utils.AssertSupabaseStartIsRunning()
 
-		if branchPtr, err := utils.GetCurrentBranch(); err != nil {
+		branch, err := utils.GetCurrentBranch()
+		if err != nil {
 			return err
-		} else if branchPtr != nil {
-			currBranch = *branchPtr
 		}
+		currBranch = branch
 	}
 
 	s := spinner.NewModel()
@@ -38,7 +37,7 @@ func DbDump(name string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, name)
+		errCh <- run(p)
 		p.Send(tea.Quit())
 	}()
 
@@ -46,13 +45,13 @@ func DbDump(name string) error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted `supabase db dump`.")
+		return errors.New("Aborted `supabase db reset`.")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
-	fmt.Println("Finished `supabase db dump` on `" + currBranch + "`.")
+	fmt.Println("Finished `supabase db reset` on branch " + currBranch + ".")
 	return nil
 }
 
@@ -142,16 +141,35 @@ var (
 	currBranch string
 )
 
-func run(p *tea.Program, name string) error {
-	p.Send(utils.StatusMsg("Creating shadow database..."))
+func run(p *tea.Program) (err error) {
+	// 1. Pause realtime. Need to be done before recreating the db because we
+	// cannot drop the db while there's an active logical replication slot.
 
-	// 1. Create shadow db and run migrations
+	if err := utils.Docker.ContainerPause(ctx, utils.RealtimeId); err != nil {
+		return err
+	}
+	defer func() {
+		if err_ := utils.Docker.ContainerUnpause(ctx, utils.RealtimeId); err_ != nil {
+			err = errors.New("Failed to unpause Realtime: " + err_.Error())
+			return
+		}
+	}()
+
+	p.Send(utils.StatusMsg("Resetting database..."))
+
+	// 2. Recreate db.
 	{
-		out, err := utils.DockerExec(
-			ctx,
-			utils.DbId,
-			[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
-		)
+		// https://dba.stackexchange.com/a/11895
+		out, err := utils.DockerExec(ctx, utils.DbId, []string{
+			"sh", "-c", "psql --username postgres <<'EOSQL' " +
+				"&& dropdb --force --username postgres '" + currBranch + "' " +
+				"&& createdb --username postgres '" + currBranch + `'
+BEGIN;
+` + fmt.Sprintf(utils.TerminateDbSqlFmt, currBranch) + `
+COMMIT;
+EOSQL
+`,
+		})
 		if err != nil {
 			return err
 		}
@@ -160,11 +178,15 @@ func run(p *tea.Program, name string) error {
 			return err
 		}
 		if errBuf.Len() > 0 {
-			return errors.New("Error creating shadow database: " + errBuf.String())
+			return errors.New("Error resetting database: " + errBuf.String())
 		}
+	}
 
+	// 3. Apply migrations + extensions + seed.
+	{
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
+			_ = os.RemoveAll("supabase/.branches/" + currBranch)
 			return err
 		}
 
@@ -173,11 +195,12 @@ func run(p *tea.Program, name string) error {
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
+				"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -185,63 +208,71 @@ EOSQL
 `,
 			})
 			if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 		}
-	}
 
-	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
+		p.Send(utils.StatusMsg("Applying extensions.sql..."))
 
-	// 2. Diff it (target) with local db (source), write it as a new migration.
-	{
-		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
-			"sh", "-c", "/venv/bin/python3 -u cli.py " +
-				"'postgres://postgres:postgres@" + utils.DbId + ":5432/" + currBranch + "' " +
-				"'postgres://postgres:postgres@" + utils.DbId + ":5432/" + utils.ShadowDbName + "'",
-		})
-		if err != nil {
-			return err
+		{
+			content, err := os.ReadFile("supabase/extensions.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+			}
 		}
 
-		f, err := os.Create(
-			"supabase/migrations/" + utils.GetCurrentTimestamp() + "_" + name + ".sql",
-		)
-		if err != nil {
-			return err
-		}
+		p.Send(utils.StatusMsg("Applying seed.sql..."))
 
-		if diffBytes, err := utils.ProcessDiffOutput(p, out); err != nil {
-			return err
-		} else if _, err := f.Write(diffBytes); err != nil {
-			return err
-		}
-
-		if err := f.Close(); err != nil {
-			return err
-		}
-	}
-
-	p.Send(utils.StatusMsg("Dropping shadow database..."))
-
-	// 3. Drop shadow db.
-	{
-		out, err := utils.DockerExec(
-			ctx,
-			utils.DbId,
-			[]string{"dropdb", "--username", "postgres", utils.ShadowDbName},
-		)
-		if err != nil {
-			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error dropping shadow database: " + errBuf.String())
+		{
+			content, err := os.ReadFile("supabase/seed.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+			}
 		}
 	}
 
