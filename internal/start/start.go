@@ -765,15 +765,22 @@ EOSQL
 	}
 
 	// Start Inbucket.
-	if _, err := utils.DockerRun(ctx, utils.InbucketId, &container.Config{
-		Image: utils.InbucketImage,
-	},
-		&container.HostConfig{
-			PortBindings: nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
-			NetworkMode:  container.NetworkMode(utils.NetId),
-		},
-	); err != nil {
-		return err
+	{
+		hostConfig := container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}
+		if utils.InbucketPort != "" {
+			hostConfig.PortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}}
+		}
+
+		if _, err := utils.DockerRun(
+			ctx,
+			utils.InbucketId,
+			&container.Config{
+				Image: utils.InbucketImage,
+			},
+			&hostConfig,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Realtime.
