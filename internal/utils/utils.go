@@ -44,6 +44,7 @@ const (
 	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
 	GotrueImage    = "supabase/gotrue:v2.2.6"
+	InbucketImage  = "inbucket/inbucket:stable"
 	RealtimeImage  = "supabase/realtime:v0.19.0"
 	PostgrestImage = "postgrest/postgrest:v8.0.0"
 	StorageImage   = "supabase/storage-api:v0.9.3"
@@ -66,22 +67,24 @@ var (
 		return docker
 	}()
 
-	ApiPort     string
-	DbPort      string
-	PgmetaPort  string
-	DbVersion   string
-	DbImage     string
-	ProjectId   string
-	NetId       string
-	DbId        string
-	PgbouncerId string
-	KongId      string
-	GotrueId    string
-	RealtimeId  string
-	RestId      string
-	StorageId   string
-	DifferId    string
-	PgmetaId    string
+	ApiPort      string
+	InbucketPort string
+	DbPort       string
+	PgmetaPort   string
+	DbVersion    string
+	DbImage      string
+	ProjectId    string
+	NetId        string
+	DbId         string
+	PgbouncerId  string
+	KongId       string
+	GotrueId     string
+	InbucketId   string
+	RealtimeId   string
+	RestId       string
+	StorageId    string
+	DifferId     string
+	PgmetaId     string
 )
 
 func GetCurrentTimestamp() string {
@@ -126,6 +129,9 @@ func LoadConfig() {
 	}
 
 	ApiPort = fmt.Sprint(viper.GetUint("ports.api"))
+	if viper.IsSet("ports.inbucket") {
+		InbucketPort = fmt.Sprint(viper.GetUint("ports.inbucket"))
+	}
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
 	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
 	DbVersion = viper.GetString("dbVersion")
@@ -158,6 +164,7 @@ func LoadConfig() {
 	PgbouncerId = "supabase_pgbouncer_" + ProjectId
 	KongId = "supabase_kong_" + ProjectId
 	GotrueId = "supabase_auth_" + ProjectId
+	InbucketId = "supabase_inbucket_" + ProjectId
 	RealtimeId = "supabase_realtime_" + ProjectId
 	RestId = "supabase_rest_" + ProjectId
 	StorageId = "supabase_storage_" + ProjectId
