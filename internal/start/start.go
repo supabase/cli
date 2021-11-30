@@ -157,10 +157,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	// TODO: Unhardcode keys
 	if m.started {
+		maybeInbucket := ""
+		if utils.InbucketPort != "" {
+			maybeInbucket = `
+Inbucket URL: http://localhost:` + utils.InbucketPort
+		}
+
 		return `Started local development setup.
 API URL: http://localhost:` + utils.ApiPort + `
-Inbucket URL: http://localhost:` + utils.InbucketPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + "/postgres" + maybeInbucket + `
 anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
 service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
 	}
