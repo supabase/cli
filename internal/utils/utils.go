@@ -45,7 +45,7 @@ const (
 	KongImage      = "library/kong:2.1"
 	GotrueImage    = "supabase/gotrue:v2.2.6"
 	InbucketImage  = "inbucket/inbucket:stable"
-	RealtimeImage  = "supabase/realtime:v0.18.0"
+	RealtimeImage  = "supabase/realtime:v0.19.0"
 	PostgrestImage = "postgrest/postgrest:v8.0.0"
 	StorageImage   = "supabase/storage-api:v0.9.3"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
