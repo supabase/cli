@@ -47,7 +47,7 @@ func Run() error {
 		if err := utils.AssertPortIsAvailable(utils.DbPort); err != nil {
 			return err
 		}
-		if err := utils.AssertPortIsAvailable(utils.PgmetaPort); err != nil {
+		if err := utils.AssertPortIsAvailable(utils.StudioPort); err != nil {
 			return err
 		}
 		if err := utils.AssertPortIsAvailable(utils.InbucketPort); err != nil {
@@ -165,7 +165,8 @@ Inbucket URL: http://localhost:` + utils.InbucketPort
 
 		return `Started local development setup.
 API URL: http://localhost:` + utils.ApiPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + "/postgres" + maybeInbucket + `
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+Studio URL: http://localhost:` + utils.StudioPort + maybeInbucket + `
 anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
 service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
 	}
@@ -412,7 +413,7 @@ func run(p *tea.Program) error {
 		}
 	}
 
-	p.Send(utils.StatusMsg("Starting db container..."))
+	p.Send(utils.StatusMsg("Starting database..."))
 
 	// Start postgres.
 	{
@@ -710,7 +711,6 @@ EOSQL
 	}
 
 	// Start gotrue.
-
 	{
 		env := []string{
 			"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
@@ -784,7 +784,6 @@ EOSQL
 	}
 
 	// Start Realtime.
-
 	{
 		if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
 			Image: utils.RealtimeImage,
@@ -874,9 +873,26 @@ EOSQL
 				"PG_META_DB_HOST=" + utils.PgbouncerId,
 			},
 		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+	); err != nil {
+		return err
+	}
+
+	// Start Studio.
+	if _, err := utils.DockerRun(
+		ctx,
+		utils.StudioId,
+		&container.Config{
+			Image: utils.StudioImage,
+			Env: []string{
+				"SUPABASE_URL=http://" + utils.KongId + ":8000",
+				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
+				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE",
+			},
+		},
 		&container.HostConfig{
-			PortBindings: nat.PortMap{"8080/tcp": []nat.PortBinding{{HostPort: utils.PgmetaPort}}},
 			NetworkMode:  container.NetworkMode(utils.NetId),
+			PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: utils.StudioPort}}},
 		},
 	); err != nil {
 		return err

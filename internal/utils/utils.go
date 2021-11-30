@@ -50,6 +50,8 @@ const (
 	StorageImage   = "supabase/storage-api:v0.9.3"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
 	PgmetaImage    = "supabase/postgres-meta:v0.28.0"
+	// TODO: Hardcode version once provided upstream.
+	StudioImage = "supabase/studio:latest"
 
 	// Args: dbname
 	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
@@ -70,7 +72,7 @@ var (
 	ApiPort      string
 	InbucketPort string
 	DbPort       string
-	PgmetaPort   string
+	StudioPort   string
 	DbVersion    string
 	DbImage      string
 	ProjectId    string
@@ -85,6 +87,7 @@ var (
 	StorageId    string
 	DifferId     string
 	PgmetaId     string
+	StudioId     string
 )
 
 func GetCurrentTimestamp() string {
@@ -133,7 +136,7 @@ func LoadConfig() {
 		InbucketPort = fmt.Sprint(viper.GetUint("ports.inbucket"))
 	}
 	DbPort = fmt.Sprint(viper.GetUint("ports.db"))
-	PgmetaPort = fmt.Sprint(viper.GetUint("ports.pgMeta"))
+	StudioPort = fmt.Sprint(viper.GetUint("ports.studio"))
 	DbVersion = viper.GetString("dbVersion")
 	switch DbVersion {
 	case
@@ -170,6 +173,7 @@ func LoadConfig() {
 	StorageId = "supabase_storage_" + ProjectId
 	DifferId = "supabase_differ_" + ProjectId
 	PgmetaId = "supabase_pg_meta_" + ProjectId
+	StudioId = "supabase_studio_" + ProjectId
 }
 
 func AssertSupabaseStartIsRunning() {
