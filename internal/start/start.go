@@ -50,6 +50,9 @@ func Run() error {
 		if err := utils.AssertPortIsAvailable(utils.PgmetaPort); err != nil {
 			return err
 		}
+		if err := utils.AssertPortIsAvailable(utils.InbucketPort); err != nil {
+			return err
+		}
 	}
 
 	s := spinner.NewModel()
@@ -154,9 +157,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	// TODO: Unhardcode keys
 	if m.started {
+		maybeInbucket := ""
+		if utils.InbucketPort != "" {
+			maybeInbucket = `
+Inbucket URL: http://localhost:` + utils.InbucketPort
+		}
+
 		return `Started local development setup.
 API URL: http://localhost:` + utils.ApiPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + "/postgres" + maybeInbucket + `
 anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
 service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
 	}
@@ -314,6 +323,19 @@ func run(p *tea.Program) error {
 			out, err := utils.Docker.ImagePull(
 				ctx,
 				"docker.io/"+utils.GotrueImage,
+				types.ImagePullOptions{},
+			)
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.InbucketImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -689,35 +711,76 @@ EOSQL
 
 	// Start gotrue.
 
-	if _, err := utils.DockerRun(
-		ctx,
-		utils.GotrueId,
-		&container.Config{
-			Image: utils.GotrueImage,
-			Env: []string{
-				"GOTRUE_API_HOST=0.0.0.0",
-				"GOTRUE_API_PORT=9999",
+	{
+		env := []string{
+			"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
 
-				"GOTRUE_DB_DRIVER=postgres",
-				"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
+			"GOTRUE_API_HOST=0.0.0.0",
+			"GOTRUE_API_PORT=9999",
 
-				"GOTRUE_SITE_URL=http://localhost:8000",
-				"GOTRUE_DISABLE_SIGNUP=false",
+			"GOTRUE_DB_DRIVER=postgres",
+			"GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
 
-				"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"GOTRUE_JWT_EXP=3600",
-				"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+			"GOTRUE_SITE_URL=http://localhost:3000",
+			"GOTRUE_DISABLE_SIGNUP=false",
 
-				"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
-				"GOTRUE_MAILER_AUTOCONFIRM=true",
+			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"GOTRUE_JWT_EXP=3600",
+			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 
-				"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
-				"GOTRUE_SMS_AUTOCONFIRM=true",
+			"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
+
+			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
+			"GOTRUE_SMS_AUTOCONFIRM=true",
+		}
+
+		if utils.InbucketPort == "" {
+			env = append(env, "GOTRUE_MAILER_AUTOCONFIRM=true")
+		} else {
+			env = append(env,
+				"GOTRUE_MAILER_AUTOCONFIRM=false",
+				"GOTRUE_SMTP_HOST="+utils.InbucketId,
+				"GOTRUE_SMTP_PORT=2500",
+				"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
+				"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
+				"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
+				"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
+				"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+			)
+		}
+
+		if _, err := utils.DockerRun(
+			ctx,
+			utils.GotrueId,
+			&container.Config{
+				Image: utils.GotrueImage,
+				Env:   env,
 			},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
-	); err != nil {
-		return err
+			&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		); err != nil {
+			return err
+		}
+	}
+
+	// Start Inbucket.
+	{
+		hostConfig := container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}
+		if utils.InbucketPort != "" {
+			hostConfig.PortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}}
+		}
+
+		if _, err := utils.DockerRun(
+			ctx,
+			utils.InbucketId,
+			&container.Config{
+				Image: utils.InbucketImage,
+			},
+			&hostConfig,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Realtime.
