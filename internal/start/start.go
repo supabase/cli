@@ -411,6 +411,19 @@ func run(p *tea.Program) error {
 				return err
 			}
 		}
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StudioImage); err != nil {
+			out, err := utils.Docker.ImagePull(
+				ctx,
+				"docker.io/"+utils.StudioImage,
+				types.ImagePullOptions{},
+			)
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+		}
 	}
 
 	p.Send(utils.StatusMsg("Starting database..."))
