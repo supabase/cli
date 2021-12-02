@@ -35,7 +35,7 @@ func Run(url string) error {
 
 	// If `schema_migrations` doesn't exist on the remote database, create it
 	// and insert the timestamp for the init migration.
-	if _, err := conn.Query(ctx, "SELECT 1 FROM supabase_migrations.schema_migrations"); err != nil {
+	if _, err := conn.Exec(ctx, "SELECT 1 FROM supabase_migrations.schema_migrations"); err != nil {
 		tx, err := conn.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
 			return err
@@ -72,7 +72,8 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	}
 	// If `migrations` is not a "prefix" of list of migrations in repo, fail &
 	// warn user.
-	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err != nil {
+	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
+	if err != nil {
 		return err
 	} else {
 		var versions []string
@@ -108,6 +109,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			return conflictErr
 		}
 	}
+	rows.Close()
 
 	// 3. Write .env
 	if err := os.WriteFile("supabase/.env", []byte("SUPABASE_REMOTE_DB_URL="+url), 0644); err != nil {
