@@ -18,18 +18,52 @@ This repository contains all the functionality for our CLI. It is still under he
 
 #### macOS
 
+Available via [Homebrew](https://brew.sh). To install:
+
 ```sh
 brew install supabase/tap/supabase
 ```
 
+To upgrade:
+
+```sh
+brew upgrade supabase
+```
+
 #### Windows
 
-```
+Available via [Scoop](https://scoop.sh). To install:
+
+```powershell
 scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-scoop install supabase/supabase
+scoop install supabase
+```
+
+To upgrade:
+
+```powershell
+scoop update supabase
 ```
 
 #### Linux
+
+Available via [Homebrew](https://brew.sh) and Linux packages.
+
+##### via Homebrew
+
+To install:
+
+```sh
+brew install supabase/tap/supabase
+```
+
+To upgrade:
+
+```sh
+brew upgrade supabase
+```
+
+##### via Linux packages
 
 Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm` file depending on your package manager and run `sudo apk add --allow-untrusted <...>.apk`/`sudo dpkg -i <...>.deb`/`sudo rpm -i <...>.rpm` respectively.
 
@@ -41,7 +75,7 @@ supabase help
 
 ## Breaking changes
 
-The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Feel free to file an issue if these steps don't work.
+The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Please file an issue if these steps don't work!
 
 ## Developing
 
@@ -49,7 +83,7 @@ To run from source:
 
 ```sh
 # Go >= 1.16
-go run -ldflags "-X github.com/supabase/cli/cmd.version=0.0.0" . help
+go run . help
 ```
 
 ---
