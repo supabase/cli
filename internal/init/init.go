@@ -33,10 +33,14 @@ var (
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
 	//go:embed templates/init_gitignore
 	initGitignore []byte
+
+	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold("supabase") + " to reinitialize.")
 )
 
-func Init() error {
-	if err := run(); err != nil {
+func Run() error {
+	if err := run(); errors.Is(err, errAlreadyInitialized) {
+		return err
+	} else if err != nil {
 		_ = os.RemoveAll("supabase")
 		return err
 	}
@@ -48,11 +52,7 @@ func run() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir("supabase"); err == nil {
-			fmt.Fprintln(
-				os.Stderr,
-				"Project already initialized. Remove `supabase` directory to reinitialize.",
-			)
-			os.Exit(1)
+			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -144,6 +144,6 @@ func run() error {
 		}
 	}
 
-	fmt.Println("Finished `supabase init`.")
+	fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
 	return nil
 }

@@ -28,7 +28,9 @@ func Run() error {
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-		utils.LoadConfig()
+		if err := utils.LoadConfig(); err != nil {
+			return err
+		}
 	}
 
 	url := os.Getenv("SUPABASE_REMOTE_DB_URL")

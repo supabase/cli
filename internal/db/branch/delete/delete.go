@@ -13,7 +13,9 @@ import (
 )
 
 func Run(branch string) error {
-	utils.AssertSupabaseStartIsRunning()
+	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		return err
+	}
 
 	if utils.IsBranchNameReserved(branch) {
 		return errors.New("Cannot delete branch " + branch + ": branch is reserved.")
