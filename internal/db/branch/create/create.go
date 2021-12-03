@@ -21,13 +21,13 @@ func Run(branch string) error {
 	}
 
 	if utils.IsBranchNameReserved(branch) {
-		return errors.New("Cannot create branch " + branch + ": branch is reserved.")
+		return errors.New("Cannot create branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
 	if valid, err := regexp.MatchString(`[[:word:]-]+`, branch); err != nil {
 		return err
 	} else if !valid {
-		return errors.New("Branch name " + branch + " is invalid. Must match [0-9A-Za-z_-]+.")
+		return errors.New("Branch name " + utils.Aqua(branch) + " is invalid. Must match [0-9A-Za-z_-]+.")
 	}
 
 	if _, err := os.ReadDir("supabase/.branches/" + branch); errors.Is(err, os.ErrNotExist) {
@@ -35,7 +35,7 @@ func Run(branch string) error {
 	} else if err != nil {
 		return err
 	} else {
-		return errors.New("Branch " + branch + " already exists.")
+		return errors.New("Branch " + utils.Aqua(branch) + " already exists.")
 	}
 
 	currBranch, err := utils.GetCurrentBranch()
@@ -62,7 +62,7 @@ func Run(branch string) error {
 
 		return nil
 	}(); err != nil {
-		return errors.New("Error dumping current branch " + currBranch + ": " + err.Error())
+		return fmt.Errorf("Error dumping current branch %s: %w", utils.Aqua(currBranch), err)
 	}
 
 	if err := func() error {
@@ -88,7 +88,7 @@ EOSQL
 
 		return nil
 	}(); err != nil {
-		return errors.New("Error creating branch " + branch + ": " + err.Error())
+		return fmt.Errorf("Error creating branch %s: %w", utils.Aqua(branch), err)
 	}
 
 	if err := os.Mkdir("supabase/.branches/"+branch, 0755); err != nil {
@@ -98,6 +98,6 @@ EOSQL
 		return err
 	}
 
-	fmt.Println("Created branch " + branch + ".")
+	fmt.Println("Created branch " + utils.Aqua(branch) + ".")
 	return nil
 }

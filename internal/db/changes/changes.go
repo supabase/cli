@@ -47,7 +47,7 @@ func Run() error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted `supabase db changes`.")
+		return errors.New("Aborted " + utils.Aqua("supabase db changes") + ".")
 	}
 	if err := <-errCh; err != nil {
 		return err
@@ -169,7 +169,7 @@ func run(p *tea.Program) error {
 		}
 
 		for _, migration := range migrations {
-			p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
+			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {

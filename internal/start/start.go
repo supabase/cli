@@ -28,9 +28,7 @@ func Run() error {
 	// Sanity checks.
 	{
 		if _, err := os.ReadDir("supabase"); errors.Is(err, os.ErrNotExist) {
-			return errors.New(
-				"Cannot find `supabase` in the current directory. Perhaps you meant to run `supabase init` first?",
-			)
+			return errors.New("Cannot find " + utils.Bold("supabase") + " in the current directory. Have you set up the project with " + utils.Aqua("supabase init") + "?")
 		} else if err != nil {
 			return err
 		}
@@ -72,7 +70,7 @@ func Run() error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		fmt.Println("Stopped `supabase start`.")
+		fmt.Println("Stopped " + utils.Aqua("supabase start") + ".")
 		return nil
 	}
 	if err := <-errCh; err != nil {
@@ -162,15 +160,16 @@ func (m model) View() string {
 		maybeInbucket := ""
 		if utils.InbucketPort != "" {
 			maybeInbucket = `
-Inbucket URL: http://localhost:` + utils.InbucketPort
+    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
 		}
 
 		return `Started local development setup.
-API URL: http://localhost:` + utils.ApiPort + `
-DB URL: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-Studio URL: http://localhost:` + utils.StudioPort + maybeInbucket + `
-anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
-service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
+
+         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
+          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
+        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
 	}
 
 	var progress string
@@ -256,7 +255,7 @@ func run(p *tea.Program) error {
 
 					branch, err := utils.GetCurrentBranch()
 					if err != nil {
-						errCh <- errors.New("Error getting current branch name: " + err.Error())
+						errCh <- fmt.Errorf("Error getting current branch name: %w", err)
 						termCh <- struct{}{}
 						return
 					}
@@ -449,7 +448,7 @@ func run(p *tea.Program) error {
 
 		globalsSql, err := os.ReadFile("supabase/globals.sql")
 		if err != nil {
-			return errors.New("Cannot find `supabase/globals.sql`.")
+			return errors.New("Cannot find " + utils.Bold("supabase/globals.sql") + ".")
 		}
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
@@ -514,7 +513,7 @@ EOSQL
 					return nil
 				}(); err != nil {
 					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					fmt.Fprintln(os.Stderr, "Error restoring branch "+branch.Name()+": "+err.Error())
+					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
 				}
 			}
 		} else if errors.Is(err, os.ErrNotExist) {
@@ -548,11 +547,11 @@ EOSQL
 			}
 
 			{
-				p.Send(utils.StatusMsg("Applying extensions.sql..."))
+				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
 
 				content, err := os.ReadFile("supabase/extensions.sql")
 				if errors.Is(err, os.ErrNotExist) {
-					return errors.New("Cannot find `supabase/extensions.sql`.")
+					return errors.New("Cannot find " + utils.Bold("supabase/extensions.sql") + ".")
 				} else if err != nil {
 					_ = os.RemoveAll("supabase/.branches/main")
 					return err
@@ -583,7 +582,7 @@ EOSQL
 			}
 
 			for _, migration := range migrations {
-				p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
+				p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 				content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 				if err != nil {
@@ -610,7 +609,7 @@ EOSQL
 			}
 
 			{
-				p.Send(utils.StatusMsg("Applying seed.sql..."))
+				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
 
 				content, err := os.ReadFile("supabase/seed.sql")
 				if errors.Is(err, os.ErrNotExist) {
@@ -988,7 +987,7 @@ EOSQL
 func dumpBranches() {
 	branches, err := os.ReadDir("supabase/.branches")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error dumping branches: "+err.Error())
+		fmt.Fprintln(os.Stderr, "Error dumping branches:", err)
 		return
 	}
 
@@ -1019,7 +1018,7 @@ func dumpBranches() {
 
 			return nil
 		}(); err != nil {
-			fmt.Fprintln(os.Stderr, "Error dumping branch "+branch.Name()+": "+err.Error())
+			fmt.Fprintln(os.Stderr, "Error dumping branch "+utils.Aqua(branch.Name())+":", err)
 		}
 	}
 }
