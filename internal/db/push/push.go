@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	pgx "github.com/jackc/pgx/v4"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var ctx = context.Background()
@@ -15,7 +16,7 @@ var ctx = context.Background()
 func Run() error {
 	url := os.Getenv("SUPABASE_REMOTE_DB_URL")
 	if url == "" {
-		return errors.New("Remote database is not set. Run `supabase db remote set` first.")
+		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
 	}
 
 	conn, err := pgx.Connect(ctx, url)
@@ -45,9 +46,7 @@ func Run() error {
 		return err
 	}
 
-	conflictErr := errors.New(
-		"supabase_migrations.schema_migrations table conflicts with the contents of `migrations` directory.",
-	)
+	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
 
 	if len(versions) > len(migrations) {
 		return conflictErr
@@ -83,7 +82,6 @@ func Run() error {
 		}
 	}
 
-	fmt.Println("Finished `supabase db push`.")
-
+	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
 }

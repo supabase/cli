@@ -35,7 +35,7 @@ func Run() error {
 
 	url := os.Getenv("SUPABASE_REMOTE_DB_URL")
 	if url == "" {
-		return errors.New("Remote database is not set. Run `supabase db remote set` first.")
+		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
 	}
 
 	s := spinner.NewModel()
@@ -53,13 +53,13 @@ func Run() error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted `supabase db remote commit`.")
+		return errors.New("Aborted " + utils.Aqua("supabase db remote commit") + ".")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
-	fmt.Println("Finished `supabase db remote commit`.")
+	fmt.Println("Finished " + utils.Aqua("supabase db remote commit") + ".")
 	return nil
 }
 
@@ -215,9 +215,7 @@ func run(p *tea.Program, url string) error {
 			return err
 		}
 
-		conflictErr := errors.New(
-			"supabase_migrations.schema_migrations table is not in sync with the contents of `migrations` directory.",
-		)
+		conflictErr := errors.New("supabase_migrations.schema_migrations table is not in sync with the contents of " + utils.Bold("supabase/migrations") + ".")
 
 		if len(versions) != len(migrations) {
 			return conflictErr
@@ -268,7 +266,7 @@ func run(p *tea.Program, url string) error {
 		{
 			globalsSql, err := os.ReadFile("supabase/globals.sql")
 			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find `supabase/globals.sql`.")
+				return errors.New("Cannot find " + utils.Bold("supabase/globals.sql") + ".")
 			} else if err != nil {
 				return err
 			}
@@ -292,7 +290,7 @@ EOSQL
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find `supabase/extensions.sql`.")
+				return errors.New("Cannot find " + utils.Aqua("supabase/extensions.sql") + ".")
 			} else if err != nil {
 				return err
 			}
@@ -319,7 +317,7 @@ EOSQL
 		}
 
 		for _, migration := range migrations {
-			p.Send(utils.StatusMsg("Applying migration " + migration.Name() + "..."))
+			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {

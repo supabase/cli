@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const latestDbVersion = "130003" // Server version of latest supabase/postgres image on hosted platform (supabase/postgres:13.3.0)
+const latestDbVersion = "140001" // Server version of latest supabase/postgres image on hosted platform (supabase/postgres:14.1.0)
 
 var (
 	//go:embed templates/extensions_sql

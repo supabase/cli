@@ -11,7 +11,7 @@ import (
 var (
 	migrationCmd = &cobra.Command{
 		Use:   "migration",
-		Short: "Create an empty migration with the `new` subcommand.",
+		Short: "Create an empty migration with the " + utils.Aqua("new") + " subcommand.",
 	}
 
 	migrationNewCmd = &cobra.Command{
@@ -20,7 +20,7 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := os.ReadDir("supabase/migrations"); errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find `supabase/migrations` directory. Have you set up the project with `supabase init`?")
+				return errors.New("Cannot find " + utils.Bold("supabase/migrations") + ". Have you set up the project with " + utils.Aqua("supabase init") + "?")
 			} else if err != nil {
 				return err
 			}

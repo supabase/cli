@@ -30,7 +30,7 @@ func Run(url string) error {
 		return err
 	}
 	if dbVersion[:2] != utils.DbVersion[:2] {
-		return errors.New("Remote database Postgres version " + dbVersion + " is incompatible with dbVersion " + utils.DbVersion + ".")
+		return errors.New("Remote database Postgres version " + dbVersion + " is incompatible with " + utils.Aqua("dbVersion") + " " + utils.DbVersion + ".")
 	}
 
 	// 2. Setup & validate `schema_migrations`.
@@ -92,9 +92,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			return err
 		}
 
-		conflictErr := errors.New(
-			"supabase_migrations.schema_migrations table conflicts with the contents of `supabase/migrations` directory.",
-		)
+		conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
 
 		if len(versions) > len(migrations) {
 			return conflictErr
@@ -118,6 +116,6 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 		return err
 	}
 
-	fmt.Println("Finished `supabase db remote set`.")
+	fmt.Println("Finished " + utils.Aqua("supabase db remote set") + ".")
 	return nil
 }

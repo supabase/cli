@@ -18,15 +18,15 @@ func Run(branch string) error {
 	}
 
 	if utils.IsBranchNameReserved(branch) {
-		return errors.New("Cannot delete branch " + branch + ": branch is reserved.")
+		return errors.New("Cannot delete branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
 	if _, err := os.ReadDir("supabase/.branches/" + branch); err != nil {
-		return errors.New("Branch " + branch + " does not exist.")
+		return errors.New("Branch " + utils.Aqua(branch) + " does not exist.")
 	}
 
 	if err := os.RemoveAll("supabase/.branches/" + branch); err != nil {
-		return errors.New("Failed deleting branch " + branch + ": " + err.Error())
+		return fmt.Errorf("Failed deleting branch %s: %w", utils.Aqua(branch), err)
 	}
 
 	{
@@ -52,6 +52,6 @@ EOSQL
 		}
 	}
 
-	fmt.Println("Deleted branch " + branch + ".")
+	fmt.Println("Deleted branch " + utils.Aqua(branch) + ".")
 	return nil
 }
