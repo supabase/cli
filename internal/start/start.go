@@ -97,13 +97,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
-			termCh <- struct{}{}
-			dumpBranches()
-			// Stop future runs
-			cancelCtx()
-			// Stop current runs
-			utils.DockerRemoveAll()
-			return m, tea.Quit
+			m.started = false
+			m.status = "Dumping branches..."
+			go cleanup(&m)
+			return m, nil
 		default:
 			return m, nil
 		}
@@ -149,9 +146,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case startedMsg:
 		m.started = bool(msg)
 		return m, nil
+	case stopMsg:
+		return m, tea.Quit
 	default:
 		return m, nil
 	}
+}
+
+func cleanup(m *model) {
+	dumpBranches()
+	// Stop future runs
+	cancelCtx()
+	// Stop current runs
+	termCh <- struct{}{}
+	m.Update(stopMsg{})
 }
 
 func (m model) View() string {
@@ -186,6 +194,7 @@ func (m model) View() string {
 }
 
 type startedMsg bool
+type stopMsg struct{}
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
@@ -208,9 +217,6 @@ func run(p *tea.Program) error {
 
 	defer utils.DockerRemoveAll()
 
-	// // Handle SIGINT/SIGTERM.
-	// termCh := make(chan os.Signal, 1)
-	// signal.Notify(termCh, syscall.SIGINT, syscall.SIGTERM)
 	errCh := make(chan error)
 
 	branchCh := make(chan string)
@@ -919,8 +925,6 @@ EOSQL
 	for {
 		select {
 		case <-termCh:
-			p.Send(startedMsg(false))
-
 			select {
 			case err := <-errCh:
 				return err
