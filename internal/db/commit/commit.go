@@ -21,7 +21,9 @@ import (
 func Run(name string) error {
 	// Sanity checks.
 	{
-		utils.AssertSupabaseStartIsRunning()
+		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+			return err
+		}
 
 		if branch, err := utils.GetCurrentBranch(); err != nil {
 			return err

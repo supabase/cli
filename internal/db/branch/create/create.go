@@ -16,7 +16,9 @@ import (
 var ctx = context.Background()
 
 func Run(branch string) error {
-	utils.AssertSupabaseStartIsRunning()
+	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		return err
+	}
 
 	if utils.IsBranchNameReserved(branch) {
 		return errors.New("Cannot create branch " + branch + ": branch is reserved.")

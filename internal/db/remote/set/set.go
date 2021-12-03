@@ -12,7 +12,9 @@ import (
 )
 
 func Run(url string) error {
-	utils.LoadConfig()
+	if err := utils.LoadConfig(); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 

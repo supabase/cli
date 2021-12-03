@@ -39,7 +39,9 @@ func Run() error {
 			return err
 		}
 
-		utils.LoadConfig()
+		if err := utils.LoadConfig(); err != nil {
+			return err
+		}
 
 		if err := utils.AssertPortIsAvailable(utils.ApiPort); err != nil {
 			return err

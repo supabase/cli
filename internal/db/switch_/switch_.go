@@ -9,11 +9,15 @@ import (
 )
 
 func Run(target string) error {
-	utils.AssertSupabaseStartIsRunning()
+	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		return err
+	}
+
+	errBranchNotExist := errors.New("Branch " + utils.Aqua(target) + " does not exist.")
 
 	branches, err := os.ReadDir("supabase/.branches")
 	if errors.Is(err, os.ErrNotExist) {
-		return errors.New("Branch " + target + " does not exist.")
+		return errBranchNotExist
 	}
 
 	for _, branch := range branches {
@@ -26,10 +30,10 @@ func Run(target string) error {
 				return err
 			}
 
-			fmt.Println("Switched to branch " + target + ".")
+			fmt.Println("Switched to branch " + utils.Aqua(target) + ".")
 			return nil
 		}
 	}
 
-	return errors.New("Branch " + target + " does not exist.")
+	return errBranchNotExist
 }

@@ -63,7 +63,7 @@ var (
 	Docker = func() *client.Client {
 		docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "❌ Failed to initialize Docker client.")
+			fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
 			os.Exit(1)
 		}
 		return docker
@@ -106,7 +106,7 @@ func GetCurrentBranch() (string, error) {
 
 func AssertDockerIsRunning() error {
 	if _, err := Docker.Ping(context.Background()); err != nil {
-		return errors.New("❌ Failed to connect to Docker daemon. Is Docker running?")
+		return errors.New("Failed to connect to Docker daemon. Is Docker running?")
 	}
 
 	return nil
@@ -124,11 +124,10 @@ func AssertPortIsAvailable(port string) error {
 	return nil
 }
 
-func LoadConfig() {
+func LoadConfig() error {
 	viper.SetConfigFile("supabase/config.json")
 	if err := viper.ReadInConfig(); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to read config:", err)
-		os.Exit(1)
+		return fmt.Errorf("Failed to read config: %w", err)
 	}
 
 	ApiPort = fmt.Sprint(viper.GetUint("ports.api"))
@@ -162,8 +161,7 @@ func LoadConfig() {
 		"140001":
 		DbImage = "supabase/postgres:14.1.0"
 	default:
-		fmt.Fprintln(os.Stderr, "Failed reading config: Invalid dbVersion: "+DbVersion+".")
-		os.Exit(1)
+		return errors.New("Failed reading config: Invalid " + Aqua("dbVersion") + ": " + DbVersion + ".")
 	}
 	ProjectId = viper.GetString("projectId")
 	NetId = "supabase_network_" + ProjectId
@@ -178,14 +176,20 @@ func LoadConfig() {
 	DifferId = "supabase_differ_" + ProjectId
 	PgmetaId = "supabase_pg_meta_" + ProjectId
 	StudioId = "supabase_studio_" + ProjectId
+
+	return nil
 }
 
-func AssertSupabaseStartIsRunning() {
-	LoadConfig()
-	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		fmt.Fprintln(os.Stderr, "`supabase start` is not running.")
-		os.Exit(1)
+func AssertSupabaseStartIsRunning() error {
+	if err := LoadConfig(); err != nil {
+		return err
 	}
+
+	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
+		return errors.New(Aqua("supabase start") + " is not running.")
+	}
+
+	return nil
 }
 
 func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
