@@ -43,13 +43,13 @@ const (
 	ShadowDbName   = "supabase_shadow"
 	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
-	GotrueImage    = "supabase/gotrue:v2.2.6"
+	GotrueImage    = "supabase/gotrue:v2.2.11"
 	InbucketImage  = "inbucket/inbucket:stable"
-	RealtimeImage  = "supabase/realtime:v0.19.0"
-	PostgrestImage = "postgrest/postgrest:v8.0.0"
-	StorageImage   = "supabase/storage-api:v0.9.3"
+	RealtimeImage  = "supabase/realtime:v0.19.3"
+	PostgrestImage = "postgrest/postgrest:v9.0.0"
+	StorageImage   = "supabase/storage-api:v0.10.0"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage    = "supabase/postgres-meta:v0.28.0"
+	PgmetaImage    = "supabase/postgres-meta:v0.29.0"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage = "supabase/studio:latest"
 
