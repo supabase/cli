@@ -157,6 +157,10 @@ func LoadConfig() {
 		"130003",
 		"130004":
 		DbImage = "supabase/postgres:13.3.0"
+	case
+		"140000",
+		"140001":
+		DbImage = "supabase/postgres:14.1.0"
 	default:
 		fmt.Fprintln(os.Stderr, "Failed reading config: Invalid dbVersion: "+DbVersion+".")
 		os.Exit(1)
