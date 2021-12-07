@@ -182,8 +182,37 @@ EOSQL
 		}
 	}
 
-	// 3. Apply migrations + extensions + seed.
+	// 3. Apply extensions + migrations + seed.
 	{
+		p.Send(utils.StatusMsg("Applying extensions.sql..."))
+
+		{
+			content, err := os.ReadFile("supabase/extensions.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				_ = os.RemoveAll("supabase/.branches/" + currBranch)
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					_ = os.RemoveAll("supabase/.branches/" + currBranch)
+					return err
+				}
+			}
+		}
+
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			_ = os.RemoveAll("supabase/.branches/" + currBranch)
@@ -214,35 +243,6 @@ EOSQL
 			if err := utils.ProcessPsqlOutput(out, p); err != nil {
 				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
-			}
-		}
-
-		p.Send(utils.StatusMsg("Applying extensions.sql..."))
-
-		{
-			content, err := os.ReadFile("supabase/extensions.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-				})
-				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
-					return err
-				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
-					return err
-				}
 			}
 		}
 
