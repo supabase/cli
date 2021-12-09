@@ -17,6 +17,12 @@ func Run(branch string) error {
 		return err
 	}
 
+	if currBranch, err := utils.GetCurrentBranch(); err != nil {
+		return err
+	} else if branch == currBranch {
+		return errors.New("Cannot delete current branch.")
+	}
+
 	if utils.IsBranchNameReserved(branch) {
 		return errors.New("Cannot delete branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
