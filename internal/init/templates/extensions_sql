@@ -1,3 +1,0 @@
--- Add `CREATE EXTENSION` SQL here. This script is only run on the local
--- database - you are expected to manually install each extension on remote
--- databases.
