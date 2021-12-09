@@ -163,9 +163,9 @@ func run(p *tea.Program) (err error) {
 	{
 		// https://dba.stackexchange.com/a/11895
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "psql --username postgres <<'EOSQL' " +
-				"&& dropdb --force --username postgres '" + currBranch + "' " +
-				"&& createdb --username postgres '" + currBranch + `'
+			"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
+				"&& dropdb --force --username postgres --host localhost '" + currBranch + "' " +
+				"&& createdb --username postgres --host localhost '" + currBranch + `'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, currBranch) + `
 COMMIT;
@@ -197,7 +197,7 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+					"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -231,7 +231,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+				"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -259,7 +259,7 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --dbname '" + currBranch + `' <<'EOSQL'
+					"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;

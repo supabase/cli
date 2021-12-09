@@ -459,7 +459,7 @@ func run(p *tea.Program) error {
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres <<'EOSQL'
+				`&& psql --username postgres --host localhost <<'EOSQL'
 BEGIN;
 ` + string(globalsSql) + `
 COMMIT;
@@ -496,7 +496,7 @@ EOSQL
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", "createdb --username postgres '" + branch.Name() + "' && psql --username postgres --dbname '" + branch.Name() + `' <<'EOSQL'
+						"sh", "-c", "createdb --username postgres --host localhost '" + branch.Name() + "' && psql --username postgres --host localhost --dbname '" + branch.Name() + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -540,7 +540,7 @@ EOSQL
 
 			{
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "createdb --username postgres main",
+					"sh", "-c", "createdb --username postgres --host localhost main",
 				})
 				if err != nil {
 					_ = os.RemoveAll("supabase/.branches/main")
@@ -563,7 +563,7 @@ EOSQL
 					return err
 				} else {
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --username postgres --dbname main <<'EOSQL'
+						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -597,7 +597,7 @@ EOSQL
 				}
 
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", `psql --username postgres --dbname main <<'EOSQL'
+					"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -625,7 +625,7 @@ EOSQL
 					return err
 				} else {
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --username postgres --dbname main <<'EOSQL'
+						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -1002,7 +1002,7 @@ func dumpBranches() {
 
 		if err := func() error {
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "pg_dump --username postgres -d '" + branch.Name() + "'",
+				"sh", "-c", "pg_dump --username postgres --host localhost --dbname '" + branch.Name() + "'",
 			})
 			if err != nil {
 				return err

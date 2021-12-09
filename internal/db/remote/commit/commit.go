@@ -272,7 +272,7 @@ func run(p *tea.Program, url string) error {
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --dbname postgres <<'EOSQL'
+				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
 BEGIN;
 ` + string(globalsSql) + `
 COMMIT;
@@ -296,7 +296,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --dbname postgres <<'EOSQL'
+				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
 BEGIN;
 ` + string(extensionsSql) + `
 COMMIT;
@@ -325,7 +325,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --dbname postgres <<'EOSQL'
+				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
