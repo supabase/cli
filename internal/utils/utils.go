@@ -88,6 +88,16 @@ var (
 	DifferId     string
 	PgmetaId     string
 	StudioId     string
+
+	//go:embed templates/globals.sql
+	GlobalsSql       string
+	InitialSchemaSql string
+	//go:embed templates/initial_schema_pg12.sql
+	initialSchemaPg12Sql string
+	//go:embed templates/initial_schema_pg13.sql
+	initialSchemaPg13Sql string
+	//go:embed templates/initial_schema_pg14.sql
+	initialSchemaPg14Sql string
 )
 
 func GetCurrentTimestamp() string {
@@ -148,7 +158,8 @@ func LoadConfig() error {
 		"120006",
 		"120007",
 		"120008":
-		DbImage = "supabase/postgres:0.14.0"
+		DbImage = "supabase/postgres:12.5.0"
+		InitialSchemaSql = initialSchemaPg12Sql
 	case
 		"130000",
 		"130001",
@@ -156,10 +167,12 @@ func LoadConfig() error {
 		"130003",
 		"130004":
 		DbImage = "supabase/postgres:13.3.0"
+		InitialSchemaSql = initialSchemaPg13Sql
 	case
 		"140000",
 		"140001":
 		DbImage = "supabase/postgres:14.1.0"
+		InitialSchemaSql = initialSchemaPg14Sql
 	default:
 		return errors.New("Failed reading config: Invalid " + Aqua("dbVersion") + ": " + DbVersion + ".")
 	}
