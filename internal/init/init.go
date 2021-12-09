@@ -15,8 +15,6 @@ import (
 const latestDbVersion = "140001" // Server version of latest supabase/postgres image on hosted platform (supabase/postgres:14.1.0)
 
 var (
-	//go:embed templates/extensions_sql
-	extensionsSql []byte
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
 	// | sed '/^ALTER ROLE postgres WITH /d' \
@@ -26,8 +24,6 @@ var (
 	// pg_dump --dbname $DB_URL
 	//go:embed templates/init_migration_sql
 	initMigrationSql []byte
-	//go:embed templates/init_seed_sql
-	initSeedSql []byte
 	//go:embed templates/init_config
 	initConfigEmbed       string
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
@@ -79,14 +75,11 @@ func run() error {
 	}
 
 	// 2. Write `extensions.sql`, `globals.sql`.
-	if err := os.WriteFile("supabase/extensions.sql", extensionsSql, 0644); err != nil {
-		return err
-	}
 	if err := os.WriteFile("supabase/globals.sql", globalsSql, 0644); err != nil {
 		return err
 	}
 
-	// 3. Write `config.json`.
+	// 2. Write `config.json`.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -109,12 +102,7 @@ func run() error {
 		}
 	}
 
-	// 4. Write `seed.sql`.
-	if err := os.WriteFile("supabase/seed.sql", initSeedSql, 0644); err != nil {
-		return err
-	}
-
-	// 5. Append to `.gitignore`.
+	// 3. Append to `.gitignore`.
 	{
 		gitRoot, err := utils.GetGitRoot()
 		if err != nil {
