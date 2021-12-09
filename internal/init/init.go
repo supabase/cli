@@ -19,11 +19,7 @@ var (
 	// | sed '/^CREATE ROLE postgres;/d' \
 	// | sed '/^ALTER ROLE postgres WITH /d' \
 	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
-	//go:embed templates/globals_sql
-	globalsSql []byte
 	// pg_dump --dbname $DB_URL
-	//go:embed templates/init_migration_sql
-	initMigrationSql []byte
 	//go:embed templates/init_config
 	initConfigEmbed       string
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
@@ -64,18 +60,6 @@ func run() error {
 
 	// 1. Write `migrations`.
 	if err := os.Mkdir("supabase/migrations", 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(
-		"supabase/migrations/"+utils.GetCurrentTimestamp()+"_init.sql",
-		initMigrationSql,
-		0644,
-	); err != nil {
-		return err
-	}
-
-	// 2. Write `extensions.sql`, `globals.sql`.
-	if err := os.WriteFile("supabase/globals.sql", globalsSql, 0644); err != nil {
 		return err
 	}
 
