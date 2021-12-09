@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -437,31 +438,27 @@ func run(p *tea.Program) error {
 
 	// Start postgres.
 	{
+		cmd := []string{}
+		if dbVersion, err := strconv.ParseUint(utils.DbVersion, 10, 64); err != nil {
+			return err
+		} else if dbVersion >= 140000 {
+			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
+		}
+
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.DbId,
-			&container.Config{
-				Image: utils.DbImage,
-				Env:   []string{"POSTGRES_PASSWORD=postgres", "POSTGRES_DB=postgres"},
-				Cmd:   []string{"postgres", "-c", "wal_level=logical"},
-			},
-			&container.HostConfig{
-				NetworkMode: container.NetworkMode(utils.NetId),
-			},
+			&container.Config{Image: utils.DbImage, Env: []string{"POSTGRES_PASSWORD=postgres"}, Cmd: cmd},
+			&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
 		); err != nil {
 			return err
-		}
-
-		globalsSql, err := os.ReadFile("supabase/globals.sql")
-		if err != nil {
-			return errors.New("Cannot find " + utils.Bold("supabase/globals.sql") + ".")
 		}
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
 				`&& psql --username postgres --host localhost <<'EOSQL'
 BEGIN;
-` + string(globalsSql) + `
+` + utils.GlobalsSql + `
 COMMIT;
 EOSQL
 `,
@@ -474,9 +471,8 @@ EOSQL
 			return err
 		}
 		if errBuf.Len() > 0 {
-			return errors.New("Error waiting for database to start: " + errBuf.String())
+			return errors.New("Error starting database: " + errBuf.String())
 		}
-
 	}
 
 	p.Send(utils.StatusMsg("Restoring branches..."))
@@ -512,13 +508,13 @@ EOSQL
 						return err
 					}
 					if errBuf.Len() > 0 {
-						_ = os.RemoveAll("supabase/.branches/" + branch.Name() + "/dump.sql")
 						return errors.New(errBuf.String())
 					}
 
 					return nil
 				}(); err != nil {
 					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
+					_ = os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644)
 					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
 				}
 			}
@@ -538,30 +534,82 @@ EOSQL
 				return err
 			}
 
-			{
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "createdb --username postgres --host localhost main",
-				})
-				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
+			if err := func() error {
+				{
+					out, err := utils.DockerExec(ctx, utils.DbId, []string{
+						"sh", "-c", "createdb --username postgres --host localhost main",
+					})
+					if err != nil {
+						return err
+					}
+					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+						return err
+					}
 				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
-				}
-			}
 
-			{
+				p.Send(utils.StatusMsg("Setting up initial schema..."))
+				{
+					out, err := utils.DockerExec(ctx, utils.DbId, []string{
+						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
+BEGIN;
+` + utils.InitialSchemaSql + `
+COMMIT;
+EOSQL
+`,
+					})
+					if err != nil {
+						return err
+					}
+					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+						return err
+					}
+				}
+
 				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
+				{
+					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+					if errors.Is(err, os.ErrNotExist) {
+						// skip
+					} else if err != nil {
+						return err
+					} else {
+						out, err := utils.DockerExec(ctx, utils.DbId, []string{
+							"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
+BEGIN;
+` + string(extensionsSql) + `
+COMMIT;
+EOSQL
+`,
+						})
+						if err != nil {
+							return err
+						}
+						if err := utils.ProcessPsqlOutput(out, p); err != nil {
+							return err
+						}
+					}
+				}
 
-				content, err := os.ReadFile("supabase/extensions.sql")
-				if errors.Is(err, os.ErrNotExist) {
-					return errors.New("Cannot find " + utils.Bold("supabase/extensions.sql") + ".")
-				} else if err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
+				migrations, err := os.ReadDir("supabase/migrations")
+				if err != nil {
 					return err
-				} else {
+				}
+
+				for i, migration := range migrations {
+					// NOTE: To handle backward-compatibility.
+					// `<timestamp>_init.sql` as the first migration (prev
+					// versions of the CLI) is deprecated.
+					if i == 0 && strings.HasSuffix(migration.Name(), "_init.sql") {
+						continue
+					}
+
+					p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
+
+					content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+					if err != nil {
+						return err
+					}
+
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
 						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
 BEGIN;
@@ -571,76 +619,42 @@ EOSQL
 `,
 					})
 					if err != nil {
-						_ = os.RemoveAll("supabase/.branches/main")
 						return err
 					}
 					if err := utils.ProcessPsqlOutput(out, p); err != nil {
-						_ = os.RemoveAll("supabase/.branches/main")
 						return err
 					}
 				}
-			}
 
-			migrations, err := os.ReadDir("supabase/migrations")
-			if err != nil {
+				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
+				{
+					content, err := os.ReadFile("supabase/seed.sql")
+					if errors.Is(err, os.ErrNotExist) {
+						// skip
+					} else if err != nil {
+						return err
+					} else {
+						out, err := utils.DockerExec(ctx, utils.DbId, []string{
+							"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
+						})
+						if err != nil {
+							return err
+						}
+						if err := utils.ProcessPsqlOutput(out, p); err != nil {
+							return err
+						}
+					}
+				}
+
+				return nil
+			}(); err != nil {
 				_ = os.RemoveAll("supabase/.branches/main")
 				return err
-			}
-
-			for _, migration := range migrations {
-				p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
-
-				content, err := os.ReadFile("supabase/migrations/" + migration.Name())
-				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
-				}
-
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-				})
-				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
-				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
-				}
-			}
-
-			{
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
-
-				content, err := os.ReadFile("supabase/seed.sql")
-				if errors.Is(err, os.ErrNotExist) {
-					// skip
-				} else if err != nil {
-					_ = os.RemoveAll("supabase/.branches/main")
-					return err
-				} else {
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						_ = os.RemoveAll("supabase/.branches/main")
-						return err
-					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
-						_ = os.RemoveAll("supabase/.branches/main")
-						return err
-					}
-				}
 			}
 		} else {
 			return err
@@ -785,43 +799,39 @@ EOSQL
 	}
 
 	// Start Inbucket.
-	{
-		hostConfig := container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}
-		if utils.InbucketPort != "" {
-			hostConfig.PortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}}
-		}
-
+	if utils.InbucketPort != "" {
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.InbucketId,
 			&container.Config{
 				Image: utils.InbucketImage,
 			},
-			&hostConfig,
+			&container.HostConfig{
+				NetworkMode:  container.NetworkMode(utils.NetId),
+				PortBindings: nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
+			},
 		); err != nil {
 			return err
 		}
 	}
 
 	// Start Realtime.
-	{
-		if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
-			Image: utils.RealtimeImage,
-			Env: []string{
-				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
-				"DB_HOST=" + utils.DbId,
-				"DB_PORT=5432",
-				"DB_USER=postgres",
-				"DB_PASSWORD=postgres",
-				"DB_NAME=" + currBranch,
-				"SLOT_NAME=supabase_realtime",
-				"PORT=4000",
-				"SECURE_CHANNELS=true",
-				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-			},
-		}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
-			return err
-		}
+	if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
+		Image: utils.RealtimeImage,
+		Env: []string{
+			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+			"DB_HOST=" + utils.DbId,
+			"DB_PORT=5432",
+			"DB_USER=postgres",
+			"DB_PASSWORD=postgres",
+			"DB_NAME=" + currBranch,
+			"SLOT_NAME=supabase_realtime",
+			"PORT=4000",
+			"SECURE_CHANNELS=true",
+			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+		},
+	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
+		return err
 	}
 
 	// start postgrest
@@ -853,12 +863,11 @@ EOSQL
 				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE",
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"DATABASE_URL=postgres://supabase_storage_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable&search_path=storage",
+				"DATABASE_URL=postgres://supabase_storage_admin:postgres@" + utils.PgbouncerId + ":5432/postgres?sslmode=disable",
 				"FILE_SIZE_LIMIT=52428800",
 				"STORAGE_BACKEND=file",
 				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
-				// TODO: https://github.com/supabase/storage-api/commit/a836fc9666c2434d89ca4b31402f74772d50fb6d
-				"PROJECT_REF=stub",
+				"TENANT_ID=stub",
 				// TODO: https://github.com/supabase/storage-api/issues/55
 				"REGION=stub",
 				"GLOBAL_S3_BUCKET=stub",

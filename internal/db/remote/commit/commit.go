@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -201,31 +202,31 @@ func run(p *tea.Program, url string) error {
 	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err != nil {
 		return err
 	} else {
-		versions := []string{}
+		remoteMigrations := []string{}
 		for rows.Next() {
 			var version string
 			if err := rows.Scan(&version); err != nil {
 				return err
 			}
-			versions = append(versions, version)
+			remoteMigrations = append(remoteMigrations, version)
 		}
 
-		migrations, err := os.ReadDir("supabase/migrations")
+		localMigrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err
 		}
 
 		conflictErr := errors.New("supabase_migrations.schema_migrations table is not in sync with the contents of " + utils.Bold("supabase/migrations") + ".")
 
-		if len(versions) != len(migrations) {
+		if len(remoteMigrations) != len(localMigrations) {
 			return conflictErr
 		}
 
 		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
-		for i, version := range versions {
-			migrationTimestamp := re.FindStringSubmatch(migrations[i].Name())[1]
+		for i, remoteTimestamp := range remoteMigrations {
+			localTimestamp := re.FindStringSubmatch(localMigrations[i].Name())[1]
 
-			if version == migrationTimestamp {
+			if localTimestamp == remoteTimestamp {
 				continue
 			}
 
@@ -234,27 +235,37 @@ func run(p *tea.Program, url string) error {
 	}
 
 	// 2. Create shadow db and run migrations.
+	p.Send(utils.StatusMsg("Creating shadow database..."))
 	{
-		p.Send(utils.StatusMsg("Creating shadow database..."))
+		cmd := []string{}
+		if dbVersion, err := strconv.ParseUint(utils.DbVersion, 10, 64); err != nil {
+			return err
+		} else if dbVersion >= 140000 {
+			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
+		}
 
 		if _, err := utils.DockerRun(
 			ctx,
 			dbId,
-			&container.Config{
-				Image: utils.DbImage,
-				Env:   []string{"POSTGRES_PASSWORD=postgres"},
-				Cmd:   []string{"postgres", "-c", "wal_level=logical"},
-			},
+			&container.Config{Image: utils.DbImage, Env: []string{"POSTGRES_PASSWORD=postgres"}, Cmd: cmd},
 			&container.HostConfig{NetworkMode: netId},
 		); err != nil {
 			return err
 		}
+
 		out, err := utils.DockerExec(ctx, dbId, []string{
-			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done",
+			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
+				`&& psql --username postgres --host localhost <<'EOSQL'
+BEGIN;
+` + utils.GlobalsSql + `
+COMMIT;
+EOSQL
+`,
 		})
 		if err != nil {
 			return err
 		}
+
 		var errBuf bytes.Buffer
 		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
@@ -264,17 +275,10 @@ func run(p *tea.Program, url string) error {
 		}
 
 		{
-			globalsSql, err := os.ReadFile("supabase/globals.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find " + utils.Bold("supabase/globals.sql") + ".")
-			} else if err != nil {
-				return err
-			}
-
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
+				"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
 BEGIN;
-` + string(globalsSql) + `
+` + utils.InitialSchemaSql + `
 COMMIT;
 EOSQL
 `,
@@ -290,24 +294,24 @@ EOSQL
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
-				return errors.New("Cannot find " + utils.Aqua("supabase/extensions.sql") + ".")
+				// skip
 			} else if err != nil {
 				return err
-			}
-
-			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
+			} else {
+				out, err := utils.DockerExec(ctx, dbId, []string{
+					"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
 BEGIN;
 ` + string(extensionsSql) + `
 COMMIT;
 EOSQL
 `,
-			})
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
-				return err
+				})
+				if err != nil {
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -316,7 +320,13 @@ EOSQL
 			return err
 		}
 
-		for _, migration := range migrations {
+		for i, migration := range migrations {
+			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
+			// the first migration (prev versions of the CLI) is deprecated.
+			if i == 0 && strings.HasSuffix(migration.Name(), "_init.sql") {
+				continue
+			}
+
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
@@ -325,7 +335,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --host localhost --dbname postgres <<'EOSQL'
+				"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;

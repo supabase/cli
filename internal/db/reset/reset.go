@@ -159,57 +159,72 @@ func run(p *tea.Program) (err error) {
 
 	p.Send(utils.StatusMsg("Resetting database..."))
 
-	// 2. Recreate db.
-	{
-		// https://dba.stackexchange.com/a/11895
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
-				"&& dropdb --force --username postgres --host localhost '" + currBranch + "' " +
-				"&& createdb --username postgres --host localhost '" + currBranch + `'
+	if err := func() error {
+		// 2. Recreate db.
+		{
+			// https://dba.stackexchange.com/a/11895
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
+					"&& dropdb --force --username postgres --host localhost '" + currBranch + "' " +
+					"&& createdb --username postgres --host localhost '" + currBranch + `'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, currBranch) + `
 COMMIT;
 EOSQL
 `,
-		})
-		if err != nil {
-			return err
+			})
+			if err != nil {
+				return err
+			}
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error resetting database: " + errBuf.String())
+			}
 		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error resetting database: " + errBuf.String())
-		}
-	}
 
-	// 3. Apply extensions + migrations + seed.
-	{
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
+		// 3. Apply initial schema + extensions + migrations + seed.
 
+		p.Send(utils.StatusMsg("Setting up initial schema..."))
 		{
-			content, err := os.ReadFile("supabase/extensions.sql")
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
+BEGIN;
+` + utils.InitialSchemaSql + `
+COMMIT;
+EOSQL
+`,
+			})
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				return err
+			}
+		}
+
+		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
+		{
+			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
 					"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
 BEGIN;
-` + string(content) + `
+` + string(extensionsSql) + `
 COMMIT;
 EOSQL
 `,
 				})
 				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
 					return err
 				}
 				if err := utils.ProcessPsqlOutput(out, p); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
 					return err
 				}
 			}
@@ -217,16 +232,20 @@ EOSQL
 
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
-			_ = os.RemoveAll("supabase/.branches/" + currBranch)
 			return err
 		}
 
-		for _, migration := range migrations {
+		for i, migration := range migrations {
+			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
+			// the first migration (prev versions of the CLI) is deprecated.
+			if i == 0 && strings.HasSuffix(migration.Name(), "_init.sql") {
+				continue
+			}
+
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
 			if err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 
@@ -239,23 +258,19 @@ EOSQL
 `,
 			})
 			if err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 			if err := utils.ProcessPsqlOutput(out, p); err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			}
 		}
 
 		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
-
 		{
 			content, err := os.ReadFile("supabase/seed.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
-				_ = os.RemoveAll("supabase/.branches/" + currBranch)
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
@@ -267,15 +282,18 @@ EOSQL
 `,
 				})
 				if err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
 					return err
 				}
 				if err := utils.ProcessPsqlOutput(out, p); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + currBranch)
 					return err
 				}
 			}
 		}
+
+		return nil
+	}(); err != nil {
+		_ = os.RemoveAll("supabase/.branches/" + currBranch)
+		return err
 	}
 
 	return nil

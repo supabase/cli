@@ -163,12 +163,59 @@ func run(p *tea.Program) error {
 			return errors.New("Error creating shadow database: " + errBuf.String())
 		}
 
+		{
+			out, err := utils.DockerExec(ctx, utils.DbId, []string{
+				"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
+BEGIN;
+` + utils.InitialSchemaSql + `
+COMMIT;
+EOSQL
+`,
+			})
+			if err != nil {
+				return err
+			}
+			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				return err
+			}
+		}
+
+		{
+			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				return err
+			} else {
+				out, err := utils.DockerExec(ctx, utils.DbId, []string{
+					"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
+BEGIN;
+` + string(extensionsSql) + `
+COMMIT;
+EOSQL
+`,
+				})
+				if err != nil {
+					return err
+				}
+				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					return err
+				}
+			}
+		}
+
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err
 		}
 
-		for _, migration := range migrations {
+		for i, migration := range migrations {
+			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
+			// the first migration (prev versions of the CLI) is deprecated.
+			if i == 0 && strings.HasSuffix(migration.Name(), "_init.sql") {
+				continue
+			}
+
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
 			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
