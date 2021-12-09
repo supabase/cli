@@ -46,7 +46,7 @@ func Run(branch string) error {
 	var dumpBuf bytes.Buffer
 	if err := func() error {
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "pg_dump --username postgres -d '" + currBranch + "'",
+			"sh", "-c", "pg_dump --username postgres --host localhost --dbname '" + currBranch + "'",
 		})
 		if err != nil {
 			return err
@@ -67,7 +67,7 @@ func Run(branch string) error {
 
 	if err := func() error {
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "createdb --username postgres '" + branch + "' && psql --username postgres --dbname '" + branch + `' <<'EOSQL'
+			"sh", "-c", "createdb --username postgres --host localhost '" + branch + "' && psql --username postgres --host localhost --dbname '" + branch + `' <<'EOSQL'
 BEGIN;
 ` + dumpBuf.String() + `
 COMMIT;

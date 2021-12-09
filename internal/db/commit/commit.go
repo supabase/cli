@@ -151,7 +151,7 @@ func run(p *tea.Program, name string) error {
 		out, err := utils.DockerExec(
 			ctx,
 			utils.DbId,
-			[]string{"createdb", "--username", "postgres", utils.ShadowDbName},
+			[]string{"createdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
 		)
 		if err != nil {
 			return err
@@ -178,7 +178,7 @@ func run(p *tea.Program, name string) error {
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
+				"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -224,7 +224,7 @@ EOSQL
 		out, err := utils.DockerExec(
 			ctx,
 			utils.DbId,
-			[]string{"dropdb", "--username", "postgres", utils.ShadowDbName},
+			[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
 		)
 		if err != nil {
 			return err
