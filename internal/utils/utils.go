@@ -123,7 +123,7 @@ func AssertDockerIsRunning() error {
 }
 
 func AssertPortIsAvailable(port string) error {
-	listener, err := net.Listen("tcp4", ":"+port)
+	listener, err := net.Listen("tcp4", "localhost:"+port)
 	if err != nil {
 		return err
 	}
