@@ -308,7 +308,7 @@ func run(p *tea.Program) error {
 
 	p.Send(utils.StatusMsg("Starting database..."))
 
-	// Start postgres.
+	// Start Postgres.
 	{
 		cmd := []string{}
 		if dbVersion, err := strconv.ParseUint(utils.DbVersion, 10, 64); err != nil {
@@ -321,7 +321,10 @@ func run(p *tea.Program) error {
 			ctx,
 			utils.DbId,
 			&container.Config{Image: utils.DbImage, Env: []string{"POSTGRES_PASSWORD=postgres"}, Cmd: cmd},
-			&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+			&container.HostConfig{
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			},
 		); err != nil {
 			return err
 		}
@@ -535,7 +538,7 @@ EOSQL
 
 	p.Send(utils.StatusMsg("Starting containers..."))
 
-	// Start pgbouncer.
+	// Start PgBouncer.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -571,15 +574,16 @@ EOSQL
 					cwd + "/supabase/.temp/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,z",
 					cwd + "/supabase/.temp/userlist.txt:/etc/pgbouncer/userlist.txt:ro,z",
 				},
-				PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
-				NetworkMode:  container.NetworkMode(utils.NetId),
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
 			return err
 		}
 	}
 
-	// Start kong.
+	// Start Kong.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -607,16 +611,17 @@ EOSQL
 				},
 			},
 			&container.HostConfig{
-				PortBindings: nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: utils.ApiPort}}},
-				NetworkMode:  container.NetworkMode(utils.NetId),
 				Binds:         []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro,z")},
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: utils.ApiPort}}},
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
 			return err
 		}
 	}
 
-	// Start gotrue.
+	// Start GoTrue.
 	{
 		env := []string{
 			"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
@@ -664,7 +669,10 @@ EOSQL
 				Image: utils.GotrueImage,
 				Env:   env,
 			},
-			&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+			&container.HostConfig{
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			},
 		); err != nil {
 			return err
 		}
@@ -679,8 +687,9 @@ EOSQL
 				Image: utils.InbucketImage,
 			},
 			&container.HostConfig{
-				NetworkMode:  container.NetworkMode(utils.NetId),
-				PortBindings: nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
 			return err
@@ -688,33 +697,40 @@ EOSQL
 	}
 
 	// Start Realtime.
-	if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
-		Image: utils.RealtimeImage,
-		Env: []string{
-			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
-			"PORT=4000",
-			"DB_HOST=" + utils.DbId,
-			"DB_PORT=5432",
-			"DB_USER=postgres",
-			"DB_PASSWORD=postgres",
-			"DB_NAME=" + currBranch,
-			"DB_SSL=false",
-			"SLOT_NAME=supabase_realtime",
-			"TEMPORARY_SLOT=true",
-			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-			"SECURE_CHANNELS=true",
-			"REPLICATION_MODE=RLS",
-			"REPLICATION_POLL_INTERVAL=100",
+	if _, err := utils.DockerRun(
+		ctx,
+		utils.RealtimeId,
+		&container.Config{
+			Image: utils.RealtimeImage,
+			Env: []string{
+				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+				"PORT=4000",
+				"DB_HOST=" + utils.DbId,
+				"DB_PORT=5432",
+				"DB_USER=postgres",
+				"DB_PASSWORD=postgres",
+				"DB_NAME=" + currBranch,
+				"DB_SSL=false",
+				"SLOT_NAME=supabase_realtime",
+				"TEMPORARY_SLOT=true",
+				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"SECURE_CHANNELS=true",
+				"REPLICATION_MODE=RLS",
+				"REPLICATION_POLL_INTERVAL=100",
+			},
+			Cmd: []string{
+				"sh", "-c",
+				"./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start",
+			},
 		},
-		Cmd: []string{
-			"sh", "-c",
-			"./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start",
-		},
-	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		}); err != nil {
 		return err
 	}
 
-	// start postgrest
+	// Start PostgREST.
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.RestId,
@@ -727,12 +743,15 @@ EOSQL
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 			},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
 	); err != nil {
 		return err
 	}
 
-	// start storage
+	// Start Storage.
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.StorageId,
@@ -753,12 +772,15 @@ EOSQL
 				"GLOBAL_S3_BUCKET=stub",
 			},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
 	); err != nil {
 		return err
 	}
 
-	// start differ
+	// Start diff tool.
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.DifferId,
@@ -766,7 +788,10 @@ EOSQL
 			Image:      utils.DifferImage,
 			Entrypoint: []string{"sleep", "infinity"},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
 	); err != nil {
 		return err
 	}
@@ -782,7 +807,10 @@ EOSQL
 				"PG_META_DB_HOST=" + utils.PgbouncerId,
 			},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
 	); err != nil {
 		return err
 	}
@@ -800,8 +828,9 @@ EOSQL
 			},
 		},
 		&container.HostConfig{
-			NetworkMode:  container.NetworkMode(utils.NetId),
-			PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: utils.StudioPort}}},
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: utils.StudioPort}}},
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 		},
 	); err != nil {
 		return err
@@ -855,25 +884,32 @@ EOSQL
 			return err
 		}
 
-		if _, err := utils.DockerRun(ctx, utils.RealtimeId, &container.Config{
-			Image: utils.RealtimeImage,
-			Env: []string{
-				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
-				"PORT=4000",
-				"DB_HOST=" + utils.DbId,
-				"DB_PORT=5432",
-				"DB_USER=postgres",
-				"DB_PASSWORD=postgres",
-				"DB_NAME=" + currBranch,
-				"DB_SSL=false",
-				"SLOT_NAME=supabase_realtime",
-				"TEMPORARY_SLOT=true",
-				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"SECURE_CHANNELS=true",
-				"REPLICATION_MODE=RLS",
-				"REPLICATION_POLL_INTERVAL=100",
+		if _, err := utils.DockerRun(
+			ctx,
+			utils.RealtimeId,
+			&container.Config{
+				Image: utils.RealtimeImage,
+				Env: []string{
+					// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+					"PORT=4000",
+					"DB_HOST=" + utils.DbId,
+					"DB_PORT=5432",
+					"DB_USER=postgres",
+					"DB_PASSWORD=postgres",
+					"DB_NAME=" + currBranch,
+					"DB_SSL=false",
+					"SLOT_NAME=supabase_realtime",
+					"TEMPORARY_SLOT=true",
+					"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+					"SECURE_CHANNELS=true",
+					"REPLICATION_MODE=RLS",
+					"REPLICATION_POLL_INTERVAL=100",
+				},
 			},
-		}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
+			&container.HostConfig{
+				NetworkMode:   container.NetworkMode(utils.NetId),
+				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			}); err != nil {
 			return err
 		}
 
