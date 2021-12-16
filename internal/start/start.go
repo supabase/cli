@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/fsnotify/fsnotify"
+	"github.com/muesli/reflow/wrap"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -877,6 +878,8 @@ type model struct {
 	progress    *progress.Model
 	psqlOutputs []string
 	started     bool
+
+	width int
 }
 
 func (m model) Init() tea.Cmd {
@@ -895,6 +898,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, nil
 		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
 	case spinner.TickMsg:
 		spinnerModel, cmd := m.spinner.Update(msg)
 		m.spinner = spinnerModel
@@ -953,13 +959,13 @@ func (m model) View() string {
     ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
 		}
 
-		return `Started local development setup.
+		return wrap.String(`Started local development setup.
 
-         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
-          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
-        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
-` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
+         `+utils.Aqua("API URL")+`: http://localhost:`+utils.ApiPort+`
+          `+utils.Aqua("DB URL")+`: postgresql://postgres:postgres@localhost:`+utils.DbPort+`/postgres
+      `+utils.Aqua("Studio URL")+`: http://localhost:`+utils.StudioPort+maybeInbucket+`
+        `+utils.Aqua("anon key")+`: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+`+utils.Aqua("service_role key")+`: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`, m.width)
 	}
 
 	var progress string
@@ -972,7 +978,7 @@ func (m model) View() string {
 		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
 	}
 
-	return m.spinner.View() + m.status + progress + psqlOutputs
+	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
 }
 
 func cleanup(m *model) {
