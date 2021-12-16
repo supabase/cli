@@ -68,122 +68,6 @@ func Run() error {
 	return nil
 }
 
-type model struct {
-	spinner     spinner.Model
-	status      string
-	progress    *progress.Model
-	psqlOutputs []string
-	started     bool
-}
-
-func (m model) Init() tea.Cmd {
-	return spinner.Tick
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			m.started = false
-			m.status = "Dumping branches..."
-			go cleanup(&m)
-			return m, nil
-		default:
-			return m, nil
-		}
-	case spinner.TickMsg:
-		spinnerModel, cmd := m.spinner.Update(msg)
-		m.spinner = spinnerModel
-		return m, cmd
-	case progress.FrameMsg:
-		if m.progress == nil {
-			return m, nil
-		}
-
-		tmp, cmd := m.progress.Update(msg)
-		progressModel := tmp.(progress.Model)
-		m.progress = &progressModel
-		return m, cmd
-	case utils.StatusMsg:
-		m.status = string(msg)
-		return m, nil
-	case utils.ProgressMsg:
-		if msg == nil {
-			m.progress = nil
-			return m, nil
-		}
-
-		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithDefaultGradient())
-			m.progress = &progressModel
-		}
-
-		return m, m.progress.SetPercent(*msg)
-	case utils.PsqlMsg:
-		if msg == nil {
-			m.psqlOutputs = []string{}
-			return m, nil
-		}
-
-		m.psqlOutputs = append(m.psqlOutputs, *msg)
-		if len(m.psqlOutputs) > 5 {
-			m.psqlOutputs = m.psqlOutputs[1:]
-		}
-		return m, nil
-	case startedMsg:
-		m.started = bool(msg)
-		return m, nil
-	case stopMsg:
-		return m, tea.Quit
-	default:
-		return m, nil
-	}
-}
-
-func cleanup(m *model) {
-	dumpBranches()
-	// Stop future runs
-	cancelCtx()
-	// Stop current runs
-	termCh <- struct{}{}
-	m.Update(stopMsg{})
-}
-
-func (m model) View() string {
-	// TODO: Unhardcode keys
-	if m.started {
-		maybeInbucket := ""
-		if utils.InbucketPort != "" {
-			maybeInbucket = `
-    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
-		}
-
-		return `Started local development setup.
-
-         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
-          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
-        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
-` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
-	}
-
-	var progress string
-	if m.progress != nil {
-		progress = "\n\n" + m.progress.View()
-	}
-
-	var psqlOutputs string
-	if len(m.psqlOutputs) > 0 {
-		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
-	}
-
-	return m.spinner.View() + m.status + progress + psqlOutputs
-}
-
-type startedMsg bool
-type stopMsg struct{}
-
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
 	termCh         = make(chan struct{}, 1)
@@ -982,6 +866,122 @@ EOSQL
 
 		p.Send(startedMsg(true))
 	}
+}
+
+type startedMsg bool
+type stopMsg struct{}
+
+type model struct {
+	spinner     spinner.Model
+	status      string
+	progress    *progress.Model
+	psqlOutputs []string
+	started     bool
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.started = false
+			m.status = "Dumping branches..."
+			go cleanup(&m)
+			return m, nil
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	case utils.PsqlMsg:
+		if msg == nil {
+			m.psqlOutputs = []string{}
+			return m, nil
+		}
+
+		m.psqlOutputs = append(m.psqlOutputs, *msg)
+		if len(m.psqlOutputs) > 5 {
+			m.psqlOutputs = m.psqlOutputs[1:]
+		}
+		return m, nil
+	case startedMsg:
+		m.started = bool(msg)
+		return m, nil
+	case stopMsg:
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	// TODO: Unhardcode keys
+	if m.started {
+		maybeInbucket := ""
+		if utils.InbucketPort != "" {
+			maybeInbucket = `
+    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
+		}
+
+		return `Started local development setup.
+
+         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
+          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
+        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`
+	}
+
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	var psqlOutputs string
+	if len(m.psqlOutputs) > 0 {
+		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
+	}
+
+	return m.spinner.View() + m.status + progress + psqlOutputs
+}
+
+func cleanup(m *model) {
+	dumpBranches()
+	// Stop future runs
+	cancelCtx()
+	// Stop current runs
+	termCh <- struct{}{}
+	m.Update(stopMsg{})
 }
 
 func dumpBranches() {
