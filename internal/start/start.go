@@ -568,8 +568,8 @@ EOSQL
 			},
 			&container.HostConfig{
 				Binds: []string{
-					cwd + "/supabase/.temp/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:z",
-					cwd + "/supabase/.temp/userlist.txt:/etc/pgbouncer/userlist.txt:z",
+					cwd + "/supabase/.temp/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,z",
+					cwd + "/supabase/.temp/userlist.txt:/etc/pgbouncer/userlist.txt:ro,z",
 				},
 				PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
 				NetworkMode:  container.NetworkMode(utils.NetId),
@@ -607,9 +607,9 @@ EOSQL
 				},
 			},
 			&container.HostConfig{
-				Binds:        []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:z")},
 				PortBindings: nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: utils.ApiPort}}},
 				NetworkMode:  container.NetworkMode(utils.NetId),
+				Binds:         []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro,z")},
 			},
 		); err != nil {
 			return err
