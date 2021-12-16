@@ -82,7 +82,7 @@ The CLI is a WIP and we're still exploring the design, so expect a lot of breaki
 To run from source:
 
 ```sh
-# Go >= 1.16
+# Go >= 1.17
 go run . help
 ```
 
