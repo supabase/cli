@@ -57,86 +57,6 @@ func Run(name string) error {
 	return nil
 }
 
-type model struct {
-	spinner     spinner.Model
-	status      string
-	progress    *progress.Model
-	psqlOutputs []string
-}
-
-func (m model) Init() tea.Cmd {
-	return spinner.Tick
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			// Stop future runs
-			cancelCtx()
-			return m, tea.Quit
-		default:
-			return m, nil
-		}
-	case spinner.TickMsg:
-		spinnerModel, cmd := m.spinner.Update(msg)
-		m.spinner = spinnerModel
-		return m, cmd
-	case progress.FrameMsg:
-		if m.progress == nil {
-			return m, nil
-		}
-
-		tmp, cmd := m.progress.Update(msg)
-		progressModel := tmp.(progress.Model)
-		m.progress = &progressModel
-		return m, cmd
-	case utils.StatusMsg:
-		m.status = string(msg)
-		return m, nil
-	case utils.ProgressMsg:
-		if msg == nil {
-			m.progress = nil
-			return m, nil
-		}
-
-		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithDefaultGradient())
-			m.progress = &progressModel
-		}
-
-		return m, m.progress.SetPercent(*msg)
-	case utils.PsqlMsg:
-		if msg == nil {
-			m.psqlOutputs = []string{}
-			return m, nil
-		}
-
-		m.psqlOutputs = append(m.psqlOutputs, *msg)
-		if len(m.psqlOutputs) > 5 {
-			m.psqlOutputs = m.psqlOutputs[1:]
-		}
-		return m, nil
-	default:
-		return m, nil
-	}
-}
-
-func (m model) View() string {
-	var progress string
-	if m.progress != nil {
-		progress = "\n\n" + m.progress.View()
-	}
-
-	var psqlOutputs string
-	if len(m.psqlOutputs) > 0 {
-		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
-	}
-
-	return m.spinner.View() + m.status + progress + psqlOutputs
-}
-
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
 
@@ -286,4 +206,84 @@ EOSQL
 	}
 
 	return nil
+}
+
+type model struct {
+	spinner     spinner.Model
+	status      string
+	progress    *progress.Model
+	psqlOutputs []string
+}
+
+func (m model) Init() tea.Cmd {
+	return spinner.Tick
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			// Stop future runs
+			cancelCtx()
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	case spinner.TickMsg:
+		spinnerModel, cmd := m.spinner.Update(msg)
+		m.spinner = spinnerModel
+		return m, cmd
+	case progress.FrameMsg:
+		if m.progress == nil {
+			return m, nil
+		}
+
+		tmp, cmd := m.progress.Update(msg)
+		progressModel := tmp.(progress.Model)
+		m.progress = &progressModel
+		return m, cmd
+	case utils.StatusMsg:
+		m.status = string(msg)
+		return m, nil
+	case utils.ProgressMsg:
+		if msg == nil {
+			m.progress = nil
+			return m, nil
+		}
+
+		if m.progress == nil {
+			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			m.progress = &progressModel
+		}
+
+		return m, m.progress.SetPercent(*msg)
+	case utils.PsqlMsg:
+		if msg == nil {
+			m.psqlOutputs = []string{}
+			return m, nil
+		}
+
+		m.psqlOutputs = append(m.psqlOutputs, *msg)
+		if len(m.psqlOutputs) > 5 {
+			m.psqlOutputs = m.psqlOutputs[1:]
+		}
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m model) View() string {
+	var progress string
+	if m.progress != nil {
+		progress = "\n\n" + m.progress.View()
+	}
+
+	var psqlOutputs string
+	if len(m.psqlOutputs) > 0 {
+		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
+	}
+
+	return m.spinner.View() + m.status + progress + psqlOutputs
 }
