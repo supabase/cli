@@ -40,7 +40,6 @@ type DiffEntry struct {
 
 const (
 	ShadowDbName   = "supabase_shadow"
-	PgbouncerImage = "edoburu/pgbouncer:1.15.0"
 	KongImage      = "library/kong:2.1"
 	GotrueImage    = "supabase/gotrue:v2.2.12"
 	InbucketImage  = "inbucket/inbucket:stable"
@@ -77,7 +76,6 @@ var (
 	ProjectId    string
 	NetId        string
 	DbId         string
-	PgbouncerId  string
 	KongId       string
 	GotrueId     string
 	InbucketId   string
@@ -166,7 +164,6 @@ func LoadConfig() error {
 	ProjectId = viper.GetString("projectId")
 	NetId = "supabase_network_" + ProjectId
 	DbId = "supabase_db_" + ProjectId
-	PgbouncerId = "supabase_pgbouncer_" + ProjectId
 	KongId = "supabase_kong_" + ProjectId
 	GotrueId = "supabase_auth_" + ProjectId
 	InbucketId = "supabase_inbucket_" + ProjectId
@@ -453,7 +450,7 @@ func filterDiffOutput(diffBytes []byte) ([]byte, error) {
 }
 
 func isSchemaIgnored(schema string) bool {
-	ignoredSchemas := []string{"auth", "extensions", "pgbouncer", "realtime", "storage", "supabase_migrations"}
+	ignoredSchemas := []string{"auth", "extensions", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations"}
 	for _, s := range ignoredSchemas {
 		if s == schema {
 			return true
