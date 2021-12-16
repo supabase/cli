@@ -284,7 +284,7 @@ EOSQL
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " +
 						"'" + url + "' " +
-						"'postgres://postgres:postgres@" + dbId + ":5432/postgres'",
+						"'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
 			},
 			&container.HostConfig{NetworkMode: container.NetworkMode(netId)},
