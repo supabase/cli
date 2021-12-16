@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	pgx "github.com/jackc/pgx/v4"
+	"github.com/muesli/reflow/wrap"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -315,6 +316,8 @@ type model struct {
 	status      string
 	progress    *progress.Model
 	psqlOutputs []string
+
+	width int
 }
 
 func (m model) Init() tea.Cmd {
@@ -334,6 +337,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, nil
 		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
 	case spinner.TickMsg:
 		spinnerModel, cmd := m.spinner.Update(msg)
 		m.spinner = spinnerModel
@@ -389,5 +395,5 @@ func (m model) View() string {
 		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
 	}
 
-	return m.spinner.View() + m.status + progress + psqlOutputs
+	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
 }
