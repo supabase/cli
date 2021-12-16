@@ -41,19 +41,6 @@ func Run() error {
 		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
-
-		if err := utils.AssertPortIsAvailable(utils.ApiPort); err != nil {
-			return err
-		}
-		if err := utils.AssertPortIsAvailable(utils.DbPort); err != nil {
-			return err
-		}
-		if err := utils.AssertPortIsAvailable(utils.StudioPort); err != nil {
-			return err
-		}
-		if err := utils.AssertPortIsAvailable(utils.InbucketPort); err != nil {
-			return err
-		}
 	}
 
 	s := spinner.NewModel()

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -119,18 +118,6 @@ func AssertDockerIsRunning() error {
 		return errors.New("Failed to connect to Docker daemon. Is Docker running?")
 	}
 
-	return nil
-}
-
-func AssertPortIsAvailable(port string) error {
-	listener, err := net.Listen("tcp4", "localhost:"+port)
-	if err != nil {
-		return err
-	}
-
-	if err := listener.Close(); err != nil {
-		return err
-	}
 	return nil
 }
 
