@@ -692,15 +692,23 @@ EOSQL
 		Image: utils.RealtimeImage,
 		Env: []string{
 			// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+			"PORT=4000",
 			"DB_HOST=" + utils.DbId,
 			"DB_PORT=5432",
 			"DB_USER=postgres",
 			"DB_PASSWORD=postgres",
 			"DB_NAME=" + currBranch,
+			"DB_SSL=false",
 			"SLOT_NAME=supabase_realtime",
-			"PORT=4000",
-			"SECURE_CHANNELS=true",
+			"TEMPORARY_SLOT=true",
 			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"SECURE_CHANNELS=true",
+			"REPLICATION_MODE=RLS",
+			"REPLICATION_POLL_INTERVAL=100",
+		},
+		Cmd: []string{
+			"sh", "-c",
+			"./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start",
 		},
 	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
 		return err
@@ -851,15 +859,19 @@ EOSQL
 			Image: utils.RealtimeImage,
 			Env: []string{
 				// connect to db directly instead of pgbouncer, since realtime doesn't work with pgbouncer for some reason
+				"PORT=4000",
 				"DB_HOST=" + utils.DbId,
 				"DB_PORT=5432",
 				"DB_USER=postgres",
 				"DB_PASSWORD=postgres",
 				"DB_NAME=" + currBranch,
+				"DB_SSL=false",
 				"SLOT_NAME=supabase_realtime",
-				"PORT=4000",
-				"SECURE_CHANNELS=true",
+				"TEMPORARY_SLOT=true",
 				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"SECURE_CHANNELS=true",
+				"REPLICATION_MODE=RLS",
+				"REPLICATION_POLL_INTERVAL=100",
 			},
 		}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
 			return err
