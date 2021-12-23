@@ -706,6 +706,10 @@ EOSQL
 			"REPLICATION_MODE=RLS",
 			"REPLICATION_POLL_INTERVAL=100",
 		},
+		Cmd: []string{
+			"sh", "-c",
+			"./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start",
+		},
 	}, &container.HostConfig{NetworkMode: container.NetworkMode(utils.NetId)}); err != nil {
 		return err
 	}
