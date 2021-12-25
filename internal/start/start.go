@@ -521,7 +521,6 @@ EOSQL
 
 		// Set up current branch.
 		{
-			// https://dba.stackexchange.com/a/11895
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
 				"sh", "-c", "psql --username postgres --host localhost template1 <<'EOSQL' " +
 					"&& dropdb --force --username postgres --host localhost postgres " +
@@ -825,7 +824,6 @@ EOSQL
 
 		// Recreate current branch.
 		{
-			// https://dba.stackexchange.com/a/11895
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
 				"sh", "-c", "psql --username postgres --host localhost template1 <<'EOSQL' " +
 					"&& dropdb --force --username postgres --host localhost postgres " +

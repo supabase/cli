@@ -36,7 +36,6 @@ func Run(branch string) error {
 	}
 
 	{
-		// https://dba.stackexchange.com/a/11895
 		out, err := utils.DockerExec(context.Background(), utils.DbId, []string{
 			"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
 				"&& dropdb --force --username postgres --host localhost '" + branch + `'

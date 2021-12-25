@@ -51,6 +51,7 @@ const (
 	// TODO: Hardcode version once provided upstream.
 	StudioImage = "supabase/studio:latest"
 
+	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
 	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
