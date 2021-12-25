@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/fsnotify/fsnotify"
@@ -817,8 +818,8 @@ EOSQL
 		p.Send(startedMsg(false))
 		p.Send(utils.StatusMsg("Switching to branch " + currBranch + "..."))
 
-		// Stop Realtime because we can't drop a db while a replication slot is active.
-		if err := utils.Docker.ContainerKill(ctx, utils.RealtimeId, "SIGKILL"); err != nil {
+		// Prevent new db connections to be established while db is recreated.
+		if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 			return err
 		}
 
@@ -847,7 +848,7 @@ EOSQL
 			}
 		}
 
-		if err := utils.Docker.ContainerStart(ctx, utils.RealtimeId, types.ContainerStartOptions{}); err != nil {
+		if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
 			return err
 		}
 
