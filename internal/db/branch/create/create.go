@@ -62,12 +62,14 @@ func Run(branch string) error {
 
 		return nil
 	}(); err != nil {
-		return fmt.Errorf("Error dumping current branch %s: %w", utils.Aqua(currBranch), err)
+		return fmt.Errorf("Error creating branch: %w", err)
 	}
 
 	if err := func() error {
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "createdb --username postgres --host localhost '" + branch + "' && psql --username postgres --host localhost --dbname '" + branch + `' <<'EOSQL'
+			"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+CREATE DATABASE "` + branch + `";
+\connect ` + branch + `
 BEGIN;
 ` + dumpBuf.String() + `
 COMMIT;
@@ -77,7 +79,6 @@ EOSQL
 		if err != nil {
 			return err
 		}
-
 		var errBuf bytes.Buffer
 		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
@@ -92,9 +93,6 @@ EOSQL
 	}
 
 	if err := os.Mkdir("supabase/.branches/"+branch, 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile("supabase/.branches/"+branch+"/dump.sql", dumpBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 

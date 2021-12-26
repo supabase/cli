@@ -37,13 +37,7 @@ func Run(branch string) error {
 
 	{
 		out, err := utils.DockerExec(context.Background(), utils.DbId, []string{
-			"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
-				"&& dropdb --force --username postgres --host localhost '" + branch + `'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, branch) + `
-COMMIT;
-EOSQL
-`,
+			"dropdb", "--username", "postgres", "--host", "localhost", branch,
 		})
 		if err != nil {
 			return err

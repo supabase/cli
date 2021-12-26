@@ -347,13 +347,15 @@ EOSQL
 				if err := func() error {
 					content, err := os.ReadFile("supabase/.branches/" + branch.Name() + "/dump.sql")
 					if errors.Is(err, os.ErrNotExist) {
-						return errors.New("Branch was not dumped")
+						return errors.New("Branch was not dumped.")
 					} else if err != nil {
 						return err
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", "createdb --username postgres --host localhost '" + branch.Name() + "' && psql --username postgres --host localhost --dbname '" + branch.Name() + `' <<'EOSQL'
+						"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+CREATE DATABASE "` + branch.Name() + `";
+\connect ` + branch.Name() + `
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -363,13 +365,8 @@ EOSQL
 					if err != nil {
 						return err
 					}
-
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New(errBuf.String())
+					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+						return fmt.Errorf("Error starting database: %w", err)
 					}
 
 					return nil
@@ -398,31 +395,34 @@ EOSQL
 			if err := func() error {
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", "createdb --username postgres --host localhost main",
+						"createdb", "--username", "postgres", "--host", "localhost", "main",
 					})
 					if err != nil {
 						return err
 					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					var errBuf bytes.Buffer
+					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 						return err
+					}
+					if errBuf.Len() > 0 {
+						return errors.New("Error creating database: " + errBuf.String())
 					}
 				}
 
 				p.Send(utils.StatusMsg("Setting up initial schema..."))
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
+						"psql", "postgresql://postgres:postgres@localhost/main", "-c", utils.InitialSchemaSql,
 					})
 					if err != nil {
 						return err
 					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					var errBuf bytes.Buffer
+					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 						return err
+					}
+					if errBuf.Len() > 0 {
+						return errors.New("Error starting database: " + errBuf.String())
 					}
 				}
 
@@ -440,18 +440,17 @@ EOSQL
 						return err
 					} else {
 						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + string(extensionsSql) + `
-COMMIT;
-EOSQL
-`,
+							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(extensionsSql),
 						})
 						if err != nil {
 							return err
 						}
-						if err := utils.ProcessPsqlOutput(out, p); err != nil {
+						var errBuf bytes.Buffer
+						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 							return err
+						}
+						if errBuf.Len() > 0 {
+							return errors.New("Error starting database: " + errBuf.String())
 						}
 					}
 				}
@@ -477,18 +476,17 @@ EOSQL
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+						"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(content),
 					})
 					if err != nil {
 						return err
 					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
+					var errBuf bytes.Buffer
+					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 						return err
+					}
+					if errBuf.Len() > 0 {
+						return errors.New("Error starting database: " + errBuf.String())
 					}
 				}
 
@@ -501,18 +499,17 @@ EOSQL
 						return err
 					} else {
 						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"sh", "-c", `psql --username postgres --host localhost --dbname main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(content),
 						})
 						if err != nil {
 							return err
 						}
-						if err := utils.ProcessPsqlOutput(out, p); err != nil {
+						var errBuf bytes.Buffer
+						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 							return err
+						}
+						if errBuf.Len() > 0 {
+							return errors.New("Error starting database: " + errBuf.String())
 						}
 					}
 				}
