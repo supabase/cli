@@ -426,6 +426,11 @@ EOSQL
 					}
 				}
 
+				p.Send(utils.StatusMsg("Running services' migrations..."))
+				if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, "main"); err != nil {
+					return err
+				}
+
 				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
 				{
 					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
@@ -524,12 +529,12 @@ EOSQL
 		// Set up current branch.
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost template1 <<'EOSQL' " +
-					"&& dropdb --force --username postgres --host localhost postgres " +
-					"&& createdb --username postgres --host localhost --template '" + currBranch + `' postgres
+				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
 COMMIT;
+DROP DATABASE postgres;
+ALTER DATABASE "` + currBranch + `" RENAME TO postgres;
 EOSQL
 `,
 			})
@@ -682,10 +687,6 @@ EOSQL
 				"REPLICATION_MODE=RLS",
 				"REPLICATION_POLL_INTERVAL=100",
 			},
-			Cmd: []string{
-				"sh", "-c",
-				"./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start",
-			},
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
@@ -804,6 +805,7 @@ EOSQL
 
 	// switch db on switch branch
 
+	prevBranch := currBranch
 	for {
 		select {
 		case <-termCh:
@@ -827,12 +829,12 @@ EOSQL
 		// Recreate current branch.
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost template1 <<'EOSQL' " +
-					"&& dropdb --force --username postgres --host localhost postgres " +
-					"&& createdb --username postgres --host localhost --template '" + currBranch + `' postgres
+				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
 COMMIT;
+ALTER DATABASE postgres RENAME TO "` + prevBranch + `";
+ALTER DATABASE "` + currBranch + `" RENAME TO postgres;
 EOSQL
 `,
 			})
@@ -851,6 +853,8 @@ EOSQL
 		if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
 			return err
 		}
+
+		prevBranch = currBranch
 
 		p.Send(startedMsg(true))
 	}
@@ -984,14 +988,27 @@ func dumpBranches() {
 		return
 	}
 
+	currBranch, err := utils.GetCurrentBranch()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error getting current branch:", err)
+		return
+	}
+
 	for _, branch := range branches {
 		if branch.Name() == "_current_branch" {
 			continue
 		}
 
+		var dbName string
+		if branch.Name() == currBranch {
+			dbName = "postgres"
+		} else {
+			dbName = branch.Name()
+		}
+
 		if err := func() error {
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "pg_dump --username postgres --host localhost --dbname '" + branch.Name() + "'",
+				"pg_dump", "postgresql://postgres:postgres@localhost/" + dbName,
 			})
 			if err != nil {
 				return err
