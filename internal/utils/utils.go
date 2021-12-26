@@ -39,15 +39,16 @@ type DiffEntry struct {
 }
 
 const (
-	ShadowDbName   = "supabase_shadow"
-	KongImage      = "library/kong:2.1"
-	GotrueImage    = "supabase/gotrue:v2.2.12"
-	InbucketImage  = "inbucket/inbucket:stable"
-	RealtimeImage  = "supabase/realtime:v0.19.4"
-	PostgrestImage = "postgrest/postgrest:v9.0.0"
-	StorageImage   = "supabase/storage-api:v0.10.0"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage    = "supabase/postgres-meta:v0.29.0"
+	ShadowDbName           = "supabase_shadow"
+	KongImage              = "library/kong:2.1"
+	GotrueImage            = "supabase/gotrue:v2.2.12"
+	InbucketImage          = "inbucket/inbucket:stable"
+	RealtimeImage          = "supabase/realtime:v0.19.4"
+	PostgrestImage         = "postgrest/postgrest:v9.0.0"
+	StorageImage           = "supabase/storage-api:v0.10.0"
+	StorageMigrationsCount = "9"
+	DifferImage            = "supabase/pgadmin-schema-diff:cli-0.0.4"
+	PgmetaImage            = "supabase/postgres-meta:v0.29.0"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage = "supabase/studio:latest"
 
@@ -500,4 +501,99 @@ func IsBranchNameReserved(branch string) bool {
 	default:
 		return false
 	}
+}
+
+func RunServicesMigrations(ctx context.Context, dbId string, dbName string) error {
+	if out, err := DockerRun(
+		ctx,
+		"supabase_gotrue_migrate",
+		&container.Config{
+			Image: GotrueImage,
+			Env: []string{
+				"GOTRUE_DB_DRIVER=postgres",
+				"GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:postgres@" + dbId + ":5432/" + dbName,
+			},
+			Cmd: []string{"gotrue", "migrate"},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+	); err != nil {
+		return err
+	} else {
+		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+			return err
+		}
+		if errBuf.Len() > 0 && !strings.Contains(errBuf.String(), "GoTrue migrations applied successfully") {
+			return errors.New("Error running GoTrue migrations: " + errBuf.String())
+		}
+	}
+
+	if out, err := DockerRun(
+		ctx,
+		"supabase_realtime_migrate",
+		&container.Config{
+			Image: RealtimeImage,
+			Env: []string{
+				"DB_HOST=" + dbId,
+				"DB_PORT=5432",
+				"DB_USER=postgres",
+				"DB_PASSWORD=postgres",
+				"DB_NAME=" + dbName,
+				"DB_SSL=false",
+			},
+			Cmd: []string{"./prod/rel/realtime/bin/realtime", "eval", "Realtime.Release.migrate"},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+	); err != nil {
+		return err
+	} else {
+		var errBuf bytes.Buffer
+		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+			return err
+		}
+		if errBuf.Len() > 0 {
+			return errors.New("Error running Realtime migrations: " + errBuf.String())
+		}
+	}
+
+	if _, err := DockerRun(
+		ctx,
+		"supabase_storage_migrate",
+		&container.Config{
+			Image: StorageImage,
+			Env: []string{
+				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + dbId + ":5432/" + dbName,
+
+				"ANON_KEY=stub",
+				"SERVICE_KEY=stub",
+				"POSTGREST_URL=stub",
+				"PGRST_JWT_SECRET=stub",
+				"FILE_SIZE_LIMIT=stub",
+				"STORAGE_BACKEND=stub",
+				"FILE_STORAGE_BACKEND_PATH=stub",
+				"TENANT_ID=stub",
+				// TODO: https://github.com/supabase/storage-api/issues/55
+				"REGION=stub",
+				"GLOBAL_S3_BUCKET=stub",
+			},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+	); err != nil {
+		return err
+	}
+	if _, err := DockerExec(
+		ctx,
+		dbId,
+		[]string{
+			"sh", "-c",
+			"until psql --username postgres --host localhost '" + dbName + `' -c "DO 'BEGIN ASSERT (SELECT COUNT(*) FROM storage.migrations) = ` + StorageMigrationsCount + `; END'"; do sleep 0.1; done`,
+		},
+	); err != nil {
+		return err
+	}
+	if err := Docker.ContainerStop(ctx, "supabase_storage_migrate", nil); err != nil {
+		return err
+	}
+
+	return nil
 }
