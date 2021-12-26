@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/muesli/reflow/wrap"
 	"github.com/supabase/cli/internal/utils"
@@ -65,16 +66,13 @@ var (
 )
 
 func run(p *tea.Program) (err error) {
-	// 1. Pause realtime. Need to be done before recreating the db because we
-	// cannot drop the db while there's an active logical replication slot.
-
-	if err := utils.Docker.ContainerPause(ctx, utils.RealtimeId); err != nil {
+	// 1. Prevent new db connections to be established while db is recreated.
+	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 		return err
 	}
 	defer func() {
-		if err_ := utils.Docker.ContainerUnpause(ctx, utils.RealtimeId); err_ != nil {
-			err = fmt.Errorf("Failed to unpause Realtime: %w", err_)
-			return
+		if err_ := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err_ != nil {
+			err = fmt.Errorf("Error reconnecting database after reset: %w", err_)
 		}
 	}()
 
