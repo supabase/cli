@@ -54,8 +54,10 @@ const (
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
-	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" CONNECTION LIMIT 0;
+	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" ALLOW_CONNECTIONS FALSE;
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
+-- Wait for WAL sender to drop replication slot.
+DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; END';
 `
 )
 
