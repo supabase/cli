@@ -90,7 +90,7 @@ func run(p *tea.Program) error {
 
 	branchCh := make(chan string)
 
-	// Ensure `current_branch` file exists.
+	// Ensure `_current_branch` file exists.
 	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
@@ -346,7 +346,9 @@ EOSQL
 
 				if err := func() error {
 					content, err := os.ReadFile("supabase/.branches/" + branch.Name() + "/dump.sql")
-					if err != nil {
+					if errors.Is(err, os.ErrNotExist) {
+						return errors.New("Branch was not dumped")
+					} else if err != nil {
 						return err
 					}
 
@@ -842,7 +844,7 @@ EOSQL
 				return err
 			}
 			if errBuf.Len() > 0 {
-				return errors.New("Error starting database: " + errBuf.String())
+				return errors.New("Error switching to branch " + utils.Aqua(currBranch) + ": " + errBuf.String())
 			}
 		}
 
