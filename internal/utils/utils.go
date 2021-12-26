@@ -54,7 +54,7 @@ const (
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
-	TerminateDbSqlFmt = `ALTER DATABASE "%[1]s" ALLOW_CONNECTIONS FALSE;
+	TerminateDbSqlFmt = `
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 -- Wait for WAL sender to drop replication slot.
 DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; END';
@@ -505,7 +505,7 @@ func IsBranchNameReserved(branch string) bool {
 	}
 }
 
-func RunServicesMigrations(ctx context.Context, dbId string, dbName string) error {
+func RunServicesMigrations(ctx context.Context, netId string, dbId string, dbName string) error {
 	if out, err := DockerRun(
 		ctx,
 		"supabase_gotrue_migrate",
@@ -517,7 +517,7 @@ func RunServicesMigrations(ctx context.Context, dbId string, dbName string) erro
 			},
 			Cmd: []string{"gotrue", "migrate"},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
 	); err != nil {
 		return err
 	} else {
@@ -545,7 +545,7 @@ func RunServicesMigrations(ctx context.Context, dbId string, dbName string) erro
 			},
 			Cmd: []string{"./prod/rel/realtime/bin/realtime", "eval", "Realtime.Release.migrate"},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
 	); err != nil {
 		return err
 	} else {
@@ -579,7 +579,7 @@ func RunServicesMigrations(ctx context.Context, dbId string, dbName string) erro
 				"GLOBAL_S3_BUCKET=stub",
 			},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(NetId), AutoRemove: true},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
 	); err != nil {
 		return err
 	}
@@ -593,7 +593,7 @@ func RunServicesMigrations(ctx context.Context, dbId string, dbName string) erro
 	); err != nil {
 		return err
 	}
-	if err := Docker.ContainerStop(ctx, "supabase_storage_migrate", nil); err != nil {
+	if err := Docker.ContainerKill(ctx, "supabase_storage_migrate", "SIGKILL"); err != nil {
 		return err
 	}
 
