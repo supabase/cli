@@ -174,7 +174,7 @@ func run(p *tea.Program, url string) error {
 
 		out, err := utils.DockerExec(ctx, dbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres --host localhost <<'EOSQL'
+				`&& psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
 BEGIN;
 ` + utils.GlobalsSql + `
 COMMIT;
@@ -184,30 +184,32 @@ EOSQL
 		if err != nil {
 			return err
 		}
-
 		var errBuf bytes.Buffer
 		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
 		}
 		if errBuf.Len() > 0 {
-			return errors.New("Error starting database: " + errBuf.String())
+			return errors.New("Error starting shadow database: " + errBuf.String())
 		}
 
 		{
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", utils.InitialSchemaSql,
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
 			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error starting shadow database: " + errBuf.String())
+			}
+		}
+
+		if err := utils.RunServicesMigrations(ctx, netId, dbId, "postgres"); err != nil {
+			return err
 		}
 
 		{
@@ -218,18 +220,17 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, dbId, []string{
-					"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
-BEGIN;
-` + string(extensionsSql) + `
-COMMIT;
-EOSQL
-`,
+					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(extensionsSql),
 				})
 				if err != nil {
 					return err
 				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 					return err
+				}
+				if errBuf.Len() > 0 {
+					return errors.New("Error starting shadow database: " + errBuf.String())
 				}
 			}
 		}
@@ -254,18 +255,17 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `psql --username postgres --host localhost <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error starting shadow database: " + errBuf.String())
 			}
 		}
 	}
@@ -282,9 +282,9 @@ EOSQL
 			&container.Config{
 				Image: utils.DifferImage,
 				Entrypoint: []string{
-					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " +
-						"'" + url + "' " +
-						"'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
+					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
+						" '" + url + "'" +
+						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
 			},
 			&container.HostConfig{NetworkMode: container.NetworkMode(netId)},
