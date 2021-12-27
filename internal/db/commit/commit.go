@@ -65,6 +65,11 @@ func run(p *tea.Program, name string) error {
 
 	// 1. Create shadow db and run migrations
 	{
+		defer utils.DockerExec( //nolint:errcheck
+			ctx,
+			utils.DbId,
+			[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
+		)
 		out, err := utils.DockerExec(
 			ctx,
 			utils.DbId,
@@ -179,27 +184,6 @@ func run(p *tea.Program, name string) error {
 
 		if err := os.WriteFile("supabase/migrations/"+utils.GetCurrentTimestamp()+"_"+name+".sql", diffBytes, 0644); err != nil {
 			return err
-		}
-	}
-
-	p.Send(utils.StatusMsg("Dropping shadow database..."))
-
-	// 3. Drop shadow db.
-	{
-		out, err := utils.DockerExec(
-			ctx,
-			utils.DbId,
-			[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
-		)
-		if err != nil {
-			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error dropping shadow database: " + errBuf.String())
 		}
 	}
 
