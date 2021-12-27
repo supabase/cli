@@ -65,16 +65,12 @@ var (
 	currBranch string
 )
 
-func run(p *tea.Program) (err error) {
+func run(p *tea.Program) error {
 	// 1. Prevent new db connections to be established while db is recreated.
 	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 		return err
 	}
-	defer func() {
-		if err_ := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err_ != nil {
-			err = fmt.Errorf("Error reconnecting database after reset: %w", err_)
-		}
-	}()
+	defer utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 
 	p.Send(utils.StatusMsg("Resetting database..."))
 
@@ -82,12 +78,12 @@ func run(p *tea.Program) (err error) {
 		// 2. Recreate db.
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost <<'EOSQL' " +
-					"&& dropdb --force --username postgres --host localhost '" + currBranch + "' " +
-					"&& createdb --username postgres --host localhost '" + currBranch + `'
+				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
 BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, currBranch) + `
+` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
 COMMIT;
+DROP DATABASE postgres;
+CREATE DATABASE postgres;
 EOSQL
 `,
 			})
@@ -108,19 +104,28 @@ EOSQL
 		p.Send(utils.StatusMsg("Setting up initial schema..."))
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", utils.InitialSchemaSql,
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
 			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error resetting database: " + errBuf.String())
+			}
+		}
+
+		// Need to connect to run services' migrations.
+		if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
+			return fmt.Errorf("Error reconnecting database: %w", err)
+		}
+
+		p.Send(utils.StatusMsg("Running services' migrations..."))
+		if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, "postgres"); err != nil {
+			return err
 		}
 
 		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
@@ -132,18 +137,17 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
-BEGIN;
-` + string(extensionsSql) + `
-COMMIT;
-EOSQL
-`,
+					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(extensionsSql),
 				})
 				if err != nil {
 					return err
 				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 					return err
+				}
+				if errBuf.Len() > 0 {
+					return errors.New("Error resetting database: " + errBuf.String())
 				}
 			}
 		}
@@ -168,18 +172,17 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error resetting database: " + errBuf.String())
 			}
 		}
 
@@ -192,18 +195,17 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --host localhost --dbname '" + currBranch + `' <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
 				})
 				if err != nil {
 					return err
 				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 					return err
+				}
+				if errBuf.Len() > 0 {
+					return errors.New("Error resetting database: " + errBuf.String())
 				}
 			}
 		}

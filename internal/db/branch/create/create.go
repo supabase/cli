@@ -38,15 +38,10 @@ func Run(branch string) error {
 		return errors.New("Branch " + utils.Aqua(branch) + " already exists.")
 	}
 
-	currBranch, err := utils.GetCurrentBranch()
-	if err != nil {
-		return err
-	}
-
 	var dumpBuf bytes.Buffer
 	if err := func() error {
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "pg_dump --username postgres --host localhost --dbname '" + currBranch + "'",
+			"pg_dump", "postgresql://postgres:postgres@localhost/postgres",
 		})
 		if err != nil {
 			return err

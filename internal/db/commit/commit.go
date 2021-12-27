@@ -25,12 +25,6 @@ func Run(name string) error {
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
 			return err
 		}
-
-		if branch, err := utils.GetCurrentBranch(); err != nil {
-			return err
-		} else {
-			currBranch = branch
-		}
 	}
 
 	s := spinner.NewModel()
@@ -54,14 +48,16 @@ func Run(name string) error {
 		return err
 	}
 
-	fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(currBranch) + ".")
+	if branch, err := utils.GetCurrentBranch(); err != nil {
+		return err
+	} else {
+		fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + ".")
+	}
 	return nil
 }
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
-
-	currBranch string
 )
 
 func run(p *tea.Program, name string) error {
@@ -87,19 +83,22 @@ func run(p *tea.Program, name string) error {
 
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/" + utils.ShadowDbName, "-c", utils.InitialSchemaSql,
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
 			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error starting shadow database: " + errBuf.String())
+			}
+		}
+
+		if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, utils.ShadowDbName); err != nil {
+			return err
 		}
 
 		{
@@ -110,18 +109,17 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
-BEGIN;
-` + string(extensionsSql) + `
-COMMIT;
-EOSQL
-`,
+					"psql", "postgresql://postgres:postgres@localhost/" + utils.ShadowDbName, "-c", string(extensionsSql),
 				})
 				if err != nil {
 					return err
 				}
-				if err := utils.ProcessPsqlOutput(out, p); err != nil {
+				var errBuf bytes.Buffer
+				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 					return err
+				}
+				if errBuf.Len() > 0 {
+					return errors.New("Error starting shadow database: " + errBuf.String())
 				}
 			}
 		}
@@ -146,30 +144,29 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", "psql --username postgres --host localhost --dbname '" + utils.ShadowDbName + `' <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
+				"psql", "postgresql://postgres:postgres@localhost/" + utils.ShadowDbName, "-c", string(content),
 			})
 			if err != nil {
 				return err
 			}
-			if err := utils.ProcessPsqlOutput(out, p); err != nil {
+			var errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error starting shadow database: " + errBuf.String())
 			}
 		}
 	}
 
 	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
 
-	// 2. Diff it (target) with local db (source), write it as a new migration.
+	// 2. Diff local db (source) with shadow db (target), write it as a new migration.
 	{
 		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
-			"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " +
-				"'postgresql://postgres:postgres@" + utils.DbId + ":5432/" + currBranch + "' " +
-				"'postgresql://postgres:postgres@" + utils.DbId + ":5432/" + utils.ShadowDbName + "'",
+			"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
+				" 'postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres'" +
+				" 'postgresql://postgres:postgres@" + utils.DbId + ":5432/" + utils.ShadowDbName + "'",
 		})
 		if err != nil {
 			return err
