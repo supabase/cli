@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	u "net/url"
 	"os"
 	"regexp"
 
@@ -12,8 +13,16 @@ import (
 )
 
 func Run(url string) error {
-	if err := utils.LoadConfig(); err != nil {
-		return err
+	// Sanity checks.
+	{
+		if parsedUrl, err := u.Parse(url); err != nil {
+			return err
+		} else if parsedUrl.String() != url {
+			return errors.New("Error parsing connection string: Make sure the URL is percent-encoded.")
+		}
+		if err := utils.LoadConfig(); err != nil {
+			return err
+		}
 	}
 
 	ctx := context.Background()
