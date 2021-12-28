@@ -243,8 +243,15 @@ EOSQL
 		for i, migration := range migrations {
 			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
 			// the first migration (prev versions of the CLI) is deprecated.
-			if i == 0 && strings.HasSuffix(migration.Name(), "_init.sql") {
-				continue
+			if i == 0 {
+				matches := regexp.MustCompile(`([0-9]{14})_init\.sql`).FindStringSubmatch(migration.Name())
+				if len(matches) == 2 {
+					if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err != nil {
+						return err
+					} else if timestamp < 20211209000000 {
+						continue
+					}
+				}
 			}
 
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
