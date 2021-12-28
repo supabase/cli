@@ -73,6 +73,10 @@ Linux packages are provided in [Releases](https://github.com/supabase/cli/releas
 supabase help
 ```
 
+## Docs
+
+Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
+
 ## Breaking changes
 
 The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Please file an issue if these steps don't work!
