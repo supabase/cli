@@ -76,21 +76,25 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			return err
 		}
 
-		conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
-
-		if len(remoteMigrations) > len(localMigrations) {
-			return conflictErr
-		}
-
 		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 		for i, remoteTimestamp := range remoteMigrations {
+			if i >= len(localMigrations) {
+				return errors.New(`The remote database was applied with migration(s) that cannot be found locally. Try updating the project from version control. Otherwise:
+1. Delete rows from supabase_migrations.schema_migrations on the remote database so that it's in sync with the contents of ` + utils.Bold("supabase/migrations") + `,
+2. Run ` + utils.Aqua("supabase db remote set") + ` again,
+3. Run ` + utils.Aqua("supabase db remote commit") + ".")
+			}
+
 			localTimestamp := re.FindStringSubmatch(localMigrations[i].Name())[1]
 
 			if localTimestamp == remoteTimestamp {
 				continue
 			}
 
-			return conflictErr
+			return errors.New(`The remote database was set up with a different Supabase CLI project. If you meant to reset the migration history to use a new Supabase CLI project:
+1. Run ` + utils.Aqua("DROP SCHEMA supabase_migrations CASCADE") + ` on the remote database,
+2. Run ` + utils.Aqua("supabase db remote set") + ` again,
+3. Run ` + utils.Aqua("supabase db remote commit") + ".")
 		}
 	}
 	rows.Close()

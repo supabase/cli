@@ -61,7 +61,9 @@ func Run() error {
 		return err
 	}
 
-	fmt.Println("Finished " + utils.Aqua("supabase db remote commit") + ".")
+	fmt.Println("Finished " + utils.Aqua("supabase db remote commit") + `.
+WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`)
 	return nil
 }
 
@@ -135,7 +137,10 @@ func run(p *tea.Program, url string) error {
 			return err
 		}
 
-		conflictErr := errors.New("supabase_migrations.schema_migrations table is not in sync with the contents of " + utils.Bold("supabase/migrations") + ".")
+		conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold("supabase/migrations") + `. Resolve this by:
+- Updating the project from version control to get the latest ` + utils.Bold("supabase/migrations") + `,
+- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
+- Or failing that, manually inserting/deleting rows from the supabase_migrations.schema_migrations table on the remote database.`)
 
 		if len(remoteMigrations) != len(localMigrations) {
 			return conflictErr

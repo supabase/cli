@@ -29,7 +29,8 @@ func Run() error {
 
 	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
 	if err != nil {
-		return errors.New("supabase_migrations.schema_migrations table does not exist.")
+		return fmt.Errorf(`Error querying remote database: %w.
+Try running `+utils.Aqua("supabase db remote set")+".", err)
 	}
 
 	versions := []string{}

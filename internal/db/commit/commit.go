@@ -53,7 +53,9 @@ func Run(name string) error {
 	if branch, err := utils.GetCurrentBranch(); err != nil {
 		return err
 	} else {
-		fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + ".")
+		fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + `.
+WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`)
 	}
 	return nil
 }
