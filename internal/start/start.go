@@ -572,6 +572,10 @@ EOSQL
 		if err := os.WriteFile("supabase/.temp/kong.yml", kongConfigBuf.Bytes(), 0644); err != nil {
 			return err
 		}
+		// Ensure the file is readable even after umask
+		if err := os.Chmod("supabase/.temp/kong.yml", 0644); err != nil {
+			return err
+		}
 
 		if _, err := utils.DockerRun(
 			ctx,
