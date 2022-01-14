@@ -641,6 +641,14 @@ EOSQL
 			)
 		}
 
+		// Append external OAuth settings if exists.
+		envs := os.Environ()
+		for _, e := range envs {
+			if strings.HasPrefix(e, "GOTRUE_EXTERNAL") {
+				env = append(env, e)
+			}
+		}
+
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.GotrueId,
