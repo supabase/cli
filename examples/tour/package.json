@@ -1,4 +1,5 @@
 {
+  "private": true,
   "name": "tour",
   "version": "1.0.0",
   "license": "MIT",
