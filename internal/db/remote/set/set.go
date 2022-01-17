@@ -39,7 +39,7 @@ func Run(url string) error {
 		return err
 	}
 	if dbVersion[:2] != utils.DbVersion[:2] {
-		return errors.New("Remote database Postgres version " + dbVersion + " is incompatible with " + utils.Aqua("dbVersion") + " " + utils.DbVersion + ".")
+		return errors.New("Remote database Postgres version " + dbVersion + " is incompatible with " + utils.Aqua("dbVersion") + " " + utils.DbVersion + ". If you are setting up a fresh Supabase CLI project, try changing " + utils.Aqua("dbVersion") + " in " + utils.Bold("supabase/config.json") + " to " + dbVersion + ".")
 	}
 
 	// 2. Setup & validate `schema_migrations`.
