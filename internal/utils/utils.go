@@ -41,14 +41,14 @@ type DiffEntry struct {
 const (
 	ShadowDbName           = "supabase_shadow"
 	KongImage              = "library/kong:2.1"
-	GotrueImage            = "supabase/gotrue:v2.2.12"
+	GotrueImage            = "supabase/gotrue:v2.3.8"
 	InbucketImage          = "inbucket/inbucket:stable"
-	RealtimeImage          = "supabase/realtime:v0.19.4"
+	RealtimeImage          = "supabase/realtime:v0.19.5"
 	PostgrestImage         = "postgrest/postgrest:v9.0.0"
 	StorageImage           = "supabase/storage-api:v0.10.0"
 	StorageMigrationsCount = "9"
 	DifferImage            = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage            = "supabase/postgres-meta:v0.29.0"
+	PgmetaImage            = "supabase/postgres-meta:v0.31.1"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage = "supabase/studio:latest"
 
