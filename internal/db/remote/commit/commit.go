@@ -213,10 +213,6 @@ EOSQL
 			}
 		}
 
-		if err := utils.RunServicesMigrations(ctx, netId, dbId, "postgres"); err != nil {
-			return err
-		}
-
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {

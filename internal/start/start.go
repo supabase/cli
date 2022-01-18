@@ -427,11 +427,6 @@ EOSQL
 					}
 				}
 
-				p.Send(utils.StatusMsg("Running services' migrations..."))
-				if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, "main"); err != nil {
-					return err
-				}
-
 				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
 				{
 					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
