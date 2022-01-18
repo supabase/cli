@@ -300,16 +300,17 @@ ALTER function "storage".search(text,text,int,int,int) owner to supabase_storage
 --
 
 -- ALTER ROLE postgres SET search_path TO "\$user",public,extensions;
-CREATE OR REPLACE FUNCTION extensions.notify_api_restart()
-RETURNS event_trigger
-LANGUAGE plpgsql
-AS $$
+
+CREATE OR REPLACE FUNCTION extensions.notify_api_restart() RETURNS event_trigger
+  LANGUAGE plpgsql
+  AS $$
 BEGIN
-    NOTIFY ddl_command_end;
+  NOTIFY pgrst, 'reload schema';
 END;
 $$;
-CREATE EVENT TRIGGER api_restart ON ddl_command_end
-EXECUTE PROCEDURE extensions.notify_api_restart();
+CREATE EVENT TRIGGER api_restart
+  ON ddl_command_end
+  EXECUTE PROCEDURE extensions.notify_api_restart();
 COMMENT ON FUNCTION extensions.notify_api_restart IS 'Sends a notification to the API to restart. If your database schema has changed, this is required so that Supabase can rebuild the relationships.';
 
 -- Trigger for pg_cron
@@ -342,7 +343,7 @@ BEGIN
     alter default privileges for user supabase_admin in schema cron grant all
         on functions to postgres with grant option;
 
-    grant all privileges on all tables in schema cron to postgres with grant option;
+    grant all privileges on all tables in schema cron to postgres with grant option; 
 
   END IF;
 
@@ -429,6 +430,23 @@ GRANT ALL ON ALL ROUTINES IN SCHEMA auth TO dashboard_user;
 GRANT ALL ON ALL ROUTINES IN SCHEMA storage TO dashboard_user;
 GRANT ALL ON ALL ROUTINES IN SCHEMA extensions TO dashboard_user;
 
+-- demote postgres user
+GRANT ALL ON DATABASE postgres TO postgres;
+GRANT ALL ON SCHEMA auth TO postgres;
+GRANT ALL ON SCHEMA extensions TO postgres;
+GRANT ALL ON SCHEMA storage TO postgres;
+GRANT ALL ON ALL TABLES IN SCHEMA auth TO postgres;
+GRANT ALL ON ALL TABLES IN SCHEMA storage TO postgres;
+GRANT ALL ON ALL TABLES IN SCHEMA extensions TO postgres;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA auth TO postgres;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA storage TO postgres;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA extensions TO postgres;
+GRANT ALL ON ALL ROUTINES IN SCHEMA auth TO postgres;
+GRANT ALL ON ALL ROUTINES IN SCHEMA storage TO postgres;
+GRANT ALL ON ALL ROUTINES IN SCHEMA extensions TO postgres;
+-- TODO: Make postgres non-superuser?
+-- ALTER ROLE postgres NOSUPERUSER CREATEDB CREATEROLE LOGIN REPLICATION BYPASSRLS;
+
 --
 -- 20211115181400-update-auth-permissions.sql
 --
@@ -476,3 +494,10 @@ ALTER FUNCTION auth.email owner to supabase_auth_admin;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON TABLES TO postgres, dashboard_user;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON SEQUENCES TO postgres, dashboard_user;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON ROUTINES TO postgres, dashboard_user;
+
+--
+-- Ad-hoc
+--
+
+ALTER SCHEMA realtime OWNER TO supabase_admin;
+GRANT USAGE ON SCHEMA realtime TO postgres;
