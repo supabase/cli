@@ -106,10 +106,6 @@ func run(p *tea.Program, name string) error {
 			}
 		}
 
-		if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, utils.ShadowDbName); err != nil {
-			return err
-		}
-
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {

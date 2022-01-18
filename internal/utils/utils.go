@@ -93,11 +93,9 @@ var (
 	//go:embed templates/globals.sql
 	GlobalsSql       string
 	InitialSchemaSql string
-	//go:embed templates/initial_schema_pg12.sql
-	initialSchemaPg12Sql string
-	//go:embed templates/initial_schema_pg13.sql
+	//go:embed templates/initial_schemas/13.sql
 	initialSchemaPg13Sql string
-	//go:embed templates/initial_schema_pg14.sql
+	//go:embed templates/initial_schemas/14.sql
 	initialSchemaPg14Sql string
 )
 
@@ -147,8 +145,7 @@ func LoadConfig() error {
 		"120006",
 		"120007",
 		"120008":
-		DbImage = "supabase/postgres:12.5.0"
-		InitialSchemaSql = initialSchemaPg12Sql
+		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 	case
 		"130000",
 		"130001",
@@ -503,99 +500,4 @@ func IsBranchNameReserved(branch string) bool {
 	default:
 		return false
 	}
-}
-
-func RunServicesMigrations(ctx context.Context, netId string, dbId string, dbName string) error {
-	if out, err := DockerRun(
-		ctx,
-		"supabase_gotrue_migrate",
-		&container.Config{
-			Image: GotrueImage,
-			Env: []string{
-				"GOTRUE_DB_DRIVER=postgres",
-				"GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:postgres@" + dbId + ":5432/" + dbName,
-			},
-			Cmd: []string{"gotrue", "migrate"},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
-	); err != nil {
-		return err
-	} else {
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 && !strings.Contains(errBuf.String(), "GoTrue migrations applied successfully") {
-			return errors.New("Error running GoTrue migrations: " + errBuf.String())
-		}
-	}
-
-	if out, err := DockerRun(
-		ctx,
-		"supabase_realtime_migrate",
-		&container.Config{
-			Image: RealtimeImage,
-			Env: []string{
-				"DB_HOST=" + dbId,
-				"DB_PORT=5432",
-				"DB_USER=postgres",
-				"DB_PASSWORD=postgres",
-				"DB_NAME=" + dbName,
-				"DB_SSL=false",
-			},
-			Cmd: []string{"./prod/rel/realtime/bin/realtime", "eval", "Realtime.Release.migrate"},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
-	); err != nil {
-		return err
-	} else {
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error running Realtime migrations: " + errBuf.String())
-		}
-	}
-
-	if _, err := DockerRun(
-		ctx,
-		"supabase_storage_migrate",
-		&container.Config{
-			Image: StorageImage,
-			Env: []string{
-				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + dbId + ":5432/" + dbName,
-
-				"ANON_KEY=stub",
-				"SERVICE_KEY=stub",
-				"POSTGREST_URL=stub",
-				"PGRST_JWT_SECRET=stub",
-				"FILE_SIZE_LIMIT=stub",
-				"STORAGE_BACKEND=stub",
-				"FILE_STORAGE_BACKEND_PATH=stub",
-				"TENANT_ID=stub",
-				// TODO: https://github.com/supabase/storage-api/issues/55
-				"REGION=stub",
-				"GLOBAL_S3_BUCKET=stub",
-			},
-		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netId), AutoRemove: true},
-	); err != nil {
-		return err
-	}
-	if _, err := DockerExec(
-		ctx,
-		dbId,
-		[]string{
-			"sh", "-c",
-			"until psql --username postgres --host localhost '" + dbName + `' -c "DO 'BEGIN ASSERT (SELECT COUNT(*) FROM storage.migrations) = ` + StorageMigrationsCount + `; END'"; do sleep 0.1; done`,
-		},
-	); err != nil {
-		return err
-	}
-	if err := Docker.ContainerKill(ctx, "supabase_storage_migrate", "SIGKILL"); err != nil {
-		return err
-	}
-
-	return nil
 }

@@ -1,3 +1,108 @@
+# About Initial Schemas
+
+These SQL files represent initial schemas needed to set up the database with Supabase stuff. These need to be manually generated for each Postgres major version. Which initial schema used depends on the Docker image tag used to run the local db, which in turn depends on the CLI's `dbVersion` config. 
+
+The initial schema for PG12 is not available because the latest image (`supabase/postgres:12.5.0`) doesn't contain `wal2json`.
+
+# How to Generate Initial Schemas
+
+This is roughly what's needed to create new initial schema files for new Postgres major versions:
+
+- Create a temporary directory
+- Create `docker-compose.yml` (this one's for `supabase/postgres:14.1.0` - modify as needed):
+
+```yaml
+services:
+  db:
+    container_name: supabase-db
+    image: supabase/postgres:14.1.0
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    restart: unless-stopped
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./globals.sql:/docker-entrypoint-initdb.d/globals.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue:v2.3.8
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_DISABLE_SIGNUP: false
+
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: true
+      GOTRUE_MAILER_AUTOCONFIRM: true
+
+      GOTRUE_EXTERNAL_PHONE_ENABLED: true
+      GOTRUE_SMS_AUTOCONFIRM: true
+
+  realtime:
+    container_name: supabase-realtime
+    image: supabase/realtime:v0.19.5
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: postgres
+      DB_USER: supabase_admin
+      DB_PASSWORD: postgres
+      DB_SSL: false
+      SLOT_NAME: supabase_realtime_rls
+      TEMPORARY_SLOT: true
+      JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      SECURE_CHANNELS: true
+      REPLICATION_MODE: RLS
+      REPLICATION_POLL_INTERVAL: 100
+    command: >
+      bash -c "./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate
+      && ./prod/rel/realtime/bin/realtime start"
+
+  storage:
+    container_name: supabase-storage
+    image: supabase/storage-api:v0.10.0
+    depends_on:
+      - db
+      - rest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://supabase_storage_admin:postgres@db:5432/postgres
+
+      ANON_KEY: a
+      SERVICE_KEY: a
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: a
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      # TODO: https://github.com/supabase/storage-api/issues/55
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+```
+
+- Copy `/internal/utils/templates/globals.sql` to `./globals.sql`
+- Create `./init.sql`:
+
+```plpgsql
 --
 -- 00-initial-schema.sql
 --
@@ -501,3 +606,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON
 
 ALTER SCHEMA realtime OWNER TO supabase_admin;
 GRANT USAGE ON SCHEMA realtime TO postgres;
+```
+
+- Run `docker compose up -d`
+- Once all migrations are finished, run `pg_dump --inserts --dbname 'postgresql://postgres:postgres@localhost:5432/postgres' > initial_schema.sql`
+- You're done!

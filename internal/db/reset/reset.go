@@ -125,11 +125,6 @@ EOSQL
 			return fmt.Errorf("Error reconnecting database: %w", err)
 		}
 
-		p.Send(utils.StatusMsg("Running services' migrations..."))
-		if err := utils.RunServicesMigrations(ctx, utils.NetId, utils.DbId, "postgres"); err != nil {
-			return err
-		}
-
 		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
 		{
 			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
