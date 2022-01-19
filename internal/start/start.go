@@ -84,7 +84,6 @@ func Run() error {
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
-	termCh         = make(chan struct{}, 1)
 
 	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
