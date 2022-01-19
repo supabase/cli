@@ -825,9 +825,6 @@ EOSQL
 	return nil
 }
 
-type startedMsg bool
-type stopMsg struct{}
-
 type model struct {
 	spinner     spinner.Model
 	status      string
