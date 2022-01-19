@@ -289,7 +289,7 @@ func GetGitRoot() (*string, error) {
 		if cwd, err := os.Getwd(); err != nil {
 			return nil, err
 		} else if IsRootDirectory(cwd) {
-			return nil, errors.New("Cannot find Git root. Are you in a Git repository?")
+			return nil, nil
 		}
 
 		if err := os.Chdir(".."); err != nil {
