@@ -83,9 +83,19 @@ var (
 
 func run(p *tea.Program) error {
 	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId) //nolint:errcheck
-	_, _ = utils.Docker.NetworkCreate(ctx, utils.NetId, types.NetworkCreate{CheckDuplicate: true})
 
 	defer utils.DockerRemoveAll()
+	_, _ = utils.Docker.NetworkCreate(
+		ctx,
+		utils.NetId,
+		types.NetworkCreate{
+			CheckDuplicate: true,
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
+			},
+		},
+	)
 
 	errCh := make(chan error)
 
@@ -304,7 +314,15 @@ func run(p *tea.Program) error {
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.DbId,
-			&container.Config{Image: utils.DbImage, Env: []string{"POSTGRES_PASSWORD=postgres"}, Cmd: cmd},
+			&container.Config{
+				Image: utils.DbImage,
+				Env:   []string{"POSTGRES_PASSWORD=postgres"},
+				Cmd:   cmd,
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
+				},
+			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
@@ -583,6 +601,10 @@ EOSQL
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
 				},
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
+				},
 			},
 			&container.HostConfig{
 				Binds:         []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro,z")},
@@ -642,6 +664,10 @@ EOSQL
 			&container.Config{
 				Image: utils.GotrueImage,
 				Env:   env,
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
+				},
 			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
@@ -659,6 +685,10 @@ EOSQL
 			utils.InbucketId,
 			&container.Config{
 				Image: utils.InbucketImage,
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
+				},
 			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
@@ -691,6 +721,10 @@ EOSQL
 				"REPLICATION_MODE=RLS",
 				"REPLICATION_POLL_INTERVAL=100",
 			},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
+			},
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
@@ -710,6 +744,10 @@ EOSQL
 				"PGRST_DB_SCHEMA=public,storage",
 				"PGRST_DB_ANON_ROLE=anon",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -740,6 +778,10 @@ EOSQL
 				"REGION=stub",
 				"GLOBAL_S3_BUCKET=stub",
 			},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
+			},
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
@@ -756,6 +798,10 @@ EOSQL
 		&container.Config{
 			Image:      utils.DifferImage,
 			Entrypoint: []string{"sleep", "infinity"},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
+			},
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
@@ -774,6 +820,10 @@ EOSQL
 			Env: []string{
 				"PG_META_PORT=8080",
 				"PG_META_DB_HOST=" + utils.DbId,
+			},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -794,6 +844,10 @@ EOSQL
 				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE",
+			},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
 			},
 		},
 		&container.HostConfig{

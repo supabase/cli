@@ -76,7 +76,17 @@ const (
 var ctx, cancelCtx = context.WithCancel(context.Background())
 
 func run(p *tea.Program, url string) error {
-	_, _ = utils.Docker.NetworkCreate(ctx, netId, types.NetworkCreate{CheckDuplicate: true})
+	_, _ = utils.Docker.NetworkCreate(
+		ctx,
+		netId,
+		types.NetworkCreate{
+			CheckDuplicate: true,
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.ProjectId,
+				"com.docker.compose.project": utils.ProjectId,
+			},
+		},
+	)
 	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
 
 	defer utils.DockerRemoveAll()
@@ -171,7 +181,15 @@ func run(p *tea.Program, url string) error {
 		if _, err := utils.DockerRun(
 			ctx,
 			dbId,
-			&container.Config{Image: utils.DbImage, Env: []string{"POSTGRES_PASSWORD=postgres"}, Cmd: cmd},
+			&container.Config{
+				Image: utils.DbImage,
+				Env:   []string{"POSTGRES_PASSWORD=postgres"},
+				Cmd:   cmd,
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
+				},
+			},
 			&container.HostConfig{NetworkMode: netId},
 		); err != nil {
 			return err
@@ -293,6 +311,10 @@ EOSQL
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + url + "'" +
 						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
+				},
+				Labels: map[string]string{
+					"com.supabase.cli.project":   utils.ProjectId,
+					"com.docker.compose.project": utils.ProjectId,
 				},
 			},
 			&container.HostConfig{NetworkMode: container.NetworkMode(netId)},
