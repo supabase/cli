@@ -8,7 +8,6 @@ require (
 	github.com/charmbracelet/lipgloss v0.4.0
 	github.com/docker/docker v20.10.12+incompatible
 	github.com/docker/go-connections v0.4.0
-	github.com/fsnotify/fsnotify v1.5.1
 	github.com/jackc/pgx/v4 v4.14.1
 	github.com/joho/godotenv v1.4.0
 	github.com/muesli/reflow v0.3.0
@@ -25,6 +24,7 @@ require (
 	github.com/containerd/containerd v1.5.9 // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/go-units v0.4.0 // indirect
+	github.com/fsnotify/fsnotify v1.5.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/gorilla/mux v1.7.3 // indirect
