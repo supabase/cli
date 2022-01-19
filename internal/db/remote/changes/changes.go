@@ -61,6 +61,7 @@ func Run() error {
 		return err
 	}
 
+	fmt.Println(diff)
 	return nil
 }
 
@@ -70,7 +71,11 @@ const (
 	differId = "supabase_db_remote_changes_differ"
 )
 
-var ctx, cancelCtx = context.WithCancel(context.Background())
+var (
+	ctx, cancelCtx = context.WithCancel(context.Background())
+
+	diff string
+)
 
 func run(p *tea.Program, url string) error {
 	_, _ = utils.Docker.NetworkCreate(
@@ -323,7 +328,7 @@ EOSQL
 			return err
 		}
 
-		fmt.Println(string(diffBytes))
+		diff = string(diffBytes)
 	}
 
 	return nil

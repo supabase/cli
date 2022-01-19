@@ -50,11 +50,14 @@ func Run() error {
 		return err
 	}
 
+	fmt.Println(diff)
 	return nil
 }
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
+
+	diff string
 )
 
 func run(p *tea.Program) error {
@@ -182,7 +185,7 @@ func run(p *tea.Program) error {
 			return err
 		}
 
-		fmt.Println(string(diffBytes))
+		diff = string(diffBytes)
 	}
 
 	return nil
