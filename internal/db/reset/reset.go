@@ -216,7 +216,7 @@ EOSQL
 				return fmt.Errorf("Error reconnecting database: %w", err)
 			}
 
-			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGHUP"); err != nil {
+			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
 				return fmt.Errorf("Error reloading PostgREST schema cache: %w", err)
 			}
 		}
