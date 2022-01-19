@@ -8,6 +8,7 @@ import (
 	"github.com/supabase/cli/internal/db/changes"
 	"github.com/supabase/cli/internal/db/commit"
 	"github.com/supabase/cli/internal/db/push"
+	remoteChanges "github.com/supabase/cli/internal/db/remote/changes"
 	remoteCommit "github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/remote/set"
 	"github.com/supabase/cli/internal/db/reset"
@@ -88,6 +89,14 @@ var (
 		},
 	}
 
+	dbRemoteChangesCmd = &cobra.Command{
+		Use:   "changes",
+		Short: "Print changes on the remote database since the last pushed migration.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return remoteChanges.Run()
+		},
+	}
+
 	dbRemoteCommitCmd = &cobra.Command{
 		Use:   "commit",
 		Short: "Commit changes on the remote database since the last pushed migration.",
@@ -123,6 +132,7 @@ func init() {
 	dbCmd.AddCommand(dbCommitCmd)
 	dbCmd.AddCommand(dbPushCmd)
 	dbRemoteCmd.AddCommand(dbRemoteSetCmd)
+	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
 	dbCmd.AddCommand(dbResetCmd)
