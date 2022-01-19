@@ -72,13 +72,26 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			return err
 		}
 
-		if _, err := conn.Exec(
-			ctx,
-			"BEGIN;"+
-				string(f)+
-				"INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"+
-				"COMMIT;",
-		); err != nil {
+		if err := func() error {
+			tx, err := conn.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(ctx)
+
+			if _, err := tx.Exec(ctx, string(f)); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
+				return err
+			}
+
+			if err := tx.Commit(ctx); err != nil {
+				return err
+			}
+
+			return nil
+		}(); err != nil {
 			return err
 		}
 	}
