@@ -19,10 +19,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
-	"github.com/fsnotify/fsnotify"
 	"github.com/muesli/reflow/wrap"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -41,8 +39,8 @@ func Run() error {
 			return err
 		}
 
-		if err := utils.LoadConfig(); err != nil {
-			return err
+		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
+			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
 	}
 
@@ -61,13 +59,26 @@ func Run() error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		fmt.Println("Stopped " + utils.Aqua("supabase start") + ".")
-		return nil
+		return errors.New("Aborted " + utils.Aqua("supabase start") + ".")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
+	maybeInbucket := ""
+	if utils.InbucketPort != "" {
+		maybeInbucket = `
+    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
+	}
+
+	// TODO: Unhardcode keys
+	fmt.Println(`Started local development setup.
+
+         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
+          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
+      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
+        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
+` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`)
 	return nil
 }
 
@@ -82,9 +93,6 @@ var (
 )
 
 func run(p *tea.Program) error {
-	defer utils.Docker.NetworkRemove(context.Background(), utils.NetId) //nolint:errcheck
-
-	defer utils.DockerRemoveAll()
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
@@ -96,10 +104,6 @@ func run(p *tea.Program) error {
 			},
 		},
 	)
-
-	errCh := make(chan error)
-
-	branchCh := make(chan string)
 
 	// Ensure `_current_branch` file exists.
 	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
@@ -117,46 +121,6 @@ func run(p *tea.Program) error {
 	currBranch, err := utils.GetCurrentBranch()
 	if err != nil {
 		return err
-	}
-
-	// Set up watcher.
-	{
-		watcher, err := fsnotify.NewWatcher()
-		if err != nil {
-			return err
-		}
-		defer watcher.Close()
-
-		if err := watcher.Add("supabase/.branches/_current_branch"); err != nil {
-			return err
-		}
-
-		go func() {
-			for {
-				select {
-				case _, ok := <-watcher.Events:
-					if !ok {
-						return
-					}
-
-					branch, err := utils.GetCurrentBranch()
-					if err != nil {
-						errCh <- fmt.Errorf("Error getting current branch name: %w", err)
-						termCh <- struct{}{}
-						return
-					}
-					branchCh <- branch
-				case err, ok := <-watcher.Errors:
-					if !ok {
-						return
-					}
-
-					errCh <- err
-					termCh <- struct{}{}
-					return
-				}
-			}
-		}()
 	}
 
 	_ = os.RemoveAll("supabase/.temp")
@@ -859,63 +823,7 @@ EOSQL
 		return err
 	}
 
-	p.Send(startedMsg(true))
-
-	// switch db on switch branch
-
-	prevBranch := currBranch
-	for {
-		select {
-		case <-termCh:
-			select {
-			case err := <-errCh:
-				return err
-			default:
-				return nil
-			}
-		case currBranch = <-branchCh:
-		}
-
-		p.Send(startedMsg(false))
-		p.Send(utils.StatusMsg("Switching to branch " + currBranch + "..."))
-
-		// Prevent new db connections to be established while db is recreated.
-		if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
-			return err
-		}
-
-		// Recreate current branch.
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
-COMMIT;
-ALTER DATABASE postgres RENAME TO "` + prevBranch + `";
-ALTER DATABASE "` + currBranch + `" RENAME TO postgres;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error switching to branch " + utils.Aqua(currBranch) + ": " + errBuf.String())
-			}
-		}
-
-		if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-			return err
-		}
-
-		prevBranch = currBranch
-
-		p.Send(startedMsg(true))
-	}
+	return nil
 }
 
 type startedMsg bool
@@ -926,7 +834,6 @@ type model struct {
 	status      string
 	progress    *progress.Model
 	psqlOutputs []string
-	started     bool
 
 	width int
 }
@@ -940,10 +847,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
-			m.started = false
-			m.status = "Dumping branches..."
-			go cleanup(&m)
-			return m, nil
+			// Stop future runs
+			cancelCtx()
+			// Stop current runs
+			utils.DockerRemoveAll()
+			return m, tea.Quit
 		default:
 			return m, nil
 		}
@@ -989,34 +897,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.psqlOutputs = m.psqlOutputs[1:]
 		}
 		return m, nil
-	case startedMsg:
-		m.started = bool(msg)
-		return m, nil
-	case stopMsg:
-		return m, tea.Quit
 	default:
 		return m, nil
 	}
 }
 
 func (m model) View() string {
-	// TODO: Unhardcode keys
-	if m.started {
-		maybeInbucket := ""
-		if utils.InbucketPort != "" {
-			maybeInbucket = `
-    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
-		}
-
-		return wrap.String(`Started local development setup.
-
-         `+utils.Aqua("API URL")+`: http://localhost:`+utils.ApiPort+`
-          `+utils.Aqua("DB URL")+`: postgresql://postgres:postgres@localhost:`+utils.DbPort+`/postgres
-      `+utils.Aqua("Studio URL")+`: http://localhost:`+utils.StudioPort+maybeInbucket+`
-        `+utils.Aqua("anon key")+`: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
-`+utils.Aqua("service_role key")+`: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`, m.width)
-	}
-
 	var progress string
 	if m.progress != nil {
 		progress = "\n\n" + m.progress.View()
@@ -1028,65 +914,4 @@ func (m model) View() string {
 	}
 
 	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
-}
-
-func cleanup(m *model) {
-	dumpBranches()
-	// Stop future runs
-	cancelCtx()
-	// Stop current runs
-	termCh <- struct{}{}
-	m.Update(stopMsg{})
-}
-
-func dumpBranches() {
-	branches, err := os.ReadDir("supabase/.branches")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error dumping branches:", err)
-		return
-	}
-
-	currBranch, err := utils.GetCurrentBranch()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error getting current branch:", err)
-		return
-	}
-
-	for _, branch := range branches {
-		if branch.Name() == "_current_branch" {
-			continue
-		}
-
-		var dbName string
-		if branch.Name() == currBranch {
-			dbName = "postgres"
-		} else {
-			dbName = branch.Name()
-		}
-
-		if err := func() error {
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"pg_dump", "postgresql://postgres:postgres@localhost/" + dbName,
-			})
-			if err != nil {
-				return err
-			}
-
-			var dumpBuf, errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(&dumpBuf, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New(errBuf.String())
-			}
-
-			if err := os.WriteFile("supabase/.branches/"+branch.Name()+"/dump.sql", dumpBuf.Bytes(), 0644); err != nil {
-				return err
-			}
-
-			return nil
-		}(); err != nil {
-			fmt.Fprintln(os.Stderr, "Error dumping branch "+utils.Aqua(branch.Name())+":", err)
-		}
-	}
 }
