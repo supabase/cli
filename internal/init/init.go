@@ -48,10 +48,6 @@ func run() error {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-
-		if _, err := utils.GetGitRoot(); err != nil {
-			return err
-		}
 	}
 
 	if err := os.Mkdir("supabase", 0755); err != nil {
@@ -91,27 +87,30 @@ func run() error {
 		gitRoot, err := utils.GetGitRoot()
 		if err != nil {
 			return err
-		}
-		gitignorePath := *gitRoot + "/.gitignore"
-		gitignore, err := os.ReadFile(gitignorePath)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.WriteFile(gitignorePath, initGitignore, 0644); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		} else if bytes.Contains(gitignore, initGitignore) {
+		} else if gitRoot == nil {
 			// skip
 		} else {
-			f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
+			gitignorePath := *gitRoot + "/.gitignore"
+			gitignore, err := os.ReadFile(gitignorePath)
+			if errors.Is(err, os.ErrNotExist) {
+				if err := os.WriteFile(gitignorePath, initGitignore, 0644); err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
-			}
-			if _, err := f.Write(append([]byte("\n"), initGitignore...)); err != nil {
-				return err
-			}
-			if err := f.Close(); err != nil {
-				return err
+			} else if bytes.Contains(gitignore, initGitignore) {
+				// skip
+			} else {
+				f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err != nil {
+					return err
+				}
+				if _, err := f.Write(append([]byte("\n"), initGitignore...)); err != nil {
+					return err
+				}
+				if err := f.Close(); err != nil {
+					return err
+				}
 			}
 		}
 	}
