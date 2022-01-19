@@ -69,10 +69,10 @@ var (
 
 func run(p *tea.Program) error {
 	// 1. Prevent new db connections to be established while db is recreated.
+	defer utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 		return err
 	}
-	defer utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 
 	p.Send(utils.StatusMsg("Resetting database..."))
 
@@ -118,11 +118,6 @@ EOSQL
 			if errBuf.Len() > 0 {
 				return errors.New("Error resetting database: " + errBuf.String())
 			}
-		}
-
-		// Need to connect to run services' migrations.
-		if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-			return fmt.Errorf("Error reconnecting database: %w", err)
 		}
 
 		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
@@ -211,6 +206,18 @@ EOSQL
 				if errBuf.Len() > 0 {
 					return errors.New("Error resetting database: " + errBuf.String())
 				}
+			}
+		}
+
+		// Reload PostgREST schema cache.
+		{
+			// Need to connect for PostgREST to connect.
+			if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
+				return fmt.Errorf("Error reconnecting database: %w", err)
+			}
+
+			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGHUP"); err != nil {
+				return fmt.Errorf("Error reloading PostgREST schema cache: %w", err)
 			}
 		}
 
