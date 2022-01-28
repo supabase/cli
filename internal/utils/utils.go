@@ -43,7 +43,7 @@ const (
 	KongImage              = "library/kong:2.1"
 	GotrueImage            = "supabase/gotrue:v2.3.8"
 	InbucketImage          = "inbucket/inbucket:stable"
-	RealtimeImage          = "supabase/realtime:v0.19.5"
+	RealtimeImage          = "supabase/realtime:v0.21.0"
 	PostgrestImage         = "postgrest/postgrest:v9.0.0"
 	StorageImage           = "supabase/storage-api:v0.10.0"
 	StorageMigrationsCount = "9"
