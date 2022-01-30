@@ -17,8 +17,6 @@ func Run(url string) error {
 	{
 		if parsedUrl, err := u.Parse(url); err != nil {
 			return err
-		} else if parsedUrl.String() != url {
-			return errors.New("Error parsing connection string: Make sure the URL is percent-encoded.")
 		}
 		if err := utils.LoadConfig(); err != nil {
 			return err
