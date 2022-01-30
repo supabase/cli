@@ -40,7 +40,7 @@ type DiffEntry struct {
 const (
 	ShadowDbName           = "supabase_shadow"
 	KongImage              = "library/kong:2.1"
-	GotrueImage            = "supabase/gotrue:v2.3.8"
+	GotrueImage            = "supabase/gotrue:v2.5.0"
 	InbucketImage          = "inbucket/inbucket:stable"
 	RealtimeImage          = "supabase/realtime:v0.21.0"
 	PostgrestImage         = "postgrest/postgrest:v9.0.0"
