@@ -13,7 +13,10 @@ import (
 
 var ctx = context.Background()
 
-func Run() error {
+func Run(dryRun bool) error {
+	if(dryRun) {
+	  fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
+	}
 	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
@@ -59,7 +62,9 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		return conflictErr
 	}
 
-	fmt.Println("Applying unapplied migrations...")
+	if(!dryRun) {
+		fmt.Println("Applying unapplied migrations...")
+	}
 
 	re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	for i, migration := range migrations {
@@ -90,15 +95,19 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			}
 			defer tx.Rollback(context.Background()) //nolint:errcheck
 
-			if _, err := tx.Exec(ctx, string(f)); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
-				return err
-			}
+			if(dryRun) {
+				fmt.Printf("Would apply migration %s:\n%s\n\n---\n\n", migration.Name(), f)
+			} else {
+				if _, err := tx.Exec(ctx, string(f)); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
+					return err
+				}
 
-			if err := tx.Commit(ctx); err != nil {
-				return err
+				if err := tx.Commit(ctx); err != nil {
+					return err
+				}
 			}
 
 			return nil
