@@ -68,11 +68,13 @@ var (
 		},
 	}
 
+	dryRun bool
+
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run()
+			return push.Run(dryRun)
 		},
 	}
 
@@ -130,6 +132,7 @@ func init() {
 	dbCmd.AddCommand(dbBranchCmd)
 	dbCmd.AddCommand(dbChangesCmd)
 	dbCmd.AddCommand(dbCommitCmd)
+	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	dbCmd.AddCommand(dbPushCmd)
 	dbRemoteCmd.AddCommand(dbRemoteSetCmd)
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
