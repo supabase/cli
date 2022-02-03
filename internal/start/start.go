@@ -47,7 +47,7 @@ func Run() error {
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	p := tea.NewProgram(model{spinner: s})
+	p := utils.NewProgram(model{spinner: s})
 
 	errCh := make(chan error, 1)
 	go func() {
