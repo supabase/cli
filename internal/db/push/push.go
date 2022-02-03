@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	pgx "github.com/jackc/pgx/v4"
 	"github.com/supabase/cli/internal/utils"
@@ -28,7 +29,14 @@ func Run() error {
 	// `schema_migrations` must be a "prefix" of `supabase/migrations`.
 
 	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
+
 	if err != nil {
+		error := err.Error()
+		if (strings.Contains(error, "prepared statement") && strings.Contains(error, "already exists"))	{
+			return fmt.Errorf(`Error querying remote database: %w.
+Try adding `+utils.Aqua("statement_cache_mode=describe")+" to your connection string.", err)
+		}
+
 		return fmt.Errorf(`Error querying remote database: %w.
 Try running `+utils.Aqua("supabase db remote set")+".", err)
 	}
