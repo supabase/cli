@@ -67,7 +67,7 @@ var (
 	currBranch string
 )
 
-func run(p *tea.Program) error {
+func run(p utils.Program) error {
 	// 1. Prevent new db connections to be established while db is recreated.
 	defer utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {

@@ -60,7 +60,7 @@ var (
 	diff string
 )
 
-func run(p *tea.Program) error {
+func run(p utils.Program) error {
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations

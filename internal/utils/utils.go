@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -304,7 +303,7 @@ type (
 	PsqlMsg     *string
 )
 
-func ProcessPullOutput(out io.ReadCloser, p *tea.Program) error {
+func ProcessPullOutput(out io.ReadCloser, p Program) error {
 	dec := json.NewDecoder(out)
 
 	downloads := make(map[string]struct{ current, total int64 })
@@ -350,7 +349,7 @@ func ProcessPullOutput(out io.ReadCloser, p *tea.Program) error {
 	return nil
 }
 
-func ProcessDiffOutput(p *tea.Program, out io.Reader) ([]byte, error) {
+func ProcessDiffOutput(p Program, out io.Reader) ([]byte, error) {
 	var diffBytesBuf bytes.Buffer
 	r, w := io.Pipe()
 	doneCh := make(chan struct{}, 1)
@@ -460,7 +459,7 @@ func isSchemaIgnored(schema string) bool {
 	return false
 }
 
-func ProcessPsqlOutput(out io.Reader, p *tea.Program) error {
+func ProcessPsqlOutput(out io.Reader, p Program) error {
 	r, w := io.Pipe()
 	doneCh := make(chan struct{}, 1)
 

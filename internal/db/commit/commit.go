@@ -64,7 +64,7 @@ var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
 )
 
-func run(p *tea.Program, name string) error {
+func run(p utils.Program, name string) error {
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations
