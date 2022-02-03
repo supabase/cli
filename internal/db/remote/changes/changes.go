@@ -77,7 +77,7 @@ var (
 	diff string
 )
 
-func run(p *tea.Program, url string) error {
+func run(p utils.Program, url string) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		netId,

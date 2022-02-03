@@ -91,7 +91,7 @@ var (
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 )
 
-func run(p *tea.Program) error {
+func run(p utils.Program) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
