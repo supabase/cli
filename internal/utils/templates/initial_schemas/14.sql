@@ -1090,6 +1090,7 @@ CREATE TABLE auth.users (
     confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED,
     email_change_token_current character varying(255) DEFAULT ''::character varying,
     email_change_confirm_status smallint DEFAULT 0,
+    banned_until timestamp with time zone,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1245,6 +1246,8 @@ INSERT INTO auth.schema_migrations VALUES ('20210927181326');
 INSERT INTO auth.schema_migrations VALUES ('20211122151130');
 INSERT INTO auth.schema_migrations VALUES ('20211124214934');
 INSERT INTO auth.schema_migrations VALUES ('20211202183645');
+INSERT INTO auth.schema_migrations VALUES ('20220114185221');
+INSERT INTO auth.schema_migrations VALUES ('20220114185340');
 
 
 --
@@ -1290,15 +1293,15 @@ INSERT INTO realtime.schema_migrations VALUES (20220107221237, '2022-01-28 03:27
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-01-18 10:51:50.03834');
-INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-01-18 10:51:50.062292');
-INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-01-18 10:51:50.084143');
-INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-01-18 10:51:50.404749');
-INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-01-18 10:51:50.44305');
-INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-01-18 10:51:50.480852');
-INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-01-18 10:51:50.51812');
-INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-01-18 10:51:50.573086');
-INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-01-18 10:51:50.647077');
+INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-02-09 00:33:16.391578');
+INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-02-09 00:33:16.413456');
+INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-02-09 00:33:16.432602');
+INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-02-09 00:33:16.851886');
+INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-02-09 00:33:16.910648');
+INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-02-09 00:33:16.970019');
+INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-02-09 00:33:17.021921');
+INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '8d530fa8e587a29e23a91adbf63b37d29dedd013', '2022-02-09 00:33:17.083734');
+INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-02-09 00:33:17.158267');
 
 
 --
@@ -1487,7 +1490,7 @@ CREATE INDEX refresh_tokens_token_idx ON auth.refresh_tokens USING btree (token)
 -- Name: users_instance_id_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE INDEX users_instance_id_email_idx ON auth.users USING btree (instance_id, email);
+CREATE INDEX users_instance_id_email_idx ON auth.users USING btree (instance_id, lower((email)::text));
 
 
 --
