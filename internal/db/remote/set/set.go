@@ -15,15 +15,16 @@ import (
 func Run(url string) error {
 	// Sanity checks.
 	{
-		if parsedUrl, err := u.Parse(url); err != nil {
-			return err
-		} else if parsedUrl.String() != url {
-			return errors.New("Error parsing connection string: Make sure the URL is percent-encoded.")
-		}
 		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
 	}
+
+	matches := regexp.MustCompile(`^postgres(?:ql)?://postgres:(.+)@(.+?)(:\d+)?/postgres$`).FindStringSubmatch(url)
+	if len(matches) != 4 {
+		return errors.New("URL is not a valid Supabase connection string.")
+	}
+	url = "postgresql://postgres:" + u.QueryEscape(matches[1]) + "@" + u.QueryEscape(matches[2]) + matches[3] + "/postgres"
 
 	ctx := context.Background()
 
