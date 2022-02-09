@@ -37,17 +37,21 @@ type DiffEntry struct {
 	SourceSchemaName *string            `json:"source_schema_name"`
 }
 
+// Update initial schemas in internal/utils/templates/initial_schemas when
+// updating any one of these.
+const (
+	GotrueImage            = "supabase/gotrue:v2.5.5"
+	RealtimeImage          = "supabase/realtime:v0.21.0"
+	StorageImage           = "supabase/storage-api:v0.11.0"
+)
+
 const (
 	ShadowDbName           = "supabase_shadow"
 	KongImage              = "library/kong:2.1"
-	GotrueImage            = "supabase/gotrue:v2.5.0"
 	InbucketImage          = "inbucket/inbucket:stable"
-	RealtimeImage          = "supabase/realtime:v0.21.0"
-	PostgrestImage         = "postgrest/postgrest:v9.0.0"
-	StorageImage           = "supabase/storage-api:v0.10.1"
-	StorageMigrationsCount = "9"
+	PostgrestImage         = "postgrest/postgrest:v9.0.0.20220107"
 	DifferImage            = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage            = "supabase/postgres-meta:v0.31.1"
+	PgmetaImage            = "supabase/postgres-meta:v0.33.2"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage = "supabase/studio:latest"
 
