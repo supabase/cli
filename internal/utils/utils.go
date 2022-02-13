@@ -14,12 +14,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
@@ -66,15 +62,6 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 )
 
 var (
-	Docker = func() *client.Client {
-		docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
-			os.Exit(1)
-		}
-		return docker
-	}()
-
 	ApiPort      string
 	InbucketPort string
 	DbPort       string
@@ -115,14 +102,6 @@ func GetCurrentBranch() (string, error) {
 	}
 
 	return string(branch), nil
-}
-
-func AssertDockerIsRunning() error {
-	if _, err := Docker.Ping(context.Background()); err != nil {
-		return NewError(err.Error())
-	}
-
-	return nil
 }
 
 // TODO: Make all errors use this.
@@ -222,80 +201,6 @@ func AssertSupabaseStartIsRunning() error {
 	}
 
 	return nil
-}
-
-func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
-	exec, err := Docker.ContainerExecCreate(
-		ctx,
-		container,
-		types.ExecConfig{Cmd: cmd, AttachStderr: true, AttachStdout: true},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := Docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
-		return nil, err
-	}
-
-	return resp.Reader, nil
-}
-
-// NOTE: There's a risk of data race with reads & writes from `DockerRun` and
-// reads from `DockerRemoveAll`, but since they're expected to be run on the
-// same thread, this is fine.
-var containers []string
-
-func DockerRun(
-	ctx context.Context,
-	name string,
-	config *container.Config,
-	hostConfig *container.HostConfig,
-) (io.Reader, error) {
-	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, name)
-
-	resp, err := Docker.ContainerAttach(ctx, container.ID, types.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := Docker.ContainerStart(ctx, container.ID, types.ContainerStartOptions{}); err != nil {
-		return nil, err
-	}
-
-	return resp.Reader, nil
-}
-
-func DockerRemoveAll() {
-	var wg sync.WaitGroup
-
-	for _, container := range containers {
-		wg.Add(1)
-
-		go func(container string) {
-			if err := Docker.ContainerRemove(context.Background(), container, types.ContainerRemoveOptions{
-				RemoveVolumes: true,
-				Force:         true,
-			}); err != nil {
-				// TODO: Handle errors
-				// fmt.Fprintln(os.Stderr, err)
-				_ = err
-			}
-
-			wg.Done()
-		}(container)
-	}
-
-	wg.Wait()
 }
 
 func GetGitRoot() (*string, error) {
