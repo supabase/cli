@@ -78,6 +78,8 @@ var (
 )
 
 func run(p utils.Program, url string) error {
+	defer cleanup()
+
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		netId,
@@ -89,9 +91,6 @@ func run(p utils.Program, url string) error {
 			},
 		},
 	)
-	defer utils.Docker.NetworkRemove(context.Background(), netId) //nolint:errcheck
-
-	defer utils.DockerRemoveAll()
 
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -334,6 +333,11 @@ EOSQL
 	return nil
 }
 
+func cleanup() {
+	utils.DockerRemoveAll()
+	_ = utils.Docker.NetworkRemove(context.Background(), netId)
+}
+
 type model struct {
 	spinner     spinner.Model
 	status      string
@@ -355,7 +359,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			cancelCtx()
 			// Stop current runs
-			utils.DockerRemoveAll()
+			cleanup()
 			return m, tea.Quit
 		default:
 			return m, nil
