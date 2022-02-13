@@ -1,11 +1,22 @@
 package utils
 
 import (
+	"fmt"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 )
+
+func NewProgram(model tea.Model, opts ...tea.ProgramOption) Program {
+	var p Program
+	if isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd()) {
+		p = tea.NewProgram(model, opts...)
+	} else {
+		p = newFakeProgram(model)
+	}
+	return p
+}
 
 // An interface describing the parts of BubbleTea's Program that we actually use.
 type Program interface {
@@ -14,30 +25,20 @@ type Program interface {
 	Quit()
 }
 
-// A dumb text implementation of BubbleTea's Program that allows
-// for output to be piped to another program.
-type FakeProgram struct {
-	model tea.Model
-}
-
-func NewProgram(model tea.Model, opts ...tea.ProgramOption) Program {
-	var p Program
-	if isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd()) {
-		p = tea.NewProgram(model, opts...)
-	} else {
-		p = NewFakeProgram(model)
-	}
-	return p
-}
-
-func NewFakeProgram(model tea.Model) *FakeProgram {
-	p := &FakeProgram{
+func newFakeProgram(model tea.Model) *fakeProgram {
+	p := &fakeProgram{
 		model: model,
 	}
 	return p
 }
 
-func (p *FakeProgram) Start() error {
+// A dumb text implementation of BubbleTea's Program that allows
+// for output to be piped to another program.
+type fakeProgram struct {
+	model tea.Model
+}
+
+func (p *fakeProgram) Start() error {
 	initCmd := p.model.Init()
 	message := initCmd()
 	if message != nil {
@@ -46,18 +47,13 @@ func (p *FakeProgram) Start() error {
 	return nil
 }
 
-func (p *FakeProgram) Send(msg tea.Msg) {
-	if msg == nil {
-		return
-	}
-
+func (p *fakeProgram) Send(msg tea.Msg) {
 	switch msg := msg.(type) {
 	case StatusMsg:
-		os.Stdout.Write([]byte(msg + "\n"))
-
+		fmt.Println(msg)
 	case PsqlMsg:
 		if msg != nil {
-			os.Stdout.Write([]byte(*msg + "\n"))
+			fmt.Println(*msg)
 		}
 	}
 
@@ -69,6 +65,6 @@ func (p *FakeProgram) Send(msg tea.Msg) {
 	}
 }
 
-func (p *FakeProgram) Quit() {
+func (p *fakeProgram) Quit() {
 	p.Send(tea.Quit())
 }
