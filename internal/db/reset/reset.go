@@ -69,7 +69,7 @@ var (
 
 func run(p utils.Program) error {
 	// 1. Prevent new db connections to be established while db is recreated.
-	defer utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
+	defer utils.Docker.NetworkConnect(context.Background(), utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 		return err
 	}
