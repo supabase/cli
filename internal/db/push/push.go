@@ -77,7 +77,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			if err != nil {
 				return err
 			}
-			defer tx.Rollback(ctx) //nolint:errcheck
+			defer tx.Rollback(context.Background()) //nolint:errcheck
 
 			if _, err := tx.Exec(ctx, string(f)); err != nil {
 				return err

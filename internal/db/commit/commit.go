@@ -70,7 +70,7 @@ func run(p utils.Program, name string) error {
 	// 1. Create shadow db and run migrations
 	{
 		defer utils.DockerExec( //nolint:errcheck
-			ctx,
+			context.Background(),
 			utils.DbId,
 			[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
 		)
