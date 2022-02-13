@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,10 +119,40 @@ func GetCurrentBranch() (string, error) {
 
 func AssertDockerIsRunning() error {
 	if _, err := Docker.Ping(context.Background()); err != nil {
-		return errors.New("Failed to connect to Docker daemon. Is Docker running?")
+		return NewError(err.Error())
 	}
 
 	return nil
+}
+
+// TODO: Make all errors use this.
+func NewError(s string) error {
+	// Ask runtime.Callers for up to 5 PCs, excluding runtime.Callers and NewError.
+	pc := make([]uintptr, 5)
+	n := runtime.Callers(2, pc)
+
+	pc = pc[:n] // pass only valid pcs to runtime.CallersFrames
+	frames := runtime.CallersFrames(pc)
+
+	// Loop to get frames.
+	// A fixed number of PCs can expand to an indefinite number of Frames.
+	for {
+		frame, more := frames.Next()
+
+		// Process this frame.
+		//
+		// We're only interested in the stack trace in this repo.
+		if strings.HasPrefix(frame.Function, "github.com/supabase/cli/internal") {
+			s += fmt.Sprintf("\n  in %s:%d", frame.Function, frame.Line)
+		}
+
+		// Check whether there are more frames to process after this one.
+		if !more {
+			break
+		}
+	}
+
+	return errors.New(s)
 }
 
 func LoadConfig() error {
