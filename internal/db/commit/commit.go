@@ -65,15 +65,12 @@ var (
 )
 
 func run(p utils.Program, name string) error {
+	defer cleanup()
+
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations
 	{
-		defer utils.DockerExec( //nolint:errcheck
-			context.Background(),
-			utils.DbId,
-			[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
-		)
 		out, err := utils.DockerExec(
 			ctx,
 			utils.DbId,
@@ -197,6 +194,14 @@ func run(p utils.Program, name string) error {
 	return nil
 }
 
+func cleanup() {
+	_, _ = utils.DockerExec(
+		context.Background(),
+		utils.DbId,
+		[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
+	)
+}
+
 type model struct {
 	spinner     spinner.Model
 	status      string
@@ -217,6 +222,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			// Stop future runs
 			cancelCtx()
+			// Stop current runs
+			cleanup()
 			return m, tea.Quit
 		default:
 			return m, nil

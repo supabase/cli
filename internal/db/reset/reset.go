@@ -68,8 +68,9 @@ var (
 )
 
 func run(p utils.Program) error {
+	defer cleanup()
+
 	// 1. Prevent new db connections to be established while db is recreated.
-	defer utils.Docker.NetworkConnect(context.Background(), utils.NetId, utils.DbId, &network.EndpointSettings{}) //nolint:errcheck
 	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
 		return err
 	}
@@ -230,6 +231,10 @@ EOSQL
 	return nil
 }
 
+func cleanup() {
+	_ = utils.Docker.NetworkConnect(context.Background(), utils.NetId, utils.DbId, &network.EndpointSettings{})
+}
+
 type model struct {
 	spinner     spinner.Model
 	status      string
@@ -250,6 +255,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			// Stop future runs
 			cancelCtx()
+			// Stop current runs
+			cleanup()
 			return m, tea.Quit
 		default:
 			return m, nil
