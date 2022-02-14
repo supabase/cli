@@ -68,3 +68,9 @@ func (p *fakeProgram) Send(msg tea.Msg) {
 func (p *fakeProgram) Quit() {
 	p.Send(tea.Quit())
 }
+
+type (
+	StatusMsg   string
+	ProgressMsg *float64
+	PsqlMsg     *string
+)
