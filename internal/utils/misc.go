@@ -206,7 +206,7 @@ func GetGitRoot() (*string, error) {
 
 		if cwd, err := os.Getwd(); err != nil {
 			return nil, err
-		} else if IsRootDirectory(cwd) {
+		} else if isRootDirectory(cwd) {
 			return nil, nil
 		}
 
@@ -215,12 +215,6 @@ func GetGitRoot() (*string, error) {
 		}
 	}
 }
-
-type (
-	StatusMsg   string
-	ProgressMsg *float64
-	PsqlMsg     *string
-)
 
 func IsBranchNameReserved(branch string) bool {
 	switch branch {
