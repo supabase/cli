@@ -620,8 +620,7 @@ EOSQL
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
-				// TODO: is this right?
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:9999/callback", strings.ToUpper(name)),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 			)
 		}
 
