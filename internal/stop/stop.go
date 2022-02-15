@@ -26,7 +26,7 @@ func Run() error {
 	{
 		containers, err := utils.Docker.ContainerList(ctx, types.ContainerListOptions{
 			All:     true,
-			Filters: filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+utils.ProjectId)),
+			Filters: filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId)),
 		})
 		if err != nil {
 			return err
@@ -53,7 +53,7 @@ func Run() error {
 	// Remove networks.
 	if _, err := utils.Docker.NetworksPrune(
 		ctx,
-		filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+utils.ProjectId)),
+		filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId)),
 	); err != nil {
 		return err
 	}
