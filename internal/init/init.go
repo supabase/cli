@@ -12,15 +12,13 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const latestDbVersion = "140001" // Server version of latest supabase/postgres image on hosted platform (supabase/postgres:14.1.0)
-
 var (
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
 	// | sed '/^ALTER ROLE postgres WITH /d' \
 	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
 	// pg_dump --dbname $DB_URL
-	//go:embed templates/init_config
+	//go:embed templates/init_config.toml
 	initConfigEmbed       string
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
 	//go:embed templates/init_gitignore
@@ -59,7 +57,7 @@ func run() error {
 		return err
 	}
 
-	// 2. Write `config.json`.
+	// 2. Write `config.toml`.
 	{
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -70,14 +68,11 @@ func run() error {
 		var initConfigBuf bytes.Buffer
 		if err := initConfigTemplate.Execute(
 			&initConfigBuf,
-			struct{ ProjectId, DbVersion string }{
-				ProjectId: dir,
-				DbVersion: latestDbVersion,
-			},
+			struct{ ProjectId string }{ProjectId: dir},
 		); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/config.json", initConfigBuf.Bytes(), 0644); err != nil {
+		if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
 			return err
 		}
 	}

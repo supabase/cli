@@ -1,9 +1,0 @@
-{
-  "projectId": "{{ .ProjectId }}",
-  "ports": {
-    "api": 54321,
-    "db": 54322,
-    "studio": 54323
-  },
-  "dbVersion": "{{ .DbVersion }}"
-}
