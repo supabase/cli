@@ -84,8 +84,8 @@ func run(p utils.Program, url string) error {
 		types.NetworkCreate{
 			CheckDuplicate: true,
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 	)
@@ -171,9 +171,7 @@ func run(p utils.Program, url string) error {
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 	{
 		cmd := []string{}
-		if dbVersion, err := strconv.ParseUint(utils.DbVersion, 10, 64); err != nil {
-			return err
-		} else if dbVersion >= 140000 {
+		if utils.Config.Db.MajorVersion >= 14 {
 			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
 		}
 
@@ -185,8 +183,8 @@ func run(p utils.Program, url string) error {
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
+					"com.supabase.cli.project":   utils.Config.ProjectId,
+					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{NetworkMode: netId},
@@ -312,8 +310,8 @@ EOSQL
 						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
 				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
+					"com.supabase.cli.project":   utils.Config.ProjectId,
+					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{NetworkMode: container.NetworkMode(netId)},

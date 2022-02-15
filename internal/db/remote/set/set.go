@@ -34,13 +34,19 @@ func Run(url string) error {
 	}
 	defer conn.Close(context.Background())
 
-	// 1. Assert dbVersion is compatible.
-	var dbVersion string
-	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')").Scan(&dbVersion); err != nil {
+	// 1. Assert db.major_version is compatible.
+	var dbMajorVersion uint
+	if err := conn.QueryRow(ctx, "SELECT current_setting('server_version_num')::int8 / 10000").Scan(&dbMajorVersion); err != nil {
 		return err
 	}
-	if dbVersion[:2] != utils.DbVersion[:2] {
-		return errors.New("Remote database Postgres version " + dbVersion + " is incompatible with " + utils.Aqua("dbVersion") + " " + utils.DbVersion + ". If you are setting up a fresh Supabase CLI project, try changing " + utils.Aqua("dbVersion") + " in " + utils.Bold("supabase/config.json") + " to " + dbVersion + ".")
+	if dbMajorVersion != utils.Config.Db.MajorVersion {
+		return fmt.Errorf(
+			"Remote database Postgres version %[1]d is incompatible with %[3]s %[2]d. If you are setting up a fresh Supabase CLI project, try changing %[3]s in %[4]s to %[1]d.",
+			dbMajorVersion,
+			utils.Config.Db.MajorVersion,
+			utils.Aqua("db.major_version"),
+			utils.Bold("supabase/config.toml"),
+		)
 	}
 
 	// 2. Setup & validate `schema_migrations`.

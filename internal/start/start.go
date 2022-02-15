@@ -39,6 +39,10 @@ func Run() error {
 			return err
 		}
 
+		if err := utils.LoadConfig(); err != nil {
+			return err
+		}
+
 		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
 			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
@@ -65,18 +69,13 @@ func Run() error {
 		return err
 	}
 
-	maybeInbucket := ""
-	if utils.InbucketPort != "" {
-		maybeInbucket = `
-    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + utils.InbucketPort
-	}
-
 	// TODO: Unhardcode keys
 	fmt.Println(`Started local development setup.
 
-         ` + utils.Aqua("API URL") + `: http://localhost:` + utils.ApiPort + `
-          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + utils.DbPort + `/postgres
-      ` + utils.Aqua("Studio URL") + `: http://localhost:` + utils.StudioPort + maybeInbucket + `
+         ` + utils.Aqua("API URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Api.Port), 10) + `
+          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + `/postgres
+      ` + utils.Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Studio.Port), 10) + `
+    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10) + `
         ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.ZopqoUt20nEV9cklpv9e3yw3PVyZLmKs5qLD6nGL1SI
 ` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE`)
 	return nil
@@ -98,8 +97,8 @@ func run(p utils.Program) error {
 		types.NetworkCreate{
 			CheckDuplicate: true,
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 	)
@@ -268,9 +267,7 @@ func run(p utils.Program) error {
 	// Start Postgres.
 	{
 		cmd := []string{}
-		if dbVersion, err := strconv.ParseUint(utils.DbVersion, 10, 64); err != nil {
-			return err
-		} else if dbVersion >= 140000 {
+		if utils.Config.Db.MajorVersion >= 14 {
 			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
 		}
 
@@ -282,13 +279,13 @@ func run(p utils.Program) error {
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
+					"com.supabase.cli.project":   utils.Config.ProjectId,
+					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
-				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: utils.DbPort}}},
+				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
@@ -542,7 +539,7 @@ EOSQL
 		}
 
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.ProjectId}); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.Config.ProjectId}); err != nil {
 			return err
 		}
 		if err := os.WriteFile("supabase/.temp/kong.yml", kongConfigBuf.Bytes(), 0644); err != nil {
@@ -565,14 +562,14 @@ EOSQL
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
 				},
 				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
+					"com.supabase.cli.project":   utils.Config.ProjectId,
+					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{
 				Binds:         []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro,z")},
 				NetworkMode:   container.NetworkMode(utils.NetId),
-				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: utils.ApiPort}}},
+				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
@@ -583,7 +580,7 @@ EOSQL
 	// Start GoTrue.
 	{
 		env := []string{
-			"API_EXTERNAL_URL=http://localhost:" + utils.ApiPort,
+			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -591,33 +588,40 @@ EOSQL
 			"GOTRUE_DB_DRIVER=postgres",
 			"GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:postgres@" + utils.DbId + ":5432/postgres",
 
-			"GOTRUE_SITE_URL=http://localhost:3000",
-			"GOTRUE_DISABLE_SIGNUP=false",
+			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
+			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !*utils.Config.Auth.EnableSignup),
 
 			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-			"GOTRUE_JWT_EXP=3600",
+			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 
-			"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
+			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
+			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
+			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !*utils.Config.Auth.Email.EnableConfirmations),
+
+			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
+			"GOTRUE_SMTP_PORT=2500",
+			"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
+			"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
+			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
+			"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
+			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
+			"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
+			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
 
 			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 			"GOTRUE_SMS_AUTOCONFIRM=true",
 		}
 
-		if utils.InbucketPort == "" {
-			env = append(env, "GOTRUE_MAILER_AUTOCONFIRM=true")
-		} else {
-			env = append(env,
-				"GOTRUE_MAILER_AUTOCONFIRM=false",
-				"GOTRUE_SMTP_HOST="+utils.InbucketId,
-				"GOTRUE_SMTP_PORT=2500",
-				"GOTRUE_SMTP_USER=GOTRUE_SMTP_USER",
-				"GOTRUE_SMTP_PASS=GOTRUE_SMTP_PASS",
-				"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
-				"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
-				"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
-				"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
-				"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+		for name, config := range utils.Config.Auth.External {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
+				// TODO: is this right?
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:9999/callback", strings.ToUpper(name)),
 			)
 		}
 
@@ -628,8 +632,8 @@ EOSQL
 				Image: utils.GotrueImage,
 				Env:   env,
 				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
+					"com.supabase.cli.project":   utils.Config.ProjectId,
+					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{
@@ -642,25 +646,23 @@ EOSQL
 	}
 
 	// Start Inbucket.
-	if utils.InbucketPort != "" {
-		if _, err := utils.DockerRun(
-			ctx,
-			utils.InbucketId,
-			&container.Config{
-				Image: utils.InbucketImage,
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.ProjectId,
-					"com.docker.compose.project": utils.ProjectId,
-				},
+	if _, err := utils.DockerRun(
+		ctx,
+		utils.InbucketId,
+		&container.Config{
+			Image: utils.InbucketImage,
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
-			&container.HostConfig{
-				NetworkMode:   container.NetworkMode(utils.NetId),
-				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: utils.InbucketPort}}},
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
-			},
-		); err != nil {
-			return err
-		}
+		},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}},
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
+	); err != nil {
+		return err
 	}
 
 	// Start Realtime.
@@ -685,8 +687,8 @@ EOSQL
 				"REPLICATION_POLL_INTERVAL=100",
 			},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -704,13 +706,14 @@ EOSQL
 			Image: utils.PostgrestImage,
 			Env: []string{
 				"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
-				"PGRST_DB_SCHEMA=public,storage",
+				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage"}, utils.Config.Api.Schemas...), ","),
+				"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 				"PGRST_DB_ANON_ROLE=anon",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 			},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -742,8 +745,8 @@ EOSQL
 				"GLOBAL_S3_BUCKET=stub",
 			},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -762,8 +765,8 @@ EOSQL
 			Image:      utils.DifferImage,
 			Entrypoint: []string{"sleep", "infinity"},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -785,8 +788,8 @@ EOSQL
 				"PG_META_DB_HOST=" + utils.DbId,
 			},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
@@ -809,13 +812,13 @@ EOSQL
 				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.M2d2z4SFn5C7HlJlaSLfrzuYim9nbY_XI40uWFN3hEE",
 			},
 			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.ProjectId,
-				"com.docker.compose.project": utils.ProjectId,
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: utils.StudioPort}}},
+			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
 			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 		},
 	); err != nil {
