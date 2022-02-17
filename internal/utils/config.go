@@ -252,7 +252,7 @@ port = %d
 # endpoints. public and storage are always included.
 schemas = []
 # Extra schemas to add to the search_path of every request.
-extra_search_path = []
+extra_search_path = ["extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
