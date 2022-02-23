@@ -153,21 +153,21 @@ func WriteConfig(test bool) error {
 }
 
 func processValue(v string) (proc string, err error) {
-	value := envExtractor.FindAll([]byte(v), -1)
+	value := envExtractor.FindStringSubmatch(v)
 	if err != nil {
 		return "", err
 	}
 	if len(value) == 0 {
 		return v, nil
 	}
-	proc = ""
-	for _, bytes := range value {
-		key := string(bytes)
-		v := os.Getenv(key)
-		if v == "" {
-			return "", fmt.Errorf("environment variable '%s' is not set and required in config", key)
-		}
-		proc += v
+	if len(value) != 2 {
+		return "", fmt.Errorf("not able to parse this: '%s'", v)
+	}
+
+	key := value[1]
+	proc = os.Getenv(key)
+	if proc == "" {
+		return "", fmt.Errorf("environment variable '%s' is not set and required in config", key)
 	}
 
 	return proc, err
@@ -272,9 +272,29 @@ func LoadConfig() error {
 			} else if Config.Auth.External[ext].Enabled {
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+				} else {
+					v, err := processValue(Config.Auth.External[ext].ClientId)
+					if err != nil {
+						return fmt.Errorf("failed to parse config file: %+v", err)
+					}
+					Config.Auth.External[ext] = provider{
+						Enabled:  true,
+						ClientId: v,
+						Secret:   Config.Auth.External[ext].Secret,
+					}
 				}
 				if Config.Auth.External[ext].Secret == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+				} else {
+					v, err := processValue(Config.Auth.External[ext].Secret)
+					if err != nil {
+						return fmt.Errorf("failed to parse config file: %+v", err)
+					}
+					Config.Auth.External[ext] = provider{
+						Enabled:  true,
+						ClientId: Config.Auth.External[ext].ClientId,
+						Secret:   v,
+					}
 				}
 			}
 		}
