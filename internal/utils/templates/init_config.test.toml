@@ -56,5 +56,5 @@ enable_confirmations = true
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `twitch`, `twitter`, `slack`, `spotify`.
 [auth.external.azure]
 enabled = true
-client_id = "[[AZURE_CLIENT_ID]]"
-secret = "[[AZURE_SECRET]]"
+client_id = "env(AZURE_CLIENT_ID)"
+secret = "env(AZURE_SECRET)"

@@ -58,7 +58,7 @@ var (
 	testInitConfigEmbed       string
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
 
-	envExtractor = regexp.MustCompile(`^\[\[(.*)\]\]$`)
+	envExtractor = regexp.MustCompile(`^env\((.*)\)$`)
 )
 
 var Config supabaseConfig
