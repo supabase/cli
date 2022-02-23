@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"text/template"
 
 	"github.com/supabase/cli/internal/utils"
 )
@@ -18,9 +16,6 @@ var (
 	// | sed '/^ALTER ROLE postgres WITH /d' \
 	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
 	// pg_dump --dbname $DB_URL
-	//go:embed templates/init_config.toml
-	initConfigEmbed       string
-	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
 	//go:embed templates/init_gitignore
 	initGitignore []byte
 
@@ -58,23 +53,8 @@ func run() error {
 	}
 
 	// 2. Write `config.toml`.
-	{
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		dir := filepath.Base(cwd)
-
-		var initConfigBuf bytes.Buffer
-		if err := initConfigTemplate.Execute(
-			&initConfigBuf,
-			struct{ ProjectId string }{ProjectId: dir},
-		); err != nil {
-			return err
-		}
-		if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
-			return err
-		}
+	if err := utils.WriteConfig(false); err != nil {
+		return err
 	}
 
 	// 3. Append to `.gitignore`.

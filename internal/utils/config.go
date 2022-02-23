@@ -1,11 +1,15 @@
 package utils
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"text/template"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/viper"
@@ -45,6 +49,16 @@ var (
 		"slack",
 		"spotify",
 	}
+
+	//go:embed templates/init_config.toml
+	initConfigEmbed       string
+	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
+
+	//go:embed templates/init_config.test.toml
+	testInitConfigEmbed       string
+	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
+
+	envExtractor = regexp.MustCompile(`^\[\[(.*)\]\]$`)
 )
 
 var Config supabaseConfig
@@ -108,6 +122,56 @@ type (
 	// 	AfterMigrations  string `toml:"after_migrations"`
 	// }
 )
+
+func WriteConfig(test bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Base(cwd)
+
+	var initConfigBuf bytes.Buffer
+	var tmpl *template.Template
+	if test {
+		tmpl = testInitConfigTemplate
+	} else {
+		tmpl = initConfigTemplate
+	}
+
+	if err := tmpl.Execute(
+		&initConfigBuf,
+		struct{ ProjectId string }{ProjectId: dir},
+	); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func processValue(v string) (proc string, err error) {
+	value := envExtractor.FindAll([]byte(v), -1)
+	if err != nil {
+		return "", err
+	}
+	if len(value) == 0 {
+		return v, nil
+	}
+	proc = ""
+	for _, bytes := range value {
+		key := string(bytes)
+		v := os.Getenv(key)
+		if v == "" {
+			return "", fmt.Errorf("environment variable '%s' is not set and required in config", key)
+		}
+		proc += v
+	}
+
+	return proc, err
+}
 
 func LoadConfig() error {
 	if _, err := toml.DecodeFile("supabase/config.toml", &Config); err == nil {
