@@ -55,9 +55,14 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 
 	fmt.Println("Applying unapplied migrations...")
 
+	re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	for i, migration := range migrations {
-		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
-		migrationTimestamp := re.FindStringSubmatch(migration.Name())[1]
+		matches := re.FindStringSubmatch(migration.Name())
+		if len(matches) == 0 {
+			return errors.New("Can't process file in supabase/migrations: " + migration.Name())
+		}
+
+		migrationTimestamp := matches[1]
 
 		if i >= len(versions) {
 			// skip
