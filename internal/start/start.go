@@ -806,8 +806,12 @@ EOSQL
 		&container.Config{
 			Image: utils.StudioImage,
 			Env: []string{
-				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
+				"POSTGRES_PASSWORD=postgres",
+
+				"SUPABASE_URL=http://" + utils.KongId + ":8000",
+				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
+				"SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
 				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
 			},
 			Labels: map[string]string{
