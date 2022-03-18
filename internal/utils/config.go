@@ -61,10 +61,10 @@ var (
 	envExtractor = regexp.MustCompile(`^env\((.*)\)$`)
 )
 
-var Config supabaseConfig
+var Config config
 
 type (
-	supabaseConfig struct {
+	config struct {
 		ProjectId string `toml:"project_id"`
 		Api       api
 		Db        db
