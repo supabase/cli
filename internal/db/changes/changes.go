@@ -122,6 +122,9 @@ func run(p utils.Program) error {
 			}
 		}
 
+		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+			return err
+		}
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err

@@ -57,9 +57,7 @@ func Run(projectRef string) error {
 
 	// 3. Save project ref
 	{
-		if err := os.Mkdir("supabase/.temp", 0755); errors.Is(err, os.ErrExist) {
-			// skip
-		} else {
+		if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
 			return err
 		}
 		if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {

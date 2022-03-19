@@ -141,6 +141,9 @@ func run(p utils.Program, url string) error {
 			remoteMigrations = append(remoteMigrations, version)
 		}
 
+		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+			return err
+		}
 		localMigrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err
@@ -251,6 +254,9 @@ EOSQL
 			}
 		}
 
+		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+			return err
+		}
 		migrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err

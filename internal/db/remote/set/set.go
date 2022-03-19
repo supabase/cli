@@ -78,6 +78,9 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			remoteMigrations = append(remoteMigrations, version)
 		}
 
+		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+			return err
+		}
 		localMigrations, err := os.ReadDir("supabase/migrations")
 		if err != nil {
 			return err

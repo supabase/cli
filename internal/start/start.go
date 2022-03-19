@@ -107,7 +107,7 @@ func run(p utils.Program) error {
 	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
-		if err := os.Mkdir("supabase/.branches", 0755); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
 			return err
 		}
 		if err := os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644); err != nil {
@@ -424,6 +424,9 @@ EOSQL
 					}
 				}
 
+				if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+					return err
+				}
 				migrations, err := os.ReadDir("supabase/migrations")
 				if err != nil {
 					return err
@@ -544,7 +547,7 @@ EOSQL
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
 				},
-				Entrypoint:   []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
 ` + kongConfigBuf.String() + `
 EOF
 `},
