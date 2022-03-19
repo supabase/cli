@@ -139,3 +139,11 @@ func IsBranchNameReserved(branch string) bool {
 		return false
 	}
 }
+
+func MkdirIfNotExist(path string) error {
+	if err := os.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+
+	return nil
+}
