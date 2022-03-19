@@ -42,6 +42,9 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		versions = append(versions, version)
 	}
 
+	if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		return err
+	}
 	migrations, err := os.ReadDir("supabase/migrations")
 	if err != nil {
 		return err
