@@ -62,9 +62,6 @@ func Run() error {
 	if err := os.RemoveAll("supabase/.branches"); err != nil {
 		return err
 	}
-	if err := os.RemoveAll("supabase/.temp"); err != nil {
-		return err
-	}
 
 	fmt.Println("Stopped local development setup.")
 	return nil

@@ -121,11 +121,6 @@ func run(p utils.Program) error {
 		return err
 	}
 
-	_ = os.RemoveAll("supabase/.temp")
-	if err := os.Mkdir("supabase/.temp", 0755); err != nil {
-		return err
-	}
-
 	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
@@ -533,20 +528,8 @@ EOSQL
 
 	// Start Kong.
 	{
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.Config.ProjectId}); err != nil {
-			return err
-		}
-		if err := os.WriteFile("supabase/.temp/kong.yml", kongConfigBuf.Bytes(), 0644); err != nil {
-			return err
-		}
-		// Ensure the file is readable even after umask
-		if err := os.Chmod("supabase/.temp/kong.yml", 0644); err != nil {
 			return err
 		}
 
@@ -557,17 +540,20 @@ EOSQL
 				Image: utils.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
-					"KONG_DECLARATIVE_CONFIG=/var/lib/kong/kong.yml",
+					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
 				},
+				Entrypoint:   []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
+` + kongConfigBuf.String() + `
+EOF
+`},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{
-				Binds:         []string{(cwd + "/supabase/.temp/kong.yml:/var/lib/kong/kong.yml:ro,z")},
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
