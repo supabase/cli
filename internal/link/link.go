@@ -14,9 +14,7 @@ import (
 func Run(projectRef string) error {
 	// 1. Sanity checks.
 	{
-		if _, err := os.ReadDir("supabase"); errors.Is(err, os.ErrNotExist) {
-			return errors.New("Cannot find " + utils.Bold("supabase") + " in the current directory. Have you set up the project with " + utils.Aqua("supabase init") + "?")
-		} else if err != nil {
+		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
 	}
