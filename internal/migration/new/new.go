@@ -1,6 +1,7 @@
 package new
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/supabase/cli/internal/utils"
@@ -16,5 +17,10 @@ func Run(migrationName string) error {
 	}
 
 	timestamp := utils.GetCurrentTimestamp()
-	return os.WriteFile("supabase/migrations/"+timestamp+"_"+migrationName+".sql", []byte{}, 0644)
+	if err := os.WriteFile("supabase/migrations/"+timestamp+"_"+migrationName+".sql", []byte{}, 0644); err != nil {
+		return err
+	}
+
+	fmt.Println("Created new migration at " + utils.Bold("supabase/migrations/"+timestamp+"_"+migrationName+".sql") + ".")
+	return nil
 }
