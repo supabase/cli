@@ -10,18 +10,11 @@ var (
 		Use:   "login",
 		Short: "Authenticate using an access token.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			accessToken, err := cmd.Flags().GetString("token")
-			if err != nil {
-				return err
-			}
-
-			return login.Run(accessToken)
+			return login.Run()
 		},
 	}
 )
 
 func init() {
-	loginCmd.Flags().String("token", "", "Access token to use")
-	loginCmd.MarkFlagRequired("token")
 	rootCmd.AddCommand(loginCmd)
 }

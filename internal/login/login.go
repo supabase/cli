@@ -10,9 +10,15 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(accessToken string) error {
+func Run() error {
+	accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN")
+
 	// 1. Validate access token
 	{
+		if accessToken == "" {
+			return errors.New("Access token not provided. Supply an access token by setting SUPABASE_ACCESS_TOKEN environment variable.")
+		}
+
 		matched, err := regexp.MatchString(`^sbp_[a-f0-9]{40}$`, accessToken)
 		if err != nil {
 			return err
