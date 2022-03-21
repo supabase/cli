@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"regexp"
@@ -39,12 +40,13 @@ func Run(slug string) error {
 	}
 
 	// 3. Deploy new Function.
+	var projectRef string
 	{
 		projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
 		if err != nil {
 			return err
 		}
-		projectRef := string(projectRefBytes)
+		projectRef = string(projectRefBytes)
 
 		accessTokenPath, err := xdg.ConfigFile("supabase/access-token")
 		if err != nil {
@@ -108,5 +110,6 @@ func Run(slug string) error {
 		}
 	}
 
+	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef) + ".")
 	return nil
 }

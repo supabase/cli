@@ -2,6 +2,7 @@ package new
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 
@@ -25,6 +26,9 @@ func Run(slug string) error {
 		if !matched {
 			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
 		}
+		if _, err := os.Stat("supabase/functions/"+slug+".ts"); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
+		}
 	}
 
 	// 3. Create new function.
@@ -44,5 +48,6 @@ serve(() => new Response("Hello World"));
 		}
 	}
 
+	fmt.Println("Created new Function at " + utils.Bold("supabase/functions/"+slug+".ts") + ".")
 	return nil
 }
