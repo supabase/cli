@@ -48,7 +48,7 @@ func Run(slug string) error {
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/functions/"+projectRef+"/"+slug, nil)
+		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func Run(slug string) error {
 		if resp.StatusCode == 404 { // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
 		} else if resp.StatusCode == 200 { // Function exists
-			req, err := http.NewRequest("DELETE", "https://api.supabase.io/v1/functions/"+projectRef+"/"+slug, nil)
+			req, err := http.NewRequest("DELETE", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
 			if err != nil {
 				return err
 			}
