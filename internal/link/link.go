@@ -39,7 +39,7 @@ func Run(projectRef string) error {
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/functions/"+projectRef, nil)
+		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions", nil)
 		if err != nil {
 			return err
 		}

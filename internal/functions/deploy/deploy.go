@@ -40,7 +40,7 @@ func Run(slug string) error {
 		if err != nil {
 			return err
 		}
-		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/" + slug + ".ts")
+		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+".ts")
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if err := cmd.Run(); err != nil {
@@ -67,7 +67,7 @@ func Run(slug string) error {
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/functions/"+projectRef+"/"+slug, nil)
+		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func Run(slug string) error {
 				return err
 			}
 
-			req, err := http.NewRequest("POST", "https://api.supabase.io/v1/functions/"+projectRef, bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -102,7 +102,7 @@ func Run(slug string) error {
 				return err
 			}
 
-			req, err := http.NewRequest("PATCH", "https://api.supabase.io/v1/functions/"+projectRef+"/"+slug, bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest("PATCH", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
