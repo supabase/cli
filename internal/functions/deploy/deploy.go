@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 
 	"github.com/adrg/xdg"
@@ -17,6 +18,9 @@ func Run(slug string) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+			return err
+		}
+		if err := utils.InstallOrUpgradeDeno(); err != nil {
 			return err
 		}
 	}
@@ -32,11 +36,17 @@ func Run(slug string) error {
 			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
 		}
 
-		newFunctionBodyBytes, err := os.ReadFile("supabase/functions/" + slug + ".ts")
+		denoPath, err := xdg.ConfigFile("supabase/deno")
 		if err != nil {
 			return err
 		}
-		newFunctionBody = string(newFunctionBodyBytes)
+		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/" + slug + ".ts")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		newFunctionBody = out.String()
 	}
 
 	// 3. Deploy new Function.
