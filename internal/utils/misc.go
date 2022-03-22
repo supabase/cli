@@ -1,14 +1,21 @@
 package utils
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/adrg/xdg"
 )
 
 // Update initial schemas in internal/utils/templates/initial_schemas when
@@ -153,6 +160,82 @@ func AssertSupabaseCliIsSetUp() error {
 		return errors.New("Cannot find " + Bold("supabase") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
 	} else if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func InstallOrUpgradeDeno() error {
+	denoPath, err := xdg.ConfigFile("supabase/deno")
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(denoPath); err == nil {
+		// Upgrade Deno.
+
+		cmd := exec.Command(denoPath, "upgrade")
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	// Install Deno.
+
+	// 1. Determine OS triple
+	var assetFilename string
+	{
+		if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
+			assetFilename = "deno-x86_64-apple-darwin.zip"
+		} else if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+			assetFilename = "deno-aarch64-apple-darwin.zip"
+		} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+			assetFilename = "deno-x86_64-unknown-linux-gnu.zip"
+		} else if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+			assetFilename = "deno-x86_64-pc-windows-msvc.zip"
+		} else {
+			return errors.New("Platform " + runtime.GOOS + "/" + runtime.GOARCH + " is currently unsupported for Functions.")
+		}
+	}
+
+	// 2. Download & install Deno binary.
+	{
+		resp, err := http.Get("https://github.com/denoland/deno/releases/latest/download/" + assetFilename)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return errors.New("Failed installing Deno binary.")
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
+		r, err := zip.NewReader(bytes.NewReader(respBody), int64(len(respBody)))
+		// There should be only 1 file: the deno binary
+		if len(r.File) != 1 {
+			return err
+		}
+		denoContents, err := r.File[0].Open()
+		if err != nil {
+			return err
+		}
+		defer denoContents.Close()
+
+		denoBytes, err := io.ReadAll(denoContents)
+		if err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(denoPath, denoBytes, 0755); err != nil {
+			return err
+		}
 	}
 
 	return nil
