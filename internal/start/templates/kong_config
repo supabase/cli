@@ -87,6 +87,14 @@ services:
         strip_path: true
         paths:
           - /pg/
+  - name: functions-v1
+    _comment: "Functions: /functions/v1/* -> http://deno-relay:8081/*"
+    url: http://supabase_deno_relay_{{ .ProjectId }}:8081/
+    routes:
+      - name: functions-v1-all
+        strip_path: true
+        paths:
+          - /functions/v1/
 consumers:
   - username: anon
     keyauth_credentials:
