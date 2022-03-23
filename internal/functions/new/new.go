@@ -26,7 +26,7 @@ func Run(slug string) error {
 		if !matched {
 			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
 		}
-		if _, err := os.Stat("supabase/functions/"+slug+".ts"); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat("supabase/functions/" + slug + ".ts"); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
 		}
 	}
