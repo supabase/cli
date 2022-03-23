@@ -22,6 +22,6 @@ var (
 
 func init() {
 	linkCmd.Flags().String("ref", "", "Project ref of the Supabase project")
-	linkCmd.MarkFlagRequired("ref")
+	_ = linkCmd.MarkFlagRequired("ref")
 	rootCmd.AddCommand(linkCmd)
 }
