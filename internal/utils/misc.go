@@ -34,7 +34,8 @@ const (
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
 	PgmetaImage    = "supabase/postgres-meta:v0.33.2"
 	// TODO: Hardcode version once provided upstream.
-	StudioImage = "supabase/studio:latest"
+	StudioImage    = "supabase/studio:latest"
+	DenoRelayImage = "supabase/deno-relay:v1.0.3"
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname

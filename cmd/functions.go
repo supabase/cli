@@ -5,6 +5,7 @@ import (
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/functions/new"
+	"github.com/supabase/cli/internal/functions/serve"
 )
 
 var (
@@ -39,11 +40,21 @@ var (
 			return new.Run(args[0])
 		},
 	}
+
+	functionsServeCmd = &cobra.Command{
+		Use:   "serve <Function name>",
+		Short: "Serve a Function locally.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return serve.Run(args[0])
+		},
+	}
 )
 
 func init() {
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
+	functionsCmd.AddCommand(functionsServeCmd)
 	rootCmd.AddCommand(functionsCmd)
 }

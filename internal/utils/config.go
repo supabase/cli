@@ -16,18 +16,19 @@ import (
 )
 
 var (
-	DbImage    string
-	NetId      string
-	DbId       string
-	KongId     string
-	GotrueId   string
-	InbucketId string
-	RealtimeId string
-	RestId     string
-	StorageId  string
-	DifferId   string
-	PgmetaId   string
-	StudioId   string
+	DbImage     string
+	NetId       string
+	DbId        string
+	KongId      string
+	GotrueId    string
+	InbucketId  string
+	RealtimeId  string
+	RestId      string
+	StorageId   string
+	DifferId    string
+	PgmetaId    string
+	StudioId    string
+	DenoRelayId string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -207,6 +208,7 @@ func LoadConfig() error {
 			DifferId = "supabase_differ_" + Config.ProjectId
 			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
 			StudioId = "supabase_studio_" + Config.ProjectId
+			DenoRelayId = "supabase_deno_relay_" + Config.ProjectId
 		}
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
