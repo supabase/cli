@@ -579,9 +579,11 @@ EOF
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
 			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !*utils.Config.Auth.EnableSignup),
 
-			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
+			"GOTRUE_JWT_ADMIN_ROLES=service_role",
+			"GOTRUE_JWT_AUD=authenticated",
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
+			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
