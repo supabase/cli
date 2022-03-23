@@ -15,7 +15,7 @@ var (
 
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
-		Short: "Delete a Function from the linked Supabase project.",
+		Short: "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return delete.Run(args[0])
