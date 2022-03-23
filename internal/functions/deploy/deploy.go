@@ -20,6 +20,9 @@ func Run(slug string) error {
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
+		if err := utils.AssertIsLinked(); err != nil {
+			return err
+		}
 		if err := utils.InstallOrUpgradeDeno(); err != nil {
 			return err
 		}
@@ -76,6 +79,7 @@ func Run(slug string) error {
 		if err != nil {
 			return err
 		}
+		defer resp.Body.Close()
 
 		if resp.StatusCode == 404 { // Function doesn't exist yet, so do a POST
 			jsonBytes, err := json.Marshal(map[string]string{"slug": slug, "name": slug, "body": newFunctionBody})
@@ -93,6 +97,7 @@ func Run(slug string) error {
 			if err != nil {
 				return err
 			}
+			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
 				return errors.New("Failed to create a new Function on the Supabase project.")
 			}
@@ -112,6 +117,7 @@ func Run(slug string) error {
 			if err != nil {
 				return err
 			}
+			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
 				return errors.New("Failed to update an existing Function's body on the Supabase project.")
 			}

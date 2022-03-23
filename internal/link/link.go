@@ -48,6 +48,7 @@ func Run(projectRef string) error {
 		if err != nil {
 			return err
 		}
+		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
 			return errors.New("Authorization failed for the access token and project ref pair.")
 		}
