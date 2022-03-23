@@ -165,6 +165,16 @@ func AssertSupabaseCliIsSetUp() error {
 	return nil
 }
 
+func AssertIsLinked() error {
+	if _, err := os.Stat("supabase/.temp/project-ref"); errors.Is(err, os.ErrNotExist) {
+		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+	} else if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func InstallOrUpgradeDeno() error {
 	denoPath, err := xdg.ConfigFile("supabase/deno")
 	if err != nil {
@@ -212,12 +222,12 @@ func InstallOrUpgradeDeno() error {
 			return errors.New("Failed installing Deno binary.")
 		}
 
-		respBody, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
 
-		r, err := zip.NewReader(bytes.NewReader(respBody), int64(len(respBody)))
+		r, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 		// There should be only 1 file: the deno binary
 		if len(r.File) != 1 {
 			return err

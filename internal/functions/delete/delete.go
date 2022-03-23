@@ -17,6 +17,9 @@ func Run(slug string) error {
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
+		if err := utils.AssertIsLinked(); err != nil {
+			return err
+		}
 	}
 
 	// 2. Validate Function slug.
@@ -57,6 +60,7 @@ func Run(slug string) error {
 		if err != nil {
 			return err
 		}
+		defer resp.Body.Close()
 
 		if resp.StatusCode == 404 { // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
@@ -70,6 +74,7 @@ func Run(slug string) error {
 			if err != nil {
 				return err
 			}
+			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
 				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project.")
 			}
