@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -31,11 +30,7 @@ func Run(args []string) error {
 		}
 		projectRef := string(projectRefBytes)
 
-		accessTokenPath, err := xdg.ConfigFile("supabase/access-token")
-		if err != nil {
-			return err
-		}
-		accessToken, err := os.ReadFile(accessTokenPath)
+		accessToken, err := utils.LoadAccessToken()
 		if err != nil {
 			return err
 		}
