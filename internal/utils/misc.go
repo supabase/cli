@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -250,4 +251,33 @@ func InstallOrUpgradeDeno() error {
 	}
 
 	return nil
+}
+
+func LoadAccessToken() (string, error) {
+	// Env takes precedence
+	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
+		matched, err := regexp.MatchString(`^sbp_[a-f0-9]{40}$`, accessToken)
+		if err != nil {
+			return "", err
+		}
+		if !matched {
+			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
+		}
+
+		return accessToken, nil
+	}
+
+	accessTokenPath, err := xdg.ConfigFile("supabase/access-token")
+	if err != nil {
+		return "", err
+	}
+	accessToken, err := os.ReadFile(accessTokenPath)
+	if err != nil {
+		return "", err
+	}
+	if string(accessToken) == "" {
+		return "", errors.New("Access token not provided. Supply an access token by setting the SUPABASE_ACCESS_TOKEN environment variable.")
+	}
+
+	return string(accessToken), nil
 }
