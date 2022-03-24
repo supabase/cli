@@ -38,7 +38,7 @@ func Run(readFromStdin bool, args []string) error {
 		}
 
 		type Secret struct {
-			Name  string `json:"key"`
+			Name  string `json:"name"`
 			Value string `json:"value"`
 		}
 

@@ -57,7 +57,7 @@ func Run() error {
 		}
 
 		var secrets []struct {
-			Key   string
+			Name   string
 			Value string
 		}
 		if err := json.Unmarshal(body, &secrets); err != nil {
@@ -68,7 +68,7 @@ func Run() error {
 |-|-|
 `
 		for _, secret := range secrets {
-			table += "|" + secret.Key + "|" + secret.Value + "|\n"
+			table += "|" + secret.Name + "|" + secret.Value + "|\n"
 		}
 
 		out, err := glamour.Render(table, "auto")
