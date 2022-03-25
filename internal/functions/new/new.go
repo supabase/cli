@@ -19,12 +19,12 @@ func Run(slug string) error {
 
 	// 2. Validate Function slug.
 	{
-		matched, err := regexp.MatchString(`^[A-Za-z0-9_-]+$`, slug)
+		matched, err := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_-]*$`, slug)
 		if err != nil {
 			return err
 		}
 		if !matched {
-			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
+			return errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 		}
 		if _, err := os.Stat("supabase/functions/" + slug + ".ts"); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
