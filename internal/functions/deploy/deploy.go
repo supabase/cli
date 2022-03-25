@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,7 +30,6 @@ func Run(slug string) error {
 	}
 
 	// 2. Validate Function slug.
-	var newFunctionBody string
 	{
 		matched, err := regexp.MatchString(`^[A-Za-z0-9_-]+$`, slug)
 		if err != nil {
@@ -38,18 +38,27 @@ func Run(slug string) error {
 		if !matched {
 			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
 		}
+	}
+
+	// 3. Bundle Function.
+	var newFunctionBody string
+	{
+		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug+".ts"))
 
 		denoPath, err := xdg.ConfigFile("supabase/deno")
 		if err != nil {
 			return err
 		}
+
 		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+".ts")
-		var out bytes.Buffer
-		cmd.Stdout = &out
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
 		if err := cmd.Run(); err != nil {
-			return err
+			return fmt.Errorf("Error bundling function: %w\n%v", err, errBuf.String())
 		}
-		newFunctionBody = out.String()
+
+		newFunctionBody = outBuf.String()
 	}
 
 	// 3. Deploy new Function.
@@ -95,7 +104,12 @@ func Run(slug string) error {
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
-				return errors.New("Failed to create a new Function on the Supabase project.")
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
+				}
+
+				return errors.New("Failed to create a new Function on the Supabase project: " + string(body))
 			}
 		} else if resp.StatusCode == 200 { // Function already exists, so do a PATCH
 			jsonBytes, err := json.Marshal(map[string]string{"body": newFunctionBody})
@@ -115,7 +129,12 @@ func Run(slug string) error {
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
-				return errors.New("Failed to update an existing Function's body on the Supabase project.")
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("Failed to update an existing Function's body on the Supabase project: %w", err)
+				}
+
+				return errors.New("Failed to update an existing Function's body on the Supabase project: " + string(body))
 			}
 		} else {
 			return errors.New("Unexpected error deploying Function.")

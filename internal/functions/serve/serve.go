@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -68,7 +70,7 @@ func Run(slug string) error {
 					"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 					"DENO_ORIGIN=http://localhost:8000",
 				},
-				Cmd: []string{"sh", "-c", `cat <<'EOF' > /home/deno/function.ts && deno run --allow-all index.ts
+				Cmd: []string{"sh", "-c", `cat <<'EOF' > /home/deno/` + slug + `.ts && deno run --allow-all index.ts
 ` + string(functionBytes) + `
 EOF
 `},
@@ -87,8 +89,22 @@ EOF
 
 	// 4. Start Function.
 	{
+		fmt.Println("Starting " + utils.Bold("supabase/functions/"+slug+".ts"))
 		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
-			"deno", "run", "--allow-all", "/home/deno/function.ts",
+			"deno", "cache", "/home/deno/" + slug + ".ts",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := stdcopy.StdCopy(io.Discard, io.Discard, out); err != nil {
+			return err
+		}
+	}
+
+	{
+		fmt.Println("Serving " + utils.Bold("supabase/functions/"+slug+".ts"))
+		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
+			"deno", "run", "--allow-all", "/home/deno/" + slug + ".ts",
 		})
 		if err != nil {
 			return err
@@ -98,5 +114,6 @@ EOF
 		}
 	}
 
+	fmt.Println("Stopped serving " + utils.Bold("supabase/functions/"+slug+".ts"))
 	return nil
 }

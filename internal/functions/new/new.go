@@ -38,9 +38,18 @@ func Run(slug string) error {
 		}
 		if err := os.WriteFile(
 			"supabase/functions/"+slug+".ts",
-			[]byte(`import { serve } from "https://deno.land/std/http/server.ts";
+			[]byte(`// Follow this setup guide to integrate the Deno language server with your editor:
+// https://deno.land/manual/getting_started/setup_your_environment
+// This enables autocomplete, go to definition, etc.
 
-serve(() => new Response("Hello World"));
+import { serve } from "https://deno.land/std@0.131.0/http/server.ts"
+
+console.log("Hello from Functions!")
+
+serve(() => new Response(
+    '{"message":"Hello from Functions!"}',
+    { headers: { "Content-Type": "application/json" } },
+))
 `),
 			0644,
 		); err != nil {
