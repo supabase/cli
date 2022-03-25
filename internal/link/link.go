@@ -3,6 +3,7 @@ package link
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -43,8 +44,14 @@ func Run(projectRef string) error {
 			return err
 		}
 		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
 		if resp.StatusCode != 200 {
-			return errors.New("Authorization failed for the access token and project ref pair.")
+			return errors.New("Authorization failed for the access token and project ref pair: " + string(body))
 		}
 	}
 
