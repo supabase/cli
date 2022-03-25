@@ -13,7 +13,8 @@ import (
 )
 
 func Run() error {
-	fmt.Print("Insert your access token and press Enter: ")
+	fmt.Print(`You can generate an access token from https://app.supabase.io/account/tokens.
+Enter your access token: `)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {

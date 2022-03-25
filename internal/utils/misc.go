@@ -272,11 +272,10 @@ func LoadAccessToken() (string, error) {
 		return "", err
 	}
 	accessToken, err := os.ReadFile(accessTokenPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
+		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
+	} else if err != nil {
 		return "", err
-	}
-	if string(accessToken) == "" {
-		return "", errors.New("Access token not provided. Supply an access token by setting the SUPABASE_ACCESS_TOKEN environment variable.")
 	}
 
 	return string(accessToken), nil

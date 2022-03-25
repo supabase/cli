@@ -45,12 +45,12 @@ func Run(projectRef string) error {
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-
 		if resp.StatusCode != 200 {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("Authorization failed for the access token and project ref pair: %w", err)
+			}
+
 			return errors.New("Authorization failed for the access token and project ref pair: " + string(body))
 		}
 	}

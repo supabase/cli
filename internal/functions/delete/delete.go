@@ -3,6 +3,7 @@ package delete
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -71,10 +72,20 @@ func Run(slug string) error {
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != 200 {
-				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project.")
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("Failed to delete Function %v on the Supabase project: %w", utils.Aqua(slug), err)
+				}
+
+				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project: " + string(body))
 			}
 		} else {
-			return errors.New("Unexpected error deleting Function.")
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("Unexpected error deleting Function: %w", err)
+			}
+
+			return errors.New("Unexpected error deleting Function: " + string(body))
 		}
 	}
 

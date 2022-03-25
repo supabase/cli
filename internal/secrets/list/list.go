@@ -57,7 +57,7 @@ func Run() error {
 		}
 
 		var secrets []struct {
-			Name   string
+			Name  string
 			Value string
 		}
 		if err := json.Unmarshal(body, &secrets); err != nil {
