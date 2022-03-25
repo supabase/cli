@@ -48,6 +48,6 @@ serve(() => new Response("Hello World"));
 		}
 	}
 
-	fmt.Println("Created new Function at \"" + utils.Bold("supabase/functions/"+slug+".ts") + "\"")
+	fmt.Println("Created new Function at " + utils.Bold("supabase/functions/"+slug+".ts"))
 	return nil
 }
