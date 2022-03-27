@@ -27,8 +27,11 @@ func Run(slug string) error {
 		if err := utils.MkdirIfNotExist("supabase/functions"); err != nil {
 			return err
 		}
+		if err := utils.MkdirIfNotExist("supabase/functions/" + slug); err != nil {
+			return err
+		}
 		if err := os.WriteFile(
-			"supabase/functions/"+slug+".ts",
+			"supabase/functions/"+slug+"/index.ts",
 			[]byte(`// Follow this setup guide to integrate the Deno language server with your editor:
 // https://deno.land/manual/getting_started/setup_your_environment
 // This enables autocomplete, go to definition, etc.
@@ -48,6 +51,6 @@ serve(() => new Response(
 		}
 	}
 
-	fmt.Println("Created new Function at " + utils.Bold("supabase/functions/"+slug+".ts"))
+	fmt.Println("Created new Function at " + utils.Bold("supabase/functions/"+slug))
 	return nil
 }
