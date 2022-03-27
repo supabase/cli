@@ -1,7 +1,6 @@
 package set
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -45,18 +45,12 @@ func Run(readFromStdin bool, args []string) error {
 
 		var secrets []Secret
 		if readFromStdin {
-			scanner := bufio.NewScanner(os.Stdin)
-			for scanner.Scan() {
-				pair := strings.TrimSpace(scanner.Text())
-				if pair == "" {
-					continue
-				}
+			pairs, err := godotenv.Parse(os.Stdin)
+			if err != nil {
+				return err
+			}
 
-				name, value, found := strings.Cut(pair, "=")
-				if !found {
-					return errors.New("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
-				}
-
+			for name, value := range pairs {
 				secret := Secret{
 					Name:  name,
 					Value: value,

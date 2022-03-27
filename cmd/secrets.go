@@ -44,7 +44,7 @@ var (
 )
 
 func init() {
-	secretsSetCmd.Flags().Bool("from-stdin", false, "Read secrets in newline-delimited KEY=VALUE pairs from stdin.")
+	secretsSetCmd.Flags().Bool("from-stdin", false, "Read secrets in .env format from stdin.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)
 	secretsCmd.AddCommand(secretsUnsetCmd)
