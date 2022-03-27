@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/supabase/cli/internal/utils"
@@ -73,7 +74,7 @@ func Run() error {
 |-|-|
 `
 		for _, secret := range secrets {
-			table += "|" + secret.Name + "|" + secret.Value + "|\n"
+			table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), strings.ReplaceAll(secret.Value, "|", "\\|"))
 		}
 
 		out, err := glamour.Render(table, "auto")
