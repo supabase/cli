@@ -2,21 +2,25 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/joho/godotenv"
 	"github.com/supabase/cli/internal/utils"
 )
 
 var ctx = context.Background()
 
-func Run(slug string) error {
+func Run(envFilePath string, slug string) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -100,13 +104,57 @@ func Run(slug string) error {
 
 	{
 		fmt.Println("Serving " + utils.Bold("supabase/functions/"+slug))
-		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
-			"deno", "run", "--allow-all", "--watch", "/home/deno/functions/" + slug + "/index.ts",
-		})
+
+		env := []string{
+			"SUPABASE_URL=http://localhost:" + strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+			"SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
+			"SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+			"SUPABASE_DB_URL=postgresql://postgres:postgres@localhost:" + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + "/postgres",
+		}
+
+		if envFilePath == "" {
+			// skip
+		} else {
+			envMap, err := godotenv.Read(envFilePath)
+			if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else if err != nil {
+				return err
+			}
+			for name, value := range envMap {
+				if strings.HasPrefix(name, "SUPABASE_") {
+					return errors.New("Invalid secret name: " + name + ". Secret names cannot start with SUPABASE_.")
+				}
+				env = append(env, name+"="+value)
+			}
+		}
+
+		exec, err := utils.Docker.ContainerExecCreate(
+			ctx,
+			utils.DenoRelayId,
+			types.ExecConfig{
+				Env: env,
+				Cmd: []string{
+					"deno", "run", "--allow-all", "--watch", "/home/deno/functions/" + slug + "/index.ts",
+				},
+				AttachStderr: true,
+				AttachStdout: true,
+			},
+		)
 		if err != nil {
 			return err
 		}
-		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, out); err != nil {
+
+		resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+		if err != nil {
+			return err
+		}
+
+		if err := utils.Docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
+			return err
+		}
+
+		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader); err != nil {
 			return err
 		}
 	}
