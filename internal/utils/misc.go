@@ -280,3 +280,15 @@ func LoadAccessToken() (string, error) {
 
 	return string(accessToken), nil
 }
+
+func ValidateFunctionSlug(slug string) error {
+	matched, err := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_-]*$`, slug)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
+	}
+
+	return nil
+}

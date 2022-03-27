@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 
 	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/utils"
@@ -27,20 +26,12 @@ func Run(slug string) error {
 		if err := utils.InstallOrUpgradeDeno(); err != nil {
 			return err
 		}
-	}
-
-	// 2. Validate Function slug.
-	{
-		matched, err := regexp.MatchString(`^[A-Za-z0-9_-]+$`, slug)
-		if err != nil {
+		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if !matched {
-			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
-		}
 	}
 
-	// 3. Bundle Function.
+	// 2. Bundle Function.
 	var newFunctionBody string
 	{
 		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug+".ts"))

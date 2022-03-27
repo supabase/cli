@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 
 	"github.com/supabase/cli/internal/utils"
 )
@@ -20,20 +19,12 @@ func Run(slug string) error {
 		if err := utils.AssertIsLinked(); err != nil {
 			return err
 		}
-	}
-
-	// 2. Validate Function slug.
-	{
-		matched, err := regexp.MatchString(`^[A-Za-z0-9_-]+$`, slug)
-		if err != nil {
+		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if !matched {
-			return errors.New("Invalid Function name. Must be `^[A-Za-z0-9_-]+$`.")
-		}
 	}
 
-	// 3. Delete Function.
+	// 2. Delete Function.
 	var projectRef string
 	{
 		projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
