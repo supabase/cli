@@ -48,7 +48,12 @@ func Run() error {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
-			return errors.New("Unexpected error retrieving project secrets.")
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("Unexpected error retrieving project secrets: %w", err)
+			}
+
+			return errors.New("Unexpected error retrieving project secrets: " + string(body))
 		}
 
 		body, err := io.ReadAll(resp.Body)
@@ -57,7 +62,7 @@ func Run() error {
 		}
 
 		var secrets []struct {
-			Name   string
+			Name  string
 			Value string
 		}
 		if err := json.Unmarshal(body, &secrets); err != nil {
