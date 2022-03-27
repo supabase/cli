@@ -35,10 +35,13 @@ func Run() error {
 		}
 	}
 
-	url := os.Getenv("SUPABASE_REMOTE_DB_URL")
-	if url == "" {
+	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
+	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
+	} else if err != nil {
+		return err
 	}
+	url := string(urlBytes)
 
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
