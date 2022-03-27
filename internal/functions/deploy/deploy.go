@@ -34,14 +34,14 @@ func Run(slug string) error {
 	// 2. Bundle Function.
 	var newFunctionBody string
 	{
-		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug+".ts"))
+		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug))
 
 		denoPath, err := xdg.ConfigFile("supabase/deno")
 		if err != nil {
 			return err
 		}
 
-		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+".ts")
+		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf

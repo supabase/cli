@@ -56,7 +56,7 @@ func Run(slug string) error {
 			Force:         true,
 		})
 
-		functionBytes, err := os.ReadFile("supabase/functions/" + slug + ".ts")
+		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
@@ -70,16 +70,13 @@ func Run(slug string) error {
 					"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 					"DENO_ORIGIN=http://localhost:8000",
 				},
-				Cmd: []string{"sh", "-c", `cat <<'EOF' > /home/deno/` + slug + `.ts && deno run --allow-all index.ts
-` + string(functionBytes) + `
-EOF
-`},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
 			&container.HostConfig{
+				Binds:       []string{cwd + "/supabase/functions:/home/deno/functions:ro,z"},
 				NetworkMode: container.NetworkMode(utils.NetId),
 			},
 		); err != nil {
@@ -89,9 +86,9 @@ EOF
 
 	// 4. Start Function.
 	{
-		fmt.Println("Starting " + utils.Bold("supabase/functions/"+slug+".ts"))
+		fmt.Println("Starting " + utils.Bold("supabase/functions/"+slug))
 		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
-			"deno", "cache", "/home/deno/" + slug + ".ts",
+			"deno", "cache", "/home/deno/functions/" + slug + "/index.ts",
 		})
 		if err != nil {
 			return err
@@ -102,9 +99,9 @@ EOF
 	}
 
 	{
-		fmt.Println("Serving " + utils.Bold("supabase/functions/"+slug+".ts"))
+		fmt.Println("Serving " + utils.Bold("supabase/functions/"+slug))
 		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
-			"deno", "run", "--allow-all", "/home/deno/" + slug + ".ts",
+			"deno", "run", "--allow-all", "--watch", "/home/deno/functions/" + slug + "/index.ts",
 		})
 		if err != nil {
 			return err
@@ -114,6 +111,6 @@ EOF
 		}
 	}
 
-	fmt.Println("Stopped serving " + utils.Bold("supabase/functions/"+slug+".ts"))
+	fmt.Println("Stopped serving " + utils.Bold("supabase/functions/"+slug))
 	return nil
 }
