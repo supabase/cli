@@ -57,6 +57,8 @@ func Run(readFromStdin bool, args []string) error {
 				}
 				secrets = append(secrets, secret)
 			}
+		} else if len(args) == 0 {
+			return errors.New("No arguments found. Use --from-stdin to read from stdin.")
 		} else {
 			for _, pair := range args {
 				name, value, found := strings.Cut(pair, "=")
