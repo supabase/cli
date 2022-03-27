@@ -22,16 +22,16 @@ func Run(slug string) error {
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
-
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-
 		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
-
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+			return err
+		}
+		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
 	}
