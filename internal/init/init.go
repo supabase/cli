@@ -47,17 +47,12 @@ func run() error {
 		return err
 	}
 
-	// 1. Write `migrations`.
-	if err := os.Mkdir("supabase/migrations", 0755); err != nil {
-		return err
-	}
-
-	// 2. Write `config.toml`.
+	// 1. Write `config.toml`.
 	if err := utils.WriteConfig(false); err != nil {
 		return err
 	}
 
-	// 3. Append to `.gitignore`.
+	// 2. Append to `.gitignore`.
 	{
 		gitRoot, err := utils.GetGitRoot()
 		if err != nil {
