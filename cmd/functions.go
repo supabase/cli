@@ -46,12 +46,18 @@ var (
 		Short: "Serve a Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return serve.Run(args[0])
+			envFilePath, err := cmd.Flags().GetString("env-file")
+			if err != nil {
+				return err
+			}
+
+			return serve.Run(envFilePath, args[0])
 		},
 	}
 )
 
 func init() {
+	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
