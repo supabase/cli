@@ -135,7 +135,7 @@ func Run(envFilePath string, slug string) error {
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--allow-all", "--watch", "/home/deno/functions/" + slug + "/index.ts",
+					"deno", "run", "--allow-all", "--watch", "--no-clear-screen", "/home/deno/functions/" + slug + "/index.ts",
 				},
 				AttachStderr: true,
 				AttachStdout: true,
