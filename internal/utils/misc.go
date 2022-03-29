@@ -190,6 +190,8 @@ func InstallOrUpgradeDeno() error {
 		if err := cmd.Run(); err != nil {
 			return err
 		}
+
+		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
