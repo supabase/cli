@@ -14,8 +14,8 @@ import (
 var ctx = context.Background()
 
 func Run(dryRun bool) error {
-	if(dryRun) {
-	  fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
+	if dryRun {
+		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
 	}
 	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
 	if errors.Is(err, os.ErrNotExist) {
@@ -62,7 +62,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		return conflictErr
 	}
 
-	if(!dryRun) {
+	if !dryRun {
 		fmt.Println("Applying unapplied migrations...")
 	}
 
@@ -95,7 +95,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			}
 			defer tx.Rollback(context.Background()) //nolint:errcheck
 
-			if(dryRun) {
+			if dryRun {
 				fmt.Printf("Would apply migration %s:\n%s\n\n---\n\n", migration.Name(), f)
 			} else {
 				if _, err := tx.Exec(ctx, string(f)); err != nil {
