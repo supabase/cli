@@ -58,8 +58,6 @@ var (
 	//go:embed templates/init_config.test.toml
 	testInitConfigEmbed       string
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
-
-	envExtractor = regexp.MustCompile(`^env\((.*)\)$`)
 )
 
 var Config config
@@ -123,56 +121,6 @@ type (
 	// 	AfterMigrations  string `toml:"after_migrations"`
 	// }
 )
-
-func WriteConfig(test bool) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Base(cwd)
-
-	var initConfigBuf bytes.Buffer
-	var tmpl *template.Template
-	if test {
-		tmpl = testInitConfigTemplate
-	} else {
-		tmpl = initConfigTemplate
-	}
-
-	if err := tmpl.Execute(
-		&initConfigBuf,
-		struct{ ProjectId string }{ProjectId: dir},
-	); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func processValue(v string) (proc string, err error) {
-	value := envExtractor.FindStringSubmatch(v)
-	if err != nil {
-		return "", err
-	}
-	if len(value) == 0 {
-		return v, nil
-	}
-	if len(value) != 2 {
-		return "", fmt.Errorf("not able to parse this: '%s'", v)
-	}
-
-	key := value[1]
-	proc = os.Getenv(key)
-	if proc == "" {
-		return "", fmt.Errorf("environment variable '%s' is not set and required in config", key)
-	}
-
-	return proc, err
-}
 
 func LoadConfig() error {
 	if _, err := toml.DecodeFile("supabase/config.toml", &Config); err == nil {
@@ -264,6 +212,22 @@ func LoadConfig() error {
 		if Config.Auth.External == nil {
 			Config.Auth.External = map[string]provider{}
 		}
+
+		maybeLoadEnv := func(s string) (string, error) {
+			matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
+			if len(matches) == 0 {
+				return s, nil
+			}
+
+			envName := matches[1]
+			value := os.Getenv(envName)
+			if value == "" {
+				return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
+			}
+
+			return value, nil
+		}
+
 		for _, ext := range authExternalProviders {
 			if _, ok := Config.Auth.External[ext]; !ok {
 				Config.Auth.External[ext] = provider{
@@ -275,9 +239,9 @@ func LoadConfig() error {
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				} else {
-					v, err := processValue(Config.Auth.External[ext].ClientId)
+					v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
 					if err != nil {
-						return fmt.Errorf("failed to parse config file: %+v", err)
+						return err
 					}
 					Config.Auth.External[ext] = provider{
 						Enabled:  true,
@@ -288,7 +252,7 @@ func LoadConfig() error {
 				if Config.Auth.External[ext].Secret == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				} else {
-					v, err := processValue(Config.Auth.External[ext].Secret)
+					v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
 					if err != nil {
 						return fmt.Errorf("failed to parse config file: %+v", err)
 					}
@@ -408,6 +372,35 @@ secret = ""
 		return err
 	}
 	if err := os.Remove("supabase/config.json"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func WriteConfig(test bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Base(cwd)
+
+	var initConfigBuf bytes.Buffer
+	var tmpl *template.Template
+	if test {
+		tmpl = testInitConfigTemplate
+	} else {
+		tmpl = initConfigTemplate
+	}
+
+	if err := tmpl.Execute(
+		&initConfigBuf,
+		struct{ ProjectId string }{ProjectId: dir},
+	); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 
