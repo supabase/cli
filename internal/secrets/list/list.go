@@ -77,7 +77,14 @@ func Run() error {
 			table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), strings.ReplaceAll(secret.Value, "|", "\\|"))
 		}
 
-		out, err := glamour.Render(table, "auto")
+		r, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(-1),
+		)
+		if err != nil {
+			return err
+		}
+		out, err := r.Render(table)
 		if err != nil {
 			return err
 		}
