@@ -38,6 +38,11 @@ func Run(envFilePath string, slug string) error {
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
+		if envFilePath != "" {
+			if _, err := os.ReadFile(envFilePath); err != nil {
+				return fmt.Errorf("Failed to read env file: %w", err)
+			}
+		}
 	}
 
 	// 2. Stop on SIGINT/SIGTERM.
@@ -116,9 +121,7 @@ func Run(envFilePath string, slug string) error {
 			// skip
 		} else {
 			envMap, err := godotenv.Read(envFilePath)
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
+			if err != nil {
 				return err
 			}
 			for name, value := range envMap {
