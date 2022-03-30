@@ -213,21 +213,6 @@ func LoadConfig() error {
 			Config.Auth.External = map[string]provider{}
 		}
 
-		maybeLoadEnv := func(s string) (string, error) {
-			matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
-			if len(matches) == 0 {
-				return s, nil
-			}
-
-			envName := matches[1]
-			value := os.Getenv(envName)
-			if value == "" {
-				return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
-			}
-
-			return value, nil
-		}
-
 		for _, ext := range authExternalProviders {
 			if _, ok := Config.Auth.External[ext]; !ok {
 				Config.Auth.External[ext] = provider{
@@ -235,33 +220,56 @@ func LoadConfig() error {
 					ClientId: "",
 					Secret:   "",
 				}
-			} else if Config.Auth.External[ext].Enabled {
-				if Config.Auth.External[ext].ClientId == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
-				} else {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
-					if err != nil {
-						return err
-					}
-					Config.Auth.External[ext] = provider{
-						Enabled:  true,
-						ClientId: v,
-						Secret:   Config.Auth.External[ext].Secret,
-					}
+			}
+		}
+	}
+
+	return nil
+}
+
+func InterpolateEnvInConfig() error {
+	maybeLoadEnv := func(s string) (string, error) {
+		matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
+		if len(matches) == 0 {
+			return s, nil
+		}
+
+		envName := matches[1]
+		value := os.Getenv(envName)
+		if value == "" {
+			return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
+		}
+
+		return value, nil
+	}
+
+	for _, ext := range authExternalProviders {
+		if Config.Auth.External[ext].Enabled {
+			var clientId, secret string
+
+			if Config.Auth.External[ext].ClientId == "" {
+				return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+			} else {
+				v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
+				if err != nil {
+					return err
 				}
-				if Config.Auth.External[ext].Secret == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
-				} else {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
-					if err != nil {
-						return fmt.Errorf("failed to parse config file: %+v", err)
-					}
-					Config.Auth.External[ext] = provider{
-						Enabled:  true,
-						ClientId: Config.Auth.External[ext].ClientId,
-						Secret:   v,
-					}
+				clientId = v
+			}
+			if Config.Auth.External[ext].Secret == "" {
+				return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+			} else {
+				v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
+				if err != nil {
+					return err
 				}
+				secret = v
+			}
+
+			Config.Auth.External[ext] = provider{
+				Enabled:  true,
+				ClientId: clientId,
+				Secret:   secret,
 			}
 		}
 	}
