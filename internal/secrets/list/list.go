@@ -1,6 +1,7 @@
 package list
 
 import (
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,11 +71,11 @@ func Run() error {
 			return err
 		}
 
-		table := `|NAME|VALUE|
+		table := `|NAME|DIGEST|
 |-|-|
 `
 		for _, secret := range secrets {
-			table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), strings.ReplaceAll(secret.Value, "|", "\\|"))
+			table += fmt.Sprintf("|`%s`|`%x`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), md5.Sum([]byte(secret.Value)))
 		}
 
 		r, err := glamour.NewTermRenderer(
