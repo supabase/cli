@@ -22,7 +22,7 @@ var (
 	}
 
 	secretsSetCmd = &cobra.Command{
-		Use:   "set [flags] <KEY=VALUE> ...",
+		Use:   "set [flags] <NAME=VALUE> ...",
 		Short: "Set a secret(s) to the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			readFromStdin, err := cmd.Flags().GetBool("from-stdin")
@@ -35,8 +35,8 @@ var (
 	}
 
 	secretsUnsetCmd = &cobra.Command{
-		Use:   "unset <KEY> ...",
-		Short: "Unset a key(s) from the linked Supabase project.",
+		Use:   "unset <NAME> ...",
+		Short: "Unset a secret(s) from the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return unset.Run(args)
 		},
@@ -44,7 +44,7 @@ var (
 )
 
 func init() {
-	secretsSetCmd.Flags().Bool("from-stdin", false, "Read secrets in .env format from stdin.")
+	secretsSetCmd.Flags().Bool("from-stdin", false, "Read secrets in env file format from stdin.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)
 	secretsCmd.AddCommand(secretsUnsetCmd)
