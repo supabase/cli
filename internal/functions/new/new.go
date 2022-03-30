@@ -24,6 +24,9 @@ func Run(slug string) error {
 
 	// 2. Create new function.
 	{
+		if err := utils.MkdirIfNotExist("supabase"); err != nil {
+			return err
+		}
 		if err := utils.MkdirIfNotExist("supabase/functions"); err != nil {
 			return err
 		}
