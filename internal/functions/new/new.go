@@ -17,7 +17,7 @@ func Run(slug string) error {
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if _, err := os.Stat("supabase/functions/" + slug + ".ts"); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat("supabase/functions/" + slug); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
 		}
 	}
