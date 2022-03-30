@@ -908,7 +908,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithDefaultGradient())
+			progressModel := progress.NewModel(progress.WithGradient("#1c1c1c", "#34b27b"))
 			m.progress = &progressModel
 		}
 
