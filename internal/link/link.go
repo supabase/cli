@@ -12,14 +12,7 @@ import (
 )
 
 func Run(projectRef string) error {
-	// 1. Sanity checks.
-	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
-			return err
-		}
-	}
-
-	// 2. Validate access token + project ref
+	// 1. Validate access token + project ref
 	{
 		matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRef)
 		if err != nil {
@@ -55,7 +48,7 @@ func Run(projectRef string) error {
 		}
 	}
 
-	// 3. Save project ref
+	// 2. Save project ref
 	{
 		if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
 			return err
