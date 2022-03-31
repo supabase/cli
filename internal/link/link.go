@@ -65,6 +65,5 @@ func Run(projectRef string) error {
 		}
 	}
 
-	fmt.Println("Finished " + utils.Aqua("supabase link") + ".")
 	return nil
 }
