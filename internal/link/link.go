@@ -50,6 +50,9 @@ func Run(projectRef string) error {
 
 	// 2. Save project ref
 	{
+		if err := utils.MkdirIfNotExist("supabase"); err != nil {
+			return err
+		}
 		if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
 			return err
 		}
