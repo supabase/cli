@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/adrg/xdg"
-	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -46,7 +45,10 @@ Enter your project ref: `)
 
 				projectRef := strings.TrimSpace(scanner.Text())
 
-				if err := link.Run(projectRef); err != nil {
+				if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+					return err
+				}
+				if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
 					return err
 				}
 			} else if err != nil {
