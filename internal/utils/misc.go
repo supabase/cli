@@ -184,7 +184,11 @@ func InstallOrUpgradeDeno() error {
 	if err := MkdirIfNotExist(filepath.Join(home, ".supabase")); err != nil {
 		return err
 	}
-	denoPath := filepath.Join(home, ".supabase", "deno")
+	denoBinName := "deno"
+	if runtime.GOOS == "windows" {
+		denoBinName = "deno.exe"
+	}
+	denoPath := filepath.Join(home, ".supabase", denoBinName)
 
 	if _, err := os.Stat(denoPath); err == nil {
 		// Upgrade Deno.
