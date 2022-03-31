@@ -7,6 +7,7 @@ This repository contains all the functionality for our CLI. It is still under he
 - [x] Running Supabase locally
 - [x] Managing database migrations
 - [x] Pushing your local changes to production
+- [x] Create and Deploy Supabase Functions
 - [ ] Manage your Supabase Account
 - [ ] Manage your Supabase Projects
 - [ ] Generating types directly from your database schema
