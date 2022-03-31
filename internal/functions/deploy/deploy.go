@@ -20,9 +20,6 @@ import (
 func Run(slug string, projectRefArg string) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
-			return err
-		}
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
 			if err := login.Run(); err != nil {
 				return err
@@ -54,7 +51,7 @@ func Run(slug string, projectRefArg string) error {
 	// 2. Bundle Function.
 	var newFunctionBody string
 	{
-		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug))
+		fmt.Println("Bundling " + utils.Bold(slug))
 
 		denoPath, err := xdg.ConfigFile("supabase/deno")
 		if err != nil {
