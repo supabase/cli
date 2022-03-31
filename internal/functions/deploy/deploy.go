@@ -195,7 +195,7 @@ Enter your project ref: `)
 		}
 	}
 
-	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef) + ".")
+	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef))
 
 	url := fmt.Sprintf("https://app.supabase.io/project/%v/functions/%v/details", projectRef, data.Id)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
