@@ -14,7 +14,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(readFromStdin bool, args []string) error {
+func Run(envFilePath string, args []string) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -44,13 +44,12 @@ func Run(readFromStdin bool, args []string) error {
 		}
 
 		var secrets []Secret
-		if readFromStdin {
-			pairs, err := godotenv.Parse(os.Stdin)
+		if envFilePath != "" {
+			envMap, err := godotenv.Read(envFilePath)
 			if err != nil {
 				return err
 			}
-
-			for name, value := range pairs {
+			for name, value := range envMap {
 				secret := Secret{
 					Name:  name,
 					Value: value,
@@ -58,7 +57,7 @@ func Run(readFromStdin bool, args []string) error {
 				secrets = append(secrets, secret)
 			}
 		} else if len(args) == 0 {
-			return errors.New("No arguments found. Use --from-stdin to read from stdin.")
+			return errors.New("No arguments found. Use --env-file to read from a .env file.")
 		} else {
 			for _, pair := range args {
 				name, value, found := strings.Cut(pair, "=")
