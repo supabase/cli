@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -36,10 +37,10 @@ Enter your access token: `)
 
 	// 2. Save access token
 	{
-		if err := utils.MkdirIfNotExist("~/.supabase"); err != nil {
+		if err := utils.MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
 			return err
 		}
-		accessTokenPath := "~/.supabase/access-token"
+		accessTokenPath := xdg.Home + "/.supabase/access-token"
 
 		if err := os.WriteFile(accessTokenPath, []byte(accessToken), 0600); err != nil {
 			return err
