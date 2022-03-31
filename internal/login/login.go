@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -37,10 +37,14 @@ Enter your access token: `)
 
 	// 2. Save access token
 	{
-		if err := utils.MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
+		home, err := os.UserHomeDir()
+		if err != nil {
 			return err
 		}
-		accessTokenPath := xdg.Home + "/.supabase/access-token"
+		if err := utils.MkdirIfNotExist(filepath.Join(home, ".supabase")); err != nil {
+			return err
+		}
+		accessTokenPath := filepath.Join(home, ".supabase", "access-token")
 
 		if err := os.WriteFile(accessTokenPath, []byte(accessToken), 0600); err != nil {
 			return err
