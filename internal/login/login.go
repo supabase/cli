@@ -37,10 +37,10 @@ Enter your access token: `)
 
 	// 2. Save access token
 	{
-		accessTokenPath, err := xdg.ConfigFile("supabase/access-token")
-		if err != nil {
+		if err := utils.MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
 			return err
 		}
+		accessTokenPath := xdg.Home + "/.supabase/access-token"
 
 		if err := os.WriteFile(accessTokenPath, []byte(accessToken), 0600); err != nil {
 			return err
