@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
-	"github.com/supabase/cli/internal/utils"
 )
 
 // Update initial schemas in internal/utils/templates/initial_schemas when
@@ -179,7 +178,7 @@ func AssertIsLinked() error {
 }
 
 func InstallOrUpgradeDeno() error {
-	if err := utils.MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
+	if err := MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
 		return err
 	}
 	denoPath := xdg.Home + "/.supabase/deno"
