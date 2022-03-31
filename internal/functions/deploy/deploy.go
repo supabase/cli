@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -76,7 +75,7 @@ Enter your project ref: `)
 	{
 		fmt.Println("Bundling " + utils.Bold(slug))
 
-		denoPath := xdg.Home + "/.supabase/deno"
+		denoPath := "~/.supabase/deno"
 
 		functionPath := "supabase/functions/" + slug
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
