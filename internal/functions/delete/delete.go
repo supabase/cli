@@ -74,9 +74,10 @@ func Run(slug string, projectRefArg string) error {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == 404 { // Function doesn't exist
+		switch resp.StatusCode {
+		case http.StatusNotFound: // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
-		} else if resp.StatusCode == 200 { // Function exists
+		case http.StatusOK: // Function exists
 			req, err := http.NewRequest("DELETE", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
 			if err != nil {
 				return err
@@ -95,7 +96,7 @@ func Run(slug string, projectRefArg string) error {
 
 				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project: " + string(body))
 			}
-		} else {
+		default:
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return fmt.Errorf("Unexpected error deleting Function: %w", err)
