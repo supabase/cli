@@ -17,9 +17,13 @@ var (
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
 		Short: "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(args[0])
+			projectRef, err := cmd.Flags().GetString("project-ref")
+			if err != nil {
+				return err
+			}
+			return delete.Run(args[0], projectRef)
 		},
 	}
 
@@ -63,6 +67,7 @@ var (
 func init() {
 	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment")
 	functionsDeployCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
+	functionsDeleteCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
