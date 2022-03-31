@@ -9,25 +9,35 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 
 	"github.com/adrg/xdg"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(slug string) error {
+func Run(slug string, projectRefArg string) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinked(); err != nil {
-			return err
+		if len(projectRefArg) == 0 {
+			if err := utils.AssertIsLinked(); err != nil {
+				return err
+			}
 		}
 		if err := utils.InstallOrUpgradeDeno(); err != nil {
 			return err
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
+		}
+		matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
 	}
 
@@ -55,11 +65,16 @@ func Run(slug string) error {
 	// 3. Deploy new Function.
 	var projectRef string
 	{
-		projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
-		if err != nil {
-			return err
+		// --project-ref overrides value on disk
+		if len(projectRefArg) == 0 {
+			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			if err != nil {
+				return err
+			}
+			projectRef = string(projectRefBytes)
+		} else {
+			projectRef = projectRefArg
 		}
-		projectRef = string(projectRefBytes)
 
 		accessToken, err := utils.LoadAccessToken()
 		if err != nil {
