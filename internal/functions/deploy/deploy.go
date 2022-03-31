@@ -25,19 +25,20 @@ func Run(slug string, projectRefArg string) error {
 			if err := utils.AssertIsLinked(); err != nil {
 				return err
 			}
+		} else {
+			matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
+			if err != nil {
+				return err
+			}
+			if !matched {
+				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+			}
 		}
 		if err := utils.InstallOrUpgradeDeno(); err != nil {
 			return err
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
-		}
-		matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
-		if err != nil {
-			return err
-		}
-		if !matched {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
 	}
 
