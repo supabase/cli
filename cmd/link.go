@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/link"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var (
@@ -15,7 +18,12 @@ var (
 				return err
 			}
 
-			return link.Run(projectRef)
+			if err := link.Run(projectRef); err != nil {
+				return err
+			}
+
+			fmt.Println("Finished " + utils.Aqua("supabase link") + ".")
+			return nil
 		},
 	}
 )

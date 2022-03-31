@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/adrg/xdg"
+	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -32,7 +34,22 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 		if len(projectRefArg) == 0 {
-			if err := utils.AssertIsLinked(); err != nil {
+			if err := utils.AssertIsLinked(); err != nil && strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
+				fmt.Print(`You can find your project ref from the project's dashboard home page, e.g. https://app.supabase.io/project/<project-ref>.
+Enter your project ref: `)
+
+				scanner := bufio.NewScanner(os.Stdin)
+				if !scanner.Scan() {
+					fmt.Println("Cancelled " + utils.Aqua("supabase functions deploy") + ".")
+					return nil
+				}
+
+				projectRef := strings.TrimSpace(scanner.Text())
+
+				if err := link.Run(projectRef); err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
 			}
 		} else {
