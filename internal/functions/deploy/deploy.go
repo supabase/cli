@@ -58,7 +58,17 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 
-		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+"/index.ts")
+		functionPath := "supabase/functions/" + slug
+		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+			// allow deploy from within supabase/
+			functionPath = "functions/" + slug
+			if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+				// allow deploy from current directory
+				functionPath = slug
+			}
+		}
+
+		cmd := exec.Command(denoPath, "bundle", "--quiet", functionPath+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf
