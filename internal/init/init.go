@@ -35,14 +35,14 @@ func Run() error {
 func run() error {
 	// Sanity checks.
 	{
-		if _, err := os.ReadDir("supabase"); err == nil {
+		if _, err := os.ReadFile("supabase/config.toml"); err == nil {
 			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
-	if err := os.Mkdir("supabase", 0755); err != nil {
+	if err := utils.MkdirIfNotExist("supabase"); err != nil {
 		return err
 	}
 

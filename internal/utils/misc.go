@@ -158,8 +158,8 @@ func MkdirIfNotExist(path string) error {
 }
 
 func AssertSupabaseCliIsSetUp() error {
-	if _, err := os.ReadDir("supabase"); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find " + Bold("supabase") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
+	if _, err := os.ReadFile("supabase/config.toml"); errors.Is(err, os.ErrNotExist) {
+		return errors.New("Cannot find " + Bold("supabase/config.toml") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
 	} else if err != nil {
 		return err
 	}
