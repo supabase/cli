@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/supabase/cli/internal/login"
@@ -80,7 +81,11 @@ Enter your project ref: `)
 		if err != nil {
 			return err
 		}
-		denoPath := filepath.Join(home, ".supabase", "deno")
+		denoBinName := "deno"
+		if runtime.GOOS == "windows" {
+			denoBinName = "deno.exe"
+		}
+		denoPath := filepath.Join(home, ".supabase", denoBinName)
 
 		functionPath := "supabase/functions/" + slug
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
