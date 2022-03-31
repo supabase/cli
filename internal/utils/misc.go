@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/adrg/xdg"
 )
 
 // Update initial schemas in internal/utils/templates/initial_schemas when
@@ -176,10 +178,10 @@ func AssertIsLinked() error {
 }
 
 func InstallOrUpgradeDeno() error {
-	if err := MkdirIfNotExist("~/.supabase"); err != nil {
+	if err := MkdirIfNotExist(xdg.Home + "/.supabase"); err != nil {
 		return err
 	}
-	denoPath := "~/.supabase/deno"
+	denoPath := xdg.Home + "/.supabase/deno"
 
 	if _, err := os.Stat(denoPath); err == nil {
 		// Upgrade Deno.
@@ -267,7 +269,7 @@ func LoadAccessToken() (string, error) {
 		return accessToken, nil
 	}
 
-	accessTokenPath := "~/.supabase/access-token"
+	accessTokenPath := xdg.Home + "/.supabase/access-token"
 	accessToken, err := os.ReadFile(accessTokenPath)
 	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
 		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
