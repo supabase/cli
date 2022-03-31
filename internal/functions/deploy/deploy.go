@@ -59,11 +59,7 @@ func Run(slug string, projectRefArg string) error {
 	var newFunctionBody string
 	{
 		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug))
-
-		denoPath, err := xdg.ConfigFile("supabase/deno")
-		if err != nil {
-			return err
-		}
+		denoPath := xdg.Home + "/.supabase/deno"
 
 		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
