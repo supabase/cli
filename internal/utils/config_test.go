@@ -5,26 +5,26 @@ import (
 	"testing"
 )
 
-func TestConfigParsing(superTest *testing.T) {
-	superTest.Cleanup(func() {
-		if err := os.Remove("./supabase/config.toml"); err != nil {
+func TestConfigParsing(t *testing.T) {
+	t.Cleanup(func() {
+		if err := os.Remove("supabase/config.toml"); err != nil {
 			if !os.IsNotExist(err) {
-				superTest.Error(err)
+				t.Error(err)
 			}
 		}
-		if err := os.Remove("./supabase"); err != nil {
+		if err := os.Remove("supabase"); err != nil {
 			if !os.IsNotExist(err) {
-				superTest.Error(err)
+				t.Error(err)
 			}
 		}
 	})
 
-	if err := os.Mkdir("./supabase", 0777); err != nil {
-		superTest.Error(err)
-		superTest.FailNow()
+	if err := os.Mkdir("supabase", 0755); err != nil {
+		t.Error(err)
+		t.FailNow()
 	}
 
-	superTest.Run("classic config file", func(t *testing.T) {
+	t.Run("classic config file", func(t *testing.T) {
 		if err := WriteConfig(false); err != nil {
 			t.Error(err)
 			t.FailNow()
@@ -35,7 +35,7 @@ func TestConfigParsing(superTest *testing.T) {
 		}
 	})
 
-	superTest.Run("config file with environment variables", func(t *testing.T) {
+	t.Run("config file with environment variables", func(t *testing.T) {
 		if err := WriteConfig(true); err != nil {
 			t.Error(err)
 			t.FailNow()
@@ -47,6 +47,12 @@ func TestConfigParsing(superTest *testing.T) {
 			t.Error(err)
 			t.FailNow()
 		}
+		if err := InterpolateEnvInConfig(); err != nil {
+			t.Error(err)
+			t.FailNow()
+		}
+		t.Setenv("AZURE_CLIENT_ID", "hello")
+		t.Setenv("AZURE_SECRET", "this is cool")
 
 		if Config.Auth.External["azure"].ClientId != "hello" {
 			t.Errorf("unexpected value for key [ClientId]: %+v", Config.Auth.External["azure"])
@@ -59,13 +65,17 @@ func TestConfigParsing(superTest *testing.T) {
 		}
 	})
 
-	superTest.Run("config file with environment variables fails when unset", func(t *testing.T) {
+	t.Run("config file with environment variables fails when unset", func(t *testing.T) {
 		if err := WriteConfig(true); err != nil {
 			t.Error(err)
 			t.FailNow()
 		}
 
-		if err := LoadConfig(); err == nil {
+		if err := LoadConfig(); err != nil {
+			t.Error(err)
+			t.FailNow()
+		}
+		if err := InterpolateEnvInConfig(); err == nil {
 			t.Error("expected to fail")
 			t.FailNow()
 		}
