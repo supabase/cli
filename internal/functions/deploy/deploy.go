@@ -24,9 +24,6 @@ type functionParams struct {
 func Run(slug string, projectRefArg string) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
-			return err
-		}
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
 			if err := login.Run(); err != nil {
 				return err
@@ -58,10 +55,21 @@ func Run(slug string, projectRefArg string) error {
 	// 2. Bundle Function.
 	var newFunctionBody string
 	{
-		fmt.Println("Bundling " + utils.Bold("supabase/functions/"+slug))
+		fmt.Println("Bundling " + utils.Bold(slug))
+
 		denoPath := xdg.Home + "/.supabase/deno"
 
-		cmd := exec.Command(denoPath, "bundle", "--quiet", "supabase/functions/"+slug+"/index.ts")
+		functionPath := "supabase/functions/" + slug
+		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+			// allow deploy from within supabase/
+			functionPath = "functions/" + slug
+			if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+				// allow deploy from current directory
+				functionPath = slug
+			}
+		}
+
+		cmd := exec.Command(denoPath, "bundle", "--quiet", functionPath+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf
