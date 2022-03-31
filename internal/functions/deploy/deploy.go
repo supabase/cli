@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 
 	"github.com/adrg/xdg"
+	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -19,6 +21,13 @@ func Run(slug string, projectRefArg string) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+			return err
+		}
+		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
+			if err := login.Run(); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
 		if len(projectRefArg) == 0 {

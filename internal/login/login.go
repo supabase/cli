@@ -47,6 +47,5 @@ Enter your access token: `)
 		}
 	}
 
-	fmt.Println("Finished " + utils.Aqua("supabase login") + ".")
 	return nil
 }

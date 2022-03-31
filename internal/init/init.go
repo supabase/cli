@@ -4,7 +4,6 @@ import (
 	"bytes"
 	_ "embed"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/supabase/cli/internal/utils"
@@ -85,6 +84,5 @@ func run() error {
 		}
 	}
 
-	fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
 	return nil
 }
