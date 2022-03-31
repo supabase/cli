@@ -17,6 +17,10 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+type functionParams struct {
+	Id string `json:"id"`
+}
+
 func Run(slug string, projectRefArg string) error {
 	// 1. Sanity checks.
 	{
@@ -74,6 +78,7 @@ func Run(slug string, projectRefArg string) error {
 
 	// 3. Deploy new Function.
 	var projectRef string
+	var data functionParams
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
@@ -102,7 +107,8 @@ func Run(slug string, projectRefArg string) error {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == 404 { // Function doesn't exist yet, so do a POST
+		switch resp.StatusCode {
+		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
 			jsonBytes, err := json.Marshal(map[string]string{"slug": slug, "name": slug, "body": newFunctionBody})
 			if err != nil {
 				return err
@@ -119,15 +125,18 @@ func Run(slug string, projectRefArg string) error {
 				return err
 			}
 			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
 			if resp.StatusCode != 200 {
-				body, err := io.ReadAll(resp.Body)
 				if err != nil {
 					return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
 				}
-
 				return errors.New("Failed to create a new Function on the Supabase project: " + string(body))
 			}
-		} else if resp.StatusCode == 200 { // Function already exists, so do a PATCH
+			if err := json.Unmarshal(body, &data); err != nil {
+				return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
+			}
+		case http.StatusOK: // Function already exists, so do a PATCH
 			jsonBytes, err := json.Marshal(map[string]string{"body": newFunctionBody})
 			if err != nil {
 				return err
@@ -144,19 +153,25 @@ func Run(slug string, projectRefArg string) error {
 				return err
 			}
 			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
 			if resp.StatusCode != 200 {
-				body, err := io.ReadAll(resp.Body)
 				if err != nil {
 					return fmt.Errorf("Failed to update an existing Function's body on the Supabase project: %w", err)
 				}
-
 				return errors.New("Failed to update an existing Function's body on the Supabase project: " + string(body))
 			}
-		} else {
+			if err := json.Unmarshal(body, &data); err != nil {
+				return fmt.Errorf("Failed to update an existing Function's body on the Supabase project: %w", err)
+			}
+		default:
 			return errors.New("Unexpected error deploying Function.")
 		}
 	}
 
 	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef) + ".")
+
+	url := fmt.Sprintf("https://app.supabase.io/project/%v/functions/%v/details", projectRef, data.Id)
+	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
+
 	return nil
 }
