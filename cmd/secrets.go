@@ -25,12 +25,12 @@ var (
 		Use:   "set [flags] <NAME=VALUE> ...",
 		Short: "Set a secret(s) to the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			readFromStdin, err := cmd.Flags().GetBool("from-stdin")
+			envFilePath, err := cmd.Flags().GetString("env-file")
 			if err != nil {
 				return err
 			}
 
-			return set.Run(readFromStdin, args)
+			return set.Run(envFilePath, args)
 		},
 	}
 
@@ -44,7 +44,7 @@ var (
 )
 
 func init() {
-	secretsSetCmd.Flags().Bool("from-stdin", false, "Read secrets in env file format from stdin.")
+	secretsSetCmd.Flags().String("env-file", "", "Read secrets from a .env file.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)
 	secretsCmd.AddCommand(secretsUnsetCmd)
