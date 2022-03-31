@@ -11,9 +11,6 @@ import (
 func Run(slug string) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
-			return err
-		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
