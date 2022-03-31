@@ -187,7 +187,11 @@ Enter your project ref: `)
 				return fmt.Errorf("Failed to update an existing Function's body on the Supabase project: %w", err)
 			}
 		default:
-			return errors.New("Unexpected error deploying Function.")
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("Unexpected error deploying Function: %w", err)
+			}
+			return errors.New("Unexpected error deploying Function: " + string(body))
 		}
 	}
 
