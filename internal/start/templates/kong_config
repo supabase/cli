@@ -95,6 +95,8 @@ services:
         strip_path: true
         paths:
           - /functions/v1/
+    plugins:
+      - name: cors
 consumers:
   - username: anon
     keyauth_credentials:
