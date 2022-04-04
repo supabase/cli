@@ -12,7 +12,7 @@ import (
 
 var ctx = context.Background()
 
-func Run(useShortId bool) error {
+func Run(useShortId bool, showKeys bool) error {
 	// Sanity checks.
 	if err := utils.AssertDockerIsRunning(); err != nil {
 		return err
@@ -32,8 +32,8 @@ func Run(useShortId bool) error {
 		}
 
 		fmt.Println("Project:", utils.Bold(utils.Config.ProjectId))
-
-		fmt.Println("Containers: ")
+		fmt.Println()
+		fmt.Println("Containers:")
 		fmt.Println("---")
 		for _, container := range containers {
 			service := strings.Join(container.Names, " | ")
@@ -62,6 +62,14 @@ func Run(useShortId bool) error {
 			fmt.Println("Status:", utils.Bold(container.Status))
 			fmt.Println("---")
 		}
+
+		if len(containers) == 0 {
+			fmt.Println(utils.Bold(utils.Red("Supabase stopped.")))
+			fmt.Println("---")
+		}
+		fmt.Println()
+		info := utils.GetProjectInfo(showKeys)
+		fmt.Println(info)
 	}
 
 	return nil

@@ -28,6 +28,7 @@ import (
 // TODO: Handle cleanup on SIGINT/SIGTERM.
 func Run() error {
 	// Sanity checks.
+	var projectInfo string
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
@@ -41,8 +42,10 @@ func Run() error {
 		if err := utils.InterpolateEnvInConfig(); err != nil {
 			return err
 		}
+		projectInfo = utils.GetProjectInfo((true))
 		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
-			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
+			message := utils.Aqua("supabase start") + " is already running. " + fmt.Sprintln() + fmt.Sprintln() + projectInfo + fmt.Sprintln() + "Try running " + utils.Aqua("supabase stop") + " first."
+			return errors.New(message)
 		}
 	}
 
@@ -67,15 +70,8 @@ func Run() error {
 		return err
 	}
 
-	// TODO: Unhardcode keys
-	fmt.Println(`Started local development setup.
-
-         ` + utils.Aqua("API URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Api.Port), 10) + `
-          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + `/postgres
-      ` + utils.Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Studio.Port), 10) + `
-    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10) + `
-        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs
-` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU`)
+	fmt.Println(`Started local development setup.`)
+	fmt.Println(projectInfo)
 	return nil
 }
 
@@ -543,7 +539,11 @@ EOSQL
 	// Start Kong.
 	{
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.Config.ProjectId}); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct {
+			ProjectId     string
+			AnonKey       string
+			ServerRoleKey string
+		}{ProjectId: utils.Config.ProjectId, AnonKey: utils.DEFAULT_ANON_KEY, ServerRoleKey: utils.DEFAULT_SERVER_ROLE_KEY}); err != nil {
 			return err
 		}
 
@@ -732,8 +732,8 @@ EOF
 		&container.Config{
 			Image: utils.StorageImage,
 			Env: []string{
-				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"ANON_KEY=" + utils.DEFAULT_ANON_KEY,
+				"SERVICE_KEY=" + utils.DEFAULT_SERVER_ROLE_KEY,
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
@@ -813,8 +813,8 @@ EOF
 
 				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-				"SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"SUPABASE_ANON_KEY=" + utils.DEFAULT_ANON_KEY,
+				"SUPABASE_SERVICE_KEY=" + utils.DEFAULT_SERVER_ROLE_KEY,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,

@@ -10,16 +10,22 @@ var statusCmd = &cobra.Command{
 	Short: "Get Supabase local development status.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		useShortId := true
+		showKeys := false
 
-		if showFullId, err := cmd.Flags().GetBool("full-id"); err == nil {
-			useShortId = !showFullId
+		if useFullId, err := cmd.Flags().GetBool("full-id"); err == nil {
+			useShortId = !useFullId
 		}
 
-		return status.Run(useShortId)
+		if _showKeys, err := cmd.Flags().GetBool("show-keys"); err == nil {
+			showKeys = _showKeys
+		}
+
+		return status.Run(useShortId, showKeys)
 	},
 }
 
 func init() {
 	statusCmd.Flags().Bool("full-id", false, "Display full id")
+	statusCmd.Flags().Bool("show-keys", false, "Display supabase keys")
 	rootCmd.AddCommand(statusCmd)
 }
