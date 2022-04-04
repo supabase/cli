@@ -9,6 +9,10 @@ func Aqua(str string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(str)
 }
 
+func Red(str string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(str)
+}
+
 // For paths & filenames.
 func Bold(str string) string {
 	return lipgloss.NewStyle().Bold(true).Render(str)
