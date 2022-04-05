@@ -73,7 +73,7 @@ services:
         config:
           add:
             headers:
-              - Content-Profile: graphql_public
+              - "Content-Profile: graphql_public"
   - name: realtime-v1
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
     url: http://supabase_realtime_{{ .ProjectId }}:4000/socket/
