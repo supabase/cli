@@ -42,7 +42,7 @@ func Run() error {
 		if err := utils.InterpolateEnvInConfig(); err != nil {
 			return err
 		}
-		projectInfo = utils.GetProjectInfo((true))
+		projectInfo = utils.GetProjectInfo()
 		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
 			message := utils.Aqua("supabase start") + " is already running. " + fmt.Sprintln() + fmt.Sprintln() + projectInfo + fmt.Sprintln() + "Try running " + utils.Aqua("supabase stop") + " first."
 			return errors.New(message)
@@ -543,7 +543,7 @@ EOSQL
 			ProjectId     string
 			AnonKey       string
 			ServerRoleKey string
-		}{ProjectId: utils.Config.ProjectId, AnonKey: utils.DEFAULT_ANON_KEY, ServerRoleKey: utils.DEFAULT_SERVER_ROLE_KEY}); err != nil {
+		}{ProjectId: utils.Config.ProjectId, AnonKey: utils.AnonKey, ServerRoleKey: utils.ServiceRoleKey}); err != nil {
 			return err
 		}
 
@@ -732,8 +732,8 @@ EOF
 		&container.Config{
 			Image: utils.StorageImage,
 			Env: []string{
-				"ANON_KEY=" + utils.DEFAULT_ANON_KEY,
-				"SERVICE_KEY=" + utils.DEFAULT_SERVER_ROLE_KEY,
+				"ANON_KEY=" + utils.AnonKey,
+				"SERVICE_KEY=" + utils.ServiceRoleKey,
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
@@ -813,8 +813,8 @@ EOF
 
 				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-				"SUPABASE_ANON_KEY=" + utils.DEFAULT_ANON_KEY,
-				"SUPABASE_SERVICE_KEY=" + utils.DEFAULT_SERVER_ROLE_KEY,
+				"SUPABASE_ANON_KEY=" + utils.AnonKey,
+				"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,

@@ -54,7 +54,7 @@ serve(async (req) => {
 
 // To invoke:
 // curl -i --location --request POST 'http://localhost:54321/functions/v1/' \
-//   --header 'Authorization: Bearer `+utils.DEFAULT_ANON_KEY+`' \
+//   --header 'Authorization: Bearer `+utils.AnonKey+`' \
 //   --header 'Content-Type: application/json' \
 //   --data '{"name":"Functions"}'
 `),

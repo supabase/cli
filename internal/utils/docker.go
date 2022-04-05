@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 )
 
@@ -101,4 +103,21 @@ func DockerRemoveAll() {
 	}
 
 	wg.Wait()
+}
+
+func GetProjectContainers(ctx context.Context) ([]types.Container, error) {
+	return Docker.ContainerList(ctx, types.ContainerListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+Config.ProjectId)),
+	})
+}
+
+func ContainerName(names []string) string {
+	service := strings.Join(names, " | ")
+
+	if len(service) > 0 && service[0] == '/' {
+		service = service[1:]
+	}
+
+	return service
 }

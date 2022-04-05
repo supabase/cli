@@ -304,7 +304,7 @@ func ValidateFunctionSlug(slug string) error {
 	return nil
 }
 
-func GetProjectInfo(includeKeys bool) string {
+func GetProjectInfo() string {
 	writeLine := func(key string, value interface{}) string {
 		return fmt.Sprintln(fmt.Sprintf("  %s: %v", Aqua(key), value))
 	}
@@ -315,11 +315,8 @@ func GetProjectInfo(includeKeys bool) string {
 	projectInfo += writeLine("DB URL", `postgresql://postgres:postgres@localhost:`+strconv.FormatUint(uint64(Config.Db.Port), 10)+`/postgres`)
 	projectInfo += writeLine("Studio URL", `http://localhost:`+strconv.FormatUint(uint64(Config.Studio.Port), 10))
 	projectInfo += writeLine("Inbucket URL", `http://localhost:`+strconv.FormatUint(uint64(Config.Inbucket.Port), 10))
-
-	if includeKeys {
-		projectInfo += writeLine("anon key", DEFAULT_ANON_KEY)
-		projectInfo += writeLine("service_role key", DEFAULT_SERVER_ROLE_KEY)
-	}
+	projectInfo += writeLine("anon key", AnonKey)
+	projectInfo += writeLine("service_role key", ServiceRoleKey)
 
 	return projectInfo
 }
