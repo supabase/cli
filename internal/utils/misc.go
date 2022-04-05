@@ -22,7 +22,7 @@ import (
 // updating any one of these.
 const (
 	GotrueImage   = "supabase/gotrue:v2.5.8"
-	RealtimeImage = "supabase/realtime:v0.22.0"
+	RealtimeImage = "supabase/realtime:v0.22.4"
 	StorageImage  = "supabase/storage-api:v0.12.0"
 )
 
