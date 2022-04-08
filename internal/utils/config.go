@@ -333,7 +333,7 @@ port = %d
 # server_version; on the remote database to check.
 major_version = %d
 # The database minimun log level messages. This has to be changed to prevent csv files from growing too much.
-log_min_messages = %d
+log_min_messages = %s
 
 [studio]
 # Port to use for Supabase Studio.
