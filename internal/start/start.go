@@ -273,8 +273,15 @@ func run(p utils.Program) error {
 	// Start Postgres.
 	{
 		cmd := []string{}
+		var logMinMessagesCommand strings.Builder
+		logMinMessagesCommand.WriteString("log_min_messages=")
+		logMinMessagesCommand.WriteString(utils.Config.Db.LogMinMessages)
 		if utils.Config.Db.MajorVersion >= 14 {
-			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
+			cmd = []string{
+				"postgres",
+				"-c", "config_file=/etc/postgresql/postgresql.conf",
+				"-c", logMinMessagesCommand.String(),
+			}
 		}
 
 		if _, err := utils.DockerRun(

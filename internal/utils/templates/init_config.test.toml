@@ -20,6 +20,8 @@ port = 54322
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
 major_version = 14
+# The database minimun log level messages. This has to be changed to prevent csv files from growing too much.
+log_min_messages = "warning"
 
 [studio]
 # Port to use for Supabase Studio.

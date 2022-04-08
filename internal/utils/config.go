@@ -82,8 +82,9 @@ type (
 	}
 
 	db struct {
-		Port         uint
-		MajorVersion uint `toml:"major_version"`
+		Port           uint
+		MajorVersion   uint   `toml:"major_version"`
+		LogMinMessages string `toml:"log_min_messages"`
 	}
 
 	studio struct {
@@ -180,6 +181,9 @@ func LoadConfig() error {
 			InitialSchemaSql = initialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
+		}
+		if Config.Db.LogMinMessages == "" {
+			Config.Db.LogMinMessages = "warning"
 		}
 		if Config.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
@@ -298,6 +302,13 @@ func handleDeprecatedConfig() error {
 		return err
 	}
 
+	var logMinMessages string
+	if viper.IsSet("logMinMessages") {
+		logMinMessages = viper.GetString("logMinMessages")
+	} else {
+		logMinMessages = "warning"
+	}
+
 	newConfig := fmt.Sprintf(
 		`# A string used to distinguish different Supabase projects on the same host. Defaults to the working
 # directory name when running supabase init.
@@ -321,6 +332,8 @@ port = %d
 # The database major version to use. This has to be the same as your remote database's. Run SHOW
 # server_version; on the remote database to check.
 major_version = %d
+# The database minimun log level messages. This has to be changed to prevent csv files from growing too much.
+log_min_messages = %d
 
 [studio]
 # Port to use for Supabase Studio.
@@ -364,6 +377,7 @@ secret = ""
 		viper.GetUint("ports.api"),
 		viper.GetUint("ports.db"),
 		dbMajorVersion,
+		logMinMessages,
 		viper.GetUint("ports.studio"),
 		inbucketPort,
 	)
@@ -374,6 +388,7 @@ secret = ""
 	Config.Studio.Port = viper.GetUint("ports.studio")
 	Config.Inbucket.Port = inbucketPort
 	Config.Db.MajorVersion = uint(dbMajorVersion)
+	Config.Db.LogMinMessages = logMinMessages
 	Config.Auth.SiteUrl = "http://localhost:3000"
 
 	if err := os.WriteFile("supabase/config.toml", []byte(newConfig), 0644); err != nil {
