@@ -35,7 +35,7 @@ const (
 	PgmetaImage    = "supabase/postgres-meta:v0.33.2"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage    = "supabase/studio:latest"
-	DenoRelayImage = "supabase/deno-relay:v1.0.5"
+	DenoRelayImage = "supabase/deno-relay:v1.1.0"
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
