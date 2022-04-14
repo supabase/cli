@@ -15,8 +15,7 @@ This is roughly what's needed to create new initial schema files for new Postgre
 services:
   db:
     container_name: supabase-db
-    image: supabase/postgres:14.1.0
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    image: supabase/postgres:14.1.0.21
     restart: unless-stopped
     ports:
       - 5432:5432
@@ -26,31 +25,17 @@ services:
       - ./globals.sql:/docker-entrypoint-initdb.d/globals.sql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
+  # We don't care about the correct env, we just want each services' migrations to run
+
   auth:
     container_name: supabase-auth
-    image: supabase/gotrue:v2.3.8
+    image: supabase/gotrue:v2.6.18
     depends_on:
       - db
     restart: unless-stopped
     environment:
-      GOTRUE_API_HOST: 0.0.0.0
-      GOTRUE_API_PORT: 9999
-
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
-
-      GOTRUE_SITE_URL: http://localhost:3000
-      GOTRUE_DISABLE_SIGNUP: false
-
-      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
-      GOTRUE_JWT_EXP: 3600
-      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
-
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: true
-      GOTRUE_MAILER_AUTOCONFIRM: true
-
-      GOTRUE_EXTERNAL_PHONE_ENABLED: true
-      GOTRUE_SMS_AUTOCONFIRM: true
 
   realtime:
     container_name: supabase-realtime
@@ -59,44 +44,32 @@ services:
       - db
     restart: unless-stopped
     environment:
-      PORT: 4000
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: postgres
       DB_USER: supabase_admin
       DB_PASSWORD: postgres
       DB_SSL: false
-      SLOT_NAME: supabase_realtime_rls
-      TEMPORARY_SLOT: true
-      JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
-      SECURE_CHANNELS: true
-      REPLICATION_MODE: RLS
-      REPLICATION_POLL_INTERVAL: 100
-    command: >
-      bash -c "./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate
-      && ./prod/rel/realtime/bin/realtime start"
+    command: ./prod/rel/realtime/bin/realtime eval Realtime.Release.migrate
 
   storage:
     container_name: supabase-storage
-    image: supabase/storage-api:v0.10.0
+    image: supabase/storage-api:v0.15.0
     depends_on:
       - db
-      - rest
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://supabase_storage_admin:postgres@db:5432/postgres
 
       ANON_KEY: a
       SERVICE_KEY: a
-      POSTGREST_URL: http://rest:3000
+      TENANT_ID: a
+      REGION: a
+      POSTGREST_URL: a
+      GLOBAL_S3_BUCKET: a
       PGRST_JWT_SECRET: a
-      FILE_SIZE_LIMIT: 52428800
-      STORAGE_BACKEND: file
-      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      TENANT_ID: stub
-      # TODO: https://github.com/supabase/storage-api/issues/55
-      REGION: stub
-      GLOBAL_S3_BUCKET: stub
+      FILE_SIZE_LIMIT: a
+      STORAGE_BACKEND: a
 ```
 
 - Copy `/internal/utils/templates/globals.sql` to `./globals.sql`
@@ -107,7 +80,7 @@ services:
 -- 00-initial-schema.sql
 --
 
--- Set up reatime
+-- Set up reatime 
 -- create publication supabase_realtime; -- defaults to empty publication
 create publication supabase_realtime;
 
@@ -248,7 +221,7 @@ VALUES  ('20171026211738'),
         ('20180108183307'),
         ('20180119214651'),
         ('20180125194653');
-
+		
 -- Gets the User ID from the request cookie
 create or replace function auth.uid() returns uuid as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
@@ -373,7 +346,7 @@ DECLARE
 _bucketId text;
 BEGIN
     -- will be replaced by migrations when server starts
-    -- saving space for cloud-init
+    RAISE 'Storage Tenant not ready. Please contact Supabase Support.';
 END
 $function$;
 
@@ -405,18 +378,6 @@ ALTER function "storage".search(text,text,int,int,int) owner to supabase_storage
 --
 
 -- ALTER ROLE postgres SET search_path TO "\$user",public,extensions;
-
-CREATE OR REPLACE FUNCTION extensions.notify_api_restart() RETURNS event_trigger
-  LANGUAGE plpgsql
-  AS $$
-BEGIN
-  NOTIFY pgrst, 'reload schema';
-END;
-$$;
-CREATE EVENT TRIGGER api_restart
-  ON ddl_command_end
-  EXECUTE PROCEDURE extensions.notify_api_restart();
-COMMENT ON FUNCTION extensions.notify_api_restart IS 'Sends a notification to the API to restart. If your database schema has changed, this is required so that Supabase can rebuild the relationships.';
 
 -- Trigger for pg_cron
 CREATE OR REPLACE FUNCTION extensions.grant_pg_cron_access()
@@ -549,14 +510,29 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA extensions TO postgres;
 GRANT ALL ON ALL ROUTINES IN SCHEMA auth TO postgres;
 GRANT ALL ON ALL ROUTINES IN SCHEMA storage TO postgres;
 GRANT ALL ON ALL ROUTINES IN SCHEMA extensions TO postgres;
--- TODO: Make postgres non-superuser?
 -- ALTER ROLE postgres NOSUPERUSER CREATEDB CREATEROLE LOGIN REPLICATION BYPASSRLS;
+
+--
+-- Ad-hoc
+--
+
+SET ROLE supabase_admin;
 
 --
 -- 20211115181400-update-auth-permissions.sql
 --
 
 -- update auth schema permissions
+GRANT ALL PRIVILEGES ON SCHEMA auth TO supabase_auth_admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA auth TO supabase_auth_admin;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA auth TO supabase_auth_admin;
+
+ALTER table IF EXISTS "auth".users OWNER TO supabase_auth_admin;
+ALTER table IF EXISTS "auth".refresh_tokens OWNER TO supabase_auth_admin;
+ALTER table IF EXISTS "auth".audit_log_entries OWNER TO supabase_auth_admin;
+ALTER table IF EXISTS "auth".instances OWNER TO supabase_auth_admin;
+ALTER table IF EXISTS "auth".schema_migrations OWNER TO supabase_auth_admin;
+
 GRANT USAGE ON SCHEMA auth TO postgres;
 GRANT ALL ON ALL TABLES IN SCHEMA auth TO postgres, dashboard_user;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA auth TO postgres, dashboard_user;
@@ -601,11 +577,433 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON ROUTINES TO postgres, dashboard_user;
 
 --
--- Ad-hoc
+-- 20220126121436-finer-postgrest-triggers.sql
 --
 
-ALTER SCHEMA realtime OWNER TO supabase_admin;
-GRANT USAGE ON SCHEMA realtime TO postgres;
+drop event trigger if exists api_restart;
+drop function if exists extensions.notify_api_restart();
+
+-- https://postgrest.org/en/latest/schema_cache.html#finer-grained-event-trigger
+-- watch create and alter
+CREATE OR REPLACE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger AS $$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+  LOOP
+    IF cmd.command_tag IN (
+      'CREATE SCHEMA', 'ALTER SCHEMA'
+    , 'CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO', 'ALTER TABLE'
+    , 'CREATE FOREIGN TABLE', 'ALTER FOREIGN TABLE'
+    , 'CREATE VIEW', 'ALTER VIEW'
+    , 'CREATE MATERIALIZED VIEW', 'ALTER MATERIALIZED VIEW'
+    , 'CREATE FUNCTION', 'ALTER FUNCTION'
+    , 'CREATE TRIGGER'
+    , 'CREATE TYPE'
+    , 'CREATE RULE'
+    , 'COMMENT'
+    )
+    -- don't notify in case of CREATE TEMP table or other objects created on pg_temp
+    AND cmd.schema_name is distinct from 'pg_temp'
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$ LANGUAGE plpgsql;
+
+-- watch drop
+CREATE OR REPLACE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger AS $$
+DECLARE
+  obj record;
+BEGIN
+  FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
+  LOOP
+    IF obj.object_type IN (
+      'schema'
+    , 'table'
+    , 'foreign table'
+    , 'view'
+    , 'materialized view'
+    , 'function'
+    , 'trigger'
+    , 'type'
+    , 'rule'
+    )
+    AND obj.is_temporary IS false -- no pg_temp objects
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$ LANGUAGE plpgsql;
+
+CREATE EVENT TRIGGER pgrst_ddl_watch
+  ON ddl_command_end
+  EXECUTE PROCEDURE extensions.pgrst_ddl_watch();
+
+CREATE EVENT TRIGGER pgrst_drop_watch
+  ON sql_drop
+  EXECUTE PROCEDURE extensions.pgrst_drop_watch();
+
+--
+-- 20220317095840_pg_graphql.sql
+--
+
+create schema if not exists graphql_public;
+
+-- GraphQL Placeholder Entrypoint
+create or replace function graphql_public.graphql(
+	"operationName" text default null,
+	query text default null,
+	variables jsonb default null,
+	extensions jsonb default null
+)
+    returns jsonb
+    language plpgsql
+as $$
+    DECLARE
+        server_version float;
+    BEGIN
+        server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+        IF server_version >= 14 THEN
+            RETURN jsonb_build_object(
+                'data', null::jsonb,
+                'errors', array['pg_graphql extension is not enabled.']
+            );
+        ELSE
+   	        RETURN jsonb_build_object(
+                'data', null::jsonb,
+                'errors', array['pg_graphql is only available on projects running Postgres 14 onwards.']
+            );
+        END IF;
+    END;
+$$;
+
+grant usage on schema graphql_public to postgres, anon, authenticated, service_role;
+alter default privileges in schema graphql_public grant all on tables to postgres, anon, authenticated, service_role;
+alter default privileges in schema graphql_public grant all on functions to postgres, anon, authenticated, service_role;
+alter default privileges in schema graphql_public grant all on sequences to postgres, anon, authenticated, service_role;
+
+alter default privileges for user supabase_admin in schema graphql_public grant all
+    on sequences to postgres, anon, authenticated, service_role;
+alter default privileges for user supabase_admin in schema graphql_public grant all
+    on tables to postgres, anon, authenticated, service_role;
+alter default privileges for user supabase_admin in schema graphql_public grant all
+    on functions to postgres, anon, authenticated, service_role;
+
+-- Trigger upon enabling pg_graphql
+CREATE OR REPLACE FUNCTION extensions.grant_pg_graphql_access()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $func$
+    DECLARE
+    func_is_graphql_resolve bool;
+    BEGIN
+    func_is_graphql_resolve = (
+        SELECT n.proname = 'resolve'
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_proc AS n
+        ON ev.objid = n.oid
+    );
+
+    IF func_is_graphql_resolve
+    THEN
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant all on function graphql.resolve to postgres, anon, authenticated, service_role;
+
+        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
+
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null 
+        )
+            returns jsonb
+            language sql
+        as $$
+            SELECT graphql.resolve(query, coalesce(variables, '{}'));
+        $$;
+
+        grant select on graphql.field, graphql.type, graphql.enum_value to postgres, anon, authenticated, service_role;
+        grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+    END IF;
+
+    END;
+$func$;
+
+CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end WHEN TAG in ('CREATE FUNCTION')
+EXECUTE PROCEDURE extensions.grant_pg_graphql_access();
+COMMENT ON FUNCTION extensions.grant_pg_graphql_access IS 'Grants access to pg_graphql';
+
+-- Trigger upon dropping the pg_graphql extension
+CREATE OR REPLACE FUNCTION extensions.set_graphql_placeholder()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $func$
+    DECLARE
+    graphql_is_dropped bool;
+    BEGIN
+    graphql_is_dropped = (
+        SELECT ev.schema_name = 'graphql_public'
+        FROM pg_event_trigger_dropped_objects() AS ev
+        WHERE ev.schema_name = 'graphql_public'
+    );
+
+    IF graphql_is_dropped
+    THEN
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language plpgsql
+        as $$
+            DECLARE
+                server_version float;
+            BEGIN
+                server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+                IF server_version >= 14 THEN
+                    RETURN jsonb_build_object(
+                        'data', null::jsonb,
+                        'errors', array['pg_graphql extension is not enabled.']
+                    );
+                ELSE
+                    RETURN jsonb_build_object(
+                        'data', null::jsonb,
+                        'errors', array['pg_graphql is only available on projects running Postgres 14 onwards.']
+                    );
+                END IF;
+            END;
+        $$;
+    END IF;
+
+    END;
+$func$;
+
+CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop WHEN TAG in ('DROP EXTENSION')
+EXECUTE PROCEDURE extensions.set_graphql_placeholder();
+COMMENT ON FUNCTION extensions.set_graphql_placeholder IS 'Reintroduces placeholder function for graphql_public.graphql';
+
+--
+-- 20220321174452-fix-postgrest-alter-type-event-trigger.sql
+--
+
+drop event trigger if exists api_restart;
+drop function if exists extensions.notify_api_restart();
+
+-- https://postgrest.org/en/latest/schema_cache.html#finer-grained-event-trigger
+-- watch create and alter
+CREATE OR REPLACE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger AS $$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+  LOOP
+    IF cmd.command_tag IN (
+      'CREATE SCHEMA', 'ALTER SCHEMA'
+    , 'CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO', 'ALTER TABLE'
+    , 'CREATE FOREIGN TABLE', 'ALTER FOREIGN TABLE'
+    , 'CREATE VIEW', 'ALTER VIEW'
+    , 'CREATE MATERIALIZED VIEW', 'ALTER MATERIALIZED VIEW'
+    , 'CREATE FUNCTION', 'ALTER FUNCTION'
+    , 'CREATE TRIGGER'
+    , 'CREATE TYPE', 'ALTER TYPE'
+    , 'CREATE RULE'
+    , 'COMMENT'
+    )
+    -- don't notify in case of CREATE TEMP table or other objects created on pg_temp
+    AND cmd.schema_name is distinct from 'pg_temp'
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$ LANGUAGE plpgsql;
+
+-- watch drop
+CREATE OR REPLACE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger AS $$
+DECLARE
+  obj record;
+BEGIN
+  FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
+  LOOP
+    IF obj.object_type IN (
+      'schema'
+    , 'table'
+    , 'foreign table'
+    , 'view'
+    , 'materialized view'
+    , 'function'
+    , 'trigger'
+    , 'type'
+    , 'rule'
+    )
+    AND obj.is_temporary IS false -- no pg_temp objects
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$ LANGUAGE plpgsql;
+
+-- CREATE EVENT TRIGGER pgrst_ddl_watch
+--   ON ddl_command_end
+--   EXECUTE PROCEDURE extensions.pgrst_ddl_watch();
+
+-- CREATE EVENT TRIGGER pgrst_drop_watch
+--   ON sql_drop
+--   EXECUTE PROCEDURE extensions.pgrst_drop_watch();
+
+--
+-- 20220404205710-pg_graphql-on-by-default.sql
+--
+
+-- Update Trigger upon enabling pg_graphql
+create or replace function extensions.grant_pg_graphql_access()
+    returns event_trigger
+    language plpgsql
+AS $func$
+DECLARE
+    func_is_graphql_resolve bool;
+BEGIN
+    func_is_graphql_resolve = (
+        SELECT n.proname = 'resolve'
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_proc AS n
+        ON ev.objid = n.oid
+    );
+
+    IF func_is_graphql_resolve
+    THEN
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant all on function graphql.resolve to postgres, anon, authenticated, service_role;
+
+        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
+
+        -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language sql
+        as $$
+            -- This changed
+            select graphql.resolve(
+                query := query,
+                variables := coalesce(variables, '{}'),
+                "operationName" := "operationName",
+                extensions := extensions
+            );
+        $$;
+
+        grant select on graphql.field, graphql.type, graphql.enum_value to postgres, anon, authenticated, service_role;
+        grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+    END IF;
+
+END;
+$func$;
+
+CREATE OR REPLACE FUNCTION extensions.set_graphql_placeholder()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $func$
+    DECLARE
+    graphql_is_dropped bool;
+    BEGIN
+    graphql_is_dropped = (
+        SELECT ev.schema_name = 'graphql_public'
+        FROM pg_event_trigger_dropped_objects() AS ev
+        WHERE ev.schema_name = 'graphql_public'
+    );
+
+    IF graphql_is_dropped
+    THEN
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language plpgsql
+        as $$
+            DECLARE
+                server_version float;
+            BEGIN
+                server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+                IF server_version >= 14 THEN
+                    RETURN jsonb_build_object(
+                        'errors', jsonb_build_array(
+                            jsonb_build_object(
+                                'message', 'pg_graphql extension is not enabled.'
+                            )
+                        )
+                    );
+                ELSE
+                    RETURN jsonb_build_object(
+                        'errors', jsonb_build_array(
+                            jsonb_build_object(
+                                'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
+                            )
+                        )
+                    );
+                END IF;
+            END;
+        $$;
+    END IF;
+
+    END;
+$func$;
+
+-- GraphQL Placeholder Entrypoint
+create or replace function graphql_public.graphql(
+	"operationName" text default null,
+	query text default null,
+	variables jsonb default null,
+	extensions jsonb default null
+)
+    returns jsonb
+    language plpgsql
+as $$
+    DECLARE
+        server_version float;
+    BEGIN
+        server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+        IF server_version >= 14 THEN
+            RETURN jsonb_build_object(
+                'errors', jsonb_build_array(
+                    jsonb_build_object(
+                        'message', 'pg_graphql extension is not enabled.'
+                    )
+                )
+            );
+        ELSE
+   	        RETURN jsonb_build_object(
+                'errors', jsonb_build_array(
+                    jsonb_build_object(
+                        'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
+                    )
+                )
+            );
+        END IF;
+    END;
+$$;
+
+
+drop extension if exists pg_graphql;
+-- Avoids limitation of only being able to load the extension via dashboard
+create extension if not exists pg_graphql;
 ```
 
 - Run `docker compose up -d`
