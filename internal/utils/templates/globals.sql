@@ -52,6 +52,15 @@ ALTER ROLE authenticated SET statement_timeout TO '8s';
 --
 
 --
+-- User Config "authenticator"
+--
+
+ALTER ROLE authenticator SET session_preload_libraries TO 'supautils', 'safeupdate';
+--
+-- User Configurations
+--
+
+--
 -- User Config "postgres"
 --
 
@@ -74,6 +83,11 @@ ALTER ROLE supabase_admin SET search_path TO '$user', 'public', 'auth', 'extensi
 --
 
 ALTER ROLE supabase_auth_admin SET search_path TO 'auth';
+--
+-- User Config "supabase_auth_admin"
+--
+
+ALTER ROLE supabase_auth_admin SET idle_in_transaction_session_timeout TO '60000';
 --
 -- User Configurations
 --
