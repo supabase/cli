@@ -35,6 +35,15 @@ CREATE SCHEMA extensions;
 ALTER SCHEMA extensions OWNER TO postgres;
 
 --
+-- Name: graphql_public; Type: SCHEMA; Schema: -; Owner: supabase_admin
+--
+
+CREATE SCHEMA graphql_public;
+
+
+ALTER SCHEMA graphql_public OWNER TO supabase_admin;
+
+--
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -176,8 +185,8 @@ CREATE FUNCTION auth.email() RETURNS text
     AS $$
   select 
   	coalesce(
-		current_setting('request.jwt.claim.email', true),
-		(current_setting('request.jwt.claims', true)::jsonb ->> 'email')
+		nullif(current_setting('request.jwt.claim.email', true), ''),
+		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
 	)::text
 $$;
 
@@ -193,8 +202,8 @@ CREATE FUNCTION auth.role() RETURNS text
     AS $$
   select 
   	coalesce(
-		current_setting('request.jwt.claim.role', true),
-		(current_setting('request.jwt.claims', true)::jsonb ->> 'role')
+		nullif(current_setting('request.jwt.claim.role', true), ''),
+		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
 	)::text
 $$;
 
@@ -208,14 +217,11 @@ ALTER FUNCTION auth.role() OWNER TO supabase_auth_admin;
 CREATE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
-  select
-  nullif(
-    coalesce(
-      current_setting('request.jwt.claim.sub', true),
-      (current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
-    ),
-    ''
-  )::uuid
+  select 
+  	coalesce(
+		nullif(current_setting('request.jwt.claim.sub', true), ''),
+		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+	)::uuid
 $$;
 
 
@@ -271,26 +277,291 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 
 
 --
--- Name: notify_api_restart(); Type: FUNCTION; Schema: extensions; Owner: postgres
+-- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.notify_api_restart() RETURNS event_trigger
+CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    func_is_graphql_resolve bool;
+BEGIN
+    func_is_graphql_resolve = (
+        SELECT n.proname = 'resolve'
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_proc AS n
+        ON ev.objid = n.oid
+    );
+
+    IF func_is_graphql_resolve
+    THEN
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant all on function graphql.resolve to postgres, anon, authenticated, service_role;
+
+        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
+
+        -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language sql
+        as $$
+            -- This changed
+            select graphql.resolve(
+                query := query,
+                variables := coalesce(variables, '{}'),
+                "operationName" := "operationName",
+                extensions := extensions
+            );
+        $$;
+
+        grant select on graphql.field, graphql.type, graphql.enum_value to postgres, anon, authenticated, service_role;
+        grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+    END IF;
+
+END;
+$_$;
+
+
+ALTER FUNCTION extensions.grant_pg_graphql_access() OWNER TO supabase_admin;
+
+--
+-- Name: FUNCTION grant_pg_graphql_access(); Type: COMMENT; Schema: extensions; Owner: supabase_admin
+--
+
+COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg_graphql';
+
+
+--
+-- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
+--
+
+CREATE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  NOTIFY pgrst, 'reload schema';
+  IF EXISTS (
+    SELECT 1
+    FROM pg_event_trigger_ddl_commands() AS ev
+    JOIN pg_extension AS ext
+    ON ev.objid = ext.oid
+    WHERE ext.extname = 'pg_net'
+  )
+  THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_roles
+      WHERE rolname = 'supabase_functions_admin'
+    )
+    THEN
+      CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION;
+    END IF;
+
+    GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+
+    ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+    ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+    ALTER function net.http_collect_response(request_id bigint, async boolean) SECURITY DEFINER;
+
+    ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+    ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+    ALTER function net.http_collect_response(request_id bigint, async boolean) SET search_path = net;
+
+    REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
+
+    GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+    GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+    GRANT EXECUTE ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+  END IF;
 END;
 $$;
 
 
-ALTER FUNCTION extensions.notify_api_restart() OWNER TO postgres;
+ALTER FUNCTION extensions.grant_pg_net_access() OWNER TO postgres;
 
 --
--- Name: FUNCTION notify_api_restart(); Type: COMMENT; Schema: extensions; Owner: postgres
+-- Name: FUNCTION grant_pg_net_access(); Type: COMMENT; Schema: extensions; Owner: postgres
 --
 
-COMMENT ON FUNCTION extensions.notify_api_restart() IS 'Sends a notification to the API to restart. If your database schema has changed, this is required so that Supabase can rebuild the relationships.';
+COMMENT ON FUNCTION extensions.grant_pg_net_access() IS 'Grants access to pg_net';
 
+
+--
+-- Name: pgrst_ddl_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
+--
+
+CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+  LOOP
+    IF cmd.command_tag IN (
+      'CREATE SCHEMA', 'ALTER SCHEMA'
+    , 'CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO', 'ALTER TABLE'
+    , 'CREATE FOREIGN TABLE', 'ALTER FOREIGN TABLE'
+    , 'CREATE VIEW', 'ALTER VIEW'
+    , 'CREATE MATERIALIZED VIEW', 'ALTER MATERIALIZED VIEW'
+    , 'CREATE FUNCTION', 'ALTER FUNCTION'
+    , 'CREATE TRIGGER'
+    , 'CREATE TYPE', 'ALTER TYPE'
+    , 'CREATE RULE'
+    , 'COMMENT'
+    )
+    -- don't notify in case of CREATE TEMP table or other objects created on pg_temp
+    AND cmd.schema_name is distinct from 'pg_temp'
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$;
+
+
+ALTER FUNCTION extensions.pgrst_ddl_watch() OWNER TO supabase_admin;
+
+--
+-- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
+--
+
+CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  obj record;
+BEGIN
+  FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects()
+  LOOP
+    IF obj.object_type IN (
+      'schema'
+    , 'table'
+    , 'foreign table'
+    , 'view'
+    , 'materialized view'
+    , 'function'
+    , 'trigger'
+    , 'type'
+    , 'rule'
+    )
+    AND obj.is_temporary IS false -- no pg_temp objects
+    THEN
+      NOTIFY pgrst, 'reload schema';
+    END IF;
+  END LOOP;
+END; $$;
+
+
+ALTER FUNCTION extensions.pgrst_drop_watch() OWNER TO supabase_admin;
+
+--
+-- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
+--
+
+CREATE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
+    LANGUAGE plpgsql
+    AS $_$
+    DECLARE
+    graphql_is_dropped bool;
+    BEGIN
+    graphql_is_dropped = (
+        SELECT ev.schema_name = 'graphql_public'
+        FROM pg_event_trigger_dropped_objects() AS ev
+        WHERE ev.schema_name = 'graphql_public'
+    );
+
+    IF graphql_is_dropped
+    THEN
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language plpgsql
+        as $$
+            DECLARE
+                server_version float;
+            BEGIN
+                server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+                IF server_version >= 14 THEN
+                    RETURN jsonb_build_object(
+                        'errors', jsonb_build_array(
+                            jsonb_build_object(
+                                'message', 'pg_graphql extension is not enabled.'
+                            )
+                        )
+                    );
+                ELSE
+                    RETURN jsonb_build_object(
+                        'errors', jsonb_build_array(
+                            jsonb_build_object(
+                                'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
+                            )
+                        )
+                    );
+                END IF;
+            END;
+        $$;
+    END IF;
+
+    END;
+$_$;
+
+
+ALTER FUNCTION extensions.set_graphql_placeholder() OWNER TO supabase_admin;
+
+--
+-- Name: FUNCTION set_graphql_placeholder(); Type: COMMENT; Schema: extensions; Owner: supabase_admin
+--
+
+COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
+
+
+--
+-- Name: graphql(text, text, jsonb, jsonb); Type: FUNCTION; Schema: graphql_public; Owner: supabase_admin
+--
+
+CREATE FUNCTION graphql_public.graphql("operationName" text DEFAULT NULL::text, query text DEFAULT NULL::text, variables jsonb DEFAULT NULL::jsonb, extensions jsonb DEFAULT NULL::jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+        server_version float;
+    BEGIN
+        server_version = (SELECT (SPLIT_PART((select version()), ' ', 2))::float);
+
+        IF server_version >= 14 THEN
+            RETURN jsonb_build_object(
+                'errors', jsonb_build_array(
+                    jsonb_build_object(
+                        'message', 'pg_graphql extension is not enabled.'
+                    )
+                )
+            );
+        ELSE
+   	        RETURN jsonb_build_object(
+                'errors', jsonb_build_array(
+                    jsonb_build_object(
+                        'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
+                    )
+                )
+            );
+        END IF;
+    END;
+$$;
+
+
+ALTER FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) OWNER TO supabase_admin;
 
 --
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
@@ -700,54 +971,59 @@ ALTER FUNCTION realtime.quote_wal2json(entity regclass) OWNER TO supabase_admin;
 CREATE FUNCTION realtime.subscription_check_filters() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        /*
-          Validates that the user defined filters for a subscription:
-            - refer to valid columns that the claimed role may access
-            - values are coercable to the correct column type
-        */
-      declare
-        col_names text[] = coalesce(
-            array_agg(c.column_name order by c.ordinal_position),
-            '{}'::text[]
-          )
-          from
-            information_schema.columns c
-          where
-            format('%I.%I', c.table_schema, c.table_name)::regclass = new.entity
-            and pg_catalog.has_column_privilege((new.claims ->> 'role'), new.entity, c.column_name, 'SELECT');
-        filter realtime.user_defined_filter;
-        col_type regtype;
-      begin
-        for filter in select * from unnest(new.filters) loop
-          -- Filtered column is valid
-          if not filter.column_name = any(col_names) then
-            raise exception 'invalid column for filter %', filter.column_name;
-          end if;
+    /*
+    Validates that the user defined filters for a subscription:
+    - refer to valid columns that the claimed role may access
+    - values are coercable to the correct column type
+    */
+    declare
+      col_names text[] = coalesce(
+        array_agg(c.column_name order by c.ordinal_position),
+        '{}'::text[]
+      )
+      from
+        information_schema.columns c
+      where
+        format('%I.%I', c.table_schema, c.table_name)::regclass = new.entity
+        and pg_catalog.has_column_privilege(
+          (new.claims ->> 'role'),
+          format('%I.%I', c.table_schema, c.table_name)::regclass,
+          c.column_name,
+          'SELECT'
+        );
+      filter realtime.user_defined_filter;
+      col_type regtype;
+    begin
+      for filter in select * from unnest(new.filters) loop
+        -- Filtered column is valid
+        if not filter.column_name = any(col_names) then
+          raise exception 'invalid column for filter %', filter.column_name;
+        end if;
 
-          -- Type is sanitized and safe for string interpolation
-          col_type = (
-            select atttypid::regtype
-            from pg_catalog.pg_attribute
-            where attrelid = new.entity
-              and attname = filter.column_name
-          );
-          if col_type is null then
-            raise exception 'failed to lookup type for column %', filter.column_name;
-          end if;
-          -- raises an exception if value is not coercable to type
-          perform realtime.cast(filter.value, col_type);
-        end loop;
+        -- Type is sanitized and safe for string interpolation
+        col_type = (
+          select atttypid::regtype
+          from pg_catalog.pg_attribute
+          where attrelid = new.entity
+            and attname = filter.column_name
+        );
+        if col_type is null then
+          raise exception 'failed to lookup type for column %', filter.column_name;
+        end if;
+        -- raises an exception if value is not coercable to type
+        perform realtime.cast(filter.value, col_type);
+      end loop;
 
-        -- Apply consistent order to filters so the unique constraint on
-        -- (subscription_id, entity, filters) can't be tricked by a different filter order
-        new.filters = coalesce(
-          array_agg(f order by f.column_name, f.op, f.value),
-          '{}'
-        ) from unnest(new.filters) f;
+      -- Apply consistent order to filters so the unique constraint on
+      -- (subscription_id, entity, filters) can't be tricked by a different filter order
+      new.filters = coalesce(
+        array_agg(f order by f.column_name, f.op, f.value),
+        '{}'
+      ) from unnest(new.filters) f;
 
-        return new;
-      end;
-    $$;
+    return new;
+  end;
+  $$;
 
 
 ALTER FUNCTION realtime.subscription_check_filters() OWNER TO supabase_admin;
@@ -1035,6 +1311,8 @@ CREATE TABLE auth.users (
     email_change_token_current character varying(255) DEFAULT ''::character varying,
     email_change_confirm_status smallint DEFAULT 0,
     banned_until timestamp with time zone,
+    reauthentication_token character varying(255) DEFAULT ''::character varying,
+    reauthentication_sent_at timestamp with time zone,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1182,6 +1460,7 @@ INSERT INTO auth.schema_migrations VALUES ('20180103212743');
 INSERT INTO auth.schema_migrations VALUES ('20180108183307');
 INSERT INTO auth.schema_migrations VALUES ('20180119214651');
 INSERT INTO auth.schema_migrations VALUES ('20180125194653');
+INSERT INTO auth.schema_migrations VALUES ('00');
 INSERT INTO auth.schema_migrations VALUES ('20210710035447');
 INSERT INTO auth.schema_migrations VALUES ('20210722035447');
 INSERT INTO auth.schema_migrations VALUES ('20210730183235');
@@ -1192,6 +1471,8 @@ INSERT INTO auth.schema_migrations VALUES ('20211124214934');
 INSERT INTO auth.schema_migrations VALUES ('20211202183645');
 INSERT INTO auth.schema_migrations VALUES ('20220114185221');
 INSERT INTO auth.schema_migrations VALUES ('20220114185340');
+INSERT INTO auth.schema_migrations VALUES ('20220224000811');
+INSERT INTO auth.schema_migrations VALUES ('20220323170000');
 
 
 --
@@ -1204,21 +1485,23 @@ INSERT INTO auth.schema_migrations VALUES ('20220114185340');
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: realtime; Owner: supabase_admin
 --
 
-INSERT INTO realtime.schema_migrations VALUES (20211116024918, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116045059, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116050929, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116051442, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116212300, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116213355, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116213934, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211116214523, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211122062447, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211124070109, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211202204204, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211202204605, '2022-01-28 03:35:52');
-INSERT INTO realtime.schema_migrations VALUES (20211210212804, '2022-01-28 03:35:53');
-INSERT INTO realtime.schema_migrations VALUES (20211228014915, '2022-01-28 03:35:53');
-INSERT INTO realtime.schema_migrations VALUES (20220107221237, '2022-01-28 03:35:53');
+INSERT INTO realtime.schema_migrations VALUES (20211116024918, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116045059, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116050929, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116051442, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116212300, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116213355, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116213934, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211116214523, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211122062447, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211124070109, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211202204204, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211202204605, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211210212804, '2022-04-14 09:52:26');
+INSERT INTO realtime.schema_migrations VALUES (20211228014915, '2022-04-14 09:52:27');
+INSERT INTO realtime.schema_migrations VALUES (20220107221237, '2022-04-14 09:52:27');
+INSERT INTO realtime.schema_migrations VALUES (20220228202821, '2022-04-14 09:52:27');
+INSERT INTO realtime.schema_migrations VALUES (20220312004840, '2022-04-14 09:52:27');
 
 
 --
@@ -1237,15 +1520,15 @@ INSERT INTO realtime.schema_migrations VALUES (20220107221237, '2022-01-28 03:35
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-02-15 12:07:23.623848');
-INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-02-15 12:07:23.677152');
-INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-02-15 12:07:23.699677');
-INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-02-15 12:07:23.929686');
-INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-02-15 12:07:23.952605');
-INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-02-15 12:07:23.9766');
-INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-02-15 12:07:24.002628');
-INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-02-15 12:07:24.025707');
-INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-02-15 12:07:24.049834');
+INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-04-14 09:52:39.214681');
+INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-04-14 09:52:39.255149');
+INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-04-14 09:52:39.276667');
+INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-04-14 09:52:39.587158');
+INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-04-14 09:52:39.621747');
+INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-04-14 09:52:39.658796');
+INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-04-14 09:52:39.702011');
+INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-04-14 09:52:39.739731');
+INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:52:39.781062');
 
 
 --
@@ -1576,6 +1859,16 @@ GRANT ALL ON SCHEMA extensions TO dashboard_user;
 
 
 --
+-- Name: SCHEMA graphql_public; Type: ACL; Schema: -; Owner: supabase_admin
+--
+
+GRANT USAGE ON SCHEMA graphql_public TO postgres;
+GRANT USAGE ON SCHEMA graphql_public TO anon;
+GRANT USAGE ON SCHEMA graphql_public TO authenticated;
+GRANT USAGE ON SCHEMA graphql_public TO service_role;
+
+
+--
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
 --
 
@@ -1737,6 +2030,13 @@ GRANT ALL ON FUNCTION extensions.grant_pg_cron_access() TO dashboard_user;
 
 
 --
+-- Name: FUNCTION grant_pg_net_access(); Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO dashboard_user;
+
+
+--
 -- Name: FUNCTION hmac(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
@@ -1748,13 +2048,6 @@ GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO dashboard_user;
 --
 
 GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO dashboard_user;
-
-
---
--- Name: FUNCTION notify_api_restart(); Type: ACL; Schema: extensions; Owner: postgres
---
-
-GRANT ALL ON FUNCTION extensions.notify_api_restart() TO dashboard_user;
 
 
 --
@@ -2238,6 +2531,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL O
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql_public; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql_public; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql_public; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: postgres
 --
 
@@ -2352,14 +2675,15 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES
 
 
 --
--- Name: api_restart; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+-- Name: issue_graphql_placeholder; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
 --
 
-CREATE EVENT TRIGGER api_restart ON ddl_command_end
-   EXECUTE FUNCTION extensions.notify_api_restart();
+CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
+         WHEN TAG IN ('DROP EXTENSION')
+   EXECUTE FUNCTION extensions.set_graphql_placeholder();
 
 
-ALTER EVENT TRIGGER api_restart OWNER TO postgres;
+ALTER EVENT TRIGGER issue_graphql_placeholder OWNER TO supabase_admin;
 
 --
 -- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
@@ -2371,6 +2695,48 @@ CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
 
 
 ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO postgres;
+
+--
+-- Name: issue_pg_graphql_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
+--
+
+CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
+         WHEN TAG IN ('CREATE FUNCTION')
+   EXECUTE FUNCTION extensions.grant_pg_graphql_access();
+
+
+ALTER EVENT TRIGGER issue_pg_graphql_access OWNER TO supabase_admin;
+
+--
+-- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+--
+
+CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
+         WHEN TAG IN ('CREATE EXTENSION')
+   EXECUTE FUNCTION extensions.grant_pg_net_access();
+
+
+ALTER EVENT TRIGGER issue_pg_net_access OWNER TO postgres;
+
+--
+-- Name: pgrst_ddl_watch; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
+--
+
+CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
+   EXECUTE FUNCTION extensions.pgrst_ddl_watch();
+
+
+ALTER EVENT TRIGGER pgrst_ddl_watch OWNER TO supabase_admin;
+
+--
+-- Name: pgrst_drop_watch; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
+--
+
+CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
+   EXECUTE FUNCTION extensions.pgrst_drop_watch();
+
+
+ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 
 --
 -- PostgreSQL database dump complete
