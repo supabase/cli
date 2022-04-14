@@ -21,9 +21,9 @@ import (
 // Update initial schemas in internal/utils/templates/initial_schemas when
 // updating any one of these.
 const (
-	GotrueImage   = "supabase/gotrue:v2.5.8"
+	GotrueImage   = "supabase/gotrue:v2.6.18"
 	RealtimeImage = "supabase/realtime:v0.22.4"
-	StorageImage  = "supabase/storage-api:v0.12.0"
+	StorageImage  = "supabase/storage-api:v0.15.0"
 )
 
 const (
