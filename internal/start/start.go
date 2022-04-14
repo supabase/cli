@@ -831,29 +831,6 @@ EOF
 		return err
 	}
 
-	// Start Deno relay.
-	if _, err := utils.DockerRun(
-		ctx,
-		utils.DenoRelayId,
-		&container.Config{
-			Image: utils.DenoRelayImage,
-			Env: []string{
-				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-				"DENO_ORIGIN=http://host.docker.internal:8000",
-			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
-		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
-		},
-	); err != nil {
-		return err
-	}
-
 	return nil
 }
 
