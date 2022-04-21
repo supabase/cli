@@ -287,7 +287,12 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
+				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
 			})
 			if err != nil {
 				return err

@@ -397,7 +397,12 @@ EOSQL
 				p.Send(utils.StatusMsg("Setting up initial schema..."))
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"psql", "postgresql://postgres:postgres@localhost/main", "-c", utils.InitialSchemaSql,
+						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
+BEGIN;
+` + utils.InitialSchemaSql + `
+COMMIT;
+EOSQL
+`,
 					})
 					if err != nil {
 						return err
@@ -466,7 +471,12 @@ EOSQL
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(content),
+						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
 					})
 					if err != nil {
 						return err
