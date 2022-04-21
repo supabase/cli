@@ -152,7 +152,12 @@ func run(p utils.Program) error {
 			}
 
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"psql", "postgresql://postgres:postgres@localhost/" + utils.ShadowDbName, "-c", string(content),
+				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/` + utils.ShadowDbName + ` <<'EOSQL'
+BEGIN;
+` + string(content) + `
+COMMIT;
+EOSQL
+`,
 			})
 			if err != nil {
 				return err
