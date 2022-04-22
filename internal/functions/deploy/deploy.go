@@ -19,11 +19,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-type functionParams struct {
-	Id string `json:"id"`
-}
-
-func Run(slug string, projectRefArg string) error {
+func Run(slug string, projectRefArg string, verifyJWT bool) error {
 	// 1. Sanity checks.
 	{
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
@@ -110,7 +106,9 @@ Enter your project ref: `)
 
 	// 3. Deploy new Function.
 	var projectRef string
-	var data functionParams
+	var data struct {
+		Id string `json:"id"`
+	}
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
@@ -141,7 +139,7 @@ Enter your project ref: `)
 
 		switch resp.StatusCode {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-			jsonBytes, err := json.Marshal(map[string]string{"slug": slug, "name": slug, "body": newFunctionBody})
+			jsonBytes, err := json.Marshal(map[string]interface{}{"slug": slug, "name": slug, "body": newFunctionBody, "verify_jwt": verifyJWT})
 			if err != nil {
 				return err
 			}
@@ -159,7 +157,7 @@ Enter your project ref: `)
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
-			if resp.StatusCode != 200 {
+			if resp.StatusCode != http.StatusOK {
 				if err != nil {
 					return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
 				}
@@ -169,7 +167,7 @@ Enter your project ref: `)
 				return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
 			}
 		case http.StatusOK: // Function already exists, so do a PATCH
-			jsonBytes, err := json.Marshal(map[string]string{"body": newFunctionBody})
+			jsonBytes, err := json.Marshal(map[string]interface{}{"body": newFunctionBody, "verify_jwt": verifyJWT})
 			if err != nil {
 				return err
 			}
@@ -186,7 +184,7 @@ Enter your project ref: `)
 			}
 			defer resp.Body.Close()
 			body, err := io.ReadAll(resp.Body)
-			if resp.StatusCode != 200 {
+			if resp.StatusCode != http.StatusOK {
 				if err != nil {
 					return fmt.Errorf("Failed to update an existing Function's body on the Supabase project: %w", err)
 				}
