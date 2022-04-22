@@ -20,7 +20,7 @@ import (
 
 var ctx = context.Background()
 
-func Run(envFilePath string, slug string) error {
+func Run(slug string, envFilePath string, verifyJWT bool) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -65,6 +65,16 @@ func Run(envFilePath string, slug string) error {
 			Force:         true,
 		})
 
+		env := []string{
+			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"DENO_ORIGIN=http://localhost:8000",
+		}
+		if verifyJWT {
+			env = append(env, "VERIFY_JWT=true")
+		} else {
+			env = append(env, "VERIFY_JWT=false")
+		}
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
@@ -75,10 +85,7 @@ func Run(envFilePath string, slug string) error {
 			utils.DenoRelayId,
 			&container.Config{
 				Image: utils.DenoRelayImage,
-				Env: []string{
-					"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
-					"DENO_ORIGIN=http://localhost:8000",
-				},
+				Env:   env,
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,

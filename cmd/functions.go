@@ -17,12 +17,13 @@ var (
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
 		Short: "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRef, err := cmd.Flags().GetString("project-ref")
 			if err != nil {
 				return err
 			}
+
 			return delete.Run(args[0], projectRef)
 		},
 	}
@@ -30,13 +31,18 @@ var (
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy <Function name>",
 		Short: "Deploy a Function to the linked Supabase project.",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			noVerifyJWT, err := cmd.Flags().GetBool("no-verify-jwt")
+			if err != nil {
+				return err
+			}
 			projectRef, err := cmd.Flags().GetString("project-ref")
 			if err != nil {
 				return err
 			}
-			return deploy.Run(args[0], projectRef)
+
+			return deploy.Run(args[0], projectRef, !noVerifyJWT)
 		},
 	}
 
@@ -58,16 +64,22 @@ var (
 			if err != nil {
 				return err
 			}
+			noVerifyJWT, err := cmd.Flags().GetBool("no-verify-jwt")
+			if err != nil {
+				return err
+			}
 
-			return serve.Run(envFilePath, args[0])
+			return serve.Run(args[0], envFilePath, !noVerifyJWT)
 		},
 	}
 )
 
 func init() {
-	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment")
-	functionsDeployCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
 	functionsDeleteCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
+	functionsDeployCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function")
+	functionsDeployCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
+	functionsServeCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function")
+	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
