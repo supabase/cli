@@ -1,8 +1,12 @@
 # About Initial Schemas
 
-These SQL files represent initial schemas needed to set up the database with Supabase stuff. These need to be manually generated for each Postgres major version. Which initial schema used depends on the Docker image tag used to run the local db, which in turn depends on the CLI's `dbVersion` config. 
+These SQL files represent initial schemas needed to set up the database with Supabase stuff. These need to be manually generated for each Postgres major version. Which initial schema used depends on the Docker image tag used to run the local db, which in turn depends on the CLI's `db.major_version` config. 
 
 The initial schema for PG12 is not available because the latest image (`supabase/postgres:12.5.0`) doesn't contain `wal2json`, which is required for Realtime to work.
+
+# Why use the pg_dump output instead of running the `init.sql` directly?
+
+Because Realtime, GoTrue, and Storage have their own migrations, and these need to be included in the initial schema for e.g. `supabase db reset` to work.
 
 # How to Generate Initial Schemas
 
