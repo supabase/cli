@@ -59,7 +59,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
 
 	if len(versions) > len(migrations) {
-		return fmt.Errorf("%w; Found " + len(versions) + " versions and " + len(migrations) + " migrations.", err)
+		return fmt.Errorf("%w; Found " + len(versions) + " versions and " + len(migrations) + " migrations.", conflictErr)
 	}
 
 	if !dryRun {
@@ -80,7 +80,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		} else if versions[i] == migrationTimestamp {
 			continue
 		} else {
-			return fmt.Errorf("%w; Expected version" + versions[i] + " but found migration " + migrationTimestamp + " at index " + i + ".", err)
+			return fmt.Errorf("%w; Expected version" + versions[i] + " but found migration " + migrationTimestamp + " at index " + i + ".", conflictErr)
 		}
 
 		f, err := os.ReadFile("supabase/migrations/" + migration.Name())
