@@ -59,7 +59,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
 
 	if len(versions) > len(migrations) {
-		return conflictErr
+		return fmt.Errorf("%w; Found %d versions and %d migrations.", conflictErr, len(versions), len(migrations))
 	}
 
 	if !dryRun {
@@ -80,7 +80,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		} else if versions[i] == migrationTimestamp {
 			continue
 		} else {
-			return conflictErr
+			return fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", conflictErr, versions[i], migrationTimestamp, i)
 		}
 
 		f, err := os.ReadFile("supabase/migrations/" + migration.Name())
@@ -91,7 +91,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		if err := func() error {
 			tx, err := conn.Begin(ctx)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w; while beginning migration %s", err, migrationTimestamp)
 			}
 			defer tx.Rollback(context.Background()) //nolint:errcheck
 
@@ -99,14 +99,14 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 				fmt.Printf("Would apply migration %s:\n%s\n\n---\n\n", migration.Name(), f)
 			} else {
 				if _, err := tx.Exec(ctx, string(f)); err != nil {
-					return err
+					return fmt.Errorf("%w; while executing migration %s",err, migrationTimestamp)
 				}
 				if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
-					return err
+					return fmt.Errorf("%w; while inserting migration %s", err, migrationTimestamp)
 				}
 
 				if err := tx.Commit(ctx); err != nil {
-					return err
+					return fmt.Errorf("%w; while committing migration %s", err, migrationTimestamp)
 				}
 			}
 
