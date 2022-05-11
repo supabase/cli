@@ -15,13 +15,12 @@ func Run() error {
 		return err
 	}
 
-    if err := utils.AssertSupabaseStartIsRunning(); err == nil {
-        fmt.Println(utils.Aqua("supabase") + " local development setup is running.")
-        utils.ShowStatus()
-    } else {
-        fmt.Println(utils.Aqua("supabase") + " local development setup is not running.")
-    }
+	if err := utils.AssertSupabaseStartIsRunning(); err == nil {
+		fmt.Println(utils.Aqua("supabase") + " local development setup is running.")
+		utils.ShowStatus()
+	} else {
+		fmt.Println(utils.Aqua("supabase") + " local development setup is not running.")
+	}
 
 	return nil
 }
-
