@@ -69,15 +69,9 @@ func Run() error {
 		return err
 	}
 
-	// TODO: Unhardcode keys
-	fmt.Println(`Started local development setup.
+	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
+	utils.ShowStatus()
 
-         ` + utils.Aqua("API URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Api.Port), 10) + `
-          ` + utils.Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + `/postgres
-      ` + utils.Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Studio.Port), 10) + `
-    ` + utils.Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10) + `
-        ` + utils.Aqua("anon key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs
-` + utils.Aqua("service_role key") + `: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU`)
 	return nil
 }
 
