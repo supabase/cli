@@ -1,7 +1,6 @@
 package status
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/supabase/cli/internal/utils"
