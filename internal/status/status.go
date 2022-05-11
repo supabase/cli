@@ -3,12 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
-	//"errors"
-	//"os"
-	//"sync"
 
-	// "github.com/docker/docker/api/types"
-	// "github.com/docker/docker/api/types/filters"
 	"github.com/supabase/cli/internal/utils"
 )
 
