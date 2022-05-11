@@ -99,7 +99,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 				fmt.Printf("Would apply migration %s:\n%s\n\n---\n\n", migration.Name(), f)
 			} else {
 				if _, err := tx.Exec(ctx, string(f)); err != nil {
-					return fmt.Errorf("%w; while executing migration %s",err, migrationTimestamp)
+					return fmt.Errorf("%w; while executing migration %s", err, migrationTimestamp)
 				}
 				if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
 					return fmt.Errorf("%w; while inserting migration %s", err, migrationTimestamp)

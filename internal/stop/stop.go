@@ -21,6 +21,10 @@ func Run() error {
 	if err := utils.LoadConfig(); err != nil {
 		return err
 	}
+	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		fmt.Println(utils.Aqua("supabase") + " local development setup is already stopped.")
+		return nil
+	}
 
 	// Remove containers.
 	{
@@ -63,6 +67,7 @@ func Run() error {
 		return err
 	}
 
-	fmt.Println("Stopped local development setup.")
+	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
+
 	return nil
 }
