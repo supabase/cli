@@ -145,7 +145,7 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--allow-all", "--watch", "--no-clear-screen", "/home/deno/functions/" + slug + "/index.ts",
+					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "/home/deno/functions/" + slug + "/index.ts",
 				},
 				AttachStderr: true,
 				AttachStdout: true,
