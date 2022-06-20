@@ -44,10 +44,6 @@ func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader,
 		return nil, err
 	}
 
-	if err := Docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
-		return nil, err
-	}
-
 	return resp.Reader, nil
 }
 
