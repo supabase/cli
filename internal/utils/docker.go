@@ -15,13 +15,11 @@ import (
 )
 
 var Docker = func() *client.Client {
-	docker, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
-		os.Exit(1)
-	}
-	// Support env (e.g. for mock setup or rootless docker)
-	err = client.FromEnv(docker)
+	docker, err := client.NewClientWithOpts(
+		client.WithAPIVersionNegotiation(),
+		// Support env (e.g. for mock setup or rootless docker)
+		client.FromEnv,
+	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
 		os.Exit(1)
