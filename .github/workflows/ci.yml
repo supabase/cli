@@ -31,7 +31,7 @@ jobs:
 
       - run: |
           if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          go test ./...
+          go test ./... -race -v -count=1 -cover
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           DOCKER_HOST: tcp://127.0.0.1:2375
