@@ -100,7 +100,7 @@ func (suite *DBTestSuite) TeardownTest() {
 
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run
-func TestDbTestSuite(t *testing.T) {
+func TestDBTestSuite(t *testing.T) {
 	suite.Run(t, new(DBTestSuite))
 }
 

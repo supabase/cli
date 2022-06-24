@@ -16,6 +16,7 @@ const (
 // Server struct with route handlers
 type Server struct {
 	FunctionsHandler func(c *gin.Context)
+	SecretsHandler   func(c *gin.Context)
 }
 
 var defaultHandler = func(c *gin.Context) {
@@ -28,6 +29,7 @@ var defaultHandler = func(c *gin.Context) {
 func NewServer() *Server {
 	s := Server{
 		FunctionsHandler: defaultHandler,
+		SecretsHandler:   defaultHandler,
 	}
 	return &s
 }
@@ -39,6 +41,7 @@ func (s *Server) NewRouter() *gin.Engine {
 
 	projects := router.Group("/projects")
 	projects.GET("/:id/functions", s.functions)
+	projects.GET("/:id/secrets", s.secrets)
 
 	return root
 }
@@ -49,6 +52,17 @@ func (s *Server) functions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "handler is nil",
 		})
+	} else {
+		s.FunctionsHandler(c)
 	}
-	s.FunctionsHandler(c)
+}
+
+func (s *Server) secrets(c *gin.Context) {
+	if s.SecretsHandler == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "handler is nil",
+		})
+	} else {
+		s.SecretsHandler(c)
+	}
 }

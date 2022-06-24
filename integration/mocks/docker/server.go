@@ -13,6 +13,7 @@ const (
 
 // Server struct with route handlers
 type Server struct {
+	PingHandler             func(c *gin.Context)
 	ContainerInspectHandler func(c *gin.Context)
 	ExecCreateHandler       func(c *gin.Context)
 	ExecStartHandler        func(c *gin.Context)
@@ -37,6 +38,9 @@ func NewServer() *Server {
 // NewRouter creating a new router and setting the routes for the server.
 func (s *Server) NewRouter() *gin.Engine {
 	root := gin.Default()
+	root.HEAD("/_ping", s.ping)
+	root.GET("/_ping", s.ping)
+
 	router := root.Group("/v1.41")
 
 	containers := router.Group("/containers")
@@ -49,14 +53,26 @@ func (s *Server) NewRouter() *gin.Engine {
 	return root
 }
 
+// ping
+func (s *Server) ping(c *gin.Context) {
+	if s.PingHandler == nil {
+		c.Header("API-Version", "1.41")
+		c.Header("OSType", "linux")
+		c.Status(http.StatusOK)
+	} else {
+		s.PingHandler(c)
+	}
+}
+
 // container
 func (s *Server) inspectContainer(c *gin.Context) {
 	if s.ContainerInspectHandler == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "handler is nil",
 		})
+	} else {
+		s.ContainerInspectHandler(c)
 	}
-	s.ContainerInspectHandler(c)
 }
 
 // exec
@@ -65,8 +81,9 @@ func (s *Server) createExec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "handler is nil",
 		})
+	} else {
+		s.ExecCreateHandler(c)
 	}
-	s.ExecCreateHandler(c)
 }
 
 func (s *Server) startExec(c *gin.Context) {
@@ -74,6 +91,7 @@ func (s *Server) startExec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "handler is nil",
 		})
+	} else {
+		s.ExecStartHandler(c)
 	}
-	s.ExecStartHandler(c)
 }

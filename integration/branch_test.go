@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// this is the part of Database test suite - DBTestSuite
 // test functions
 func (suite *DBTestSuite) TestBranchCreate() {
 	// create branch
