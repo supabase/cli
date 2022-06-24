@@ -20,45 +20,20 @@ import (
 
 type DBTestSuite struct {
 	suite.Suite
-	cmd    *cobra.Command
-	ids    []string
-	bodies []string
-	params []gin.Params
-	mtx    sync.RWMutex
+	cmd     *cobra.Command
+	tempDir string
+	ids     []string
+	bodies  []string
+	params  []gin.Params
+	mtx     sync.RWMutex
 }
 
 // test functions
-func (suite *DBTestSuite) TestBranchCreate() {
-	// create branch
-	branch := "test-branch"
-	create, args, err := suite.cmd.Traverse([]string{"db", "branch", "create", branch})
-	if err != nil {
-		suite.Fail("failed to find create command")
-	}
-	err = create.RunE(create, args)
-	if err != nil {
-		suite.Fail("failed to create branch", err)
-	}
-
-	// check if branch dir exists
-	_, err = os.Stat("supabase/.branches/" + branch)
-	require.NoError(suite.T(), err)
-
-	// check if all exec calls were made to docker api
-	ids := suite.constructParams()
-	require.ElementsMatch(suite.T(), suite.params, ids)
-
-	// check commands in exec calls
-	require.ElementsMatch(suite.T(), suite.bodies, []string{
-		"{\"User\":\"\",\"Privileged\":false,\"Tty\":false,\"AttachStdin\":false,\"AttachStderr\":true,\"AttachStdout\":true,\"Detach\":false,\"DetachKeys\":\"\",\"Env\":null,\"WorkingDir\":\"\",\"Cmd\":[\"pg_dump\",\"postgresql://postgres:postgres@localhost/postgres\"]}\n",
-		"{\"Detach\":false,\"Tty\":false}\n",
-		"{\"User\":\"\",\"Privileged\":false,\"Tty\":false,\"AttachStdin\":false,\"AttachStderr\":true,\"AttachStdout\":true,\"Detach\":false,\"DetachKeys\":\"\",\"Env\":null,\"WorkingDir\":\"\",\"Cmd\":[\"sh\",\"-c\",\"psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres \\u003c\\u003c'EOSQL'\\nCREATE DATABASE \\\"" + branch + "\\\";\\n\\\\connect " + branch + "\\nBEGIN;\\nexit code 0\\nCOMMIT;\\nEOSQL\\n\"]}\n",
-		"{\"Detach\":false,\"Tty\":false}\n",
-	})
-}
+// add tests here <-
 
 // hooks
 func (suite *DBTestSuite) SetupTest() {
+	suite.tempDir = NewTempDir(Logger, TempDir)
 	suite.mtx.Lock()
 	suite.ids = []string{}
 	suite.bodies = []string{}
@@ -119,6 +94,10 @@ func (suite *DBTestSuite) SetupTest() {
 	}
 }
 
+func (suite *DBTestSuite) TeardownTest() {
+	require.NoError(suite.T(), os.Chdir(TempDir))
+}
+
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run
 func TestDbTestSuite(t *testing.T) {
@@ -153,7 +132,7 @@ func (suite *DBTestSuite) constructParams() []gin.Params {
 		ids = append(ids, gin.Params{
 			gin.Param{
 				Key:   "id",
-				Value: "supabase_db_" + filepath.Base(TempDir),
+				Value: "supabase_db_" + filepath.Base(suite.tempDir),
 			},
 		})
 

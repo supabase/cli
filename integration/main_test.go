@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/supabase/cli/integration/mocks/docker"
+	"github.com/supabase/cli/integration/mocks/supabase"
 )
 
 const (
-	DockerPort = ":2375"
+	DockerPort   = ":2375"
+	SupabasePort = ":2376"
 )
 
 var (
@@ -19,6 +21,7 @@ var (
 var (
 	Logger     *log.Logger
 	DockerMock *docker.Server
+	SupaMock   *supabase.Server
 )
 
 func TestMain(m *testing.M) {
@@ -27,7 +30,8 @@ func TestMain(m *testing.M) {
 	Logger.Println("Global tests setup")
 
 	DockerMock = newDockerMock(Logger)
-	TempDir = newTempDir(Logger)
+	SupaMock = newSupabaseMock(Logger)
+	TempDir = NewTempDir(Logger, "")
 
 	// run tests
 	exitVal := m.Run()
@@ -52,8 +56,25 @@ func newDockerMock(Logger *log.Logger) *docker.Server {
 	return dockerMock
 }
 
-func newTempDir(Logger *log.Logger) string {
-	wd, err := os.Getwd()
+func newSupabaseMock(Logger *log.Logger) *supabase.Server {
+	supaMock := supabase.NewServer()
+	supaRouter := supaMock.NewRouter()
+	go func() {
+		err := supaRouter.Run(SupabasePort)
+		if err != nil {
+			Logger.Fatal(err)
+		}
+	}()
+
+	return supaMock
+}
+
+func NewTempDir(Logger *log.Logger, baseDir string) string {
+	wd := baseDir
+	var err error
+	if baseDir == "" {
+		wd, err = os.Getwd()
+	}
 	if err != nil {
 		Logger.Fatal(err)
 	}

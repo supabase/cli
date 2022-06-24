@@ -42,7 +42,12 @@ func Run(args []string) error {
 		}
 		reqBody := bytes.NewReader(secretsNamesBytes)
 
-		req, err := http.NewRequest("DELETE", "https://api.supabase.io/v1/projects/"+projectRef+"/secrets", reqBody)
+		supabaseAPI := os.Getenv("SUPABASE_API_URI")
+		if supabaseAPI == "" {
+			supabaseAPI = "https://api.supabase.io"
+		}
+		req, err := http.NewRequest(
+			"DELETE", supabaseAPI+"/v1/projects/"+projectRef+"/secrets", reqBody)
 		if err != nil {
 			return err
 		}
