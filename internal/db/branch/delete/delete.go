@@ -27,11 +27,11 @@ func Run(branch string) error {
 		return errors.New("Cannot delete branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
-	if _, err := os.ReadDir("supabase/.branches/" + branch); err != nil {
+	if _, err := os.ReadDir(".supabase/branches/" + branch); err != nil {
 		return errors.New("Branch " + utils.Aqua(branch) + " does not exist.")
 	}
 
-	if err := os.RemoveAll("supabase/.branches/" + branch); err != nil {
+	if err := os.RemoveAll(".supabase/branches/" + branch); err != nil {
 		return fmt.Errorf("Failed deleting branch %s: %w", utils.Aqua(branch), err)
 	}
 

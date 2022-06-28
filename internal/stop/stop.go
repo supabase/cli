@@ -32,6 +32,7 @@ func Run() error {
 			All:     true,
 			Filters: filters.NewArgs(filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId)),
 		})
+		fmt.Fprintln(os.Stdout, "DockerRun Containers:", containers)
 		if err != nil {
 			return err
 		}
@@ -63,7 +64,7 @@ func Run() error {
 	}
 
 	// Remove temporary files.
-	if err := os.RemoveAll("supabase/.branches"); err != nil {
+	if err := os.RemoveAll(".supabase/branches"); err != nil {
 		return err
 	}
 

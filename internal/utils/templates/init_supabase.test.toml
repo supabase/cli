@@ -58,3 +58,7 @@ enable_confirmations = false
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"
 secret = "env(AZURE_SECRET)"
+
+[edgefunctions]
+src_path = ""
+functions_path = ""

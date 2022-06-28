@@ -9,7 +9,7 @@ import (
 )
 
 func Run() error {
-	branches, err := os.ReadDir("supabase/.branches")
+	branches, err := os.ReadDir(".supabase/branches")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {

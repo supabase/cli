@@ -17,7 +17,7 @@ func Run(dryRun bool) error {
 	if dryRun {
 		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
 	}
-	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
+	urlBytes, err := os.ReadFile(".supabase/temp/remote-db-url")
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
 	} else if err != nil {
@@ -31,7 +31,7 @@ func Run(dryRun bool) error {
 	}
 	defer conn.Close(context.Background())
 
-	// `schema_migrations` must be a "prefix" of `supabase/migrations`.
+	// `schema_migrations` must be a "prefix" of `.supabase/migrations`.
 
 	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
 	if err != nil {
@@ -48,15 +48,15 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		versions = append(versions, version)
 	}
 
-	if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+	if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 		return err
 	}
-	migrations, err := os.ReadDir("supabase/migrations")
+	migrations, err := os.ReadDir(".supabase/migrations")
 	if err != nil {
 		return err
 	}
 
-	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
+	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(".supabase/migrations") + ".")
 
 	if len(versions) > len(migrations) {
 		return fmt.Errorf("%w; Found %d versions and %d migrations.", conflictErr, len(versions), len(migrations))
@@ -70,7 +70,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 	for i, migration := range migrations {
 		matches := re.FindStringSubmatch(migration.Name())
 		if len(matches) == 0 {
-			return errors.New("Can't process file in supabase/migrations: " + migration.Name())
+			return errors.New("Can't process file in .supabase/migrations: " + migration.Name())
 		}
 
 		migrationTimestamp := matches[1]
@@ -83,7 +83,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			return fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", conflictErr, versions[i], migrationTimestamp, i)
 		}
 
-		f, err := os.ReadFile("supabase/migrations/" + migration.Name())
+		f, err := os.ReadFile(".supabase/migrations/" + migration.Name())
 		if err != nil {
 			return err
 		}

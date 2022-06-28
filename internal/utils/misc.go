@@ -58,7 +58,7 @@ func GetCurrentTimestamp() string {
 }
 
 func GetCurrentBranch() (string, error) {
-	branch, err := os.ReadFile("supabase/.branches/_current_branch")
+	branch, err := os.ReadFile(".supabase/branches/_current_branch")
 	if err != nil {
 		return "", err
 	}
@@ -159,9 +159,18 @@ func MkdirIfNotExist(path string) error {
 	return nil
 }
 
+
+func MkdirAllIfNotExist(path string) error {
+	if err := os.MkdirAll(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+
+	return nil
+}
+
 func AssertSupabaseCliIsSetUp() error {
-	if _, err := os.ReadFile("supabase/config.toml"); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find " + Bold("supabase/config.toml") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
+	if _, err := os.ReadFile("supabase.toml"); errors.Is(err, os.ErrNotExist) {
+		return errors.New("Cannot find " + Bold("supabase.toml") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
 	} else if err != nil {
 		return err
 	}
@@ -170,7 +179,7 @@ func AssertSupabaseCliIsSetUp() error {
 }
 
 func AssertIsLinked() error {
-	if _, err := os.Stat("supabase/.temp/project-ref"); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(".supabase/temp/project-ref"); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	} else if err != nil {
 		return err

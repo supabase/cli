@@ -25,7 +25,7 @@ func Run() error {
 	if err := run(); errors.Is(err, errAlreadyInitialized) {
 		return err
 	} else if err != nil {
-		_ = os.RemoveAll("supabase")
+		_ = os.RemoveAll(".supabase")
 		return err
 	}
 
@@ -35,18 +35,18 @@ func Run() error {
 func run() error {
 	// Sanity checks.
 	{
-		if _, err := os.ReadFile("supabase/config.toml"); err == nil {
+		if _, err := os.ReadFile("supabase.toml"); err == nil {
 			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
-	if err := utils.MkdirIfNotExist("supabase"); err != nil {
+	if err := utils.MkdirIfNotExist(".supabase"); err != nil {
 		return err
 	}
 
-	// 1. Write `config.toml`.
+	// 1. Write `supabase.toml`.
 	if err := utils.WriteConfig(false); err != nil {
 		return err
 	}

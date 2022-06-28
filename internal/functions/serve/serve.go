@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"path/filepath"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -21,15 +22,28 @@ import (
 var ctx = context.Background()
 
 func Run(slug string, envFilePath string, verifyJWT bool) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	if err := utils.LoadConfig(); err != nil {
+		return err
+	}
+
+	edgeFuncSrcPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath)
+	edgeFuncSlugPath := filepath.Join("/home/deno", utils.Config.Edgefunctions.FunctionsPath, slug, "index.ts")
+
+	fmt.Println(utils.Config)
+	fmt.Println("Edge Func Src Path" + utils.Bold(edgeFuncSrcPath))
+	fmt.Println("Edge Func Slug" + utils.Bold(edgeFuncSlugPath))
+
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
 			return err
 		}
 		if err := utils.AssertDockerIsRunning(); err != nil {
-			return err
-		}
-		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
@@ -75,11 +89,6 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 			env = append(env, "VERIFY_JWT=false")
 		}
 
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.DenoRelayId,
@@ -91,8 +100,9 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
+// @TODO - this is not quite right - might need to allow a base directory
 			&container.HostConfig{
-				Binds:       []string{cwd + "/supabase/functions:/home/deno/functions:ro,z"},
+				Binds:       []string{edgeFuncSrcPath+":/home/deno:ro,z"},
 				NetworkMode: container.NetworkMode(utils.NetId),
 			},
 		); err != nil {
@@ -102,9 +112,9 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 
 	// 4. Start Function.
 	{
-		fmt.Println("Starting " + utils.Bold("supabase/functions/"+slug))
+		fmt.Println("Starting " + utils.Bold(edgeFuncSlugPath))
 		out, err := utils.DockerExec(ctx, utils.DenoRelayId, []string{
-			"deno", "cache", "/home/deno/functions/" + slug + "/index.ts",
+			"deno", "cache", edgeFuncSlugPath,
 		})
 		if err != nil {
 			return err
@@ -115,7 +125,7 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 	}
 
 	{
-		fmt.Println("Serving " + utils.Bold("supabase/functions/"+slug))
+		fmt.Println("Serving " + utils.Bold(edgeFuncSlugPath))
 
 		env := []string{
 			"SUPABASE_URL=http://" + utils.KongId + ":8000",
@@ -145,7 +155,7 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "/home/deno/functions/" + slug + "/index.ts",
+					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", edgeFuncSlugPath,
 				},
 				AttachStderr: true,
 				AttachStdout: true,
@@ -169,6 +179,6 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 		}
 	}
 
-	fmt.Println("Stopped serving " + utils.Bold("supabase/functions/"+slug))
+	fmt.Println("Stopped serving " + utils.Bold(edgeFuncSlugPath))
 	return nil
 }

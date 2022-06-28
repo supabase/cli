@@ -45,7 +45,7 @@ func Run(url string) error {
 			dbMajorVersion,
 			utils.Config.Db.MajorVersion,
 			utils.Aqua("db.major_version"),
-			utils.Bold("supabase/config.toml"),
+			utils.Bold("supabase.toml"),
 		)
 	}
 
@@ -78,10 +78,10 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			remoteMigrations = append(remoteMigrations, version)
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 			return err
 		}
-		localMigrations, err := os.ReadDir("supabase/migrations")
+		localMigrations, err := os.ReadDir(".supabase/migrations")
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 		for i, remoteTimestamp := range remoteMigrations {
 			if i >= len(localMigrations) {
 				return errors.New(`The remote database was applied with migration(s) that cannot be found locally. Try updating the project from version control. Otherwise:
-1. Delete rows from supabase_migrations.schema_migrations on the remote database so that it's in sync with the contents of ` + utils.Bold("supabase/migrations") + `,
+1. Delete rows from supabase_migrations.schema_migrations on the remote database so that it's in sync with the contents of ` + utils.Bold(".supabase/migrations") + `,
 2. Run ` + utils.Aqua("supabase db remote set") + ` again,
 3. Run ` + utils.Aqua("supabase db remote commit") + ".")
 			}
@@ -110,10 +110,10 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	rows.Close()
 
 	// 3. Write .env
-	if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+	if err := utils.MkdirIfNotExist(".supabase/temp"); err != nil {
 		return err
 	}
-	if err := os.WriteFile("supabase/.temp/remote-db-url", []byte(url), 0600); err != nil {
+	if err := os.WriteFile(".supabase/temp/remote-db-url", []byte(url), 0600); err != nil {
 		return err
 	}
 

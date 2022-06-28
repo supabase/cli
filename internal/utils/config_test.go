@@ -7,22 +7,17 @@ import (
 
 func TestConfigParsing(t *testing.T) {
 	t.Cleanup(func() {
-		if err := os.Remove("supabase/config.toml"); err != nil {
+		if err := os.Remove("supabase.toml"); err != nil {
 			if !os.IsNotExist(err) {
 				t.Error(err)
 			}
 		}
-		if err := os.Remove("supabase"); err != nil {
+		if err := os.Remove("supabase.json"); err != nil {
 			if !os.IsNotExist(err) {
 				t.Error(err)
 			}
 		}
 	})
-
-	if err := os.Mkdir("supabase", 0755); err != nil {
-		t.Error(err)
-		t.FailNow()
-	}
 
 	t.Run("classic config file", func(t *testing.T) {
 		if err := WriteConfig(false); err != nil {

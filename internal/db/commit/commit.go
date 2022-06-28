@@ -109,7 +109,7 @@ EOSQL
 		}
 
 		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+			extensionsSql, err := os.ReadFile(".supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
@@ -131,10 +131,10 @@ EOSQL
 			}
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 			return err
 		}
-		migrations, err := os.ReadDir("supabase/migrations")
+		migrations, err := os.ReadDir(".supabase/migrations")
 		if err != nil {
 			return err
 		}
@@ -155,7 +155,7 @@ EOSQL
 
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
-			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			content, err := os.ReadFile(".supabase/migrations/" + migration.Name())
 			if err != nil {
 				return err
 			}
@@ -199,7 +199,7 @@ EOSQL
 			return err
 		}
 
-		if err := os.WriteFile("supabase/migrations/"+utils.GetCurrentTimestamp()+"_"+name+".sql", diffBytes, 0644); err != nil {
+		if err := os.WriteFile(".supabase/migrations/"+utils.GetCurrentTimestamp()+"_"+name+".sql", diffBytes, 0644); err != nil {
 			return err
 		}
 	}

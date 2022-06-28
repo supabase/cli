@@ -51,11 +51,11 @@ var (
 		"spotify",
 	}
 
-	//go:embed templates/init_config.toml
+	//go:embed templates/init_supabase.toml
 	initConfigEmbed       string
 	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
 
-	//go:embed templates/init_config.test.toml
+	//go:embed templates/init_supabase.test.toml
 	testInitConfigEmbed       string
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
 )
@@ -70,6 +70,7 @@ type (
 		Studio    studio
 		Inbucket  inbucket
 		Auth      auth
+		Edgefunctions edgefunctions
 		// TODO
 		// Scripts   scripts
 	}
@@ -115,6 +116,11 @@ type (
 		Secret   string
 	}
 
+	edgefunctions struct {
+		SrcPath   string `toml:"src_path"`
+		FunctionsPath   string `toml:"functions_path"`
+	}
+
 	// TODO
 	// scripts struct {
 	// 	BeforeMigrations string `toml:"before_migrations"`
@@ -123,10 +129,10 @@ type (
 )
 
 func LoadConfig() error {
-	if _, err := toml.DecodeFile("supabase/config.toml", &Config); err == nil {
+	if _, err := toml.DecodeFile("supabase.toml", &Config); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
-		_, _err := os.Stat("supabase/config.json")
+		_, _err := os.Stat("supabase.json")
 		if errors.Is(_err, os.ErrNotExist) {
 			return fmt.Errorf("Missing config: %w", err)
 		} else if _err != nil {
@@ -222,6 +228,14 @@ func LoadConfig() error {
 				}
 			}
 		}
+//@TODO - full path?
+		if Config.Edgefunctions.SrcPath == "" {
+			Config.Edgefunctions.SrcPath = ".supabase/functions"
+		}
+
+		if Config.Edgefunctions.FunctionsPath == "" {
+			Config.Edgefunctions.FunctionsPath = ".supabase/functions"
+		}
 	}
 
 	return nil
@@ -279,9 +293,9 @@ func InterpolateEnvInConfig() error {
 
 // TODO: Remove this after 2022-08-15.
 func handleDeprecatedConfig() error {
-	fmt.Println("WARNING: Found deprecated supabase/config.json. Converting to supabase/config.toml. Refer to release notes for details.")
+	fmt.Println("WARNING: Found deprecated supabase.json. Converting to .supabase/supabase.toml. Refer to release notes for details.")
 
-	viper.SetConfigFile("supabase/config.json")
+	viper.SetConfigFile("supabase.json")
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("Failed to read config: %w", err)
 	}
@@ -376,10 +390,10 @@ secret = ""
 	Config.Db.MajorVersion = uint(dbMajorVersion)
 	Config.Auth.SiteUrl = "http://localhost:3000"
 
-	if err := os.WriteFile("supabase/config.toml", []byte(newConfig), 0644); err != nil {
+	if err := os.WriteFile("supabase.toml", []byte(newConfig), 0644); err != nil {
 		return err
 	}
-	if err := os.Remove("supabase/config.json"); err != nil {
+	if err := os.Remove("supabase.json"); err != nil {
 		return err
 	}
 
@@ -408,7 +422,7 @@ func WriteConfig(test bool) error {
 		return err
 	}
 
-	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile("supabase.toml", initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 

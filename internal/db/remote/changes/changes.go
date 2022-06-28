@@ -35,7 +35,7 @@ func Run() error {
 		}
 	}
 
-	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
+	urlBytes, err := os.ReadFile(".supabase/temp/remote-db-url")
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
 	} else if err != nil {
@@ -133,7 +133,7 @@ func run(p utils.Program, url string) error {
 		}
 	}
 
-	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
+	// 1. Assert `.supabase/migrations` and `schema_migrations` are in sync.
 	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err != nil {
 		return err
 	} else {
@@ -146,16 +146,16 @@ func run(p utils.Program, url string) error {
 			remoteMigrations = append(remoteMigrations, version)
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 			return err
 		}
-		localMigrations, err := os.ReadDir("supabase/migrations")
+		localMigrations, err := os.ReadDir(".supabase/migrations")
 		if err != nil {
 			return err
 		}
 
-		conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold("supabase/migrations") + `. Resolve this by:
-- Updating the project from version control to get the latest ` + utils.Bold("supabase/migrations") + `,
+		conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold(".supabase/migrations") + `. Resolve this by:
+- Updating the project from version control to get the latest ` + utils.Bold(".supabase/migrations") + `,
 - Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
 - Or failing that, manually inserting/deleting rows from the supabase_migrations.schema_migrations table on the remote database.`)
 
@@ -242,7 +242,7 @@ EOSQL
 		}
 
 		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+			extensionsSql, err := os.ReadFile(".supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
@@ -264,10 +264,10 @@ EOSQL
 			}
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 			return err
 		}
-		migrations, err := os.ReadDir("supabase/migrations")
+		migrations, err := os.ReadDir(".supabase/migrations")
 		if err != nil {
 			return err
 		}
@@ -288,7 +288,7 @@ EOSQL
 
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
-			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			content, err := os.ReadFile(".supabase/migrations/" + migration.Name())
 			if err != nil {
 				return err
 			}

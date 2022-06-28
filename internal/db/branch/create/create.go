@@ -30,7 +30,7 @@ func Run(branch string) error {
 		return errors.New("Branch name " + utils.Aqua(branch) + " is invalid. Must match [0-9A-Za-z_-]+.")
 	}
 
-	if _, err := os.ReadDir("supabase/.branches/" + branch); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.ReadDir(".supabase/branches/" + branch); errors.Is(err, os.ErrNotExist) {
 		// skip
 	} else if err != nil {
 		return err
@@ -87,7 +87,7 @@ EOSQL
 		return fmt.Errorf("Error creating branch %s: %w", utils.Aqua(branch), err)
 	}
 
-	if err := os.Mkdir("supabase/.branches/"+branch, 0755); err != nil {
+	if err := os.Mkdir(".supabase/branches/"+branch, 0755); err != nil {
 		return err
 	}
 

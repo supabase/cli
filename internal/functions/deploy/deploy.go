@@ -42,10 +42,10 @@ Enter your project ref: `)
 
 				projectRef := strings.TrimSpace(scanner.Text())
 
-				if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+				if err := utils.MkdirIfNotExist(".supabase/temp"); err != nil {
 					return err
 				}
-				if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+				if err := os.WriteFile(".supabase/temp/project-ref", []byte(projectRef), 0644); err != nil {
 					return err
 				}
 			} else if err != nil {
@@ -83,14 +83,14 @@ Enter your project ref: `)
 		}
 		denoPath := filepath.Join(home, ".supabase", denoBinName)
 
-		functionPath := "supabase/functions/" + slug
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+
+		functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
-			// allow deploy from within supabase/
-			functionPath = "functions/" + slug
-			if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
-				// allow deploy from current directory
-				functionPath = slug
-			}
+			return errors.New("Function " + utils.Aqua(functionPath) + " does not exist.")
 		}
 
 		cmd := exec.Command(denoPath, "bundle", "--quiet", functionPath+"/index.ts")
@@ -112,7 +112,7 @@ Enter your project ref: `)
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(".supabase/temp/project-ref")
 			if err != nil {
 				return err
 			}

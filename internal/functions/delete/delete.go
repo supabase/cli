@@ -49,7 +49,7 @@ func Run(slug string, projectRefArg string) error {
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(".supabase/temp/project-ref")
 			if err != nil {
 				return err
 			}

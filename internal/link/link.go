@@ -50,13 +50,13 @@ func Run(projectRef string) error {
 
 	// 2. Save project ref
 	{
-		if err := utils.MkdirIfNotExist("supabase"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase"); err != nil {
 			return err
 		}
-		if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/temp"); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+		if err := os.WriteFile(".supabase/temp/project-ref", []byte(projectRef), 0644); err != nil {
 			return err
 		}
 	}

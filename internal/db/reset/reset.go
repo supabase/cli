@@ -126,9 +126,9 @@ EOSQL
 			}
 		}
 
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
+		p.Send(utils.StatusMsg("Applying " + utils.Bold(".supabase/extensions.sql") + "..."))
 		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+			extensionsSql, err := os.ReadFile(".supabase/extensions.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
@@ -150,10 +150,10 @@ EOSQL
 			}
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 			return err
 		}
-		migrations, err := os.ReadDir("supabase/migrations")
+		migrations, err := os.ReadDir(".supabase/migrations")
 		if err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ EOSQL
 
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
-			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			content, err := os.ReadFile(".supabase/migrations/" + migration.Name())
 			if err != nil {
 				return err
 			}
@@ -199,9 +199,9 @@ EOSQL
 			}
 		}
 
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
+		p.Send(utils.StatusMsg("Applying " + utils.Bold(".supabase/seed.sql") + "..."))
 		{
-			content, err := os.ReadFile("supabase/seed.sql")
+			content, err := os.ReadFile(".supabase/seed.sql")
 			if errors.Is(err, os.ErrNotExist) {
 				// skip
 			} else if err != nil {
@@ -237,7 +237,7 @@ EOSQL
 
 		return nil
 	}(); err != nil {
-		_ = os.RemoveAll("supabase/.branches/" + currBranch)
+		_ = os.RemoveAll(".supabase/branches/" + currBranch)
 		return err
 	}
 

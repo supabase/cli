@@ -22,7 +22,7 @@ func Run(target string) error {
 
 	errBranchNotExist := errors.New("Branch " + utils.Aqua(target) + " does not exist.")
 
-	branches, err := os.ReadDir("supabase/.branches")
+	branches, err := os.ReadDir(".supabase/branches")
 	if errors.Is(err, os.ErrNotExist) {
 		return errBranchNotExist
 	}
@@ -38,7 +38,7 @@ func Run(target string) error {
 				return err
 			}
 
-			if err := os.WriteFile("supabase/.branches/_current_branch", []byte(target), 0644); err != nil {
+			if err := os.WriteFile(".supabase/branches/_current_branch", []byte(target), 0644); err != nil {
 				return err
 			}
 

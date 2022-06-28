@@ -4,34 +4,36 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(slug string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
+
 	// 1. Sanity checks.
 	{
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if _, err := os.Stat("supabase/functions/" + slug); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(functionPath); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
 		}
 	}
 
 	// 2. Create new function.
 	{
-		if err := utils.MkdirIfNotExist("supabase"); err != nil {
-			return err
-		}
-		if err := utils.MkdirIfNotExist("supabase/functions"); err != nil {
-			return err
-		}
-		if err := utils.MkdirIfNotExist("supabase/functions/" + slug); err != nil {
+		if err := utils.MkdirAllIfNotExist(functionPath); err != nil {
 			return err
 		}
 		if err := os.WriteFile(
-			"supabase/functions/"+slug+"/index.ts",
+			functionPath+"/index.ts",
 			[]byte(`// Follow this setup guide to integrate the Deno language server with your editor:
 // https://deno.land/manual/getting_started/setup_your_environment
 // This enables autocomplete, go to definition, etc.
@@ -64,6 +66,6 @@ serve(async (req) => {
 		}
 	}
 
-	fmt.Println("Created new Function at " + utils.Bold("supabase/functions/"+slug))
+	fmt.Println("Created new Function at " + utils.Bold(functionPath))
 	return nil
 }

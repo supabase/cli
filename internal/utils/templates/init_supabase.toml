@@ -58,3 +58,7 @@ enable_confirmations = false
 enabled = false
 client_id = ""
 secret = ""
+
+[edgefunctions]
+src_path = ""
+functions_path = ""

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+//	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -98,13 +99,13 @@ func run(p utils.Program) error {
 	)
 
 	// Ensure `_current_branch` file exists.
-	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
+	if _, err := os.ReadFile(".supabase/branches/_current_branch"); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
-		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
+		if err := utils.MkdirIfNotExist(".supabase/branches"); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644); err != nil {
+		if err := os.WriteFile(".supabase/branches/_current_branch", []byte("main"), 0644); err != nil {
 			return err
 		}
 	} else {
@@ -116,9 +117,14 @@ func run(p utils.Program) error {
 	}
 
 	p.Send(utils.StatusMsg("Pulling images..."))
+//	os.Exit(3)
 
 	// Pull images.
 	{
+		p.Send(utils.StatusMsg("docker.io/"+utils.DbImage))
+//		duration := time.Duration(10)*time.Second // Pause for 10 seconds
+//		time.Sleep(duration)
+
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -132,6 +138,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.KongImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -145,6 +152,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.GotrueImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -158,6 +166,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.InbucketImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -171,6 +180,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.RealtimeImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -184,6 +194,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.PostgrestImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -197,6 +208,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.StorageImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StorageImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -210,6 +222,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.DifferImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -223,6 +236,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.PgmetaImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -236,6 +250,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.StudioImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StudioImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -249,6 +264,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
+		p.Send(utils.StatusMsg("docker.io/"+utils.DenoRelayImage))
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DenoRelayImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
@@ -291,6 +307,7 @@ func run(p utils.Program) error {
 				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 			},
 		); err != nil {
+			p.Send(utils.StatusMsg(err.Error()))
 			return err
 		}
 
@@ -319,14 +336,14 @@ EOSQL
 
 	// Restore branches.
 	{
-		if branches, err := os.ReadDir("supabase/.branches"); err == nil {
+		if branches, err := os.ReadDir(".supabase/branches"); err == nil {
 			for _, branch := range branches {
 				if branch.Name() == "_current_branch" {
 					continue
 				}
 
 				if err := func() error {
-					content, err := os.ReadFile("supabase/.branches/" + branch.Name() + "/dump.sql")
+					content, err := os.ReadFile(".supabase/branches/" + branch.Name() + "/dump.sql")
 					if errors.Is(err, os.ErrNotExist) {
 						return errors.New("Branch was not dumped.")
 					} else if err != nil {
@@ -352,13 +369,13 @@ EOSQL
 
 					return nil
 				}(); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					_ = os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644)
+					_ = os.RemoveAll(".supabase/branches/" + branch.Name())
+					_ = os.WriteFile(".supabase/branches/_current_branch", []byte("main"), 0644)
 					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
 				}
 			}
 		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches", 0755); err != nil {
+			if err := os.Mkdir(".supabase/branches", 0755); err != nil {
 				return err
 			}
 		} else {
@@ -366,10 +383,10 @@ EOSQL
 		}
 
 		// Ensure `main` branch exists.
-		if _, err := os.ReadDir("supabase/.branches/main"); err == nil {
+		if _, err := os.ReadDir(".supabase/branches/main"); err == nil {
 			// skip
 		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches/main", 0755); err != nil {
+			if err := os.Mkdir(".supabase/branches/main", 0755); err != nil {
 				return err
 			}
 
@@ -412,9 +429,9 @@ EOSQL
 					}
 				}
 
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
+				p.Send(utils.StatusMsg("Applying " + utils.Bold(".supabase/extensions.sql") + "..."))
 				{
-					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
+					extensionsSql, err := os.ReadFile(".supabase/extensions.sql")
 					if errors.Is(err, os.ErrNotExist) {
 						// skip
 					} else if err != nil {
@@ -436,10 +453,10 @@ EOSQL
 					}
 				}
 
-				if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
+				if err := utils.MkdirIfNotExist(".supabase/migrations"); err != nil {
 					return err
 				}
-				migrations, err := os.ReadDir("supabase/migrations")
+				migrations, err := os.ReadDir(".supabase/migrations")
 				if err != nil {
 					return err
 				}
@@ -461,7 +478,7 @@ EOSQL
 
 					p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
-					content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+					content, err := os.ReadFile(".supabase/migrations/" + migration.Name())
 					if err != nil {
 						return err
 					}
@@ -486,9 +503,9 @@ EOSQL
 					}
 				}
 
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
+				p.Send(utils.StatusMsg("Applying " + utils.Bold(".supabase/seed.sql") + "..."))
 				{
-					content, err := os.ReadFile("supabase/seed.sql")
+					content, err := os.ReadFile(".supabase/seed.sql")
 					if errors.Is(err, os.ErrNotExist) {
 						// skip
 					} else if err != nil {
@@ -512,7 +529,7 @@ EOSQL
 
 				return nil
 			}(); err != nil {
-				_ = os.RemoveAll("supabase/.branches/main")
+				_ = os.RemoveAll(".supabase/branches/main")
 				return err
 			}
 		} else {
