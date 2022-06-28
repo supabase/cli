@@ -88,6 +88,10 @@ Enter your project ref: `)
 			return err
 		}
 
+		if err := utils.LoadConfig(); err != nil {
+			return err
+		}
+
 		functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(functionPath) + " does not exist.")

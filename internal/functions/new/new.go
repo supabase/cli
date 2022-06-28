@@ -15,6 +15,10 @@ func Run(slug string) error {
 		return err
 	}
 
+	if err := utils.LoadConfig(); err != nil {
+		return err
+	}
+
 	functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
 
 	// 1. Sanity checks.
