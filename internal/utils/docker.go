@@ -58,18 +58,14 @@ func DockerRun(
 	config *container.Config,
 	hostConfig *container.HostConfig,
 ) (io.Reader, error) {
-	fmt.Fprintln(os.Stdout, "DockerRun Containers:", config)
-	fmt.Fprintln(os.Stdout, "DockerRun Containers:", hostConfig)
 	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed DockerContainerCreate:", err)
 		return nil, err
 	}
 	containers = append(containers, name)
-	fmt.Fprintln(os.Stdout, "DockerRun Containers:", containers)
 
 	resp, err := Docker.ContainerAttach(ctx, container.ID, types.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
-	fmt.Fprintln(os.Stdout, "DockerContainerAttach:", resp)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed DockerContainerAttach:", err)
 		return nil, err
