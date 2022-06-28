@@ -160,10 +160,6 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 			return err
 		}
 
-		if err := utils.Docker.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{}); err != nil {
-			return err
-		}
-
 		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader); err != nil {
 			return err
 		}
