@@ -1,4 +1,4 @@
-project_name: supabase
+project_name: supabase-cli
 before:
   hooks:
     - go mod tidy
@@ -6,7 +6,7 @@ builds:
   - id: supabase
     binary: supabase
     ldflags:
-      - -X github.com/supabase/cli/cmd.version={{.Version}}
+      - -X github.com/Colt-Builders-Corp/supabase-cli/cmd.version={{.Version}}
     targets:
       - darwin_amd64
       - darwin_arm64
@@ -17,12 +17,12 @@ changelog:
   skip: true
 brews:
   - tap:
-      owner: supabase
+      owner: Colt-Builders-Corp 
       name: homebrew-tap
     commit_author:
-      name: Bobbie Soedirgo
-      email: bobbie@soedirgo.dev
-    homepage: https://supabase.io
+      name: Norm 
+      email: norm@ 
+    homepage: https://github.com/Colt-Builders-Corp/supabase-cli 
     description: Supabase CLI
     license: MIT
     install: |
@@ -30,22 +30,3 @@ brews:
       (bash_completion/"supabase").write `#{bin}/supabase completion bash`
       (fish_completion/"supabase.fish").write `#{bin}/supabase completion fish`
       (zsh_completion/"_supabase").write `#{bin}/supabase completion zsh`
-scoop:
-  bucket:
-    owner: supabase
-    name: scoop-bucket
-  commit_author:
-    name: Bobbie Soedirgo
-    email: bobbie@soedirgo.dev
-  homepage: https://supabase.io
-  description: Supabase CLI
-  license: MIT
-nfpms:
-  - maintainer: Supabase
-    description: Supabase CLI
-    homepage: https://github.com/supabase/cli
-    license: MIT
-    formats:
-      - apk
-      - deb
-      - rpm
