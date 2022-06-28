@@ -75,6 +75,6 @@ func Run(name string, orgId uint, dbPassword string, region string, plan string)
 	{
 	}
 
-	fmt.Printf(`Created a new project %s at %s\n`, utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Ref))
+	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Ref))
 	return nil
 }
