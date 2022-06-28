@@ -13,9 +13,9 @@ var (
 	}
 
 	projectsCreateCmd = &cobra.Command{
-		Use:   "create",
-		Short: "Create a new project.",
-		Args:  cobra.ExactArgs(1),
+		Use:     "create",
+		Short:   "Create a new project.",
+		Args:    cobra.ExactArgs(1),
 		Example: `supabase projects create my-project --org-id 12345 --db-password ******** --region us-east-1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
