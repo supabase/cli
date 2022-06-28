@@ -18,7 +18,8 @@ func Run(name string, orgId uint, dbPassword string, region string, plan string)
 	}
 
 	// TODO: Prompt missing args.
-	{}
+	{
+	}
 
 	// POST request, check errors
 	var project struct {
@@ -71,7 +72,8 @@ func Run(name string, orgId uint, dbPassword string, region string, plan string)
 	}
 
 	// TODO: Poll until PostgREST is reachable.
-	{}
+	{
+	}
 
 	fmt.Printf(`Created a new project %s at %s\n`, utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Ref))
 	return nil
