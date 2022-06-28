@@ -22,13 +22,13 @@ This repository contains all the functionality for our CLI. It is still under he
 Available via [Homebrew](https://brew.sh). To install:
 
 ```sh
-brew install supabase/tap/supabase
+brew install Colt-Builders-Corp/tap/supabase-cli
 ```
 
 To upgrade:
 
 ```sh
-brew upgrade supabase
+brew upgrade supabase-cli
 ```
 
 #### Windows
@@ -55,13 +55,13 @@ Available via [Homebrew](https://brew.sh) and Linux packages.
 To install:
 
 ```sh
-brew install supabase/tap/supabase
+brew install Colt-Builders-Corp/tap/supabase-cli
 ```
 
 To upgrade:
 
 ```sh
-brew upgrade supabase
+brew upgrade supabase-cli
 ```
 
 ##### via Linux packages

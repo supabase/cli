@@ -228,7 +228,6 @@ func LoadConfig() error {
 				}
 			}
 		}
-//@TODO - full path?
 		if Config.Edgefunctions.SrcPath == "" {
 			Config.Edgefunctions.SrcPath = ".supabase/functions"
 		}

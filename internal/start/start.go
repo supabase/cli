@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
-//	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -117,13 +116,10 @@ func run(p utils.Program) error {
 	}
 
 	p.Send(utils.StatusMsg("Pulling images..."))
-//	os.Exit(3)
 
 	// Pull images.
 	{
 		p.Send(utils.StatusMsg("docker.io/"+utils.DbImage))
-//		duration := time.Duration(10)*time.Second // Pause for 10 seconds
-//		time.Sleep(duration)
 
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
 			out, err := utils.Docker.ImagePull(

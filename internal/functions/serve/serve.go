@@ -34,10 +34,6 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 	edgeFuncSrcPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath)
 	edgeFuncSlugPath := filepath.Join("/home/deno", utils.Config.Edgefunctions.FunctionsPath, slug, "index.ts")
 
-	fmt.Println(utils.Config)
-	fmt.Println("Edge Func Src Path" + utils.Bold(edgeFuncSrcPath))
-	fmt.Println("Edge Func Slug" + utils.Bold(edgeFuncSlugPath))
-
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -100,7 +96,6 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 					"com.docker.compose.project": utils.Config.ProjectId,
 				},
 			},
-// @TODO - this is not quite right - might need to allow a base directory
 			&container.HostConfig{
 				Binds:       []string{edgeFuncSrcPath+":/home/deno:ro,z"},
 				NetworkMode: container.NetworkMode(utils.NetId),
