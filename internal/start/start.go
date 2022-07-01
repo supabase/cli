@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/template"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -25,7 +27,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-// TODO: Handle cleanup on SIGINT/SIGTERM.
 func Run() error {
 	// Sanity checks.
 	{
@@ -50,6 +51,16 @@ func Run() error {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	p := utils.NewProgram(model{spinner: s})
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		utils.DockerRemoveAll()
+		_ = utils.Docker.NetworkRemove(context.Background(), utils.NetId)
+		p.Send(tea.Quit())
+		fmt.Println("Cleaned ressources before quiting")
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
