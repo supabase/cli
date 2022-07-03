@@ -109,16 +109,26 @@ func DockerAddFile(ctx context.Context, container string, fileName string, conte
 		Mode: 0777,
 		Size: int64(len(content)),
 	})
+
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
 	_, err = tw.Write(content)
+
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
 	err = tw.Close()
 
 	if err != nil {
-		return fmt.Errorf("docker copy: %v", err)
+		return fmt.Errorf("failed to copy file: %v", err)
 	}
 
 	err = Docker.CopyToContainer(ctx, container, "/tmp", &buf, types.CopyToContainerOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to copy file: %v", err)
 	}
 	return nil
 }
