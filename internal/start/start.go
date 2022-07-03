@@ -493,9 +493,15 @@ EOSQL
 						// skip
 					} else if err != nil {
 						return err
+					}
+
+					err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
+
+					if err != nil {
+						return err
 					} else {
 						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(content),
+							"psql", "postgresql://postgres:postgres@localhost/main", "-f", "/tmp/seed.sql",
 						})
 						if err != nil {
 							return err

@@ -208,7 +208,7 @@ EOSQL
 				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
+					"psql", "postgresql://postgres:postgres@localhost/postgres", "-f", string(content),
 				})
 				if err != nil {
 					return err
