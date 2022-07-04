@@ -16,10 +16,10 @@ var (
 		Use:     "create",
 		Short:   "Create a new project.",
 		Args:    cobra.ExactArgs(1),
-		Example: `supabase projects create my-project --org-id 12345 --db-password ******** --region us-east-1`,
+		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			orgId, err := cmd.Flags().GetUint("org-id")
+			orgId, err := cmd.Flags().GetString("org-id")
 			if err != nil {
 				return err
 			}
@@ -51,7 +51,7 @@ var (
 
 func init() {
 	// TODO: Make these optional once we implement prompting missing flags.
-	projectsCreateCmd.Flags().Uint("org-id", 0, "Organization ID to create the project in.")
+	projectsCreateCmd.Flags().String("org-id", "", "Organization ID to create the project in.")
 	if err := projectsCreateCmd.MarkFlagRequired("org-id"); err != nil {
 		panic(err)
 	}

@@ -44,19 +44,18 @@ func Run() error {
 	}
 
 	var orgs []struct {
-		Id   uint   `json:"id"`
+		Id   string `json:"id"`
 		Name string `json:"name"`
-		Slug string `json:"slug"`
 	}
 	if err := json.Unmarshal(body, &orgs); err != nil {
 		return err
 	}
 
-	table := `|ID|SLUG|NAME|
-|-|-|-|
+	table := `|ID|NAME|
+|-|-|
 `
 	for _, org := range orgs {
-		table += fmt.Sprintf("|`%d`|`%s`|`%s`|\n", org.Id, org.Slug, strings.ReplaceAll(org.Name, "|", "\\|"))
+		table += fmt.Sprintf("|`%s`|`%s`|\n", org.Id, strings.ReplaceAll(org.Name, "|", "\\|"))
 	}
 
 	r, err := glamour.NewTermRenderer(
