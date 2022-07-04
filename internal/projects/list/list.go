@@ -44,10 +44,9 @@ func Run() error {
 	}
 
 	var projects []struct {
-		OrgId     uint   `json:"organization_id"`
-		Id        uint   `json:"id"`
+		OrgId     string `json:"organization_id"`
+		Id        string `json:"id"`
 		Name      string `json:"name"`
-		Ref       string `json:"ref"`
 		Region    string `json:"region"`
 		CreatedAt string `json:"created_at"`
 	}
@@ -56,11 +55,11 @@ func Run() error {
 	}
 
 	// TODO: Add CREATED AT
-	table := `|ORG ID|ID|NAME|REF|REGION|
-|-|-|-|-|-|
+	table := `|ORG ID|ID|NAME|REGION|
+|-|-|-|-|
 `
 	for _, project := range projects {
-		table += fmt.Sprintf("|`%d`|`%d`|`%s`|`%s`|`%s`|\n", project.OrgId, project.Id, strings.ReplaceAll(project.Name, "|", "\\|"), project.Ref, utils.RegionMap[project.Region])
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|\n", project.OrgId, project.Id, strings.ReplaceAll(project.Name, "|", "\\|"), utils.RegionMap[project.Region])
 	}
 
 	r, err := glamour.NewTermRenderer(

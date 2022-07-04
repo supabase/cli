@@ -11,7 +11,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(name string, orgId uint, dbPassword string, region string, plan string) error {
+func Run(name string, orgId string, dbPassword string, region string, plan string) error {
 	accessToken, err := utils.LoadAccessToken()
 	if err != nil {
 		return err
@@ -23,11 +23,8 @@ func Run(name string, orgId uint, dbPassword string, region string, plan string)
 
 	// POST request, check errors
 	var project struct {
-		Id     uint   `json:"id"`
-		Ref    string `json:"ref"`
-		Name   string `json:"name"`
-		OrgId  uint   `json:"organization_id"`
-		Region string `json:"region"`
+		Id   string `json:"id"`
+		Name string `json:"name"`
 	}
 	{
 		jsonBytes, err := json.Marshal(map[string]interface{}{
@@ -75,6 +72,6 @@ func Run(name string, orgId uint, dbPassword string, region string, plan string)
 	{
 	}
 
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Ref))
+	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Id))
 	return nil
 }
