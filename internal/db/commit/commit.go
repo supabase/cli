@@ -74,7 +74,7 @@ func run(p utils.Program, name string) error {
 		out, err := utils.DockerExec(
 			ctx,
 			utils.DbId,
-			[]string{"createdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
+			[]string{"createdb", "--username", "postgres", "--host", "127.0.0.1", utils.ShadowDbName},
 		)
 		if err != nil {
 			return err
@@ -211,7 +211,7 @@ func cleanup() {
 	_, _ = utils.DockerExec(
 		context.Background(),
 		utils.DbId,
-		[]string{"dropdb", "--username", "postgres", "--host", "localhost", utils.ShadowDbName},
+		[]string{"dropdb", "--username", "postgres", "--host", "127.0.0.1", utils.ShadowDbName},
 	)
 }
 
