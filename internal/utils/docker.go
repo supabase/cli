@@ -74,7 +74,7 @@ func DockerRun(
 	if err := Docker.ContainerStart(ctx, container.ID, types.ContainerStartOptions{}); err != nil {
 		return nil, err
 	}
-	
+
 	return resp.Reader, nil
 }
 
