@@ -296,7 +296,7 @@ func run(p utils.Program) error {
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres --host localhost <<'EOSQL'
+				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
 BEGIN;
 ` + utils.GlobalsSql + `
 COMMIT;
@@ -306,6 +306,7 @@ EOSQL
 		if err != nil {
 			return err
 		}
+
 		var errBuf bytes.Buffer
 		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
@@ -334,7 +335,7 @@ EOSQL
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+						"sh", "-c", `psql --set ON_ERROR_STOP=on --host 127.0.0.1 postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
 CREATE DATABASE "` + branch.Name() + `";
 \connect ` + branch.Name() + `
 BEGIN;
@@ -376,7 +377,7 @@ EOSQL
 			if err := func() error {
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"createdb", "--username", "postgres", "--host", "localhost", "main",
+						"createdb", "--username", "postgres", "--host", "127.0.0.1", "main",
 					})
 					if err != nil {
 						return err
@@ -393,7 +394,7 @@ EOSQL
 				p.Send(utils.StatusMsg("Setting up initial schema..."))
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
+						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --host 127.0.0.1 postgresql://postgres:postgres@localhost/main <<'EOSQL'
 BEGIN;
 ` + utils.InitialSchemaSql + `
 COMMIT;

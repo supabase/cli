@@ -37,7 +37,7 @@ func Run(branch string) error {
 
 	{
 		out, err := utils.DockerExec(context.Background(), utils.DbId, []string{
-			"dropdb", "--username", "postgres", "--host", "localhost", branch,
+			"dropdb", "--username", "postgres", "--host", "127.0.0.1", branch,
 		})
 		if err != nil {
 			return err
