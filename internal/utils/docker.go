@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -97,4 +99,36 @@ func DockerRemoveAll() {
 	}
 
 	wg.Wait()
+}
+
+func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	err := tw.WriteHeader(&tar.Header{
+		Name: fileName,
+		Mode: 0777,
+		Size: int64(len(content)),
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
+	_, err = tw.Write(content)
+
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
+	err = tw.Close()
+
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+
+	err = Docker.CopyToContainer(ctx, container, "/tmp", &buf, types.CopyToContainerOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %v", err)
+	}
+	return nil
 }
