@@ -93,7 +93,7 @@ Enter your project ref: `)
 		}
 
 		functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
-		fmt.Println("functionPath: " + functionPath)
+		// fmt.Println("functionPath: " + functionPath)
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(functionPath) + " does not exist.")
 		}
@@ -107,9 +107,28 @@ Enter your project ref: `)
 		}
 
 		newFunctionBody = outBuf.String()
+		//fmt.Println(newFunctionBody)
 	}
 
-	// 3. Deploy new Function.
+	// 3. Lint Function.
+	{
+		fmt.Println("Linting " + utils.Bold(slug))
+
+		r := strings.NewReader(newFunctionBody)
+		cmd := exec.Command("eslint", "--no-eslintrc", "--stdin", "--parser-options", `sourceType:module,ecmaVersion:2022`, "--rule", `no-new-func:error,no-eval:error`)
+
+		// eslint --no-eslintrc --stdin --parser-options "sourceType:module,ecmaVersion:2022" --rule "no-new-func:error,no-eval:error"
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdin = r
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
+		// fmt.Println(cmd.String())
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("Error linting function: %w\n%v", err, errBuf.String())
+		}
+	}
+
+	// 4. Deploy new Function.
 	var projectRef string
 	var data struct {
 		Id string `json:"id"`

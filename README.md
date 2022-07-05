@@ -22,7 +22,7 @@ This repository contains all the functionality for our CLI. It is still under he
 Available via [Homebrew](https://brew.sh). To install:
 
 ```sh
-brew install Colt-Builders-Corp/tap/supabase-cli
+brew install Colt-Builders-Corp/tap/supabase-cli eslint
 ```
 
 To upgrade:
