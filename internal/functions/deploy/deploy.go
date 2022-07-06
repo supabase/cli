@@ -93,6 +93,7 @@ Enter your project ref: `)
 		}
 
 		functionPath := filepath.Join(cwd, utils.Config.Edgefunctions.SrcPath, utils.Config.Edgefunctions.FunctionsPath, slug)
+
 		// fmt.Println("functionPath: " + functionPath)
 		if _, err := os.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
 			return errors.New("Function " + utils.Aqua(functionPath) + " does not exist.")
