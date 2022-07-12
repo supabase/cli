@@ -176,7 +176,7 @@ func LoadConfig() error {
 			DbImage = "supabase/postgres:13.3.0"
 			InitialSchemaSql = initialSchemaPg13Sql
 		case 14:
-			DbImage = "supabase/postgres:14.1.0.34"
+			DbImage = "supabase/postgres:14.1.0.21"
 			InitialSchemaSql = initialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
