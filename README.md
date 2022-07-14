@@ -55,7 +55,7 @@ Available via [Homebrew](https://brew.sh) and Linux packages.
 To install:
 
 ```sh
-brew install Colt-Builders-Corp/tap/supabase-cli
+brew install Colt-Builders-Corp/tap/supabase-cli eslint
 ```
 
 To upgrade:
