@@ -50,7 +50,7 @@ func Run(name string, orgId string, dbPassword string, region string, plan strin
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return fmt.Errorf("Unexpected error creating project: %w", err)
