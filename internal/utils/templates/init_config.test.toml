@@ -30,6 +30,8 @@ port = 54323
 [inbucket]
 # Port to use for the email testing server web interface.
 port = 54324
+smtp_port = 54325
+pop3_port = 54326
 
 [auth]
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used

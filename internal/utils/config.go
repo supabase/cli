@@ -91,7 +91,9 @@ type (
 	}
 
 	inbucket struct {
-		Port uint
+		Port     uint
+		SmtpPort uint `toml:"smtp_port"`
+		Pop3Port uint `toml:"pop3_port"`
 	}
 
 	auth struct {

@@ -660,6 +660,14 @@ EOF
 		}
 	}
 
+	var inbucketPortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+
+	if utils.Config.Inbucket.SmtpPort != 0 {
+		inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+	}
+	if utils.Config.Inbucket.Pop3Port != 0 {
+		inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+	}
 	// Start Inbucket.
 	if _, err := utils.DockerRun(
 		ctx,
@@ -673,7 +681,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}},
+			PortBindings:  inbucketPortBindings,
 			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 		},
 	); err != nil {
