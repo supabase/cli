@@ -189,12 +189,6 @@ func LoadConfig() error {
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
-		if Config.Inbucket.SmtpPort == 0 {
-			return errors.New("Missing required field in config: inbucket.smtp_port")
-		}
-		if Config.Inbucket.Pop3Port == 0 {
-			return errors.New("Missing required field in config: inbucket.pop3_port")
-		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
