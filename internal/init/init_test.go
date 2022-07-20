@@ -48,6 +48,8 @@ func TestInitCommand(t *testing.T) {
 		assert.Error(t, Run(fsys))
 	})
 
+	// TODO: throws error on failure to find git root
+
 	t.Run("appends to git ignore", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
