@@ -36,7 +36,7 @@ func Run(fsys afero.Fs) error {
 func run(fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if _, err := afero.ReadFile(fsys, "supabase/config.toml"); err == nil {
+		if _, err := fsys.Stat("supabase/config.toml"); err == nil {
 			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err

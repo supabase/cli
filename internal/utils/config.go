@@ -130,7 +130,7 @@ func LoadConfig() error {
 }
 
 func loadConfig(fsys afero.Fs) error {
-	// TODO: remove this helper once all sub commands pass in fsys
+	// TODO: provide a config interface for all sub commands to use fsys
 	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), "supabase/config.toml", &Config); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
