@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
@@ -13,7 +15,7 @@ var (
 		Use:   "login",
 		Short: "Authenticate using an access token.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := login.Run(); err != nil {
+			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
 				return err
 			}
 

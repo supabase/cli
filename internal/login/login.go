@@ -4,19 +4,25 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run() error {
+var (
+	pattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
+)
+
+func Run(stdin io.Reader, fsys afero.Fs) error {
 	fmt.Print(`You can generate an access token from https://app.supabase.io/account/tokens.
 Enter your access token: `)
 
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(stdin)
 	if !scanner.Scan() {
 		fmt.Println("Cancelled " + utils.Aqua("supabase login") + ".")
 		return nil
@@ -26,11 +32,7 @@ Enter your access token: `)
 
 	// 1. Validate access token
 	{
-		matched, err := regexp.MatchString(`^sbp_[a-f0-9]{40}$`, accessToken)
-		if err != nil {
-			return err
-		}
-		if !matched {
+		if !pattern.Match([]byte(accessToken)) {
 			return errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 		}
 	}
@@ -41,12 +43,14 @@ Enter your access token: `)
 		if err != nil {
 			return err
 		}
-		if err := utils.MkdirIfNotExist(filepath.Join(home, ".supabase")); err != nil {
+
+		configPath := filepath.Join(home, ".supabase")
+		if err := utils.MkdirIfNotExistFS(fsys, configPath); err != nil {
 			return err
 		}
-		accessTokenPath := filepath.Join(home, ".supabase", "access-token")
 
-		if err := os.WriteFile(accessTokenPath, []byte(accessToken), 0600); err != nil {
+		accessTokenPath := filepath.Join(configPath, "access-token")
+		if err := afero.WriteFile(fsys, accessTokenPath, []byte(accessToken), 0600); err != nil {
 			return err
 		}
 	}
