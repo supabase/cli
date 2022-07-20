@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 )
 
@@ -125,7 +126,12 @@ type (
 )
 
 func LoadConfig() error {
-	if _, err := toml.DecodeFile("supabase/config.toml", &Config); err == nil {
+	return loadConfig(afero.NewOsFs())
+}
+
+func loadConfig(fsys afero.Fs) error {
+	// TODO: remove this helper once all sub commands pass in fsys
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), "supabase/config.toml", &Config); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
 		_, _err := os.Stat("supabase/config.json")
@@ -388,7 +394,8 @@ secret = ""
 	return nil
 }
 
-func WriteConfig(test bool) error {
+func WriteConfig(fsys afero.Fs, test bool) error {
+	// Using current directory name as project id
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -410,7 +417,7 @@ func WriteConfig(test bool) error {
 		return err
 	}
 
-	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
+	if err := afero.WriteFile(fsys, "supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 

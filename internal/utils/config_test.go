@@ -1,83 +1,36 @@
 package utils
 
 import (
-	"os"
 	"testing"
+
+	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestConfigParsing(t *testing.T) {
-	t.Cleanup(func() {
-		if err := os.Remove("supabase/config.toml"); err != nil {
-			if !os.IsNotExist(err) {
-				t.Error(err)
-			}
-		}
-		if err := os.Remove("supabase"); err != nil {
-			if !os.IsNotExist(err) {
-				t.Error(err)
-			}
-		}
-	})
-
-	if err := os.Mkdir("supabase", 0755); err != nil {
-		t.Error(err)
-		t.FailNow()
-	}
-
 	t.Run("classic config file", func(t *testing.T) {
-		if err := WriteConfig(false); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
-		if err := LoadConfig(); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
+		fsys := afero.NewMemMapFs()
+		assert.NoError(t, WriteConfig(fsys, false))
+		assert.NoError(t, loadConfig(fsys))
 	})
 
 	t.Run("config file with environment variables", func(t *testing.T) {
-		if err := WriteConfig(true); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
+		fsys := afero.NewMemMapFs()
+		assert.NoError(t, WriteConfig(fsys, true))
 
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
-		if err := LoadConfig(); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
-		if err := InterpolateEnvInConfig(); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
-		t.Setenv("AZURE_CLIENT_ID", "hello")
-		t.Setenv("AZURE_SECRET", "this is cool")
+		assert.NoError(t, loadConfig(fsys))
+		assert.NoError(t, InterpolateEnvInConfig())
 
-		if Config.Auth.External["azure"].ClientId != "hello" {
-			t.Errorf("unexpected value for key [ClientId]: %+v", Config.Auth.External["azure"])
-			t.FailNow()
-		}
-
-		if Config.Auth.External["azure"].Secret != "this is cool" {
-			t.Errorf("unexpected value for key [Secret]: %+v", Config.Auth.External["azure"])
-			t.FailNow()
-		}
+		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)
+		assert.Equal(t, "this is cool", Config.Auth.External["azure"].Secret)
 	})
 
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {
-		if err := WriteConfig(true); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
-
-		if err := LoadConfig(); err != nil {
-			t.Error(err)
-			t.FailNow()
-		}
-		if err := InterpolateEnvInConfig(); err == nil {
-			t.Error("expected to fail")
-			t.FailNow()
-		}
+		fsys := afero.NewMemMapFs()
+		assert.NoError(t, WriteConfig(fsys, true))
+		assert.NoError(t, loadConfig(fsys))
+		assert.Error(t, InterpolateEnvInConfig())
 	})
 }

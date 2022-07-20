@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -21,33 +22,33 @@ var (
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold("supabase") + " to reinitialize.")
 )
 
-func Run() error {
-	if err := run(); errors.Is(err, errAlreadyInitialized) {
+func Run(fsys afero.Fs) error {
+	if err := run(fsys); errors.Is(err, errAlreadyInitialized) {
 		return err
 	} else if err != nil {
-		_ = os.RemoveAll("supabase")
+		_ = fsys.RemoveAll("supabase")
 		return err
 	}
 
 	return nil
 }
 
-func run() error {
+func run(fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if _, err := os.ReadFile("supabase/config.toml"); err == nil {
+		if _, err := afero.ReadFile(fsys, "supabase/config.toml"); err == nil {
 			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
-	if err := utils.MkdirIfNotExist("supabase"); err != nil {
+	if err := fsys.Mkdir("supabase", 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 
 	// 1. Write `config.toml`.
-	if err := utils.WriteConfig(false); err != nil {
+	if err := utils.WriteConfig(fsys, false); err != nil {
 		return err
 	}
 
@@ -60,9 +61,9 @@ func run() error {
 			// skip
 		} else {
 			gitignorePath := *gitRoot + "/.gitignore"
-			gitignore, err := os.ReadFile(gitignorePath)
+			gitignore, err := afero.ReadFile(fsys, gitignorePath)
 			if errors.Is(err, os.ErrNotExist) {
-				if err := os.WriteFile(gitignorePath, initGitignore, 0644); err != nil {
+				if err := afero.WriteFile(fsys, gitignorePath, initGitignore, 0644); err != nil {
 					return err
 				}
 			} else if err != nil {
@@ -70,7 +71,7 @@ func run() error {
 			} else if bytes.Contains(gitignore, initGitignore) {
 				// skip
 			} else {
-				f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				f, err := fsys.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 				if err != nil {
 					return err
 				}
