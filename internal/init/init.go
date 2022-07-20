@@ -43,7 +43,7 @@ func run(fsys afero.Fs) error {
 		}
 	}
 
-	if err := fsys.Mkdir("supabase", 0755); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := utils.MkdirIfNotExistFS(fsys, "supabase"); err != nil {
 		return err
 	}
 

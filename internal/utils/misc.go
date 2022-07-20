@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/afero"
 )
 
 // Update initial schemas in internal/utils/templates/initial_schemas when
@@ -153,6 +155,14 @@ func IsBranchNameReserved(branch string) bool {
 
 func MkdirIfNotExist(path string) error {
 	if err := os.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+
+	return nil
+}
+
+func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
+	if err := fsys.Mkdir("supabase", 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 

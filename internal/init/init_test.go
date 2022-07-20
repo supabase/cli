@@ -61,4 +61,6 @@ func TestInitCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, initGitignore, content[1:])
 	})
+
+	// TODO: test all error edge cases around git ignore
 }

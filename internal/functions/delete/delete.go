@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -20,7 +21,7 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(); err != nil {
+			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
 				return err
 			}
 		} else if err != nil {
