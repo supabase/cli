@@ -26,7 +26,7 @@ func Run(fsys afero.Fs) error {
 	if err := run(fsys); errors.Is(err, errAlreadyInitialized) {
 		return err
 	} else if err != nil {
-		fsys.RemoveAll("supabase")
+		_ = fsys.RemoveAll("supabase")
 		return err
 	}
 
