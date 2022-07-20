@@ -153,7 +153,6 @@ func IsBranchNameReserved(branch string) bool {
 	}
 }
 
-// Deprecated: use *FS version instead which allows mocking the filesystem in unit tests
 func MkdirIfNotExist(path string) error {
 	if err := os.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
