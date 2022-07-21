@@ -163,7 +163,7 @@ func MkdirIfNotExist(path string) error {
 }
 
 func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
-	if err := fsys.Mkdir("supabase", 0755); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := fsys.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 
