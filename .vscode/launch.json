@@ -14,7 +14,7 @@
       "env": {
         "DOCKER_HOST": "tcp://127.0.0.1:2375",
         "DOCKER_API_VERSION": "1.41",
-        "SUPABASE_API_URI": "http://127.0.0.1:2376"
+        "SUPABASE_INTERNAL_API_HOST": "http://127.0.0.1:2376"
       }
     }
   ]

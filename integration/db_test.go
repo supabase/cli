@@ -78,7 +78,7 @@ func (suite *DBTestSuite) SetupTest() {
 	}
 
 	// create supabase dir
-	suite.cmd = clicmd.NewRootCmd()
+	suite.cmd = clicmd.GetRootCmd()
 	init, _, err := suite.cmd.Find([]string{"init"})
 	if err != nil {
 		suite.Fail("failed to find init command")

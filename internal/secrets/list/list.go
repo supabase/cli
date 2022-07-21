@@ -38,7 +38,7 @@ func Run() error {
 			return err
 		}
 
-		supabaseAPI := os.Getenv("SUPABASE_API_URI")
+		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
 		if supabaseAPI == "" {
 			supabaseAPI = "https://api.supabase.io"
 		}

@@ -23,6 +23,8 @@ func init() {
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
-func NewRootCmd() *cobra.Command {
+// instantiate new rootCmd is a bit tricky with cobra, but it can be done later with the following
+// approach for example: https://github.com/portworx/pxc/tree/master/cmd
+func GetRootCmd() *cobra.Command {
 	return rootCmd
 }

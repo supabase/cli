@@ -32,7 +32,7 @@ func (suite *InitTestSuite) TestInit() {
 // hooks
 func (suite *InitTestSuite) SetupTest() {
 	// init cli
-	suite.cmd = clicmd.NewRootCmd()
+	suite.cmd = clicmd.GetRootCmd()
 	suite.tempDir = NewTempDir(Logger, TempDir)
 }
 

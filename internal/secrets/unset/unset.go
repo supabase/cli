@@ -42,7 +42,7 @@ func Run(args []string) error {
 		}
 		reqBody := bytes.NewReader(secretsNamesBytes)
 
-		supabaseAPI := os.Getenv("SUPABASE_API_URI")
+		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
 		if supabaseAPI == "" {
 			supabaseAPI = "https://api.supabase.io"
 		}

@@ -5,6 +5,27 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+
+      - run: |
+          if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
+          chown -R runner /home/runner/
+          go test ./... -race -v -count=1 -cover -coverprofile=coverage.out
+          go tool cover -func coverage.out | grep total
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          DOCKER_HOST: tcp://127.0.0.1:2375
+          DOCKER_API_VERSION: "1.41"
+          SUPABASE_INTERNAL_API_HOST: http://127.0.0.1:2376
+
   lint:
     name: Lint
     runs-on: ubuntu-20.04
@@ -18,22 +39,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v3
         with:
           version: v1.46
-
-  test:
-    name: Test
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions/setup-go@v3
-        with:
-          go-version: 1.18
-
-      - run: |
-          if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          go test ./... -race -v -count=1 -cover
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-          DOCKER_HOST: tcp://127.0.0.1:2375
-          DOCKER_API_VERSION: "1.41"
-          SUPABASE_API_URI: http://127.0.0.1:2376

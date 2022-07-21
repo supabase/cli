@@ -59,7 +59,7 @@ func (suite *LinkTestSuite) TestLink() {
 // hooks
 func (suite *LinkTestSuite) SetupTest() {
 	// init cli
-	suite.cmd = clicmd.NewRootCmd()
+	suite.cmd = clicmd.GetRootCmd()
 	suite.tempDir = NewTempDir(Logger, TempDir)
 
 	// init supabase

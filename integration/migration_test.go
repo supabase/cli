@@ -36,7 +36,7 @@ func (suite *MigrationTestSuite) TestNewMigration() {
 // hooks
 func (suite *MigrationTestSuite) SetupTest() {
 	// init cli
-	suite.cmd = clicmd.NewRootCmd()
+	suite.cmd = clicmd.GetRootCmd()
 	suite.tempDir = NewTempDir(Logger, TempDir)
 
 	// init supabase
