@@ -51,8 +51,13 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
 )
 
-//go:embed templates/globals.sql
-var GlobalsSql string
+var (
+	//go:embed templates/globals.sql
+	GlobalsSql string
+
+	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
+	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
+)
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
@@ -154,15 +159,11 @@ func IsBranchNameReserved(branch string) bool {
 }
 
 func MkdirIfNotExist(path string) error {
-	if err := os.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-
-	return nil
+	return MkdirIfNotExistFS(afero.NewOsFs(), path)
 }
 
 func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
-	if err := fsys.Mkdir("supabase", 0755); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := fsys.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 
@@ -276,13 +277,13 @@ func InstallOrUpgradeDeno() error {
 }
 
 func LoadAccessToken() (string, error) {
+	return LoadAccessTokenFS(afero.NewOsFs())
+}
+
+func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 	// Env takes precedence
 	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
-		matched, err := regexp.MatchString(`^sbp_[a-f0-9]{40}$`, accessToken)
-		if err != nil {
-			return "", err
-		}
-		if !matched {
+		if !AccessTokenPattern.MatchString(accessToken) {
 			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 		}
 
@@ -294,7 +295,7 @@ func LoadAccessToken() (string, error) {
 		return "", err
 	}
 	accessTokenPath := filepath.Join(home, ".supabase", "access-token")
-	accessToken, err := os.ReadFile(accessTokenPath)
+	accessToken, err := afero.ReadFile(fsys, accessTokenPath)
 	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
 		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
 	} else if err != nil {

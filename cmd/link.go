@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
@@ -18,7 +19,8 @@ var (
 				return err
 			}
 
-			if err := link.Run(projectRef); err != nil {
+			fsys := afero.NewOsFs()
+			if err := link.Run(projectRef, fsys); err != nil {
 				return err
 			}
 

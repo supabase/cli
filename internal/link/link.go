@@ -5,24 +5,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(projectRef string) error {
+func Run(projectRef string, fsys afero.Fs) error {
 	// 1. Validate access token + project ref
 	{
-		matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRef)
-		if err != nil {
-			return err
-		}
-		if !matched {
+		if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
 
-		accessToken, err := utils.LoadAccessToken()
+		accessToken, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
 			return err
 		}
@@ -50,13 +45,13 @@ func Run(projectRef string) error {
 
 	// 2. Save project ref
 	{
-		if err := utils.MkdirIfNotExist("supabase"); err != nil {
+		if err := utils.MkdirIfNotExistFS(fsys, "supabase"); err != nil {
 			return err
 		}
-		if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+		if err := utils.MkdirIfNotExistFS(fsys, "supabase/.temp"); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+		if err := afero.WriteFile(fsys, "supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
 			return err
 		}
 	}

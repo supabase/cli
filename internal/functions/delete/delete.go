@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/afero"
@@ -32,11 +31,7 @@ func Run(slug string, projectRefArg string) error {
 				return err
 			}
 		} else {
-			matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
-			if err != nil {
-				return err
-			}
-			if !matched {
+			if !utils.ProjectRefPattern.MatchString(projectRefArg) {
 				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 			}
 		}
