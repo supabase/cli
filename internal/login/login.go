@@ -7,15 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-)
-
-var (
-	pattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 )
 
 func Run(stdin io.Reader, fsys afero.Fs) error {
@@ -32,7 +27,7 @@ Enter your access token: `)
 
 	// 1. Validate access token
 	{
-		if !pattern.Match([]byte(accessToken)) {
+		if !utils.AccessTokenPattern.MatchString(accessToken) {
 			return errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 		}
 	}

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 
 	"github.com/supabase/cli/internal/utils"
 )
@@ -14,11 +13,7 @@ import (
 func Run(projectRef string) error {
 	// 1. Validate access token + project ref
 	{
-		matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRef)
-		if err != nil {
-			return err
-		}
-		if !matched {
+		if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
 
