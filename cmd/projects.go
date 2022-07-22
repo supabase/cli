@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/list"
@@ -36,7 +37,13 @@ var (
 				return err
 			}
 
-			return create.Run(name, orgId, dbPassword, region, plan)
+			return create.Run(create.RequestParam{
+				Name:   name,
+				OrgId:  orgId,
+				DbPass: dbPassword,
+				Region: region,
+				Plan:   plan,
+			}, afero.NewOsFs())
 		},
 	}
 
@@ -44,7 +51,7 @@ var (
 		Use:   "list",
 		Short: "List all projects.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run()
+			return list.Run(afero.NewOsFs())
 		},
 	}
 )

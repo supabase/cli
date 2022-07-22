@@ -8,11 +8,21 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(name string, orgId string, dbPassword string, region string, plan string) error {
-	accessToken, err := utils.LoadAccessToken()
+type RequestParam struct {
+	OrgId  string `json:"organization_id"`
+	Name   string `json:"name"`
+	DbPass string `json:"db_pass"`
+	Region string `json:"region"`
+	Plan   string `json:"plan"`
+}
+
+func Run(params RequestParam, fsys afero.Fs) error {
+	accessToken, err := utils.LoadAccessTokenFS(fsys)
 	if err != nil {
 		return err
 	}
@@ -22,18 +32,9 @@ func Run(name string, orgId string, dbPassword string, region string, plan strin
 	}
 
 	// POST request, check errors
-	var project struct {
-		Id   string `json:"id"`
-		Name string `json:"name"`
-	}
+	var project list.Project
 	{
-		jsonBytes, err := json.Marshal(map[string]interface{}{
-			"organization_id": orgId,
-			"name":            name,
-			"db_pass":         dbPassword,
-			"region":          region,
-			"plan":            plan,
-		})
+		jsonBytes, err := json.Marshal(params)
 		if err != nil {
 			return err
 		}
