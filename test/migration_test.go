@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
-	"github.com/supabase/cli/integration/mocks/supabase"
+	"github.com/supabase/cli/test/mocks/supabase"
 )
 
 type MigrationTestSuite struct {

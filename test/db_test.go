@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
-	"github.com/supabase/cli/integration/mocks/docker"
+	"github.com/supabase/cli/test/mocks/docker"
 )
 
 type DBTestSuite struct {

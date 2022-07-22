@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/docker/docker/client"
-	"github.com/supabase/cli/integration/mocks/docker"
-	"github.com/supabase/cli/integration/mocks/supabase"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/test/mocks/docker"
+	"github.com/supabase/cli/test/mocks/supabase"
 )
 
 const (
