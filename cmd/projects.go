@@ -37,7 +37,13 @@ var (
 				return err
 			}
 
-			return create.Run(name, orgId, dbPassword, region, plan)
+			return create.Run(create.RequestParam{
+				Name:   name,
+				OrgId:  orgId,
+				DbPass: dbPassword,
+				Region: region,
+				Plan:   plan,
+			}, afero.NewOsFs())
 		},
 	}
 
