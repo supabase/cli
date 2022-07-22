@@ -18,7 +18,7 @@ func Run() error {
 		return err
 	}
 
-	req, err := http.NewRequest("GET", "https://api.supabase.io/v1/organizations", nil)
+	req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/organizations", nil)
 	if err != nil {
 		return err
 	}

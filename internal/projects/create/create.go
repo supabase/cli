@@ -39,7 +39,7 @@ func Run(params RequestParam, fsys afero.Fs) error {
 			return err
 		}
 
-		req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects", bytes.NewReader(jsonBytes))
+		req, err := http.NewRequest("POST", utils.GetSupabaseAPIHost()+"/v1/projects", bytes.NewReader(jsonBytes))
 		if err != nil {
 			return err
 		}
@@ -73,6 +73,6 @@ func Run(params RequestParam, fsys afero.Fs) error {
 	{
 	}
 
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Id))
+	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua(utils.GetSupabaseDashboardURL()+"/project/"+project.Id))
 	return nil
 }

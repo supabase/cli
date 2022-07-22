@@ -27,7 +27,7 @@ func Run(fsys afero.Fs) error {
 		return err
 	}
 
-	req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects", nil)
+	req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects", nil)
 	if err != nil {
 		return err
 	}
