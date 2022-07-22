@@ -22,10 +22,6 @@ jobs:
           mkdir  /home/runner/.supabase && chown -R runner /home/runner/.supabase
           go test ./... -race -v -count=1 -coverpkg ./... -coverprofile=coverage.out
           go tool cover -func coverage.out | grep total
-        env:
-          DOCKER_HOST: tcp://127.0.0.1:2375
-          DOCKER_API_VERSION: "1.41"
-          SUPABASE_INTERNAL_API_HOST: http://127.0.0.1:2376
 
   lint:
     name: Lint
