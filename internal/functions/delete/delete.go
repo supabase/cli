@@ -59,11 +59,7 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 
-		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
-		if supabaseAPI == "" {
-			supabaseAPI = "https://api.supabase.io"
-		}
-		req, err := http.NewRequest("GET", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
+		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -78,7 +74,7 @@ func Run(slug string, projectRefArg string) error {
 		case http.StatusNotFound: // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
 		case http.StatusOK: // Function exists
-			req, err := http.NewRequest("DELETE", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
+			req, err := http.NewRequest("DELETE", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 			if err != nil {
 				return err
 			}

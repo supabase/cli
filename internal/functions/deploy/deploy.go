@@ -122,11 +122,7 @@ Enter your project ref: `)
 			return err
 		}
 
-		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
-		if supabaseAPI == "" {
-			supabaseAPI = "https://api.supabase.io"
-		}
-		req, err := http.NewRequest("GET", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
+		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -151,7 +147,7 @@ Enter your project ref: `)
 			}
 
 			req, err := http.NewRequest(
-				"POST", supabaseAPI+"/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
+				"POST", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -180,7 +176,7 @@ Enter your project ref: `)
 			}
 
 			req, err := http.NewRequest(
-				"PATCH", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
+				"PATCH", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
