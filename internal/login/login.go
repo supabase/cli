@@ -14,8 +14,8 @@ import (
 )
 
 func Run(stdin io.Reader, fsys afero.Fs) error {
-	fmt.Print(`You can generate an access token from https://app.supabase.io/account/tokens.
-Enter your access token: `)
+	fmt.Printf(`You can generate an access token from %s/account/tokens.
+Enter your access token: `, utils.GetSupabaseDashboardURL())
 
 	scanner := bufio.NewScanner(stdin)
 	if !scanner.Scan() {
