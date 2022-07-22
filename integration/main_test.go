@@ -5,8 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/docker/docker/client"
 	"github.com/supabase/cli/integration/mocks/docker"
 	"github.com/supabase/cli/integration/mocks/supabase"
+	"github.com/supabase/cli/internal/utils"
 )
 
 const (
@@ -32,6 +34,10 @@ func TestMain(m *testing.M) {
 	DockerMock = newDockerMock(Logger)
 	SupaMock = newSupabaseMock(Logger)
 	TempDir = NewTempDir(Logger, "")
+
+	// redirect clients to mock servers
+	client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker)
+	os.Setenv("SUPABASE_INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
 
 	// run tests
 	exitVal := m.Run()
