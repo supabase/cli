@@ -36,7 +36,10 @@ func TestMain(m *testing.M) {
 	TempDir = NewTempDir(Logger, "")
 
 	// redirect clients to mock servers
-	client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker)
+	err := client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker)
+	if err != nil {
+		Logger.Fatal(err)
+	}
 	os.Setenv("SUPABASE_INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
 
 	// run tests
