@@ -208,11 +208,7 @@ Enter your project ref: `)
 
 	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef))
 
-	supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
-	if supabaseAPI == "" {
-		supabaseAPI = "https://api.supabase.io"
-	}
-	url := fmt.Sprintf("%s/project/%v/functions/%v/details", supabaseAPI, projectRef, data.Id)
+	url := fmt.Sprintf("%s/project/%v/functions/%v/details", utils.GetSupabaseDashboardURL(), projectRef, data.Id)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 
 	return nil
