@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -23,11 +22,7 @@ func Run(projectRef string, fsys afero.Fs) error {
 			return err
 		}
 
-		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
-		if supabaseAPI == "" {
-			supabaseAPI = "https://api.supabase.io"
-		}
-		req, err := http.NewRequest("GET", supabaseAPI+"/v1/projects/"+projectRef+"/functions", nil)
+		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions", nil)
 		if err != nil {
 			return err
 		}
