@@ -2,7 +2,6 @@ package link
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -12,11 +11,6 @@ import (
 )
 
 func TestLinkCommand(t *testing.T) {
-	var supabaseAPI = os.Getenv("SUPABASE_INTERNAL_API_HOST")
-	if supabaseAPI == "" {
-		supabaseAPI = "https://api.supabase.io"
-	}
-
 	t.Run("link functions to project", func(t *testing.T) {
 		// Setup in-memory fs
 		project := apitest.RandomProjectRef()
@@ -26,7 +20,7 @@ func TestLinkCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.Off()
-		gock.New(supabaseAPI).
+		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(200).
 			JSON([]string{})
@@ -54,7 +48,7 @@ func TestLinkCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.Off()
-		gock.New(supabaseAPI).
+		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -70,7 +64,7 @@ func TestLinkCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.Off()
-		gock.New(supabaseAPI).
+		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
@@ -87,7 +81,7 @@ func TestLinkCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.Off()
-		gock.New(supabaseAPI).
+		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(200).
 			JSON([]string{})
