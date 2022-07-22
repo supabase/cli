@@ -79,7 +79,11 @@ func Run(envFilePath string, args []string) error {
 		}
 		reqBody := bytes.NewReader(secretsBytes)
 
-		req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects/"+projectRef+"/secrets", reqBody)
+		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
+		if supabaseAPI == "" {
+			supabaseAPI = "https://api.supabase.io"
+		}
+		req, err := http.NewRequest("POST", supabaseAPI+"/v1/projects/"+projectRef+"/secrets", reqBody)
 		if err != nil {
 			return err
 		}

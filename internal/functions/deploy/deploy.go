@@ -122,7 +122,11 @@ Enter your project ref: `)
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
+		supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
+		if supabaseAPI == "" {
+			supabaseAPI = "https://api.supabase.io"
+		}
+		req, err := http.NewRequest("GET", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -135,12 +139,19 @@ Enter your project ref: `)
 
 		switch resp.StatusCode {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-			jsonBytes, err := json.Marshal(map[string]interface{}{"slug": slug, "name": slug, "body": newFunctionBody, "verify_jwt": verifyJWT})
+			jsonBytes, err := json.Marshal(
+				map[string]interface{}{
+					"slug":       slug,
+					"name":       slug,
+					"body":       newFunctionBody,
+					"verify_jwt": verifyJWT,
+				})
 			if err != nil {
 				return err
 			}
 
-			req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest(
+				"POST", supabaseAPI+"/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -168,7 +179,8 @@ Enter your project ref: `)
 				return err
 			}
 
-			req, err := http.NewRequest("PATCH", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest(
+				"PATCH", supabaseAPI+"/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -200,7 +212,11 @@ Enter your project ref: `)
 
 	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef))
 
-	url := fmt.Sprintf("https://app.supabase.io/project/%v/functions/%v/details", projectRef, data.Id)
+	supabaseAPI := os.Getenv("SUPABASE_INTERNAL_API_HOST")
+	if supabaseAPI == "" {
+		supabaseAPI = "https://api.supabase.io"
+	}
+	url := fmt.Sprintf("%s/project/%v/functions/%v/details", supabaseAPI, projectRef, data.Id)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 
 	return nil
