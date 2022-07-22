@@ -31,8 +31,8 @@ func Run(slug string, projectRefArg string, verifyJWT bool) error {
 		}
 		if len(projectRefArg) == 0 {
 			if err := utils.AssertIsLinked(); err != nil && strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-				fmt.Print(`You can find your project ref from the project's dashboard home page, e.g. https://app.supabase.io/project/<project-ref>.
-Enter your project ref: `)
+				fmt.Printf(`You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
+Enter your project ref: `, utils.GetSupabaseDashboardURL())
 
 				scanner := bufio.NewScanner(os.Stdin)
 				if !scanner.Scan() {
