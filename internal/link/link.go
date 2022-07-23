@@ -51,7 +51,7 @@ func Run(projectRef string, fsys afero.Fs) error {
 		if err := utils.MkdirIfNotExistFS(fsys, "supabase/.temp"); err != nil {
 			return err
 		}
-		if err := afero.WriteFile(fsys, "supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+		if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
 			return err
 		}
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/test/mocks/supabase"
 )
 
@@ -38,7 +39,7 @@ func (suite *SecretsTestSuite) TestLink() {
 	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)
 	os.Setenv("SUPABASE_ACCESS_TOKEN", key)
 	ref := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
-	require.NoError(suite.T(), ioutil.WriteFile("supabase/.temp/project-ref", []byte(ref), os.FileMode(0755)))
+	require.NoError(suite.T(), ioutil.WriteFile(utils.ProjectRefPath, []byte(ref), os.FileMode(0755)))
 
 	// set stdout to write into file so we can capture cmd output
 	tmpfile, err := ioutil.TempFile(suite.tempDir, "output")

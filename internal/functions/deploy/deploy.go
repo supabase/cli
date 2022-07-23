@@ -45,7 +45,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 				if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
 					return err
 				}
-				if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+				if err := os.WriteFile(utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
 					return err
 				}
 			} else if err != nil {
@@ -108,7 +108,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 			if err != nil {
 				return err
 			}

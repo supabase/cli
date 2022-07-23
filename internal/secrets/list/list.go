@@ -27,7 +27,7 @@ func Run() error {
 
 	// 2. Print secrets.
 	{
-		projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+		projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 		if err != nil {
 			return err
 		}

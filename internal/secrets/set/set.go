@@ -27,7 +27,7 @@ func Run(envFilePath string, args []string) error {
 
 	// 2. Set secret(s).
 	{
-		projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+		projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 		if err != nil {
 			return err
 		}

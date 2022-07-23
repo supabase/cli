@@ -78,7 +78,7 @@ func Run(isLocal bool, dbUrl string) error {
 			if err := utils.AssertIsLinked(); err != nil {
 				return err
 			}
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 			if err != nil {
 				return err
 			}
