@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
+	"github.com/supabase/cli/internal/utils"
 )
 
 type InitTestSuite struct {
@@ -25,7 +26,7 @@ func (suite *InitTestSuite) TestInit() {
 	require.NoError(suite.T(), init.RunE(init, []string{}))
 
 	// check if init dir exists
-	_, err = os.Stat("supabase/config.toml")
+	_, err = os.Stat(utils.ConfigPath)
 	require.NoError(suite.T(), err)
 }
 

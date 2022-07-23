@@ -131,7 +131,7 @@ func LoadConfig() error {
 
 func loadConfig(fsys afero.Fs) error {
 	// TODO: provide a config interface for all sub commands to use fsys
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), "supabase/config.toml", &Config); err == nil {
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
 		_, _err := os.Stat("supabase/config.json")
@@ -384,7 +384,7 @@ secret = ""
 	Config.Db.MajorVersion = uint(dbMajorVersion)
 	Config.Auth.SiteUrl = "http://localhost:3000"
 
-	if err := os.WriteFile("supabase/config.toml", []byte(newConfig), 0644); err != nil {
+	if err := os.WriteFile(ConfigPath, []byte(newConfig), 0644); err != nil {
 		return err
 	}
 	if err := os.Remove("supabase/config.json"); err != nil {
@@ -417,7 +417,7 @@ func WriteConfig(fsys afero.Fs, test bool) error {
 		return err
 	}
 
-	if err := afero.WriteFile(fsys, "supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
+	if err := afero.WriteFile(fsys, ConfigPath, initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 
