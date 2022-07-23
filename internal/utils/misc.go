@@ -49,6 +49,8 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 `
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
+
+	ConfigPath = "supabase/config.toml"
 )
 
 var (
@@ -171,8 +173,12 @@ func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
 }
 
 func AssertSupabaseCliIsSetUp() error {
-	if _, err := os.ReadFile("supabase/config.toml"); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find " + Bold("supabase/config.toml") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
+	return AssertSupabaseCliIsSetUpFS(afero.NewOsFs())
+}
+
+func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
+	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
+		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
 	} else if err != nil {
 		return err
 	}

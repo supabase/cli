@@ -23,7 +23,7 @@ func TestInitCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run(fsys))
 		// Validate generated config.toml
-		exists, err := afero.Exists(fsys, "supabase/config.toml")
+		exists, err := afero.Exists(fsys, utils.ConfigPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate generated .gitignore
@@ -35,7 +35,7 @@ func TestInitCommand(t *testing.T) {
 	t.Run("throws error when config file exists", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
-		_, err := fsys.Create("supabase/config.toml")
+		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
 		assert.Error(t, Run(fsys))

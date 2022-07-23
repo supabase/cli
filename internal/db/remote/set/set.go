@@ -45,7 +45,7 @@ func Run(url string) error {
 			dbMajorVersion,
 			utils.Config.Db.MajorVersion,
 			utils.Aqua("db.major_version"),
-			utils.Bold("supabase/config.toml"),
+			utils.Bold(utils.ConfigPath),
 		)
 	}
 
