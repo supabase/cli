@@ -9,11 +9,17 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run() error {
-	accessToken, err := utils.LoadAccessToken()
+type Organization struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func Run(fsys afero.Fs) error {
+	accessToken, err := utils.LoadAccessTokenFS(fsys)
 	if err != nil {
 		return err
 	}
@@ -43,10 +49,7 @@ func Run() error {
 		return err
 	}
 
-	var orgs []struct {
-		Id   string `json:"id"`
-		Name string `json:"name"`
-	}
+	var orgs []Organization
 	if err := json.Unmarshal(body, &orgs); err != nil {
 		return err
 	}
