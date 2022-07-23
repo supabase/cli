@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/orgs/list"
 )
@@ -15,7 +16,7 @@ var (
 		Use:   "list",
 		Short: "List all organizations the logged-in user belongs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run()
+			return list.Run(afero.NewOsFs())
 		},
 	}
 )
