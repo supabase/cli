@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/test/mocks/supabase"
 )
 
@@ -49,9 +50,9 @@ func (suite *LinkTestSuite) TestLink() {
 		"Accept-Encoding": []string{"gzip"},
 		"User-Agent":      []string{"Go-http-client/1.1"},
 	})
-	_, err = os.Stat("supabase/.temp/project-ref")
+	_, err = os.Stat(utils.ProjectRefPath)
 	require.NoError(suite.T(), err)
-	ref, err := ioutil.ReadFile("supabase/.temp/project-ref")
+	ref, err := ioutil.ReadFile(utils.ProjectRefPath)
 	require.NoError(suite.T(), err)
 	require.Equal(suite.T(), id, string(ref))
 }

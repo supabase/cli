@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -26,6 +27,10 @@ func TestLinkCommand(t *testing.T) {
 			JSON([]string{})
 		// Run test
 		assert.NoError(t, Run(project, fsys))
+		// Validate file contents
+		content, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte(project), content)
 	})
 
 	t.Run("throws error on invalid project ref", func(t *testing.T) {

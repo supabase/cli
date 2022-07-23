@@ -50,7 +50,8 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
 
-	ConfigPath = "supabase/config.toml"
+	ConfigPath     = "supabase/config.toml"
+	ProjectRefPath = "supabase/.temp/project-ref"
 )
 
 var (
@@ -187,7 +188,11 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 }
 
 func AssertIsLinked() error {
-	if _, err := os.Stat("supabase/.temp/project-ref"); errors.Is(err, os.ErrNotExist) {
+	return AssertIsLinkedFS(afero.NewOsFs())
+}
+
+func AssertIsLinkedFS(fsys afero.Fs) error {
+	if _, err := fsys.Stat(ProjectRefPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	} else if err != nil {
 		return err
