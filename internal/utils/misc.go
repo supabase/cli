@@ -60,6 +60,7 @@ var (
 
 	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
+	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
 )
 
 func GetCurrentTimestamp() string {

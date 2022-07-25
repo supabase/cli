@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 
 	pgx "github.com/jackc/pgx/v4"
 	"github.com/supabase/cli/internal/utils"
@@ -66,9 +65,8 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		fmt.Println("Applying unapplied migrations...")
 	}
 
-	re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	for i, migration := range migrations {
-		matches := re.FindStringSubmatch(migration.Name())
+		matches := utils.MigrateFilePattern.FindStringSubmatch(migration.Name())
 		if len(matches) == 0 {
 			return errors.New("Can't process file in supabase/migrations: " + migration.Name())
 		}

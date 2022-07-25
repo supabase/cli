@@ -161,9 +161,8 @@ func run(p utils.Program, url string) error {
 			return conflictErr
 		}
 
-		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 		for i, remoteTimestamp := range remoteMigrations {
-			localTimestamp := re.FindStringSubmatch(localMigrations[i].Name())[1]
+			localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
 
 			if localTimestamp == remoteTimestamp {
 				continue
