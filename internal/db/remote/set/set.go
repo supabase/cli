@@ -6,7 +6,6 @@ import (
 	"fmt"
 	u "net/url"
 	"os"
-	"regexp"
 
 	pgx "github.com/jackc/pgx/v4"
 	"github.com/supabase/cli/internal/utils"
@@ -20,7 +19,7 @@ func Run(url string) error {
 		}
 	}
 
-	matches := regexp.MustCompile(`^postgres(?:ql)?://postgres:(.+)@(.+?)(:\d+)?/postgres$`).FindStringSubmatch(url)
+	matches := utils.PostgresUrlPattern.FindStringSubmatch(url)
 	if len(matches) != 4 {
 		return errors.New("URL is not a valid Supabase connection string.")
 	}
