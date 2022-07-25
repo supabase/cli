@@ -12,7 +12,7 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestSecretSetCommand(t *testing.T) {
+func TestSecretUnsetCommand(t *testing.T) {
 	t.Run("Unsets secret via cli args", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
