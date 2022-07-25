@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
@@ -87,7 +88,7 @@ var (
 		Short: "Set the remote database to push migrations to.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return set.Run(args[0])
+			return set.Run(args[0], afero.NewOsFs())
 		},
 	}
 

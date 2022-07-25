@@ -126,10 +126,10 @@ type (
 )
 
 func LoadConfig() error {
-	return loadConfig(afero.NewOsFs())
+	return LoadConfigFS(afero.NewOsFs())
 }
 
-func loadConfig(fsys afero.Fs) error {
+func LoadConfigFS(fsys afero.Fs) error {
 	// TODO: provide a config interface for all sub commands to use fsys
 	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err == nil {
 		// skip

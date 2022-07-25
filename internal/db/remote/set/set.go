@@ -5,16 +5,16 @@ import (
 	"errors"
 	"fmt"
 	u "net/url"
-	"os"
 
 	pgx "github.com/jackc/pgx/v4"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(url string) error {
+func Run(url string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.LoadConfig(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
 	}
@@ -80,7 +80,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
 			return err
 		}
-		localMigrations, err := os.ReadDir("supabase/migrations")
+		localMigrations, err := afero.ReadDir(fsys, "supabase/migrations")
 		if err != nil {
 			return err
 		}
@@ -94,7 +94,6 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			}
 
 			localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
-
 			if localTimestamp == remoteTimestamp {
 				continue
 			}
@@ -108,10 +107,10 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	rows.Close()
 
 	// 3. Write .env
-	if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, "supabase/.temp"); err != nil {
 		return err
 	}
-	if err := os.WriteFile(utils.RemoteDbPath, []byte(url), 0600); err != nil {
+	if err := afero.WriteFile(fsys, utils.RemoteDbPath, []byte(url), 0600); err != nil {
 		return err
 	}
 
