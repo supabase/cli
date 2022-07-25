@@ -30,6 +30,8 @@ func TestProjectCreateCommand(t *testing.T) {
 		defer gock.Off()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
+			MatchType("json").
+			JSON(params).
 			Reply(201).
 			JSON(list.Project{
 				Id:        "bcnzkuicchyuaswrezwk",
@@ -56,6 +58,8 @@ func TestProjectCreateCommand(t *testing.T) {
 		defer gock.Off()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
+			MatchType("json").
+			JSON(params).
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, Run(params, fsys))
@@ -71,6 +75,8 @@ func TestProjectCreateCommand(t *testing.T) {
 		defer gock.Off()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
+			MatchType("json").
+			JSON(params).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
@@ -87,6 +93,8 @@ func TestProjectCreateCommand(t *testing.T) {
 		defer gock.Off()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
+			MatchType("json").
+			JSON(params).
 			Reply(200).
 			JSON([]string{})
 		// Run test
