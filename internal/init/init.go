@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -43,7 +44,7 @@ func run(fsys afero.Fs) error {
 		}
 	}
 
-	if err := utils.MkdirIfNotExistFS(fsys, "supabase"); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ConfigPath)); err != nil {
 		return err
 	}
 

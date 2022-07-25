@@ -42,7 +42,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 
 				projectRef := strings.TrimSpace(scanner.Text())
 
-				if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+				if err := utils.MkdirIfNotExist(filepath.Dir(utils.ProjectRefPath)); err != nil {
 					return err
 				}
 				if err := os.WriteFile(utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
