@@ -86,7 +86,6 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 			return err
 		}
 
-		re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 		for i, remoteTimestamp := range remoteMigrations {
 			if i >= len(localMigrations) {
 				return errors.New(`The remote database was applied with migration(s) that cannot be found locally. Try updating the project from version control. Otherwise:
@@ -95,7 +94,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 3. Run ` + utils.Aqua("supabase db remote commit") + ".")
 			}
 
-			localTimestamp := re.FindStringSubmatch(localMigrations[i].Name())[1]
+			localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
 
 			if localTimestamp == remoteTimestamp {
 				continue
