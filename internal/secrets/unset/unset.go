@@ -7,31 +7,31 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(args []string) error {
+func Run(args []string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinked(); err != nil {
+		if err := utils.AssertIsLinkedFS(fsys); err != nil {
 			return err
 		}
 	}
 
 	// 2. Unset secret(s).
 	{
-		projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
+		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		if err != nil {
 			return err
 		}
 		projectRef := string(projectRefBytes)
 
-		accessToken, err := utils.LoadAccessToken()
+		accessToken, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
 			return err
 		}

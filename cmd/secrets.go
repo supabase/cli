@@ -39,7 +39,7 @@ var (
 		Use:   "unset <NAME> ...",
 		Short: "Unset a secret(s) from the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unset.Run(args)
+			return unset.Run(args, afero.NewOsFs())
 		},
 	}
 )
