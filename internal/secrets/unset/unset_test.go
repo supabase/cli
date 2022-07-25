@@ -30,10 +30,10 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]string{"my-scret"}).
+			JSON([]string{"my-secret"}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run([]string{"my-scret"}, fsys))
+		assert.NoError(t, Run([]string{"my-secret"}, fsys))
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
@@ -120,6 +120,6 @@ func TestSecretUnsetCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run([]string{"my-scret"}, fsys))
+		assert.Error(t, Run([]string{"my-secret"}, fsys))
 	})
 }
