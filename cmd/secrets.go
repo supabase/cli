@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/secrets/set"
@@ -17,7 +18,7 @@ var (
 		Use:   "list",
 		Short: "List all secrets in the linked project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run()
+			return list.Run(afero.NewOsFs())
 		},
 	}
 

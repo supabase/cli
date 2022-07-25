@@ -7,33 +7,38 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run() error {
+type Secret struct {
+	Name  string
+	Value string
+}
+
+func Run(fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinked(); err != nil {
+		if err := utils.AssertIsLinkedFS(fsys); err != nil {
 			return err
 		}
 	}
 
 	// 2. Print secrets.
 	{
-		projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
+		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		if err != nil {
 			return err
 		}
 		projectRef := string(projectRefBytes)
 
-		accessToken, err := utils.LoadAccessToken()
+		accessToken, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
 			return err
 		}
@@ -63,10 +68,7 @@ func Run() error {
 			return err
 		}
 
-		var secrets []struct {
-			Name  string
-			Value string
-		}
+		var secrets []Secret
 		if err := json.Unmarshal(body, &secrets); err != nil {
 			return err
 		}
