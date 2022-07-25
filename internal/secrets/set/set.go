@@ -7,50 +7,46 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/joho/godotenv"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(envFilePath string, args []string) error {
+func Run(envFilePath string, args []string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinked(); err != nil {
+		if err := utils.AssertIsLinkedFS(fsys); err != nil {
 			return err
 		}
 	}
 
 	// 2. Set secret(s).
 	{
-		projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
+		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		if err != nil {
 			return err
 		}
 		projectRef := string(projectRefBytes)
 
-		accessToken, err := utils.LoadAccessToken()
+		accessToken, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
 			return err
 		}
 
-		type Secret struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		}
-
-		var secrets []Secret
+		var secrets []list.Secret
 		if envFilePath != "" {
 			envMap, err := godotenv.Read(envFilePath)
 			if err != nil {
 				return err
 			}
 			for name, value := range envMap {
-				secret := Secret{
+				secret := list.Secret{
 					Name:  name,
 					Value: value,
 				}
@@ -65,7 +61,7 @@ func Run(envFilePath string, args []string) error {
 					return errors.New("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
 				}
 
-				secret := Secret{
+				secret := list.Secret{
 					Name:  name,
 					Value: value,
 				}

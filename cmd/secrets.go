@@ -31,7 +31,7 @@ var (
 				return err
 			}
 
-			return set.Run(envFilePath, args)
+			return set.Run(envFilePath, args, afero.NewOsFs())
 		},
 	}
 
