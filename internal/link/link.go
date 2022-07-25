@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -45,10 +46,7 @@ func Run(projectRef string, fsys afero.Fs) error {
 
 	// 2. Save project ref
 	{
-		if err := utils.MkdirIfNotExistFS(fsys, "supabase"); err != nil {
-			return err
-		}
-		if err := utils.MkdirIfNotExistFS(fsys, "supabase/.temp"); err != nil {
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ProjectRefPath)); err != nil {
 			return err
 		}
 		if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	u "net/url"
+	"path/filepath"
 
 	pgx "github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -107,7 +108,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	rows.Close()
 
 	// 3. Write .env
-	if err := utils.MkdirIfNotExistFS(fsys, "supabase/.temp"); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RemoteDbPath)); err != nil {
 		return err
 	}
 	if err := afero.WriteFile(fsys, utils.RemoteDbPath, []byte(url), 0600); err != nil {
