@@ -35,7 +35,7 @@ func Run() error {
 		}
 	}
 
-	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
+	urlBytes, err := os.ReadFile(utils.RemoteDbPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
 	} else if err != nil {

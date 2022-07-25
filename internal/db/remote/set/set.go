@@ -112,7 +112,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
 		return err
 	}
-	if err := os.WriteFile("supabase/.temp/remote-db-url", []byte(url), 0600); err != nil {
+	if err := os.WriteFile(utils.RemoteDbPath, []byte(url), 0600); err != nil {
 		return err
 	}
 

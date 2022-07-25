@@ -52,6 +52,7 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 
 	ConfigPath     = "supabase/config.toml"
 	ProjectRefPath = "supabase/.temp/project-ref"
+	RemoteDbPath   = "supabase/.temp/remote-db-url"
 )
 
 var (
