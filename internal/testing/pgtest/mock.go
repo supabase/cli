@@ -107,10 +107,10 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 			}
 		}
 		r.script.Steps = append(r.script.Steps, pgmock.SendMessage(&desc))
-	} else {
-		// Postgres emits field descriptions even if no rows are returned. However,
-		// we do not need to handle this case because pgx does not care about it.
 	}
+	// Note: Postgres emits field descriptions even if no rows are returned. However,
+	// pgx does not care about it so we do not need to handle the else case.
+
 	// Add row data
 	for _, data := range rows {
 		var dr pgproto3.DataRow
@@ -126,16 +126,17 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 		}
 		r.script.Steps = append(r.script.Steps, pgmock.SendMessage(&dr))
 	}
-	// Subquery emits additional completion messages but pgx doesn't seem to care. For eg.
-	// Reply("CREATE SCHEMA").
-	// pgmock.SendMessage(&pgproto3.NoticeResponse{
-	// 	Severity:            "NOTICE",
-	// 	SeverityUnlocalized: "NOTICE",
-	// 	Code:                "42P06",
-	// 	Message:             "schema \"supabase_migrations\" already exists, skipping",
-	// }),
-	// pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte("CREATE SCHEMA")}),
+
 	// Add completion message
+	// Subquery emits additional completion messages but pgx doesn't seem to care. For eg.
+	//   Reply("CREATE SCHEMA").
+	//   pgmock.SendMessage(&pgproto3.NoticeResponse{
+	// 	     Severity:            "NOTICE",
+	// 	     SeverityUnlocalized: "NOTICE",
+	// 	     Code:                "42P06",
+	// 	     Message:             "schema \"supabase_migrations\" already exists, skipping",
+	//   }),
+	//   pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte("CREATE SCHEMA")}),
 	r.script.Steps = append(
 		r.script.Steps,
 		pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte(tag)}),
