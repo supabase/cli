@@ -21,6 +21,10 @@ jobs:
           go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/...,./pkg/... -coverprofile=coverage.out
           go tool cover -func coverage.out | grep total
 
+      - uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: coverage.out
+
   lint:
     name: Lint
     runs-on: ubuntu-20.04
