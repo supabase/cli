@@ -1,5 +1,7 @@
 # Supabase CLI (WIP)
 
+[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main)
+
 [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
 This repository contains all the functionality for our CLI. It is still under heavy development.
