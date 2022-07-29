@@ -38,7 +38,7 @@ func Run(target string) error {
 				return err
 			}
 
-			if err := os.WriteFile("supabase/.branches/_current_branch", []byte(target), 0644); err != nil {
+			if err := os.WriteFile(utils.CurrBranchPath, []byte(target), 0644); err != nil {
 				return err
 			}
 
