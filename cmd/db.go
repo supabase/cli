@@ -60,11 +60,16 @@ var (
 		},
 	}
 
+	useMigra bool
+
 	dbCommitCmd = &cobra.Command{
 		Use:   "commit <migration name>",
 		Short: "Diffs the local database with current migrations, writing it as a new migration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if useMigra {
+				return commit.RunMigra(args[0], afero.NewOsFs())
+			}
 			return commit.Run(args[0])
 		},
 	}
@@ -132,6 +137,7 @@ func init() {
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbCmd.AddCommand(dbBranchCmd)
 	dbCmd.AddCommand(dbChangesCmd)
+	dbCommitCmd.Flags().BoolVar(&useMigra, "migra", false, "Use migra to generate schema diff.")
 	dbCmd.AddCommand(dbCommitCmd)
 	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	dbCmd.AddCommand(dbPushCmd)
