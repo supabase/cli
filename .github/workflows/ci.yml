@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -20,6 +23,10 @@ jobs:
           mkdir  /home/runner/.supabase && chown -R runner /home/runner/.supabase
           go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/...,./pkg/... -coverprofile=coverage.out
           go tool cover -func coverage.out | grep total
+
+      - uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: coverage.out
 
   lint:
     name: Lint
