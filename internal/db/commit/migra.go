@@ -104,7 +104,9 @@ func RunMigra(name string, fsys afero.Fs) error {
 	}
 
 	fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + `.
-WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+
+WARNING: You are using ` + utils.Aqua("--migra") + ` experimental flag to generate schema diffs.
+If you discover any bugs, please report them to https://github.com/supabase/cli/issues.
 Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`)
 
 	return nil
@@ -133,7 +135,7 @@ func createShadowDb(ctx context.Context, container, shadow string) error {
 	// Reset shadow database
 	exec, err := utils.Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
 		Cmd:          []string{"/bin/sh", "-c", resetShadowScript},
-		Env:          []string{"DB_NAME=" + shadow},
+		Env:          []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql},
 		AttachStderr: true,
 		AttachStdout: true,
 	})
@@ -156,7 +158,7 @@ func createShadowDb(ctx context.Context, container, shadow string) error {
 	return nil
 }
 
-// Migrates a fresh database to the latest local schema.
+// Applies local migration scripts to a database.
 func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Parse connection url
 	config, err := pgx.ParseConfig(url)
@@ -164,7 +166,6 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 		return err
 	}
 	// Apply config overrides
-	config.PreferSimpleProtocol = true
 	for _, op := range options {
 		op(config)
 	}
@@ -174,11 +175,6 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 		return err
 	}
 	defer conn.Close(ctx)
-	// Initialise schema
-	batch := toBatchQuery(utils.InitialSchemaSql)
-	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
-		return err
-	}
 	// Apply migrations
 	if migrations, err := afero.ReadDir(fsys, migrateDir); err == nil {
 		for i, migration := range migrations {
