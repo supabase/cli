@@ -98,13 +98,13 @@ func run(p utils.Program) error {
 	)
 
 	// Ensure `_current_branch` file exists.
-	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
+	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
 		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644); err != nil {
+		if err := os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644); err != nil {
 			return err
 		}
 	} else {
@@ -354,7 +354,7 @@ EOSQL
 					return nil
 				}(); err != nil {
 					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					_ = os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644)
+					_ = os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644)
 					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
 				}
 			}

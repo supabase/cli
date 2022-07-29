@@ -53,6 +53,7 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 	ConfigPath     = "supabase/config.toml"
 	ProjectRefPath = "supabase/.temp/project-ref"
 	RemoteDbPath   = "supabase/.temp/remote-db-url"
+	CurrBranchPath = "supabase/.branches/_current_branch"
 )
 
 var (
@@ -71,7 +72,11 @@ func GetCurrentTimestamp() string {
 }
 
 func GetCurrentBranch() (string, error) {
-	branch, err := os.ReadFile("supabase/.branches/_current_branch")
+	return GetCurrentBranchFS(afero.NewOsFs())
+}
+
+func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
+	branch, err := afero.ReadFile(fsys, CurrBranchPath)
 	if err != nil {
 		return "", err
 	}
