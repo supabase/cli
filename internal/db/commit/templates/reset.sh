@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-dropdb --username postgres --host 127.0.0.1 --if-exists "$DB_NAME" || true
+export PGOPTIONS=--client-min-messages=error
+
+dropdb --username postgres --host 127.0.0.1 --if-exists "$DB_NAME"
 createdb --username postgres --host 127.0.0.1 "$DB_NAME"
 
 # initialise large schema here to avoid lockup
