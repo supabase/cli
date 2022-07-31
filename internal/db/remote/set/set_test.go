@@ -24,14 +24,13 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", map[string]interface{}{"version": version})
 		// Run test
 		assert.NoError(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("creates migrations table if absent", func(t *testing.T) {
@@ -40,7 +39,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, true))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist").
 			Query(CREATE_MIGRATION_TABLE).
@@ -49,7 +48,6 @@ func TestDbRemoteSetCommand(t *testing.T) {
 			Reply("SELECT 0")
 		// Run test
 		assert.NoError(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 		// Validate file contents
 		content, err := afero.ReadFile(fsys, utils.RemoteDbPath)
 		assert.NoError(t, err)
@@ -72,12 +70,8 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, true))
-		// Setup mock postgres
-		conn := pgtest.NewWithStatus(map[string]string{})
-		defer conn.Close()
 		// Run test
-		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
+		assert.Error(t, Run(postgresUrl, fsys))
 	})
 
 	t.Run("throws error on missing server version", func(t *testing.T) {
@@ -88,10 +82,9 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		conn := pgtest.NewWithStatus(map[string]string{
 			"standard_conforming_strings": "on",
 		})
-		defer conn.Close()
+		defer conn.Close(t)
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on unsupported server version", func(t *testing.T) {
@@ -103,10 +96,9 @@ func TestDbRemoteSetCommand(t *testing.T) {
 			"standard_conforming_strings": "on",
 			"server_version":              "13.1",
 		})
-		defer conn.Close()
+		defer conn.Close(t)
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on failure to create table", func(t *testing.T) {
@@ -115,14 +107,13 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, true))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist").
 			Query(CREATE_MIGRATION_TABLE).
 			ReplyError(pgerrcode.DuplicateTable, "relation \"schema_migrations\" already exists")
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on failure to list migrations", func(t *testing.T) {
@@ -131,14 +122,13 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, true))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on migration mismatch", func(t *testing.T) {
@@ -147,14 +137,13 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, true))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", map[string]interface{}{"version": "20220727064247"})
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on malformed file name", func(t *testing.T) {
@@ -167,14 +156,13 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", map[string]interface{}{"version": "20220727064247"})
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 
 	t.Run("throws error on failure to create directory", func(t *testing.T) {
@@ -183,7 +171,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, true))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		defer conn.Close()
+		defer conn.Close(t)
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist").
 			Query(CREATE_MIGRATION_TABLE).
@@ -192,6 +180,5 @@ func TestDbRemoteSetCommand(t *testing.T) {
 			Reply("SELECT 0")
 		// Run test
 		assert.Error(t, Run(postgresUrl, afero.NewReadOnlyFs(fsys), conn.Intercept))
-		assert.NoError(t, <-conn.ErrChan)
 	})
 }
