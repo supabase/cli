@@ -155,7 +155,12 @@ func createShadowDb(ctx context.Context, container, shadow string) error {
 	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, resp.Reader); err != nil {
 		return err
 	}
-	if errBuf.Len() > 0 {
+	// Get the exit code
+	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
+	if err != nil {
+		return err
+	}
+	if iresp.ExitCode > 0 {
 		return errors.New("Error creating shadow database: " + errBuf.String())
 	}
 	return nil
