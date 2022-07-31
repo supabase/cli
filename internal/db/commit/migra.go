@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	migraId    = "supabase_cli_migra"
+	migraId    = "supabase_migra_cli"
 	diffImage  = "djrobstep/migra:3.0.1621480950"
 	migrateDir = "supabase/migrations"
 )
@@ -126,6 +126,9 @@ func toBatchQuery(contents string) (batch pgx.Batch) {
 			batch.Queue(query[:len(query)-1])
 			lines = nil
 		}
+	}
+	if len(lines) > 0 {
+		batch.Queue(strings.Join(lines, "\n"))
 	}
 	return batch
 }
