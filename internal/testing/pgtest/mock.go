@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"reflect"
+	"testing"
 	"time"
 
 	"github.com/jackc/pgmock"
@@ -26,7 +27,7 @@ type MockConn struct {
 	status map[string]string
 
 	// Channel for reporting all server error
-	ErrChan chan error
+	errChan chan error
 }
 
 func (r *MockConn) getStartupMessage(config *pgx.ConnConfig) []pgmock.Step {
@@ -59,10 +60,11 @@ func (r *MockConn) getStartupMessage(config *pgx.ConnConfig) []pgmock.Step {
 // The mock dialer provides a full duplex net.Conn backed by an in-memory buffer.
 // It is implemented by grcp/test/bufconn package.
 func (r *MockConn) Intercept(config *pgx.ConnConfig) {
-	// TODO: check for config.PreferSimpleProtocol
+	// Override config for test
 	config.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return r.server.DialContext(ctx)
 	}
+	config.PreferSimpleProtocol = true
 	config.TLSConfig = nil
 	// Add startup message
 	r.script.Steps = append(r.getStartupMessage(config), r.script.Steps...)
@@ -71,8 +73,8 @@ func (r *MockConn) Intercept(config *pgx.ConnConfig) {
 // Adds a simple query to the mock connection.
 //
 // TODO: support prepared statements that involve multiple round trips, ie. Parse -> Bind.
-func (r *MockConn) Query(psql string) *MockConn {
-	r.script.Steps = append(r.script.Steps, pgmock.ExpectMessage(&pgproto3.Query{String: psql}))
+func (r *MockConn) Query(sql string) *MockConn {
+	r.script.Steps = append(r.script.Steps, pgmock.ExpectMessage(&pgproto3.Query{String: sql}))
 	return r
 }
 
@@ -128,15 +130,6 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 	}
 
 	// Add completion message
-	// Subquery emits additional completion messages but pgx doesn't seem to care. For eg.
-	//   Reply("CREATE SCHEMA").
-	//   pgmock.SendMessage(&pgproto3.NoticeResponse{
-	// 	     Severity:            "NOTICE",
-	// 	     SeverityUnlocalized: "NOTICE",
-	// 	     Code:                "42P06",
-	// 	     Message:             "schema \"supabase_migrations\" already exists, skipping",
-	//   }),
-	//   pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte("CREATE SCHEMA")}),
 	r.script.Steps = append(
 		r.script.Steps,
 		pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte(tag)}),
@@ -162,8 +155,13 @@ func (r *MockConn) ReplyError(code, message string) *MockConn {
 	return r
 }
 
-func (r *MockConn) Close() {
-	_ = r.server.Close()
+func (r *MockConn) Close(t *testing.T) {
+	if err := <-r.errChan; err != nil {
+		t.Fatalf("failed to close %v", err)
+	}
+	if err := r.server.Close(); err != nil {
+		t.Fatalf("failed to close %v", err)
+	}
 }
 
 func NewWithStatus(status map[string]string) *MockConn {
@@ -171,30 +169,30 @@ func NewWithStatus(status map[string]string) *MockConn {
 	mock := MockConn{
 		server:  bufconn.Listen(bufSize),
 		status:  status,
-		ErrChan: make(chan error, 1),
+		errChan: make(chan error, 1),
 	}
 	// Start server in background
 	const timeout = time.Millisecond * 450
 	go func() {
-		defer close(mock.ErrChan)
+		defer close(mock.errChan)
 		// Block until we've opened a TCP connection
 		conn, err := mock.server.Accept()
 		if err != nil {
-			mock.ErrChan <- err
+			mock.errChan <- err
 			return
 		}
 		defer conn.Close()
 		// Prevent server from hanging the test
 		err = conn.SetDeadline(time.Now().Add(timeout))
 		if err != nil {
-			mock.ErrChan <- err
+			mock.errChan <- err
 			return
 		}
 		// Always expect clients to terminate the request
 		mock.script.Steps = append(mock.script.Steps, pgmock.ExpectMessage(&pgproto3.Terminate{}))
 		err = mock.script.Run(pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn))
 		if err != nil {
-			mock.ErrChan <- err
+			mock.errChan <- err
 			return
 		}
 	}()
