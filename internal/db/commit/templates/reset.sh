@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+# prevent notice messages from being printed to stderr
 export PGOPTIONS=--client-min-messages=error
 
 dropdb --username postgres --host 127.0.0.1 --if-exists "$DB_NAME"
