@@ -192,6 +192,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 				matches := initSchemaPattern.FindStringSubmatch(migration.Name())
 				if len(matches) == 2 {
 					if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err != nil {
+						// Unreachable due to regex valdiation, but return just in case
 						return err
 					} else if timestamp < 20211209000000 {
 						continue
