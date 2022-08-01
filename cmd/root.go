@@ -31,7 +31,8 @@ func init() {
 	flags := rootCmd.PersistentFlags()
 	flags.Bool("debug", false, "enable debug mode")
 	flags.VisitAll(func(f *pflag.Flag) {
-		viper.BindPFlag(strings.ReplaceAll(f.Name, "-", "_"), flags.Lookup(f.Name))
+		key := strings.ReplaceAll(f.Name, "-", "_")
+		_ = viper.BindPFlag(key, flags.Lookup(f.Name))
 	})
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
