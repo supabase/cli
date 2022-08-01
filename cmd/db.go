@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -96,15 +95,10 @@ var (
 		Short: "Set the remote database to push migrations to.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var opts []func(*pgx.ConnConfig)
 			if viper.GetBool("DEBUG") {
-				opts = append(opts, func(config *pgx.ConnConfig) {
-					proxy := debug.NewWithDialFunc(config.DialFunc)
-					config.DialFunc = proxy.DialFunc
-					config.TLSConfig = nil
-				})
+				return set.Run(args[0], afero.NewOsFs(), debug.SetupPGX)
 			}
-			return set.Run(args[0], afero.NewOsFs(), opts...)
+			return set.Run(args[0], afero.NewOsFs())
 		},
 	}
 

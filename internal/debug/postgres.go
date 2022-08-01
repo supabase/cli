@@ -3,11 +3,13 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"os"
 
 	"github.com/jackc/pgproto3/v2"
+	"github.com/jackc/pgx/v4"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -24,11 +26,13 @@ func NewProxy() Proxy {
 	}
 }
 
-func NewWithDialFunc(dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) Proxy {
-	return Proxy{
-		dialContext: dialContext,
+func SetupPGX(config *pgx.ConnConfig) {
+	proxy := Proxy{
+		dialContext: config.DialFunc,
 		errChan:     make(chan error, 1),
 	}
+	config.DialFunc = proxy.DialFunc
+	config.TLSConfig = nil
 }
 
 func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -41,7 +45,11 @@ func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, e
 	ln := bufconn.Listen(bufSize)
 	go func() {
 		defer serverConn.Close()
-		clientConn, _ := ln.Accept()
+		clientConn, err := ln.Accept()
+		if err != nil {
+			// Unreachable code as bufconn never throws, but just in case
+			panic(err)
+		}
 		defer clientConn.Close()
 
 		backend := NewBackend(clientConn)
@@ -50,7 +58,8 @@ func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, e
 		go frontend.forward(backend, p.errChan)
 
 		for {
-			if err := <-p.errChan; err != nil {
+			// Since pgx closes connection first, every EOF is seen as unexpected
+			if err := <-p.errChan; err != nil && err != io.ErrUnexpectedEOF {
 				panic(err)
 			}
 		}
@@ -67,7 +76,7 @@ type Backend struct {
 func NewBackend(clientConn net.Conn) Backend {
 	return Backend{
 		pgproto3.NewBackend(pgproto3.NewChunkReader(clientConn), clientConn),
-		log.New(os.Stdout, "PG Recv: ", log.LstdFlags|log.Lmsgprefix),
+		log.New(os.Stderr, "PG Recv: ", log.LstdFlags|log.Lmsgprefix),
 	}
 }
 
@@ -119,7 +128,7 @@ type Frontend struct {
 func NewFrontend(serverConn net.Conn) Frontend {
 	return Frontend{
 		pgproto3.NewFrontend(pgproto3.NewChunkReader(serverConn), serverConn),
-		log.New(os.Stdout, "PG Send: ", log.LstdFlags|log.Lmsgprefix),
+		log.New(os.Stderr, "PG Send: ", log.LstdFlags|log.Lmsgprefix),
 	}
 }
 
