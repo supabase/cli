@@ -89,7 +89,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 			}
 		}
 
-		cmd := exec.Command(denoPath, "bundle", "--quiet", functionPath+"/index.ts")
+		cmd := exec.Command(denoPath, "bundle", "--no-check=remote", "--quiet", functionPath+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf
