@@ -21,6 +21,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -44,6 +46,11 @@ func RunMigra(name string, fsys afero.Fs) error {
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
 			return err
 		}
+	}
+
+	var opts []func(*pgx.ConnConfig)
+	if viper.GetBool("DEBUG") {
+		opts = append(opts, debug.SetupPGX)
 	}
 
 	ctx := context.Background()
@@ -71,7 +78,7 @@ func RunMigra(name string, fsys afero.Fs) error {
 
 	fmt.Println("Initialising schema...")
 	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/%s", utils.Config.Db.Port, utils.ShadowDbName)
-	if err := applyMigrations(ctx, url, fsys); err != nil {
+	if err := applyMigrations(ctx, url, fsys, opts...); err != nil {
 		return err
 	}
 
