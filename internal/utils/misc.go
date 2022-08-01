@@ -226,7 +226,7 @@ func InstallOrUpgradeDeno() error {
 	if _, err := os.Stat(denoPath); err == nil {
 		// Upgrade Deno.
 
-		cmd := exec.Command(denoPath, "upgrade")
+		cmd := exec.Command(denoPath, "upgrade", "--version", "1.20.3")
 		if err := cmd.Run(); err != nil {
 			return err
 		}
