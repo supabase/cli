@@ -38,9 +38,6 @@ func Run() error {
 		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
-		if err := utils.InterpolateEnvInConfig(); err != nil {
-			return err
-		}
 		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
 			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
