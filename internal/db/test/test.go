@@ -101,9 +101,10 @@ func compress(src string, buf io.Writer, fsys afero.Fs) error {
 	tw := tar.NewWriter(buf)
 
 	// walk through every file in the folder
-	filepath.Walk(src, func(file string, fi os.FileInfo, err error) error {
+	afero.Walk(fsys, src, func(file string, fi os.FileInfo, err error) error {
 		// return on any error
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 
