@@ -104,6 +104,20 @@ COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
 
 
 --
+-- Name: pgtap; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
+
+
+--
+-- Name: EXTENSION pgtap; Type: COMMENT; Schema: -; Owner:
+--
+
+COMMENT ON EXTENSION pgtap IS 'Unit testing for PostgreSQL';
+
+
+--
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
 
