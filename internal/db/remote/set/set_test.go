@@ -17,7 +17,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("sets the remote database url", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup initial migration
 		version := "20220727064247"
 		_, err := fsys.Create("supabase/migrations/" + version + "_init.sql")
@@ -36,7 +36,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("creates migrations table if absent", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -61,7 +61,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on invalid postgres url", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
 		assert.Error(t, Run("invalid", fsys))
 	})
@@ -69,7 +69,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on failture to connect", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys))
 	})
@@ -77,7 +77,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on missing server version", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
 			"standard_conforming_strings": "on",
@@ -90,7 +90,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on unsupported server version", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
 			"standard_conforming_strings": "on",
@@ -104,7 +104,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on failure to create table", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -119,7 +119,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on failure to list migrations", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -134,7 +134,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on migration mismatch", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -149,7 +149,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on malformed file name", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup initial migration
 		version := "20220727064247"
 		_, err := fsys.Create("supabase/migrations/" + version + ".sql")
@@ -168,7 +168,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 	t.Run("throws error on failure to create directory", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, true))
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
