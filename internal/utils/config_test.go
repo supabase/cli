@@ -21,7 +21,6 @@ func TestConfigParsing(t *testing.T) {
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
 		assert.NoError(t, LoadConfigFS(fsys))
-		assert.NoError(t, InterpolateEnvInConfig())
 
 		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)
 		assert.Equal(t, "this is cool", Config.Auth.External["azure"].Secret)
@@ -30,7 +29,6 @@ func TestConfigParsing(t *testing.T) {
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, true))
-		assert.NoError(t, LoadConfigFS(fsys))
-		assert.Error(t, InterpolateEnvInConfig())
+		assert.Error(t, LoadConfigFS(fsys))
 	})
 }
