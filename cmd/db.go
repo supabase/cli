@@ -33,7 +33,7 @@ var (
 		Short: "Create a branch.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(args[0])
+			return create.Run(args[0], afero.NewOsFs())
 		},
 	}
 

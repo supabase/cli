@@ -64,6 +64,7 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?://postgres:(.+)@(.+?)(:\d+)?/postgres$`)
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
+	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 )
 
 func GetCurrentTimestamp() string {
