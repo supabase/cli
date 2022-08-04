@@ -9,4 +9,4 @@ sed -i 's/  and e.objid is null/  -- and e.objid is null/g' \
 /usr/local/lib/python3.9/site-packages/schemainspect/pg/sql/enums.sql
 
 # diff public schema only
-migra --unsafe --schema=public "$SOURCE" "$TARGET"
+migra --unsafe --schema="${SCHEMA:public}" "$SOURCE" "$TARGET"

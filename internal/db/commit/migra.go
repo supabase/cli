@@ -40,7 +40,7 @@ var (
 	resetShadowScript string
 )
 
-func RunMigra(name string, fsys afero.Fs) error {
+func RunMigra(name, schema string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
@@ -86,7 +86,7 @@ func RunMigra(name string, fsys afero.Fs) error {
 	baseUrl := "postgresql://postgres:postgres@" + utils.DbId + ":5432/"
 	source := baseUrl + utils.ShadowDbName
 	target := baseUrl + "postgres"
-	diff, err := diffSchema(ctx, source, target)
+	diff, err := diffSchema(ctx, source, target, schema)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 }
 
 // Diffs local database schema against shadow, saves output as a migration script.
-func diffSchema(ctx context.Context, source, target string) (string, error) {
+func diffSchema(ctx context.Context, source, target, schema string) (string, error) {
 	// Pull migra image
 	imageUrl := "docker.io/" + diffImage
 	if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, imageUrl); err != nil {
@@ -251,8 +251,12 @@ func diffSchema(ctx context.Context, source, target string) (string, error) {
 		migraId,
 		&container.Config{
 			Image: imageUrl,
-			Env:   []string{"SOURCE=" + source, "TARGET=" + target},
-			Cmd:   []string{"/bin/sh", "-c", diffSchemaScript},
+			Env: []string{
+				"SOURCE=" + source,
+				"TARGET=" + target,
+				"SCHEMA=" + schema,
+			},
+			Cmd: []string{"/bin/sh", "-c", diffSchemaScript},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
 				"com.docker.compose.project": utils.Config.ProjectId,
