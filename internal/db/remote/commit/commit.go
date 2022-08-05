@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -172,7 +173,62 @@ func run(p utils.Program, url string) error {
 		}
 	}
 
-	// 2. Create shadow db and run migrations.
+	timestamp := utils.GetCurrentTimestamp()
+
+	// 2. Special case if this is the first migration
+	{
+		localMigrations, err := os.ReadDir(filepath.Join("supabase", "migrations"))
+		if err != nil {
+			return err
+		}
+
+		if len(localMigrations) == 0 {
+			strings.Join(utils.InternalSchemas, "|")
+
+			// Use pg_dump instead of schema diff
+			out, err := utils.DockerRun(
+				ctx,
+				dbId,
+				&container.Config{
+					Image: utils.DbImage,
+					Env:   []string{"POSTGRES_PASSWORD=postgres"},
+					Entrypoint: []string{
+						"sh", "-c",
+						"pg_dump --schema-only --quote-all-identifier --exclude-schema '" + strings.Join(utils.InternalSchemas, "|") + `' --schema '*' --extension '*' --dbname '` + url + `' | sed 's/CREATE SCHEMA "public"/-- CREATE SCHEMA "public"/'`,
+					},
+					Labels: map[string]string{
+						"com.supabase.cli.project":   utils.Config.ProjectId,
+						"com.docker.compose.project": utils.Config.ProjectId,
+					},
+				},
+				&container.HostConfig{NetworkMode: netId},
+			)
+			if err != nil {
+				return err
+			}
+
+			var dumpBuf, errBuf bytes.Buffer
+			if _, err := stdcopy.StdCopy(&dumpBuf, &errBuf, out); err != nil {
+				return err
+			}
+			if errBuf.Len() > 0 {
+				return errors.New("Error running pg_dump on remote database: " + errBuf.String())
+			}
+
+			// Insert a row to `schema_migrations`
+			if _, err := conn.Query(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)", timestamp); err != nil {
+				return err
+			}
+
+			if err := os.WriteFile(filepath.Join("supabase", "migrations", timestamp+"_remote_commit.sql"), dumpBuf.Bytes(), 0644); err != nil {
+				return err
+			}
+
+			return nil
+		}
+	}
+
+	// 3. Create shadow db and run migrations.
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 	{
 		cmd := []string{}
@@ -311,9 +367,7 @@ EOSQL
 		}
 	}
 
-	timestamp := utils.GetCurrentTimestamp()
-
-	// 3. Diff remote db (source) & shadow db (target) and write it as a new migration.
+	// 4. Diff remote db (source) & shadow db (target) and write it as a new migration.
 	{
 		p.Send(utils.StatusMsg("Committing changes on remote database as a new migration..."))
 
@@ -348,7 +402,7 @@ EOSQL
 		}
 	}
 
-	// 4. Insert a row to `schema_migrations`
+	// 5. Insert a row to `schema_migrations`
 	if _, err := conn.Query(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)", timestamp); err != nil {
 		return err
 	}

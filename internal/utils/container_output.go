@@ -162,8 +162,7 @@ func filterDiffOutput(diffBytes []byte) ([]byte, error) {
 		}
 
 		isSchemaIgnored := func(schema string) bool {
-			ignoredSchemas := []string{"auth", "extensions", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations"}
-			for _, s := range ignoredSchemas {
+			for _, s := range InternalSchemas {
 				if s == schema {
 					return true
 				}
