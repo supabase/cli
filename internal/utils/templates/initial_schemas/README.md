@@ -19,7 +19,7 @@ This is roughly what's needed to create new initial schema files for new Postgre
 services:
   db:
     container_name: supabase-db
-    image: supabase/postgres:14.1.0.21
+    image: supabase/postgres:14.1.0.34
     restart: unless-stopped
     ports:
       - 5432:5432
@@ -40,6 +40,8 @@ services:
     environment:
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+      GOTRUE_SITE_URL: a
+      GOTRUE_JWT_SECRET: a
 
   realtime:
     container_name: supabase-realtime
@@ -581,6 +583,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON ROUTINES TO postgres, dashboard_user;
 
 --
+-- 20220118070449-enable-safeupdate-postgrest.sql
+--
+
+-- ALTER ROLE authenticator SET session_preload_libraries = 'safeupdate';
+
+--
 -- 20220126121436-finer-postgrest-triggers.sql
 --
 
@@ -647,6 +655,12 @@ CREATE EVENT TRIGGER pgrst_ddl_watch
 CREATE EVENT TRIGGER pgrst_drop_watch
   ON sql_drop
   EXECUTE PROCEDURE extensions.pgrst_drop_watch();
+
+--
+-- 20220224211803-fix-postgrest-supautils.sql
+--
+
+-- ALTER ROLE authenticator SET session_preload_libraries = supautils, safeupdate;
 
 --
 -- 20220317095840_pg_graphql.sql
@@ -863,6 +877,12 @@ END; $$ LANGUAGE plpgsql;
 --   EXECUTE PROCEDURE extensions.pgrst_drop_watch();
 
 --
+-- 20220322085208_gotrue_session_limit.sql
+--
+
+-- ALTER ROLE supabase_auth_admin SET idle_in_transaction_session_timeout TO 60000;
+
+--
 -- 20220404205710-pg_graphql-on-by-default.sql
 --
 
@@ -1007,9 +1027,186 @@ $$;
 
 drop extension if exists pg_graphql;
 -- Avoids limitation of only being able to load the extension via dashboard
-create extension if not exists pg_graphql;
+-- Only install as well if the extension is actually installed
+DO $$
+DECLARE
+  graphql_exists boolean;
+BEGIN
+  graphql_exists = (
+      select count(*) = 1 
+      from pg_available_extensions 
+      where name = 'pg_graphql'
+  );
+
+  IF graphql_exists 
+  THEN
+  create extension if not exists pg_graphql;
+  END IF;
+END $$;
+
+--
+-- 20220609081115-grant-supabase-auth-admin-and-supabase-storage-admin-to-postgres.sql
+--
+
+-- grant supabase_auth_admin, supabase_storage_admin to postgres;
+
+--
+-- 20220613123923-pg_graphql-pg-dump-perms.sql
+--
+
+create or replace function extensions.grant_pg_graphql_access()
+    returns event_trigger
+    language plpgsql
+AS $func$
+DECLARE
+    func_is_graphql_resolve bool;
+BEGIN
+    func_is_graphql_resolve = (
+        SELECT n.proname = 'resolve'
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_proc AS n
+        ON ev.objid = n.oid
+    );
+
+    IF func_is_graphql_resolve
+    THEN
+
+        -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
+        create or replace function graphql_public.graphql(
+            "operationName" text default null,
+            query text default null,
+            variables jsonb default null,
+            extensions jsonb default null
+        )
+            returns jsonb
+            language sql
+        as $$
+            select graphql.resolve(
+                query := query,
+                variables := coalesce(variables, '{}'),
+                "operationName" := "operationName",
+                extensions := extensions
+            );
+        $$;
+
+		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+		-- function in the extension so we need to grant permissions on existing entities AND
+		-- update default permissions to any others that are created after `graphql.resolve`
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
+        grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
+        grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
+		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
+    END IF;
+
+END;
+$func$;
+
+-- Cycle the extension off and back on to apply the permissions update.
+
+drop extension if exists pg_graphql;
+-- Avoids limitation of only being able to load the extension via dashboard
+-- Only install as well if the extension is actually installed
+DO $$
+DECLARE
+  graphql_exists boolean;
+BEGIN
+  graphql_exists = (
+      select count(*) = 1 
+      from pg_available_extensions 
+      where name = 'pg_graphql'
+  );
+
+  IF graphql_exists 
+  THEN
+  create extension if not exists pg_graphql schema extensions;
+  END IF;
+END $$;
+
+--
+-- 20220713082019_pg_cron_pg_net_temp_perms_fix.sql
+--
+
+DO $$
+DECLARE
+  pg_cron_installed boolean;
+BEGIN
+  -- checks if pg_cron is enabled   
+  pg_cron_installed = (
+    select count(*) = 1 
+    from pg_available_extensions 
+    where name = 'pg_cron'
+    and installed_version is not null
+  );
+
+  IF pg_cron_installed
+  THEN
+    grant usage on schema cron to postgres with grant option;
+
+    alter default privileges in schema cron grant all on tables to postgres with grant option;
+    alter default privileges in schema cron grant all on functions to postgres with grant option;
+    alter default privileges in schema cron grant all on sequences to postgres with grant option;
+
+    alter default privileges for user supabase_admin in schema cron grant all
+        on sequences to postgres with grant option;
+    alter default privileges for user supabase_admin in schema cron grant all
+        on tables to postgres with grant option;
+    alter default privileges for user supabase_admin in schema cron grant all
+        on functions to postgres with grant option;
+
+    grant all privileges on all tables in schema cron to postgres with grant option; 
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  pg_net_installed boolean;
+BEGIN
+  -- checks if pg_net is enabled
+  pg_net_installed = (
+    select count(*) = 1 
+    from pg_available_extensions 
+    where name = 'pg_net'
+    and installed_version is not null
+      
+  );
+
+  IF pg_net_installed 
+  THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_roles
+      WHERE rolname = 'supabase_functions_admin'
+    )
+    THEN
+      CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION;
+    END IF;
+
+    GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+
+    ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+    ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+    ALTER function net.http_collect_response(request_id bigint, async boolean) SECURITY DEFINER;
+
+    ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+    ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+    ALTER function net.http_collect_response(request_id bigint, async boolean) SET search_path = net;
+
+    REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
+
+    GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+    GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+    GRANT EXECUTE ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+  END IF;
+END $$;
 ```
 
 - Run `docker compose up -d`
 - Once all migrations are finished, run `pg_dump --inserts --dbname 'postgresql://postgres:postgres@localhost:5432/postgres' > initial_schema.sql`
+- Comment out lines that start with `GRANT ALL ON FUNCTION graphql_public`
+- Add `drop extension pg_graphql; create extension pg_graphql schema extensions;` at the end
 - You're done!
