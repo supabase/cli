@@ -22,6 +22,7 @@ func Run(branch string, fsys afero.Fs) error {
 		return err
 	}
 
+	// TODO: update branch history atomically with database
 	if err := deleteBranchDir(branch, fsys); err != nil {
 		return err
 	}
