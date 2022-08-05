@@ -6,20 +6,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"path/filepath"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(branch string) error {
-	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+func Run(branch string, fsys afero.Fs) error {
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return err
 	}
 
-	if currBranch, err := utils.GetCurrentBranch(); err != nil {
+	if err := deleteBranchDir(branch, fsys); err != nil {
 		return err
-	} else if branch == currBranch {
+	}
+
+	ctx := context.Background()
+	if err := deleteBranchPG(ctx, branch); err != nil {
+		return err
+	}
+
+	fmt.Println("Deleted branch " + utils.Aqua(branch) + ".")
+	return nil
+}
+
+func deleteBranchDir(branch string, fsys afero.Fs) error {
+	if currBranch, _ := utils.GetCurrentBranchFS(fsys); branch == currBranch {
 		return errors.New("Cannot delete current branch.")
 	}
 
@@ -27,30 +44,45 @@ func Run(branch string) error {
 		return errors.New("Cannot delete branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
-	if _, err := os.ReadDir("supabase/.branches/" + branch); err != nil {
+	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	if _, err := afero.ReadDir(fsys, branchPath); err != nil {
 		return errors.New("Branch " + utils.Aqua(branch) + " does not exist.")
 	}
 
-	if err := os.RemoveAll("supabase/.branches/" + branch); err != nil {
+	if err := fsys.RemoveAll(branchPath); err != nil {
 		return fmt.Errorf("Failed deleting branch %s: %w", utils.Aqua(branch), err)
 	}
 
-	{
-		out, err := utils.DockerExec(context.Background(), utils.DbId, []string{
-			"dropdb", "--username", "postgres", "--host", "127.0.0.1", branch,
-		})
-		if err != nil {
-			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error dropping database: " + errBuf.String())
-		}
-	}
+	return nil
+}
 
-	fmt.Println("Deleted branch " + utils.Aqua(branch) + ".")
+func deleteBranchPG(ctx context.Context, branch string) error {
+	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
+		Cmd:          []string{"dropdb", "--username", "postgres", "--host", "127.0.0.1", branch},
+		AttachStderr: true,
+		AttachStdout: true,
+	})
+	if err != nil {
+		return err
+	}
+	// Read exec output
+	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+	// Capture error details
+	var errBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, resp.Reader); err != nil {
+		return err
+	}
+	// Get the exit code
+	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
+	if err != nil {
+		return err
+	}
+	if iresp.ExitCode > 0 {
+		return errors.New("Error deleting branch: " + errBuf.String())
+	}
 	return nil
 }
