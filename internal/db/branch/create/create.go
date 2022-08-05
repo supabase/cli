@@ -3,34 +3,62 @@ package create
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"regexp"
+	"path/filepath"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-var ctx = context.Background()
+var (
+	//go:embed templates/clone.sh
+	cloneScript string
+)
 
-func Run(branch string) error {
-	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+func Run(branch string, fsys afero.Fs) error {
+	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
+	}
+
+	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	if err := assertNewBranchIsValid(branchPath, fsys); err != nil {
+		return nil
+	}
+
+	var ctx = context.Background()
+	if err := createBranch(ctx, branch); err != nil {
+		return err
+	}
+
+	if err := fsys.MkdirAll(branchPath, 0755); err != nil {
+		return err
+	}
+
+	fmt.Println("Created branch " + utils.Aqua(branch) + ".")
+	return nil
+}
+
+func assertNewBranchIsValid(branchPath string, fsys afero.Fs) error {
+	branch := filepath.Base(branchPath)
 
 	if utils.IsBranchNameReserved(branch) {
 		return errors.New("Cannot create branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
-	if valid, err := regexp.MatchString(`[[:word:]-]+`, branch); err != nil {
-		return err
-	} else if !valid {
+	if !utils.BranchNamePattern.MatchString(branch) {
 		return errors.New("Branch name " + utils.Aqua(branch) + " is invalid. Must match [0-9A-Za-z_-]+.")
 	}
 
-	if _, err := os.ReadDir("supabase/.branches/" + branch); errors.Is(err, os.ErrNotExist) {
+	if _, err := afero.ReadDir(fsys, branchPath); errors.Is(err, os.ErrNotExist) {
 		// skip
 	} else if err != nil {
 		return err
@@ -38,59 +66,37 @@ func Run(branch string) error {
 		return errors.New("Branch " + utils.Aqua(branch) + " already exists.")
 	}
 
-	var dumpBuf bytes.Buffer
-	if err := func() error {
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"pg_dump", "postgresql://postgres:postgres@localhost/postgres",
-		})
-		if err != nil {
-			return err
-		}
+	return nil
+}
 
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(&dumpBuf, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New(errBuf.String())
-		}
-
-		return nil
-	}(); err != nil {
-		return fmt.Errorf("Error creating branch: %w", err)
-	}
-
-	if err := func() error {
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-CREATE DATABASE "` + branch + `";
-\connect ` + branch + `
-BEGIN;
-` + dumpBuf.String() + `
-COMMIT;
-EOSQL
-`,
-		})
-		if err != nil {
-			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New(errBuf.String())
-		}
-
-		return nil
-	}(); err != nil {
-		return fmt.Errorf("Error creating branch %s: %w", utils.Aqua(branch), err)
-	}
-
-	if err := os.Mkdir("supabase/.branches/"+branch, 0755); err != nil {
+func createBranch(ctx context.Context, branch string) error {
+	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
+		Cmd:          []string{"/bin/bash", "-c", cloneScript},
+		Env:          []string{"DB_NAME=" + branch},
+		AttachStderr: true,
+		AttachStdout: true,
+	})
+	if err != nil {
 		return err
 	}
-
-	fmt.Println("Created branch " + utils.Aqua(branch) + ".")
+	// Read exec output
+	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+	// Capture error details
+	var errBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, resp.Reader); err != nil {
+		return err
+	}
+	// Get the exit code
+	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
+	if err != nil {
+		return err
+	}
+	if iresp.ExitCode > 0 {
+		return errors.New("Error creating branch: " + errBuf.String())
+	}
 	return nil
 }

@@ -64,6 +64,7 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?://postgres:(.+)@(.+?)(:\d+)?/postgres$`)
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
+	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 )
 
 func GetCurrentTimestamp() string {
@@ -119,6 +120,10 @@ func AssertSupabaseStartIsRunning() error {
 		return err
 	}
 
+	return AssertSupabaseDbIsRunning()
+}
+
+func AssertSupabaseDbIsRunning() error {
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
 		return errors.New(Aqua("supabase start") + " is not running.")
 	}

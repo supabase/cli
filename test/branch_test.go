@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 
+	"github.com/docker/docker/api/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,10 +31,9 @@ func (suite *DBTestSuite) TestBranchCreate() {
 	require.ElementsMatch(suite.T(), suite.params, ids)
 
 	// check commands in exec calls
-	require.ElementsMatch(suite.T(), suite.bodies, []string{
-		"{\"User\":\"\",\"Privileged\":false,\"Tty\":false,\"AttachStdin\":false,\"AttachStderr\":true,\"AttachStdout\":true,\"Detach\":false,\"DetachKeys\":\"\",\"Env\":null,\"WorkingDir\":\"\",\"Cmd\":[\"pg_dump\",\"postgresql://postgres:postgres@localhost/postgres\"]}\n",
-		"{\"Detach\":false,\"Tty\":false}\n",
-		"{\"User\":\"\",\"Privileged\":false,\"Tty\":false,\"AttachStdin\":false,\"AttachStderr\":true,\"AttachStdout\":true,\"Detach\":false,\"DetachKeys\":\"\",\"Env\":null,\"WorkingDir\":\"\",\"Cmd\":[\"sh\",\"-c\",\"psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres \\u003c\\u003c'EOSQL'\\nCREATE DATABASE \\\"" + branch + "\\\";\\n\\\\connect " + branch + "\\nBEGIN;\\nexit code 0\\nCOMMIT;\\nEOSQL\\n\"]}\n",
-		"{\"Detach\":false,\"Tty\":false}\n",
-	})
+	require.Equal(suite.T(), 2, len(suite.bodies))
+	var execBody types.ExecConfig
+	require.NoError(suite.T(), json.Unmarshal([]byte(suite.bodies[0]), &execBody))
+	var startBody types.ExecStartCheck
+	require.NoError(suite.T(), json.Unmarshal([]byte(suite.bodies[1]), &startBody))
 }
