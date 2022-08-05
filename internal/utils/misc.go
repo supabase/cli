@@ -69,6 +69,9 @@ var (
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?://postgres:(.+)@(.+?)(:\d+)?/postgres$`)
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
+
+	// These schemas are ignored from schema diffs
+	InternalSchemas = []string{"auth", "extensions", "graphql_public", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
 )
 
 func GetCurrentTimestamp() string {
