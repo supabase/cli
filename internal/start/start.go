@@ -526,7 +526,7 @@ EOSQL
 		// Set up current branch.
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
+				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
 COMMIT;

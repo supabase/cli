@@ -57,6 +57,10 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 )
 
 var (
+	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
+	// | sed '/^CREATE ROLE postgres;/d' \
+	// | sed '/^ALTER ROLE postgres WITH /d' \
+	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
 	//go:embed templates/globals.sql
 	GlobalsSql string
 

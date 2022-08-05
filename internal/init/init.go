@@ -12,11 +12,6 @@ import (
 )
 
 var (
-	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
-	// | sed '/^CREATE ROLE postgres;/d' \
-	// | sed '/^ALTER ROLE postgres WITH /d' \
-	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
-	// pg_dump --dbname $DB_URL
 	//go:embed templates/init_gitignore
 	initGitignore []byte
 
