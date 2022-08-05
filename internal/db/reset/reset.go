@@ -233,11 +233,13 @@ EOSQL
 		{
 			// Need to connect for PostgREST to connect.
 			if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-				return fmt.Errorf("Error reconnecting database: %w", err)
+				fmt.Fprintf(os.Stderr, "Error reconnecting database: %v", err)
+				return nil
 			}
 
 			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-				return fmt.Errorf("Error reloading PostgREST schema cache: %w", err)
+				fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
+				return nil
 			}
 		}
 
