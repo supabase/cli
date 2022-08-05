@@ -22,9 +22,33 @@ var (
 )
 
 func Run(branch string, fsys afero.Fs) error {
-	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
+	}
+
+	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	if err := assertNewBranchIsValid(branchPath, fsys); err != nil {
+		return nil
+	}
+
+	var ctx = context.Background()
+	if err := createBranch(ctx, branch); err != nil {
+		return err
+	}
+
+	if err := fsys.MkdirAll(branchPath, 0755); err != nil {
+		return err
+	}
+
+	fmt.Println("Created branch " + utils.Aqua(branch) + ".")
+	return nil
+}
+
+func assertNewBranchIsValid(branchPath string, fsys afero.Fs) error {
+	branch := filepath.Base(branchPath)
 
 	if utils.IsBranchNameReserved(branch) {
 		return errors.New("Cannot create branch " + utils.Aqua(branch) + ": branch name is reserved.")
@@ -34,7 +58,6 @@ func Run(branch string, fsys afero.Fs) error {
 		return errors.New("Branch name " + utils.Aqua(branch) + " is invalid. Must match [0-9A-Za-z_-]+.")
 	}
 
-	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
 	if _, err := afero.ReadDir(fsys, branchPath); errors.Is(err, os.ErrNotExist) {
 		// skip
 	} else if err != nil {
@@ -43,7 +66,10 @@ func Run(branch string, fsys afero.Fs) error {
 		return errors.New("Branch " + utils.Aqua(branch) + " already exists.")
 	}
 
-	var ctx = context.Background()
+	return nil
+}
+
+func createBranch(ctx context.Context, branch string) error {
 	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
 		Cmd:          []string{"/bin/bash", "-c", cloneScript},
 		Env:          []string{"DB_NAME=" + branch},
@@ -58,6 +84,7 @@ func Run(branch string, fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Close()
 	// Capture error details
 	var errBuf bytes.Buffer
 	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, resp.Reader); err != nil {
@@ -71,11 +98,5 @@ func Run(branch string, fsys afero.Fs) error {
 	if iresp.ExitCode > 0 {
 		return errors.New("Error creating branch: " + errBuf.String())
 	}
-
-	if err := fsys.MkdirAll(branchPath, 0755); err != nil {
-		return err
-	}
-
-	fmt.Println("Created branch " + utils.Aqua(branch) + ".")
 	return nil
 }

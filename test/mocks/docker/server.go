@@ -49,6 +49,7 @@ func (s *Server) NewRouter() *gin.Engine {
 
 	exec := router.Group("/exec")
 	exec.POST("/:id/start", s.startExec)
+	exec.GET("/:id/json", s.inspectContainer)
 
 	return root
 }

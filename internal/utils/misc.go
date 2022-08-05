@@ -127,6 +127,14 @@ func AssertSupabaseStartIsRunning() error {
 	return nil
 }
 
+func AssertSupabaseDbIsRunning() error {
+	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
+		return errors.New(Aqua("supabase start") + " is not running.")
+	}
+
+	return nil
+}
+
 func GetGitRoot() (*string, error) {
 	origWd, err := os.Getwd()
 	if err != nil {
