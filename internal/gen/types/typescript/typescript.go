@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -23,6 +24,10 @@ func Run(useLocal bool, dbUrl string) error {
 		return errors.New("Must specify either --local or --db-url")
 	}
 
+	if err := utils.LoadConfig(); err != nil {
+		return err
+	}
+
 	if useLocal {
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
 			return err
@@ -36,7 +41,7 @@ func Run(useLocal bool, dbUrl string) error {
 					"PG_META_DB_HOST=" + utils.DbId,
 				},
 				Cmd: []string{
-					"node", "bin/src/server/app.js", "gen", "types", "typescript", "--exclude-schemas", "auth,extensions,graphql,graphql_public,realtime,storage,supabase_functions,supabase_migrations",
+					"node", "bin/src/server/app.js", "gen", "types", "typescript", "--include-schemas", strings.Join(append([]string{"public"}, utils.Config.Api.Schemas...), ","),
 				},
 				AttachStderr: true,
 				AttachStdout: true,
@@ -98,7 +103,7 @@ func Run(useLocal bool, dbUrl string) error {
 					"PG_META_DB_URL=" + dbUrl,
 				},
 				Cmd: []string{
-					"node", "bin/src/server/app.js", "gen", "types", "typescript", "--exclude-schemas", "auth,extensions,graphql,graphql_public,realtime,storage,supabase_functions,supabase_migrations",
+					"node", "bin/src/server/app.js", "gen", "types", "typescript", "--include-schemas", strings.Join(append([]string{"public"}, utils.Config.Api.Schemas...), ","),
 				},
 			},
 			&container.HostConfig{},
