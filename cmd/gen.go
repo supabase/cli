@@ -16,9 +16,9 @@ var (
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
-		Short: "Generate types for TypeScript. Must either specify --local, or --db-url, or be in a linked project (with supabase link)",
+		Short: "Generate types for TypeScript. Must specify either --local or --db-url",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			isLocal, err := cmd.Flags().GetBool("local")
+			useLocal, err := cmd.Flags().GetBool("local")
 			if err != nil {
 				return err
 			}
@@ -27,7 +27,7 @@ var (
 				return err
 			}
 
-			return typescript.Run(isLocal, dbUrl)
+			return typescript.Run(useLocal, dbUrl)
 		},
 	}
 )
