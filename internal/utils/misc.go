@@ -120,11 +120,7 @@ func AssertSupabaseStartIsRunning() error {
 		return err
 	}
 
-	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		return errors.New(Aqua("supabase start") + " is not running.")
-	}
-
-	return nil
+	return AssertSupabaseDbIsRunning()
 }
 
 func AssertSupabaseDbIsRunning() error {
