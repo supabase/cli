@@ -35,7 +35,7 @@ const (
 	InbucketImage  = "inbucket/inbucket:stable"
 	PostgrestImage = "postgrest/postgrest:v9.0.0.20220211"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage    = "supabase/postgres-meta:v0.40.0"
+	PgmetaImage    = "supabase/postgres-meta:v0.42.1"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage    = "supabase/studio:latest"
 	DenoRelayImage = "supabase/deno-relay:v1.2.0"
