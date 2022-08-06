@@ -409,6 +409,10 @@ func WriteConfig(fsys afero.Fs, test bool) error {
 		return err
 	}
 
+	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
+		return err
+	}
+
 	if err := afero.WriteFile(fsys, ConfigPath, initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}

@@ -16,7 +16,3 @@
 
 # IDE
 .vscode
-
-# Supabase
-**/supabase/.branches
-**/supabase/.temp

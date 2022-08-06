@@ -1,7 +1,6 @@
 package init
 
 import (
-	"bytes"
 	_ "embed"
 	"errors"
 	"os"
@@ -19,17 +18,6 @@ var (
 )
 
 func Run(fsys afero.Fs) error {
-	if err := run(fsys); errors.Is(err, errAlreadyInitialized) {
-		return err
-	} else if err != nil {
-		_ = fsys.RemoveAll("supabase")
-		return err
-	}
-
-	return nil
-}
-
-func run(fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
@@ -39,46 +27,45 @@ func run(fsys afero.Fs) error {
 		}
 	}
 
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ConfigPath)); err != nil {
-		return err
-	}
-
 	// 1. Write `config.toml`.
 	if err := utils.WriteConfig(fsys, false); err != nil {
 		return err
 	}
 
 	// 2. Append to `.gitignore`.
-	{
-		gitRoot, err := utils.GetGitRoot()
-		if err != nil {
-			return err
-		} else if gitRoot == nil {
-			// skip
-		} else {
-			gitignorePath := *gitRoot + "/.gitignore"
-			gitignore, err := afero.ReadFile(fsys, gitignorePath)
-			if errors.Is(err, os.ErrNotExist) {
-				if err := afero.WriteFile(fsys, gitignorePath, initGitignore, 0644); err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			} else if bytes.Contains(gitignore, initGitignore) {
-				// skip
-			} else {
-				f, err := fsys.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					return err
-				}
-				if _, err := f.Write(append([]byte("\n"), initGitignore...)); err != nil {
-					return err
-				}
-				if err := f.Close(); err != nil {
-					return err
-				}
-			}
-		}
+	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot == nil {
+		// User not using git
+		return nil
+	}
+
+	ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
+	if err := updateGitIgnore(ignorePath, fsys); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
+	var contents []byte
+
+	if contained, err := afero.FileContainsBytes(fsys, ignorePath, initGitignore); contained {
+		return nil
+	} else if err == nil {
+		// Add a line break when appending
+		contents = append(contents, '\n')
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	f, err := fsys.OpenFile(ignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(append(contents, initGitignore...)); err != nil {
+		return err
 	}
 
 	return nil

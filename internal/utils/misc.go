@@ -138,14 +138,14 @@ func AssertSupabaseDbIsRunning() error {
 	return nil
 }
 
-func GetGitRoot() (*string, error) {
+func GetGitRoot(fsys afero.Fs) (*string, error) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 
 	for {
-		_, err := os.ReadDir(".git")
+		_, err := afero.ReadDir(fsys, ".git")
 
 		if err == nil {
 			gitRoot, err := os.Getwd()
