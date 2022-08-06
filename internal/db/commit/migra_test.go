@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func TestApplyMigrations(t *testing.T) {
@@ -20,8 +21,8 @@ func TestApplyMigrations(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration
 		migrations := map[string]string{
-			filepath.Join(migrateDir, "20220727064247_init.sql"): "create table test",
-			filepath.Join(migrateDir, "20220727064248_drop.sql"): "drop table test;\n-- ignore me",
+			filepath.Join(utils.MigrationsDir, "20220727064247_init.sql"): "create table test",
+			filepath.Join(utils.MigrationsDir, "20220727064248_drop.sql"): "drop table test;\n-- ignore me",
 		}
 		for path, query := range migrations {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
@@ -52,7 +53,7 @@ func TestApplyMigrations(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration
 		name := "20211208000000_init.sql"
-		path := filepath.Join(migrateDir, name)
+		path := filepath.Join(utils.MigrationsDir, name)
 		query := "create table test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
 		// Setup mock postgres
@@ -75,7 +76,7 @@ func TestApplyMigrations(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration
 		name := "20220727064247_create_table.sql"
-		path := filepath.Join(migrateDir, name)
+		path := filepath.Join(utils.MigrationsDir, name)
 		query := "create table test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
 		// Setup mock postgres
