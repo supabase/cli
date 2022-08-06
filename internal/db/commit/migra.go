@@ -27,9 +27,8 @@ import (
 )
 
 const (
-	migraId    = "supabase_migra_cli"
-	diffImage  = "djrobstep/migra:3.0.1621480950"
-	migrateDir = "supabase/migrations"
+	migraId   = "supabase_migra_cli"
+	diffImage = "djrobstep/migra:3.0.1621480950"
 )
 
 var (
@@ -101,7 +100,7 @@ func RunMigra(name, schema string, fsys afero.Fs) error {
 	}
 
 	filename := utils.GetCurrentTimestamp() + "_" + name + ".sql"
-	if err := afero.WriteFile(fsys, filepath.Join(migrateDir, filename), []byte(diff), 0644); err != nil {
+	if err := afero.WriteFile(fsys, filepath.Join(utils.MigrationsDir, filename), []byte(diff), 0644); err != nil {
 		return err
 	}
 
@@ -191,7 +190,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 	}
 	defer conn.Close(ctx)
 	// Apply migrations
-	if migrations, err := afero.ReadDir(fsys, migrateDir); err == nil {
+	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
 		for i, migration := range migrations {
 			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
 			// the first migration (prev versions of the CLI) is deprecated.
@@ -207,7 +206,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 				}
 			}
 			fmt.Println("Applying migration " + utils.Bold(migration.Name()) + "...")
-			contents, err := afero.ReadFile(fsys, filepath.Join(migrateDir, migration.Name()))
+			contents, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
 			if err != nil {
 				return err
 			}

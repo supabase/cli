@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
@@ -17,7 +18,7 @@ var (
 		Short: "Create an empty migration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new.Run(args[0])
+			return new.Run(args[0], afero.NewOsFs())
 		},
 	}
 )
