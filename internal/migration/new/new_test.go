@@ -1,13 +1,13 @@
 package new
 
 import (
-	"bytes"
 	"path/filepath"
 	"regexp"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -16,7 +16,8 @@ func TestNewCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup empty stdin
-		stdin := &bytes.Buffer{}
+		stdin, err := fsys.Create("/dev/stdin")
+		require.NoError(t, err)
 		// Run test
 		assert.NoError(t, Run("test_migrate", stdin, fsys))
 		// Validate output
@@ -32,23 +33,27 @@ func TestNewCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup stdin
 		script := "create table pet;\ndrop table pet;\n"
+		require.NoError(t, afero.WriteFile(fsys, "/dev/stdin", []byte(script), 0644))
+		stdin, err := fsys.Open("/dev/stdin")
+		require.NoError(t, err)
 		// Run test
-		assert.NoError(t, Run("test_migrate", bytes.NewBufferString(script), fsys))
+		assert.NoError(t, Run("test_migrate", stdin, fsys))
 		// Validate output
 		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		assert.NoError(t, err)
 		path := filepath.Join(utils.MigrationsDir, files[0].Name())
 		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
-		assert.Equal(t, script, contents)
+		assert.Equal(t, []byte(script), contents)
 	})
 
 	t.Run("throws error on failure to create directory", func(t *testing.T) {
 		// Setup read-only fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := afero.NewMemMapFs()
 		// Setup empty stdin
-		stdin := &bytes.Buffer{}
+		stdin, err := fsys.Create("/dev/stdin")
+		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run("test_migrate", stdin, fsys))
+		assert.Error(t, Run("test_migrate", stdin, afero.NewReadOnlyFs(fsys)))
 	})
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(migrationName string, stdin io.Reader, fsys afero.Fs) error {
+func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
 		return err
 	}
@@ -21,11 +21,12 @@ func Run(migrationName string, stdin io.Reader, fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, stdin); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
+	defer f.Close()
+
+	if fi, err := stdin.Stat(); err == nil && fi.Size() > 0 {
+		if _, err := io.Copy(f, stdin); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("Created new migration at " + utils.Bold(path) + ".")
