@@ -24,16 +24,16 @@ import (
 // Update initial schemas in internal/utils/templates/initial_schemas when
 // updating any one of these.
 const (
-	GotrueImage   = "supabase/gotrue:v2.6.18"
-	RealtimeImage = "supabase/realtime:v0.22.4"
-	StorageImage  = "supabase/storage-api:v0.15.0"
+	GotrueImage   = "supabase/gotrue:v2.10.3"
+	RealtimeImage = "supabase/realtime:v0.22.7"
+	StorageImage  = "supabase/storage-api:v0.18.7"
 )
 
 const (
 	ShadowDbName   = "supabase_shadow"
 	KongImage      = "library/kong:2.1"
 	InbucketImage  = "inbucket/inbucket:stable"
-	PostgrestImage = "postgrest/postgrest:v9.0.0.20220211"
+	PostgrestImage = "postgrest/postgrest:v9.0.1.20220802"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
 	PgmetaImage    = "supabase/postgres-meta:v0.42.1"
 	// TODO: Hardcode version once provided upstream.
