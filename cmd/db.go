@@ -9,8 +9,7 @@ import (
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
 	"github.com/supabase/cli/internal/db/branch/list"
-	"github.com/supabase/cli/internal/db/changes"
-	"github.com/supabase/cli/internal/db/commit"
+	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/push"
 	remoteChanges "github.com/supabase/cli/internal/db/remote/changes"
 	remoteCommit "github.com/supabase/cli/internal/db/remote/commit"
@@ -56,26 +55,17 @@ var (
 		},
 	}
 
-	dbChangesCmd = &cobra.Command{
-		Use:   "changes",
-		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return changes.Run()
-		},
-	}
-
 	useMigra bool
 	schema   string
 
-	dbCommitCmd = &cobra.Command{
-		Use:   "commit <migration name>",
-		Short: "Diffs the local database with current migrations, writing it as a new migration.",
-		Args:  cobra.ExactArgs(1),
+	dbDiffCmd = &cobra.Command{
+		Use:   "diff",
+		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if useMigra {
-				return commit.RunMigra(args[0], schema, afero.NewOsFs())
+				return diff.RunMigra(schema, afero.NewOsFs())
 			}
-			return commit.Run(args[0])
+			return diff.Run()
 		},
 	}
 
@@ -144,10 +134,9 @@ func init() {
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbCmd.AddCommand(dbBranchCmd)
-	dbCmd.AddCommand(dbChangesCmd)
-	dbCommitCmd.Flags().BoolVar(&useMigra, "migra", false, "Use migra to generate schema diff.")
-	dbCommitCmd.Flags().StringVarP(&schema, "schema", "s", "public", "The schema to diff (defaults to public).")
-	dbCmd.AddCommand(dbCommitCmd)
+	dbDiffCmd.Flags().BoolVar(&useMigra, "migra", false, "Use migra to generate schema diff.")
+	dbDiffCmd.Flags().StringVarP(&schema, "schema", "s", "public", "The schema to diff (defaults to public).")
+	dbCmd.AddCommand(dbDiffCmd)
 	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	dbCmd.AddCommand(dbPushCmd)
 	dbRemoteCmd.AddCommand(dbRemoteSetCmd)

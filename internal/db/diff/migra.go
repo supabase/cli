@@ -1,4 +1,4 @@
-package commit
+package diff
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ var (
 	resetShadowScript string
 )
 
-func RunMigra(name, schema string, fsys afero.Fs) error {
+func RunMigra(schema string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
@@ -97,11 +97,6 @@ func RunMigra(name, schema string, fsys afero.Fs) error {
 	if len(diff) < 2 {
 		fmt.Println("No changes found")
 		return nil
-	}
-
-	filename := utils.GetCurrentTimestamp() + "_" + name + ".sql"
-	if err := afero.WriteFile(fsys, filepath.Join(utils.MigrationsDir, filename), []byte(diff), 0644); err != nil {
-		return err
 	}
 
 	branch, err := utils.GetCurrentBranchFS(fsys)
