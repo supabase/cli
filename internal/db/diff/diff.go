@@ -1,4 +1,4 @@
-package commit
+package diff
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 )
 
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run(name string) error {
+func Run() error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
@@ -36,7 +36,7 @@ func Run(name string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, name)
+		errCh <- run(p)
 		p.Send(tea.Quit())
 	}()
 
@@ -44,27 +44,23 @@ func Run(name string) error {
 		return err
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted " + utils.Aqua("supabase db commit") + ".")
+		return errors.New("Aborted " + utils.Aqua("supabase db diff") + ".")
 	}
 	if err := <-errCh; err != nil {
 		return err
 	}
 
-	if branch, err := utils.GetCurrentBranch(); err != nil {
-		return err
-	} else {
-		fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + `.
-WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
-Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`)
-	}
+	fmt.Println(diff)
 	return nil
 }
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
+
+	diff string
 )
 
-func run(p utils.Program, name string) error {
+func run(p utils.Program) error {
 	defer cleanup()
 
 	p.Send(utils.StatusMsg("Creating shadow database..."))
@@ -183,7 +179,7 @@ EOSQL
 
 	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
 
-	// 2. Diff local db (source) with shadow db (target), write it as a new migration.
+	// 2. Diff local db (source) with shadow db (target), print it.
 	{
 		out, err := utils.DockerExec(ctx, utils.DifferId, []string{
 			"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
@@ -199,9 +195,7 @@ EOSQL
 			return err
 		}
 
-		if err := os.WriteFile("supabase/migrations/"+utils.GetCurrentTimestamp()+"_"+name+".sql", diffBytes, 0644); err != nil {
-			return err
-		}
+		diff = string(diffBytes)
 	}
 
 	return nil

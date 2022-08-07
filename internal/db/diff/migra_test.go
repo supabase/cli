@@ -1,4 +1,4 @@
-package commit
+package diff
 
 import (
 	"context"
