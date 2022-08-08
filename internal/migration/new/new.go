@@ -15,8 +15,7 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 		return err
 	}
 
-	name := utils.GetCurrentTimestamp() + "_" + migrationName + ".sql"
-	path := filepath.Join(utils.MigrationsDir, name)
+	path := GetMigrationPath(migrationName)
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -34,4 +33,9 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 
 	fmt.Println("Created new migration at " + utils.Bold(path) + ".")
 	return nil
+}
+
+func GetMigrationPath(migrationName string) string {
+	name := utils.GetCurrentTimestamp() + "_" + migrationName + ".sql"
+	return filepath.Join(utils.MigrationsDir, name)
 }
