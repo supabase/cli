@@ -17,14 +17,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/muesli/reflow/wrap"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 )
 
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run() error {
+func Run(file string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
 	}
@@ -50,7 +55,17 @@ func Run() error {
 		return err
 	}
 
-	fmt.Println(diff)
+	if len(file) > 0 {
+		// Pipe to new migration command
+		r, w, err := os.Pipe()
+		if err != nil {
+			return err
+		}
+		w.WriteString(diff)
+		return new.Run(file, r, fsys)
+	} else {
+		fmt.Println(diff)
+	}
 	return nil
 }
 
