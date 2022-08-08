@@ -15,7 +15,7 @@ var (
 
 	projectsCreateCmd = &cobra.Command{
 		Use:     "create",
-		Short:   "Create a new project.",
+		Short:   "Create a new project",
 		Args:    cobra.ExactArgs(1),
 		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -49,7 +49,7 @@ var (
 
 	projectsListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List all projects.",
+		Short: "List all projects",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs())
 		},

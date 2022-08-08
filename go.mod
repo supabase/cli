@@ -15,12 +15,13 @@ require (
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mattn/go-isatty v0.0.14
 	github.com/muesli/reflow v0.3.0
-	github.com/spf13/cobra v1.4.0
+	github.com/spf13/cobra v1.5.0
 	github.com/spf13/viper v1.10.1
 	github.com/withfig/autocomplete-tools/packages/cobra v1.1.3
 )
 
 require (
+	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
@@ -34,6 +35,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

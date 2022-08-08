@@ -11,12 +11,12 @@ import (
 var (
 	secretsCmd = &cobra.Command{
 		Use:   "secrets",
-		Short: "Supabase secrets",
+		Short: "Manage Supabase secrets",
 	}
 
 	secretsListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List all secrets in the linked project.",
+		Short: "List all secrets in the linked project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs())
 		},
@@ -24,7 +24,7 @@ var (
 
 	secretsSetCmd = &cobra.Command{
 		Use:   "set [flags] <NAME=VALUE> ...",
-		Short: "Set a secret(s) to the linked Supabase project.",
+		Short: "Set a secret(s) to the linked Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			envFilePath, err := cmd.Flags().GetString("env-file")
 			if err != nil {
@@ -37,7 +37,7 @@ var (
 
 	secretsUnsetCmd = &cobra.Command{
 		Use:   "unset <NAME> ...",
-		Short: "Unset a secret(s) from the linked Supabase project.",
+		Short: "Unset a secret(s) from the linked Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return unset.Run(args, afero.NewOsFs())
 		},

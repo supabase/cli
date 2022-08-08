@@ -12,7 +12,7 @@ import (
 var (
 	linkCmd = &cobra.Command{
 		Use:   "link",
-		Short: "Link to a Supabase project.",
+		Short: "Link to a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRef, err := cmd.Flags().GetString("project-ref")
 			if err != nil {
@@ -31,7 +31,7 @@ var (
 )
 
 func init() {
-	linkCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
+	linkCmd.Flags().String("project-ref", "", "Project ref of the Supabase project.")
 	_ = linkCmd.MarkFlagRequired("project-ref")
 	rootCmd.AddCommand(linkCmd)
 }
