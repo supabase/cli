@@ -26,6 +26,7 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 	if fi, err := stdin.Stat(); err != nil {
 		return err
 	} else if (fi.Mode() & os.ModeCharDevice) == 0 {
+		// Ref: https://stackoverflow.com/a/26567513
 		if _, err := io.Copy(f, stdin); err != nil {
 			return err
 		}
