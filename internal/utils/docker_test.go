@@ -205,10 +205,10 @@ func TestRunOnce(t *testing.T) {
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/" + containerId + "/stop").
 			Reply(http.StatusServiceUnavailable)
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(200*time.Millisecond))
+		defer cancel()
 		// Run test
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(50*time.Millisecond))
 		_, err := DockerRunOnce(ctx, imageId, nil, nil)
-		cancel()
 		assert.Error(t, err)
 		assert.False(t, gock.HasUnmatchedRequest())
 	})

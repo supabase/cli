@@ -18,7 +18,9 @@ import (
 	"github.com/spf13/viper"
 )
 
-var Docker = func() *client.Client {
+var Docker = NewDocker()
+
+func NewDocker() *client.Client {
 	docker, err := client.NewClientWithOpts(
 		client.WithAPIVersionNegotiation(),
 		// Support env (e.g. for mock setup or rootless docker)
@@ -29,7 +31,7 @@ var Docker = func() *client.Client {
 		os.Exit(1)
 	}
 	return docker
-}()
+}
 
 func AssertDockerIsRunning() error {
 	if _, err := Docker.Ping(context.Background()); err != nil {
@@ -188,7 +190,7 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 	go func() {
 		<-ctx.Done()
 		if ctx.Err() != nil {
-			if err := Docker.ContainerStop(context.Background(), resp.ID, nil); err != nil {
+			if err := NewDocker().ContainerStop(context.Background(), resp.ID, nil); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to stop container:", resp.ID, err)
 			}
 		}
