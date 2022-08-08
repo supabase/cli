@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -30,7 +31,7 @@ var (
 	resetShadowScript string
 )
 
-func RunMigra(ctx context.Context, schema []string, fsys afero.Fs) error {
+func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -77,6 +78,14 @@ func RunMigra(ctx context.Context, schema []string, fsys afero.Fs) error {
 
 	if len(out) < 2 {
 		fmt.Fprintln(os.Stderr, "No changes found")
+	} else if len(file) > 0 {
+		// Pipe to new migration command
+		r, w, err := os.Pipe()
+		if err != nil {
+			return err
+		}
+		w.WriteString(out)
+		return new.Run(file, r, fsys)
 	} else {
 		fmt.Println(out)
 	}
