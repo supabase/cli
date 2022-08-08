@@ -1,6 +1,7 @@
 package new
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -28,16 +29,18 @@ func TestNewCommand(t *testing.T) {
 		assert.True(t, match)
 	})
 
-	t.Run("creates new file with contents", func(t *testing.T) {
+	t.Run("streams content from pipe", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup stdin
-		script := "create table pet;\ndrop table pet;\n"
-		require.NoError(t, afero.WriteFile(fsys, "/dev/stdin", []byte(script), 0644))
-		stdin, err := fsys.Open("/dev/stdin")
+		r, w, err := os.Pipe()
 		require.NoError(t, err)
+		script := "create table pet;\ndrop table pet;\n"
+		_, err = w.WriteString(script)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
 		// Run test
-		assert.NoError(t, Run("test_migrate", stdin, fsys))
+		assert.NoError(t, Run("test_migrate", r, fsys))
 		// Validate output
 		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		assert.NoError(t, err)
@@ -55,5 +58,16 @@ func TestNewCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Run test
 		assert.Error(t, Run("test_migrate", stdin, afero.NewReadOnlyFs(fsys)))
+	})
+
+	t.Run("throws error on closed pipe", func(t *testing.T) {
+		// Setup read-only fs
+		fsys := afero.NewMemMapFs()
+		// Setup empty stdin
+		r, _, err := os.Pipe()
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
+		// Run test
+		assert.Error(t, Run("test_migrate", r, fsys))
 	})
 }
