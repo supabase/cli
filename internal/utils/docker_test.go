@@ -338,7 +338,7 @@ func TestExecOnce(t *testing.T) {
 			Post("/v" + version + "/containers/" + containerId + "/exec").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := DockerExecOnce(context.Background(), containerId, nil, nil)
+		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
 		assert.False(t, gock.HasUnmatchedRequest())
 	})
@@ -357,7 +357,7 @@ func TestExecOnce(t *testing.T) {
 			Reply(http.StatusAccepted).
 			JSON(types.IDResponse{ID: "test-command"})
 		// Run test
-		err := DockerExecOnce(context.Background(), containerId, nil, nil)
+		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
 		assert.False(t, gock.HasUnmatchedRequest())
 	})
