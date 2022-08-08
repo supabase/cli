@@ -36,11 +36,9 @@ func TestNewCommand(t *testing.T) {
 		r, w, err := os.Pipe()
 		require.NoError(t, err)
 		script := "create table pet;\ndrop table pet;\n"
-		go func() {
-			_, err = w.WriteString(script)
-			require.NoError(t, err)
-			require.NoError(t, w.Close())
-		}()
+		_, err = w.WriteString(script)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
 		// Run test
 		assert.NoError(t, Run("test_migrate", r, fsys))
 		// Validate output
