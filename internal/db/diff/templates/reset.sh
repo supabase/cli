@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/bin/bash
+set -euo pipefail
 
 # recreate shadow database from scratch
 dropdb --username postgres --host 127.0.0.1 --if-exists "$DB_NAME"

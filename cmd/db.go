@@ -56,14 +56,14 @@ var (
 	}
 
 	useMigra bool
-	schema   string
+	schema   []string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
 		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if useMigra {
-				return diff.RunMigra(schema, afero.NewOsFs())
+				return diff.RunMigra(cmd.Context(), schema, afero.NewOsFs())
 			}
 			return diff.Run()
 		},
@@ -134,8 +134,8 @@ func init() {
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbCmd.AddCommand(dbBranchCmd)
-	dbDiffCmd.Flags().BoolVar(&useMigra, "migra", false, "Use migra to generate schema diff.")
-	dbDiffCmd.Flags().StringVarP(&schema, "schema", "s", "public", "The schema to diff (defaults to public).")
+	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "The list of schema to diff (defaults to public).")
 	dbCmd.AddCommand(dbDiffCmd)
 	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	dbCmd.AddCommand(dbPushCmd)
