@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,7 +23,21 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
-	cobra.CheckErr(rootCmd.Execute())
+	ctx := context.Background()
+	// Trap Ctrl+C and call cancel on the context:
+	// https://medium.com/@matryer/make-ctrl-c-cancel-the-context-context-bd006a8ad6ff
+	ctx, cancel := context.WithCancel(ctx)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	defer signal.Stop(c)
+	go func() {
+		select {
+		case <-c:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	cobra.CheckErr(rootCmd.ExecuteContext(ctx))
 }
 
 func init() {

@@ -1,24 +1,16 @@
 package diff
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -27,7 +19,6 @@ import (
 )
 
 const (
-	migraId   = "supabase_migra_cli"
 	diffImage = "djrobstep/migra:3.0.1621480950"
 )
 
@@ -39,10 +30,13 @@ var (
 	resetShadowScript string
 )
 
-func RunMigra(schema string, fsys afero.Fs) error {
+func RunMigra(ctx context.Context, schema []string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
 	}
@@ -52,69 +46,44 @@ func RunMigra(schema string, fsys afero.Fs) error {
 		opts = append(opts, debug.SetupPGX)
 	}
 
-	ctx := context.Background()
-	// Trap Ctrl+C and call cancel on the context:
-	// https://medium.com/@matryer/make-ctrl-c-cancel-the-context-context-bd006a8ad6ff
-	ctx, cancel := context.WithCancel(ctx)
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	defer func() {
-		signal.Stop(c)
-		cancel()
-	}()
-	go func() {
-		select {
-		case <-c:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	fmt.Println("Creating shadow database...")
+	fmt.Fprintln(os.Stderr, "Creating shadow database...")
 	if err := createShadowDb(ctx, utils.DbId, utils.ShadowDbName); err != nil {
 		return err
 	}
 
-	fmt.Println("Initialising schema...")
+	fmt.Fprintln(os.Stderr, "Initialising schema...")
 	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/%s", utils.Config.Db.Port, utils.ShadowDbName)
 	if err := applyMigrations(ctx, url, fsys, opts...); err != nil {
 		return err
 	}
 
-	fmt.Println("Diffing local database...")
-	baseUrl := "postgresql://postgres:postgres@" + utils.DbId + ":5432/"
-	source := baseUrl + utils.ShadowDbName
-	target := baseUrl + "postgres"
-	diff, err := diffSchema(ctx, source, target, schema)
+	fmt.Fprintln(os.Stderr, "Diffing local database...")
+	source := "postgresql://postgres:postgres@" + utils.DbId + ":5432/" + utils.ShadowDbName
+	target := "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
+	out, err := diffSchema(ctx, source, target, schema)
 	if err != nil {
 		return err
 	}
 
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted " + utils.Aqua("supabase db commit") + ".")
-	}
-
-	if len(diff) < 2 {
-		fmt.Println("No changes found")
-		return nil
+		return errors.New("Aborted " + utils.Aqua("supabase db diff") + ".")
 	}
 
 	branch, err := utils.GetCurrentBranchFS(fsys)
 	if err != nil {
 		branch = "<unknown>"
 	}
+	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 
-	fmt.Println("Finished " + utils.Aqua("supabase db commit") + " on branch " + utils.Aqua(branch) + `.
-
-WARNING: You are using ` + utils.Aqua("--migra") + ` experimental flag to generate schema diffs.
-If you discover any bugs, please report them to https://github.com/supabase/cli/issues.
-Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`)
-
+	if len(out) < 2 {
+		fmt.Fprintln(os.Stderr, "No changes found")
+	} else {
+		fmt.Println(out)
+	}
 	return nil
 }
 
 func toBatchQuery(contents string) (batch pgx.Batch) {
-	// batch := &pgx.Batch{}
 	var lines []string
 	for _, line := range strings.Split(contents, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -137,32 +106,10 @@ func toBatchQuery(contents string) (batch pgx.Batch) {
 // Creates a fresh database inside supabase_cli_db container.
 func createShadowDb(ctx context.Context, container, shadow string) error {
 	// Reset shadow database
-	exec, err := utils.Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
-		Cmd:          []string{"/bin/sh", "-c", resetShadowScript},
-		Env:          []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql},
-		AttachStderr: true,
-		AttachStdout: true,
-	})
-	if err != nil {
-		return err
-	}
-	// Read exec output
-	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return err
-	}
-	// Capture error details
-	var errBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(io.Discard, &errBuf, resp.Reader); err != nil {
-		return err
-	}
-	// Get the exit code
-	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
-	if err != nil {
-		return err
-	}
-	if iresp.ExitCode > 0 {
-		return errors.New("Error creating shadow database: " + errBuf.String())
+	env := []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql}
+	cmd := []string{"/bin/bash", "-c", resetShadowScript}
+	if _, err := utils.DockerExecOnce(ctx, container, env, cmd); err != nil {
+		return errors.New("error creating shadow database")
 	}
 	return nil
 }
@@ -200,7 +147,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 					}
 				}
 			}
-			fmt.Println("Applying migration " + utils.Bold(migration.Name()) + "...")
+			fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(migration.Name())+"...")
 			contents, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
 			if err != nil {
 				return err
@@ -214,60 +161,15 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 	return nil
 }
 
-// Diffs local database schema against shadow, saves output as a migration script.
-func diffSchema(ctx context.Context, source, target, schema string) (string, error) {
-	// Pull migra image
-	imageUrl := "docker.io/" + diffImage
-	if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, imageUrl); err != nil {
-		out, err := utils.Docker.ImagePull(ctx, imageUrl, types.ImagePullOptions{})
-		if err != nil {
-			return "", err
-		}
-		dec := json.NewDecoder(out)
-		for {
-			var progress jsonmessage.JSONMessage
-			if err := dec.Decode(&progress); err == io.EOF {
-				break
-			} else if err != nil {
-				return "", err
-			}
-			fmt.Println(progress.Status)
-		}
-	}
-	// Remove stale container, if any
-	_ = utils.Docker.ContainerRemove(ctx, migraId, types.ContainerRemoveOptions{
-		RemoveVolumes: true,
-		Force:         true,
-	})
-	// Run migra
-	out, err := utils.DockerRun(
-		ctx,
-		migraId,
-		&container.Config{
-			Image: imageUrl,
-			Env: []string{
-				"SOURCE=" + source,
-				"TARGET=" + target,
-				"SCHEMA=" + schema,
-			},
-			Cmd: []string{"/bin/sh", "-c", diffSchemaScript},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
-		},
-		&container.HostConfig{
-			NetworkMode: container.NetworkMode(utils.NetId),
-			AutoRemove:  true,
-		},
-	)
+// Diffs local database schema against shadow, dumps output to stdout.
+func diffSchema(ctx context.Context, source, target string, schema []string) (string, error) {
+	env := []string{"SOURCE=" + source, "TARGET=" + target}
+	// Passing in script string means command line args must be set manually, ie. "$@"
+	args := "set -- " + strings.Join(schema, " ") + ";"
+	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
+	out, err := utils.DockerRunOnce(ctx, diffImage, env, cmd)
 	if err != nil {
-		return "", err
+		return "", errors.New("error diffing scheam")
 	}
-	// Copy output
-	buf := new(strings.Builder)
-	if _, err := stdcopy.StdCopy(buf, io.Discard, out); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return out, nil
 }
