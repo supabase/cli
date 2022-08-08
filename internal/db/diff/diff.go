@@ -56,15 +56,8 @@ func Run(file string, fsys afero.Fs) error {
 	}
 
 	if len(file) > 0 {
-		// Pipe to new migration command
-		r, w, err := os.Pipe()
-		if err != nil {
-			return err
-		}
-		if _, err := w.WriteString(diff); err != nil {
-			return err
-		}
-		return new.Run(file, r, fsys)
+		path := new.GetMigrationPath(file)
+		return afero.WriteFile(fsys, path, []byte(diff), 0644)
 	} else {
 		fmt.Println(diff)
 	}

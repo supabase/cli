@@ -79,15 +79,8 @@ func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) 
 	if len(out) < 2 {
 		fmt.Fprintln(os.Stderr, "No changes found")
 	} else if len(file) > 0 {
-		// Pipe to new migration command
-		r, w, err := os.Pipe()
-		if err != nil {
-			return err
-		}
-		if _, err := w.WriteString(diff); err != nil {
-			return err
-		}
-		return new.Run(file, r, fsys)
+		path := new.GetMigrationPath(file)
+		return afero.WriteFile(fsys, path, []byte(out), 0644)
 	} else {
 		fmt.Println(out)
 	}
