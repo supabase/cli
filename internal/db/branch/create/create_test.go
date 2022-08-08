@@ -87,7 +87,7 @@ func TestBranchCreation(t *testing.T) {
 
 func TestCreateCommand(t *testing.T) {
 	const (
-		version = "v1.41"
+		version = "1.41"
 		branch  = "test-branch"
 	)
 
@@ -107,7 +107,11 @@ func TestCreateCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/containers").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(branch, fsys))
+		assert.False(t, gock.HasUnmatchedRequest())
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/docker/docker/client"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,7 +55,7 @@ func TestBranchDir(t *testing.T) {
 
 func TestDeleteCommand(t *testing.T) {
 	const (
-		version = "v1.41"
+		version = "1.41"
 		branch  = "test-branch"
 	)
 
@@ -67,14 +68,18 @@ func TestDeleteCommand(t *testing.T) {
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
+		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
 		defer gock.Off()
-		gock.InterceptClient(utils.Docker.HTTPClient())
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/containers").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(branch, fsys))
+		assert.False(t, gock.HasUnmatchedRequest())
 	})
 }
