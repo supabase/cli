@@ -84,7 +84,9 @@ func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) 
 		if err != nil {
 			return err
 		}
-		w.WriteString(out)
+		if _, err := w.WriteString(diff); err != nil {
+			return err
+		}
 		return new.Run(file, r, fsys)
 	} else {
 		fmt.Println(out)

@@ -61,7 +61,9 @@ func Run(file string, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		w.WriteString(diff)
+		if _, err := w.WriteString(diff); err != nil {
+			return err
+		}
 		return new.Run(file, r, fsys)
 	} else {
 		fmt.Println(diff)
