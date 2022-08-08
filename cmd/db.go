@@ -21,7 +21,8 @@ import (
 
 var (
 	dbCmd = &cobra.Command{
-		Use: "db",
+		Use:   "db",
+		Short: "Manage Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{
@@ -31,7 +32,7 @@ var (
 
 	dbBranchCreateCmd = &cobra.Command{
 		Use:   "create <branch name>",
-		Short: "Create a branch.",
+		Short: "Create a branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return create.Run(args[0], afero.NewOsFs())
@@ -40,7 +41,7 @@ var (
 
 	dbBranchDeleteCmd = &cobra.Command{
 		Use:   "delete <branch name>",
-		Short: "Delete a branch.",
+		Short: "Delete a branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return delete.Run(args[0], afero.NewOsFs())
@@ -49,7 +50,7 @@ var (
 
 	dbBranchListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List branches.",
+		Short: "List branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs(), os.Stdout)
 		},
@@ -61,7 +62,7 @@ var (
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
-		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
+		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if useMigra {
@@ -75,19 +76,20 @@ var (
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
-		Short: "Push new migrations to the remote database.",
+		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return push.Run(dryRun)
 		},
 	}
 
 	dbRemoteCmd = &cobra.Command{
-		Use: "remote",
+		Use:   "remote",
+		Short: "Manage remote database connections",
 	}
 
 	dbRemoteSetCmd = &cobra.Command{
 		Use:   "set <remote database url>",
-		Short: "Set the remote database to push migrations to.",
+		Short: "Set the remote database to push migrations to",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if viper.GetBool("DEBUG") {
@@ -99,7 +101,7 @@ var (
 
 	dbRemoteChangesCmd = &cobra.Command{
 		Use:   "changes",
-		Short: "Print changes on the remote database since the last pushed migration.",
+		Short: "Print changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return remoteChanges.Run()
 		},
@@ -107,7 +109,7 @@ var (
 
 	dbRemoteCommitCmd = &cobra.Command{
 		Use:   "commit",
-		Short: "Commit changes on the remote database since the last pushed migration.",
+		Short: "Commit changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return remoteCommit.Run()
 		},
@@ -115,7 +117,7 @@ var (
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
-		Short: "Resets the local database to reflect current migrations. Any changes on the local database that is not committed will be lost.",
+		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return reset.Run()
 		},
@@ -123,7 +125,7 @@ var (
 
 	dbSwitchCmd = &cobra.Command{
 		Use:   "switch <branch name>",
-		Short: "Switch branches.",
+		Short: "Switch the active branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return switch_.Run(args[0])
@@ -135,10 +137,11 @@ func init() {
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
+	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
 	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
-	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Name of the new migration file to create.")
-	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "The list of schema to diff (defaults to public).")
+	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
+	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
 	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	dbCmd.AddCommand(dbPushCmd)
@@ -147,6 +150,5 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
 	dbCmd.AddCommand(dbResetCmd)
-	dbCmd.AddCommand(dbSwitchCmd)
 	rootCmd.AddCommand(dbCmd)
 }

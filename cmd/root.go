@@ -46,7 +46,7 @@ func init() {
 		viper.AutomaticEnv()
 	})
 	flags := rootCmd.PersistentFlags()
-	flags.Bool("debug", false, "enable debug mode")
+	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.VisitAll(func(f *pflag.Flag) {
 		key := strings.ReplaceAll(f.Name, "-", "_")
 		_ = viper.BindPFlag(key, flags.Lookup(f.Name))

@@ -7,11 +7,13 @@ import (
 
 var (
 	genCmd = &cobra.Command{
-		Use: "gen",
+		Use:   "gen",
+		Short: "Run code generation tools",
 	}
 
 	genTypesCmd = &cobra.Command{
-		Use: "types",
+		Use:   "types",
+		Short: "Generate types from Postgres schema",
 	}
 
 	genTypesTypescriptCmd = &cobra.Command{
@@ -33,8 +35,8 @@ var (
 )
 
 func init() {
-	genTypesTypescriptCmd.Flags().Bool("local", false, "Generate types from the local dev database")
-	genTypesTypescriptCmd.Flags().String("db-url", "", "Generate types from a database url")
+	genTypesTypescriptCmd.Flags().Bool("local", false, "Generate types from the local dev database.")
+	genTypesTypescriptCmd.Flags().String("db-url", "", "Generate types from a database url.")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
 	rootCmd.AddCommand(genCmd)
