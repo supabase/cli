@@ -25,7 +25,7 @@ func main() {
 			Bugs:        "https://github.com/supabase/cli/issues",
 			Spec:        "https://github.com/supabase/supabase.tools/cli_spec/lib.yaml",
 			Description: root.Short,
-			Options:     root.Flags().FlagUsages(),
+			Options:     mdScriptEscape(root.Flags().FlagUsages()),
 		},
 	}
 	// Generate, serialise, and print
