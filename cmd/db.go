@@ -9,13 +9,13 @@ import (
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
 	"github.com/supabase/cli/internal/db/branch/list"
+	"github.com/supabase/cli/internal/db/branch/switch_"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/push"
-	remoteChanges "github.com/supabase/cli/internal/db/remote/changes"
-	remoteCommit "github.com/supabase/cli/internal/db/remote/commit"
+	"github.com/supabase/cli/internal/db/remote/changes"
+	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/remote/set"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/db/switch_"
 	"github.com/supabase/cli/internal/debug"
 )
 
@@ -53,6 +53,15 @@ var (
 		Short: "List branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs(), os.Stdout)
+		},
+	}
+
+	dbSwitchCmd = &cobra.Command{
+		Use:   "switch <branch name>",
+		Short: "Switch the active branch",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return switch_.Run(args[0])
 		},
 	}
 
@@ -103,7 +112,7 @@ var (
 		Use:   "changes",
 		Short: "Print changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return remoteChanges.Run()
+			return changes.Run()
 		},
 	}
 
@@ -111,7 +120,7 @@ var (
 		Use:   "commit",
 		Short: "Commit changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return remoteCommit.Run()
+			return commit.Run()
 		},
 	}
 
@@ -120,15 +129,6 @@ var (
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return reset.Run()
-		},
-	}
-
-	dbSwitchCmd = &cobra.Command{
-		Use:   "switch <branch name>",
-		Short: "Switch the active branch",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return switch_.Run(args[0])
 		},
 	}
 )
