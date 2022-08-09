@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,33 +12,29 @@ import (
 
 func main() {
 	root := cmd.GetRootCmd()
-	root.InitDefaultHelpCmd()
-	root.InitDefaultHelpFlag()
 	spec := SpecDoc{
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
 			Version:     "1.0.0",
-			Title:       "Supabase CLI",
+			Title:       strings.TrimSpace(root.Short),
+			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
 			Source:      "https://github.com/supabase/cli",
 			Bugs:        "https://github.com/supabase/cli/issues",
 			Spec:        "https://github.com/supabase/supabase.tools/cli_spec/lib.yaml",
-			Description: root.Short,
-			Options:     mdScriptEscape(root.Flags().FlagUsages()),
 		},
 	}
 	// Generate, serialise, and print
-	_ = GenYamlDoc(root, &spec)
+	yamlDoc := GenYamlDoc(root, &spec)
+	spec.Info.Options = yamlDoc.Options
+	// Reverse commands list
 	for i, j := 0, len(spec.Commands)-1; i < j; i, j = i+1, j-1 {
 		spec.Commands[i], spec.Commands[j] = spec.Commands[j], spec.Commands[i]
 	}
-
-	final, err := yaml.Marshal(spec)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	if _, err := fmt.Println(string(final)); err != nil {
+	// Write to stdout
+	encoder := yaml.NewEncoder(os.Stdout)
+	if err := encoder.Encode(spec); err != nil {
 		log.Fatalln(err)
 	}
 }
@@ -74,6 +70,7 @@ type SpecDoc struct {
 	Commands []CmdDoc `yaml:""`
 }
 
+// DFS on command tree to generate documentation specs.
 func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 	var subcommands []string
 	for _, c := range cmd.Commands() {
@@ -97,23 +94,30 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 	}
 
 	if cmd.Runnable() {
-		yamlDoc.Usage = mdScriptEscape(cmd.UseLine())
+		yamlDoc.Usage = mdCodeBlock(cmd.UseLine(), root.Info.Language)
 	}
 
 	flags := cmd.NonInheritedFlags()
 	if flags.HasFlags() {
-		yamlDoc.Options = mdScriptEscape(flags.FlagUsages())
+		yamlDoc.Options = mdCodeBlock(flags.FlagUsages(), root.Info.Language)
 	}
 
 	return yamlDoc
 }
 
-func mdScriptEscape(script string) string {
-	return "```sh\n" + strings.Trim(script, "\n") + "\n```"
+// Wraps a command string in markdown style code block, ie.
+//
+//   ```sh
+//   echo "hello world"
+//   ```
+func mdCodeBlock(script string, language string) string {
+	return "```" + language + "\n" + strings.Trim(script, "\n") + "\n```"
 }
 
-// Temporary workaround for yaml lib generating incorrect yaml with long strings
-// that do not contain \n.
+// Yaml lib generates incorrect yaml with long strings that do not contain \n.
+//
+//   example: 'a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a
+//     a a a a a a '
 func forceMultiLine(s string) string {
 	if len(s) > 60 && !strings.Contains(s, "\n") {
 		s = s + "\n"
