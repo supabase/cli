@@ -112,17 +112,6 @@ func run(p utils.Program, username, password, database string, fsys afero.Fs) er
 	}
 	defer conn.Close(context.Background())
 
-	// Assert db.major_version is compatible.
-	if err := AssertPostgresVersionMatch(conn); err != nil {
-		return err
-	}
-	// If `schema_migrations` doesn't exist on the remote database, create it.
-	if _, err := conn.Exec(ctx, CHECK_MIGRATION_EXISTS); err != nil {
-		if _, err := conn.Exec(ctx, CREATE_MIGRATION_TABLE); err != nil {
-			return err
-		}
-	}
-
 	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
@@ -388,7 +377,7 @@ EOSQL
 	}
 
 	// 5. Insert a row to `schema_migrations`
-	if _, err := conn.Query(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)", timestamp); err != nil {
+	if _, err := conn.Exec(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
 		return err
 	}
 
