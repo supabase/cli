@@ -2,14 +2,20 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
+	"golang.org/x/term"
 )
 
 var (
+	database string
+	username string
+	password string
+
 	linkCmd = &cobra.Command{
 		Use:   "link",
 		Short: "Link to a Supabase project",
@@ -19,8 +25,12 @@ var (
 				return err
 			}
 
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+
 			fsys := afero.NewOsFs()
-			if err := link.Run(projectRef, fsys); err != nil {
+			if err := link.Run(cmd.Context(), projectRef, username, password, database, fsys); err != nil {
 				return err
 			}
 
@@ -31,7 +41,21 @@ var (
 )
 
 func init() {
-	linkCmd.Flags().String("project-ref", "", "Project ref of the Supabase project.")
+	flags := linkCmd.Flags()
+	flags.String("project-ref", "", "Project ref of the Supabase project.")
+	flags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
+	flags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
+	flags.StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
 	_ = linkCmd.MarkFlagRequired("project-ref")
 	rootCmd.AddCommand(linkCmd)
+}
+
+func PromptPassword(stdin *os.File) string {
+	fmt.Print("Enter your database password: ")
+	bytepw, err := term.ReadPassword(int(stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return ""
+	}
+	return string(bytepw)
 }

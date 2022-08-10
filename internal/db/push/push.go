@@ -41,7 +41,7 @@ func Run(ctx context.Context, dryRun bool, username, password, database string, 
 	rows, err := conn.Query(ctx, commit.LIST_MIGRATION_VERSION)
 	if err != nil {
 		return fmt.Errorf(`Error querying remote database: %w.
-If this is your first time pushing, run `+utils.Aqua("supabase db remote commit")+" to initialise the remote first.", err)
+Try running `+utils.Aqua("supabase link")+" to reinitialise the project.", err)
 	}
 
 	versions := []string{}
@@ -103,7 +103,7 @@ Try running `+utils.Aqua("supabase migration new")+".", err)
 					return fmt.Errorf("%w; while executing migration %s", err, migrationTimestamp)
 				}
 				// Insert a row to `schema_migrations`
-				if _, err := conn.Query(ctx, commit.INSERT_MIGRATION_VERSION, migrationTimestamp); err != nil {
+				if _, err := conn.Exec(ctx, commit.INSERT_MIGRATION_VERSION, migrationTimestamp); err != nil {
 					return fmt.Errorf("%w; while inserting migration %s", err, migrationTimestamp)
 				}
 				if err := tx.Commit(ctx); err != nil {

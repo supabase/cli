@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/afero"
@@ -15,7 +14,6 @@ import (
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
-	"golang.org/x/term"
 )
 
 var (
@@ -80,17 +78,14 @@ var (
 		},
 	}
 
-	dryRun   bool
-	database string
-	username string
-	password string
+	dryRun bool
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if password == "" {
-				password = getPassword(os.Stdin)
+				password = PromptPassword(os.Stdin)
 			}
 			return push.Run(cmd.Context(), dryRun, username, password, database, afero.NewOsFs())
 		},
@@ -114,7 +109,7 @@ var (
 		Short: "Commit changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if password == "" {
-				password = getPassword(os.Stdin)
+				password = PromptPassword(os.Stdin)
 			}
 			return commit.Run(cmd.Context(), username, password, database, afero.NewOsFs())
 		},
@@ -154,14 +149,4 @@ func init() {
 	dbCmd.AddCommand(dbRemoteCmd)
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
-}
-
-func getPassword(stdin *os.File) string {
-	fmt.Print("Enter your database password: ")
-	bytepw, err := term.ReadPassword(int(stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return ""
-	}
-	return string(bytepw)
 }
