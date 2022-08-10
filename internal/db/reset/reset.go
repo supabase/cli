@@ -102,7 +102,7 @@ EOSQL
 			}
 		}
 
-		// 3. Apply initial schema + extensions + migrations + seed.
+		// 3. Apply initial schema + migrations + seed.
 
 		p.Send(utils.StatusMsg("Setting up initial schema..."))
 		{
@@ -123,30 +123,6 @@ EOSQL
 			}
 			if errBuf.Len() > 0 {
 				return errors.New("Error resetting database: " + errBuf.String())
-			}
-		}
-
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
-		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(extensionsSql),
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error resetting database: " + errBuf.String())
-				}
 			}
 		}
 

@@ -410,30 +410,6 @@ EOSQL
 					}
 				}
 
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
-				{
-					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						// skip
-					} else if err != nil {
-						return err
-					} else {
-						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(extensionsSql),
-						})
-						if err != nil {
-							return err
-						}
-						var errBuf bytes.Buffer
-						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-							return err
-						}
-						if errBuf.Len() > 0 {
-							return errors.New("Error starting database: " + errBuf.String())
-						}
-					}
-				}
-
 				if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
 					return err
 				}
