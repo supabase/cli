@@ -18,6 +18,9 @@ func Run(ctx context.Context, projectRef, username, password, database string, f
 	if err := validateProjectRef(projectRef, fsys); err != nil {
 		return err
 	}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
 
 	// 2. Check database connection
 	{
