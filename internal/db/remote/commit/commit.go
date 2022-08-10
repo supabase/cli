@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,28 +22,32 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	pgx "github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
+	"github.com/spf13/afero"
+	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
 
+const (
+	CHECK_MIGRATION_EXISTS = "SELECT 1 FROM supabase_migrations.schema_migrations LIMIT 1"
+	LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
+	CREATE_MIGRATION_TABLE = `CREATE SCHEMA IF NOT EXISTS supabase_migrations;
+CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);
+`
+	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
+)
+
 // TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run() error {
+func Run(_ctx context.Context, username, password, database string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-		if err := utils.LoadConfig(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
 	}
-
-	urlBytes, err := os.ReadFile(utils.RemoteDbPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
-	} else if err != nil {
-		return err
-	}
-	url := string(urlBytes)
 
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
@@ -51,7 +56,7 @@ func Run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, url)
+		errCh <- run(p, username, password, database, fsys)
 		p.Send(tea.Quit())
 	}()
 
@@ -79,7 +84,7 @@ const (
 
 var ctx, cancelCtx = context.WithCancel(context.Background())
 
-func run(p utils.Program, url string) error {
+func run(p utils.Program, username, password, database string, fsys afero.Fs) error {
 	defer cleanup()
 
 	_, _ = utils.Docker.NetworkCreate(
@@ -94,11 +99,26 @@ func run(p utils.Program, url string) error {
 		},
 	)
 
-	conn, err := pgx.Connect(ctx, url)
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := ConnectRemotePostgres(username, password, database, projectRef)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+
+	// Assert db.major_version is compatible.
+	if err := AssertPostgresVersionMatch(conn); err != nil {
+		return err
+	}
+	// If `schema_migrations` doesn't exist on the remote database, create it.
+	if _, err := conn.Exec(ctx, CHECK_MIGRATION_EXISTS); err != nil {
+		if _, err := conn.Exec(ctx, CREATE_MIGRATION_TABLE); err != nil {
+			return err
+		}
+	}
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
@@ -133,51 +153,15 @@ func run(p utils.Program, url string) error {
 	}
 
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err != nil {
+	if err := assertRemoteInSync(conn, fsys); err != nil {
 		return err
-	} else {
-		remoteMigrations := []string{}
-		for rows.Next() {
-			var version string
-			if err := rows.Scan(&version); err != nil {
-				return err
-			}
-			remoteMigrations = append(remoteMigrations, version)
-		}
-
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-			return err
-		}
-		localMigrations, err := os.ReadDir("supabase/migrations")
-		if err != nil {
-			return err
-		}
-
-		conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold("supabase/migrations") + `. Resolve this by:
-- Updating the project from version control to get the latest ` + utils.Bold("supabase/migrations") + `,
-- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
-- Or failing that, manually inserting/deleting rows from the supabase_migrations.schema_migrations table on the remote database.`)
-
-		if len(remoteMigrations) != len(localMigrations) {
-			return conflictErr
-		}
-
-		for i, remoteTimestamp := range remoteMigrations {
-			localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
-
-			if localTimestamp == remoteTimestamp {
-				continue
-			}
-
-			return conflictErr
-		}
 	}
 
 	timestamp := utils.GetCurrentTimestamp()
 
 	// 2. Special case if this is the first migration
 	{
-		localMigrations, err := os.ReadDir(filepath.Join("supabase", "migrations"))
+		localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		if err != nil {
 			return err
 		}
@@ -194,7 +178,7 @@ func run(p utils.Program, url string) error {
 					Env:   []string{"POSTGRES_PASSWORD=postgres"},
 					Entrypoint: []string{
 						"sh", "-c",
-						"pg_dump --schema-only --quote-all-identifier --exclude-schema '" + strings.Join(utils.InternalSchemas, "|") + `' --schema '*' --extension '*' --dbname '` + url + `' | sed 's/CREATE SCHEMA "public"/-- CREATE SCHEMA "public"/'`,
+						"pg_dump --schema-only --quote-all-identifier --exclude-schema '" + strings.Join(utils.InternalSchemas, "|") + `' --schema '*' --extension '*' --dbname '` + conn.Config().ConnString() + `' | sed 's/CREATE SCHEMA "public"/-- CREATE SCHEMA "public"/'`,
 					},
 					Labels: map[string]string{
 						"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -216,11 +200,12 @@ func run(p utils.Program, url string) error {
 			}
 
 			// Insert a row to `schema_migrations`
-			if _, err := conn.Query(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)", timestamp); err != nil {
+			if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
 				return err
 			}
 
-			if err := os.WriteFile(filepath.Join("supabase", "migrations", timestamp+"_remote_commit.sql"), dumpBuf.Bytes(), 0644); err != nil {
+			path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+			if err := afero.WriteFile(fsys, path, dumpBuf.Bytes(), 0644); err != nil {
 				return err
 			}
 
@@ -317,10 +302,7 @@ EOSQL
 			}
 		}
 
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-			return err
-		}
-		migrations, err := os.ReadDir("supabase/migrations")
+		migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		if err != nil {
 			return err
 		}
@@ -341,7 +323,7 @@ EOSQL
 
 			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
 
-			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+			content, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
 			if err != nil {
 				return err
 			}
@@ -378,7 +360,7 @@ EOSQL
 				Image: utils.DifferImage,
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
-						" '" + url + "'" +
+						" '" + conn.Config().ConnString() + "'" +
 						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
 				Labels: map[string]string{
@@ -500,4 +482,104 @@ func (m model) View() string {
 	}
 
 	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
+}
+
+func AssertPostgresVersionMatch(conn *pgx.Conn) error {
+	serverVersion := conn.PgConn().ParameterStatus("server_version")
+	// Safe to assume that supported Postgres version is 10.0 <= n < 100.0
+	majorDigits := len(serverVersion)
+	if majorDigits > 2 {
+		majorDigits = 2
+	}
+	dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7)
+	if err != nil {
+		return err
+	}
+	if dbMajorVersion != uint64(utils.Config.Db.MajorVersion) {
+		return fmt.Errorf(
+			"Remote database Postgres version %[1]d is incompatible with %[3]s %[2]d. If you are setting up a fresh Supabase CLI project, try changing %[3]s in %[4]s to %[1]d.",
+			dbMajorVersion,
+			utils.Config.Db.MajorVersion,
+			utils.Aqua("db.major_version"),
+			utils.Bold(utils.ConfigPath),
+		)
+	}
+	return nil
+}
+
+// Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
+func ConnectRemotePostgres(username, password, database, host string) (*pgx.Conn, error) {
+	// Build connection string
+	pgUrl := fmt.Sprintf(
+		"postgresql://%s:%s@db.%s.supabase.io:5432/%s",
+		url.QueryEscape(username),
+		url.QueryEscape(password),
+		url.QueryEscape(host),
+		url.QueryEscape(database),
+	)
+	// Parse connection url
+	config, err := pgx.ParseConfig(pgUrl)
+	if err != nil {
+		return nil, err
+	}
+	// Simple protocol is preferred over pgx default Parse -> Bind flow because
+	//   1. Using a single command for each query reduces RTT over an Internet connection.
+	//   2. Performance gains from using the alternate binary protocol is negligible because
+	//      we are only selecting from migrations table. Large reads are handled by PostgREST.
+	//   3. Any prepared statements are cleared server side upon closing the TCP connection.
+	//      Since CLI workloads are one-off scripts, we don't use connection pooling and hence
+	//      don't benefit from per connection server side cache.
+	config.PreferSimpleProtocol = true
+	if viper.GetBool("DEBUG") {
+		debug.SetupPGX(config)
+	}
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func assertRemoteInSync(conn *pgx.Conn, fsys afero.Fs) error {
+	// Load remote migrations
+	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
+	if err != nil {
+		return err
+	}
+	remoteMigrations := []string{}
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return err
+		}
+		remoteMigrations = append(remoteMigrations, version)
+	}
+	// Load local migrations
+	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+		return err
+	}
+	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
+	if err != nil {
+		return err
+	}
+
+	conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold(utils.MigrationsDir) + `. Resolve this by:
+- Updating the project from version control to get the latest ` + utils.Bold(utils.MigrationsDir) + `,
+- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
+- Or failing that, manually inserting/deleting rows from the supabase_migrations.schema_migrations table on the remote database.`)
+	if len(remoteMigrations) != len(localMigrations) {
+		return conflictErr
+	}
+
+	for i, remoteTimestamp := range remoteMigrations {
+		localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
+
+		if localTimestamp == remoteTimestamp {
+			continue
+		}
+
+		return conflictErr
+	}
+
+	return nil
 }

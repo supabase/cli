@@ -222,6 +222,18 @@ func AssertIsLinkedFS(fsys afero.Fs) error {
 	return nil
 }
 
+func LoadProjectRef(fsys afero.Fs) (string, error) {
+	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
+	if err != nil {
+		return "", err
+	}
+	projectRef := string(projectRefBytes)
+	if !ProjectRefPattern.MatchString(projectRef) {
+		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	}
+	return projectRef, nil
+}
+
 func InstallOrUpgradeDeno() error {
 	home, err := os.UserHomeDir()
 	if err != nil {

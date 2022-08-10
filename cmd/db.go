@@ -1,11 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
 	"github.com/supabase/cli/internal/db/branch/list"
@@ -14,9 +14,8 @@ import (
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
-	"github.com/supabase/cli/internal/db/remote/set"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/debug"
+	"golang.org/x/term"
 )
 
 var (
@@ -81,31 +80,25 @@ var (
 		},
 	}
 
-	dryRun bool
+	dryRun   bool
+	database string
+	username string
+	password string
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run(dryRun)
+			if password == "" {
+				password = getPassword(os.Stdin)
+			}
+			return push.Run(cmd.Context(), dryRun, username, password, database, afero.NewOsFs())
 		},
 	}
 
 	dbRemoteCmd = &cobra.Command{
 		Use:   "remote",
 		Short: "Manage remote database connections",
-	}
-
-	dbRemoteSetCmd = &cobra.Command{
-		Use:   "set <remote database url>",
-		Short: "Set the remote database to push migrations to",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if viper.GetBool("DEBUG") {
-				return set.Run(args[0], afero.NewOsFs(), debug.SetupPGX)
-			}
-			return set.Run(args[0], afero.NewOsFs())
-		},
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
@@ -120,7 +113,10 @@ var (
 		Use:   "commit",
 		Short: "Commit changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return commit.Run()
+			if password == "" {
+				password = getPassword(os.Stdin)
+			}
+			return commit.Run(cmd.Context(), username, password, database, afero.NewOsFs())
 		},
 	}
 
@@ -143,12 +139,29 @@ func init() {
 	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
 	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
-	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	pushFlags := dbPushCmd.Flags()
+	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	pushFlags.StringVarP(&database, "database", "d", "postgres", "Name of your Postgres database.")
+	pushFlags.StringVarP(&username, "username", "u", "postgres", "Username to your Postgres database.")
+	pushFlags.StringVarP(&password, "password", "p", "", "Password to your Postgres database.")
 	dbCmd.AddCommand(dbPushCmd)
-	dbRemoteCmd.AddCommand(dbRemoteSetCmd)
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
+	commitFlags := dbRemoteCommitCmd.Flags()
+	commitFlags.StringVarP(&database, "database", "d", "postgres", "Name of your Postgres database.")
+	commitFlags.StringVarP(&username, "username", "u", "postgres", "Username to your Postgres database.")
+	commitFlags.StringVarP(&password, "password", "p", "", "Password to your Postgres database.")
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
+}
+
+func getPassword(stdin *os.File) string {
+	fmt.Print("Enter your database password: ")
+	bytepw, err := term.ReadPassword(int(stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return ""
+	}
+	return string(bytepw)
 }
