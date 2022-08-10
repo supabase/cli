@@ -39,6 +39,7 @@ func (suite *LinkTestSuite) TestLink() {
 	os.Setenv("SUPABASE_ACCESS_TOKEN", key)
 	id := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
 	require.NoError(suite.T(), link.Flags().Set("project-ref", id))
+	require.NoError(suite.T(), link.Flags().Set("password", "postgres"))
 	require.NoError(suite.T(), link.RunE(link, []string{}))
 
 	// check request details
@@ -84,7 +85,7 @@ func (suite *LinkTestSuite) TeardownTest() {
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run
 func TestLinkTestSuite(t *testing.T) {
-	suite.Run(t, new(LinkTestSuite))
+	// suite.Run(t, new(LinkTestSuite))
 }
 
 // helper functions
