@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	database string
-	username string
+	// TODO: allow switching roles on backend
+	database = "postgres"
+	username = "postgres"
 	password string
 
 	linkCmd = &cobra.Command{
@@ -43,8 +44,8 @@ var (
 func init() {
 	flags := linkCmd.Flags()
 	flags.String("project-ref", "", "Project ref of the Supabase project.")
-	flags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
-	flags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
+	// flags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
+	// flags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
 	flags.StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
 	_ = linkCmd.MarkFlagRequired("project-ref")
 	rootCmd.AddCommand(linkCmd)
