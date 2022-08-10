@@ -160,7 +160,8 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
-			if resp.StatusCode != http.StatusOK {
+			// TODO: remove the StatusOK case after 2022-08-20
+			if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 				if err != nil {
 					return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
 				}

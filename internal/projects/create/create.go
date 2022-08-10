@@ -51,6 +51,7 @@ func Run(params RequestParam, fsys afero.Fs) error {
 		}
 		defer resp.Body.Close()
 
+		// TODO: remove the StatusOK case after 2022-08-20
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
