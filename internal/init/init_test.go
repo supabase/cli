@@ -44,13 +44,13 @@ func TestInitCommand(t *testing.T) {
 		assert.False(t, exists)
 	})
 
-	t.Run("throws error when config file exists", func(t *testing.T) {
+	t.Run("returns early when config file exists", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.NoError(t, Run(fsys))
 	})
 
 	t.Run("throws error on failure to write config", func(t *testing.T) {

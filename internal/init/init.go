@@ -3,6 +3,7 @@ package init
 import (
 	_ "embed"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -13,15 +14,14 @@ import (
 var (
 	//go:embed templates/init_gitignore
 	initGitignore []byte
-
-	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold("supabase") + " to reinitialize.")
 )
 
 func Run(fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
-			return errAlreadyInitialized
+			fmt.Fprintln(os.Stderr, "Project already initialized. Remove "+utils.Bold("supabase")+" to reinitialize.")
+			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
