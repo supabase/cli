@@ -15,6 +15,9 @@ func Run(ctx context.Context, dryRun bool, username, password, database string, 
 	if dryRun {
 		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
 	}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
 	if err := utils.AssertIsLinkedFS(fsys); err != nil {
 		return err
 	}

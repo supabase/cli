@@ -47,6 +47,9 @@ func Run(_ctx context.Context, username, password, database string, fsys afero.F
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
+		if err := utils.AssertIsLinkedFS(fsys); err != nil {
+			return err
+		}
 	}
 
 	s := spinner.NewModel()
