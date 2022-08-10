@@ -271,29 +271,6 @@ EOSQL
 			}
 		}
 
-		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, dbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(extensionsSql),
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error starting shadow database: " + errBuf.String())
-				}
-			}
-		}
-
 		migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		if err != nil {
 			return err

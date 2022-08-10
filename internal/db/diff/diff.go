@@ -71,70 +71,12 @@ var (
 )
 
 func run(p utils.Program) error {
-	defer cleanup()
-
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations
 	{
-		out, err := utils.DockerExec(
-			ctx,
-			utils.DbId,
-			[]string{"createdb", "--username", "postgres", "--host", "127.0.0.1", utils.ShadowDbName},
-		)
-		if err != nil {
+		if err := createShadowDb(ctx, utils.DbId, utils.ShadowDbName); err != nil {
 			return err
-		}
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error creating shadow database: " + errBuf.String())
-		}
-
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/` + utils.ShadowDbName + ` <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting shadow database: " + errBuf.String())
-			}
-		}
-
-		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/" + utils.ShadowDbName, "-c", string(extensionsSql),
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error starting shadow database: " + errBuf.String())
-				}
-			}
 		}
 
 		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
@@ -211,14 +153,6 @@ EOSQL
 	return nil
 }
 
-func cleanup() {
-	_, _ = utils.DockerExec(
-		context.Background(),
-		utils.DbId,
-		[]string{"dropdb", "--username", "postgres", "--host", "127.0.0.1", utils.ShadowDbName},
-	)
-}
-
 type model struct {
 	spinner     spinner.Model
 	status      string
@@ -239,8 +173,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			// Stop future runs
 			cancelCtx()
-			// Stop current runs
-			cleanup()
 			return m, tea.Quit
 		default:
 			return m, nil
