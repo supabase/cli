@@ -63,7 +63,8 @@ func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) 
 			return err
 		}
 
-		if resp.StatusCode() != http.StatusOK {
+		// TODO: remove the StatusOK case after 2022-08-20
+		if resp.StatusCode() != http.StatusCreated && resp.StatusCode() != http.StatusOK {
 			return errors.New("Unexpected error setting project secrets: " + string(resp.Body))
 		}
 	}
