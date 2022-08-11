@@ -1,6 +1,7 @@
 package set
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -38,7 +39,7 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON([]list.Secret{dummy}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run("", []string{dummyEnv}, fsys))
+		assert.NoError(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
 	})
 
 	t.Run("Sets secret value via env file", func(t *testing.T) {
@@ -67,11 +68,11 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON([]list.Secret{dummy}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run(tmpfile.Name(), []string{}, fsys))
+		assert.NoError(t, Run(context.Background(), tmpfile.Name(), []string{}, fsys))
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
-		assert.Error(t, Run("", []string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), "", []string{}, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on missing project ref", func(t *testing.T) {
@@ -80,7 +81,7 @@ func TestSecretSetCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run("", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
 	})
 
 	t.Run("throws error on missing access token", func(t *testing.T) {
@@ -91,7 +92,7 @@ func TestSecretSetCommand(t *testing.T) {
 		_, err = fsys.Create(utils.ProjectRefPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run("", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
 	})
 
 	t.Run("throws error on empty secret", func(t *testing.T) {
@@ -107,7 +108,7 @@ func TestSecretSetCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Run test
-		assert.Error(t, Run("", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -130,7 +131,7 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON([]list.Secret{dummy}).
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run("", []string{dummyEnv}, fsys))
+		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -154,6 +155,6 @@ func TestSecretSetCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run("", []string{dummyEnv}, fsys))
+		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
 	})
 }
