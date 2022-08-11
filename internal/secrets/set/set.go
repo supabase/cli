@@ -1,52 +1,41 @@
 package set
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(envFilePath string, args []string, fsys afero.Fs) error {
+func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertIsLinkedFS(fsys); err != nil {
 			return err
 		}
 	}
 
 	// 2. Set secret(s).
 	{
-		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
-		if err != nil {
-			return err
-		}
-		projectRef := string(projectRefBytes)
-
-		accessToken, err := utils.LoadAccessTokenFS(fsys)
+		projectRef, err := utils.LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
 
-		var secrets []list.Secret
+		var secrets api.CreateSecretsJSONBody
 		if envFilePath != "" {
 			envMap, err := godotenv.Read(envFilePath)
 			if err != nil {
 				return err
 			}
 			for name, value := range envMap {
-				secret := list.Secret{
+				secret := api.CreateSecretBody{
 					Name:  name,
 					Value: value,
 				}
@@ -61,7 +50,7 @@ func Run(envFilePath string, args []string, fsys afero.Fs) error {
 					return errors.New("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
 				}
 
-				secret := list.Secret{
+				secret := api.CreateSecretBody{
 					Name:  name,
 					Value: value,
 				}
@@ -69,31 +58,13 @@ func Run(envFilePath string, args []string, fsys afero.Fs) error {
 			}
 		}
 
-		secretsBytes, err := json.Marshal(secrets)
+		resp, err := utils.GetSupabase().CreateSecretsWithResponse(ctx, projectRef, secrets)
 		if err != nil {
 			return err
 		}
-		reqBody := bytes.NewReader(secretsBytes)
 
-		req, err := http.NewRequest("POST", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/secrets", reqBody)
-		if err != nil {
-			return err
-		}
-		req.Header.Add("Authorization", "Bearer "+string(accessToken))
-		req.Header.Add("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("Unexpected error setting project secrets: %w", err)
-			}
-
-			return errors.New("Unexpected error setting project secrets: " + string(body))
+		if resp.StatusCode() != http.StatusOK {
+			return errors.New("Unexpected error setting project secrets: " + string(resp.Body))
 		}
 	}
 

@@ -2,6 +2,7 @@ package integration
 
 // Basic imports
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -31,9 +32,10 @@ type SecretsTestSuite struct {
 }
 
 // test functions
-func (suite *SecretsTestSuite) TestLink() {
+func (suite *SecretsTestSuite) TestList() {
 	// run command
 	list, _, err := suite.cmd.Find([]string{"secrets", "list"})
+	list.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 
 	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)

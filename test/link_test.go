@@ -2,6 +2,7 @@ package integration
 
 // Basic imports
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -34,12 +35,14 @@ type LinkTestSuite struct {
 func (suite *LinkTestSuite) TestLink() {
 	// run command
 	link, _, err := suite.cmd.Find([]string{"link"})
+	link.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)
 	os.Setenv("SUPABASE_ACCESS_TOKEN", key)
 	id := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
 	require.NoError(suite.T(), link.Flags().Set("project-ref", id))
 	require.NoError(suite.T(), link.Flags().Set("password", "postgres"))
+
 	require.NoError(suite.T(), link.RunE(link, []string{}))
 
 	// check request details

@@ -18,7 +18,7 @@ var (
 		Use:   "list",
 		Short: "List all secrets in the linked project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(afero.NewOsFs())
+			return list.Run(cmd.Context(), afero.NewOsFs())
 		},
 	}
 
@@ -31,7 +31,7 @@ var (
 				return err
 			}
 
-			return set.Run(envFilePath, args, afero.NewOsFs())
+			return set.Run(cmd.Context(), envFilePath, args, afero.NewOsFs())
 		},
 	}
 
@@ -39,7 +39,7 @@ var (
 		Use:   "unset <NAME> ...",
 		Short: "Unset a secret(s) from the linked Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unset.Run(args, afero.NewOsFs())
+			return unset.Run(cmd.Context(), args, afero.NewOsFs())
 		},
 	}
 )

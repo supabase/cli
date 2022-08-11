@@ -1,6 +1,7 @@
 package unset
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -30,14 +32,14 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]string{"my-secret"}).
+			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run([]string{"my-secret"}, fsys))
+		assert.NoError(t, Run(context.Background(), []string{"my-secret"}, fsys))
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
-		assert.Error(t, Run([]string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), []string{}, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on missing project ref", func(t *testing.T) {
@@ -46,7 +48,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run([]string{}, fsys))
+		assert.Error(t, Run(context.Background(), []string{}, fsys))
 	})
 
 	t.Run("throws error on missing access token", func(t *testing.T) {
@@ -57,7 +59,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		_, err = fsys.Create(utils.ProjectRefPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run([]string{}, fsys))
+		assert.Error(t, Run(context.Background(), []string{}, fsys))
 	})
 
 	t.Run("throws error on empty secret", func(t *testing.T) {
@@ -73,7 +75,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Run test
-		assert.Error(t, Run([]string{}, fsys))
+		assert.Error(t, Run(context.Background(), []string{}, fsys))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -93,10 +95,10 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]string{"my-secret"}).
+			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run([]string{"my-secret"}, fsys))
+		assert.Error(t, Run(context.Background(), []string{"my-secret"}, fsys))
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -116,10 +118,10 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]string{"my-secret"}).
+			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run([]string{"my-secret"}, fsys))
+		assert.Error(t, Run(context.Background(), []string{"my-secret"}, fsys))
 	})
 }

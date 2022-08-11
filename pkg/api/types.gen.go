@@ -29,6 +29,20 @@ const (
 	UsWest1      CreateProjectBodyRegion = "us-west-1"
 )
 
+// Defines values for FunctionResponseStatus.
+const (
+	FunctionResponseStatusACTIVE    FunctionResponseStatus = "ACTIVE"
+	FunctionResponseStatusREMOVED   FunctionResponseStatus = "REMOVED"
+	FunctionResponseStatusTHROTTLED FunctionResponseStatus = "THROTTLED"
+)
+
+// Defines values for FunctionSlugResponseStatus.
+const (
+	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
+	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
+	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
+)
+
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
 	Body      string `json:"body"`
@@ -57,11 +71,42 @@ type CreateProjectBodyPlan string
 // CreateProjectBodyRegion defines model for CreateProjectBody.Region.
 type CreateProjectBodyRegion string
 
-// CreateSecretParams defines model for CreateSecretParams.
-type CreateSecretParams struct {
+// CreateSecretBody defines model for CreateSecretBody.
+type CreateSecretBody struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
+
+// FunctionResponse defines model for FunctionResponse.
+type FunctionResponse struct {
+	CreatedAt float32                `json:"created_at"`
+	Id        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Slug      string                 `json:"slug"`
+	Status    FunctionResponseStatus `json:"status"`
+	UpdatedAt float32                `json:"updated_at"`
+	VerifyJwt *bool                  `json:"verify_jwt,omitempty"`
+	Version   float32                `json:"version"`
+}
+
+// FunctionResponseStatus defines model for FunctionResponse.Status.
+type FunctionResponseStatus string
+
+// FunctionSlugResponse defines model for FunctionSlugResponse.
+type FunctionSlugResponse struct {
+	Body      *string                    `json:"body,omitempty"`
+	CreatedAt float32                    `json:"created_at"`
+	Id        string                     `json:"id"`
+	Name      string                     `json:"name"`
+	Slug      string                     `json:"slug"`
+	Status    FunctionSlugResponseStatus `json:"status"`
+	UpdatedAt float32                    `json:"updated_at"`
+	VerifyJwt *bool                      `json:"verify_jwt,omitempty"`
+	Version   float32                    `json:"version"`
+}
+
+// FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
+type FunctionSlugResponseStatus string
 
 // OrganizationResponse defines model for OrganizationResponse.
 type OrganizationResponse struct {
@@ -78,11 +123,17 @@ type ProjectResponse struct {
 	Region         string `json:"region"`
 }
 
+// SecretResponse defines model for SecretResponse.
+type SecretResponse struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // UpdateFunctionBody defines model for UpdateFunctionBody.
 type UpdateFunctionBody struct {
-	Body      string `json:"body"`
-	Name      string `json:"name"`
-	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
+	Body      *string `json:"body,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
 // CreateOrganizationJSONBody defines parameters for CreateOrganization.
@@ -106,7 +157,7 @@ type UpdateFunctionJSONBody = UpdateFunctionBody
 type DeleteSecretsJSONBody = []string
 
 // CreateSecretsJSONBody defines parameters for CreateSecrets.
-type CreateSecretsJSONBody = []CreateSecretParams
+type CreateSecretsJSONBody = []CreateSecretBody
 
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
 type CreateOrganizationJSONRequestBody = CreateOrganizationJSONBody

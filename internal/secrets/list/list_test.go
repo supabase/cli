@@ -1,6 +1,7 @@
 package list
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -30,18 +32,18 @@ func TestSecretListCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(200).
-			JSON([]Secret{
+			JSON(api.CreateSecretsJSONBody{
 				{
 					Name:  "Test Secret",
 					Value: "dummy-secret-value",
 				},
 			})
 		// Run test
-		assert.NoError(t, Run(fsys))
+		assert.NoError(t, Run(context.Background(), fsys))
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
-		assert.Error(t, Run(afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on missing project ref", func(t *testing.T) {
@@ -50,7 +52,7 @@ func TestSecretListCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 	})
 
 	t.Run("throws error on missing access token", func(t *testing.T) {
@@ -61,7 +63,7 @@ func TestSecretListCommand(t *testing.T) {
 		_, err = fsys.Create(utils.ProjectRefPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -82,7 +84,7 @@ func TestSecretListCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/secrets").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -104,7 +106,7 @@ func TestSecretListCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 	})
 
 	t.Run("throws error on malformed json", func(t *testing.T) {
@@ -126,6 +128,6 @@ func TestSecretListCommand(t *testing.T) {
 			Reply(200).
 			JSON(map[string]string{})
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 	})
 }

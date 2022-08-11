@@ -225,7 +225,7 @@ func AssertIsLinkedFS(fsys afero.Fs) error {
 func LoadProjectRef(fsys afero.Fs) (string, error) {
 	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
 	if err != nil {
-		return "", err
+		return "", errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	}
 	projectRef := string(projectRefBytes)
 	if !ProjectRefPattern.MatchString(projectRef) {
