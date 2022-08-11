@@ -12,11 +12,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-type Secret struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
 func Run(ctx context.Context, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
