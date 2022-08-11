@@ -1,6 +1,39 @@
 package utils
 
-import "os"
+import (
+	"log"
+	"os"
+	"sync"
+
+	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
+	supabase "github.com/supabase/cli/pkg/api"
+)
+
+var (
+	clientOnce sync.Once
+	apiClient  *supabase.ClientWithResponses
+)
+
+func GetSupabase() *supabase.ClientWithResponses {
+	clientOnce.Do(func() {
+		token, err := LoadAccessToken()
+		if err != nil {
+			log.Fatalln(err)
+		}
+		provider, err := securityprovider.NewSecurityProviderBearerToken(token)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		apiClient, err = supabase.NewClientWithResponses(
+			GetSupabaseAPIHost(),
+			supabase.WithRequestEditorFn(provider.Intercept),
+		)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	})
+	return apiClient
+}
 
 var RegionMap = map[string]string{
 	"ap-northeast-1": "Northeast Asia (Tokyo)",

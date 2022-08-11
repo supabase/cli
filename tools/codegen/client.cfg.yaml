@@ -1,0 +1,4 @@
+package: api
+generate:
+  client: true
+output: ../../pkg/api/client.gen.go
