@@ -1,6 +1,7 @@
 package link
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestProjectValidation(t *testing.T) {
 			Reply(200).
 			JSON([]string{})
 		// Run test
-		assert.NoError(t, validateProjectRef(project, fsys))
+		assert.NoError(t, validateProjectRef(context.Background(), project, fsys))
 		// Validate file contents
 		// content, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		// assert.NoError(t, err)
@@ -33,14 +34,14 @@ func TestProjectValidation(t *testing.T) {
 	})
 
 	t.Run("throws error on invalid project ref", func(t *testing.T) {
-		assert.Error(t, validateProjectRef("malformed", afero.NewMemMapFs()))
+		assert.Error(t, validateProjectRef(context.Background(), "malformed", afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on failure to load token", func(t *testing.T) {
 		// Setup valid access token
 		project := apitest.RandomProjectRef()
 		fsys := afero.NewMemMapFs()
-		assert.Error(t, validateProjectRef(project, fsys))
+		assert.Error(t, validateProjectRef(context.Background(), project, fsys))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -56,7 +57,7 @@ func TestProjectValidation(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, validateProjectRef(project, fsys))
+		assert.Error(t, validateProjectRef(context.Background(), project, fsys))
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -73,6 +74,6 @@ func TestProjectValidation(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, validateProjectRef(project, fsys))
+		assert.Error(t, validateProjectRef(context.Background(), project, fsys))
 	})
 }
