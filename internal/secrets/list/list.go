@@ -23,18 +23,14 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinkedFS(fsys); err != nil {
-			return err
-		}
 	}
 
 	// 2. Print secrets.
 	{
-		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+		projectRef, err := utils.LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
-		projectRef := string(projectRefBytes)
 
 		resp, err := utils.GetSupabase().GetSecretsWithResponse(ctx, projectRef)
 		if err != nil {

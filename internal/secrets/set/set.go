@@ -19,18 +19,14 @@ func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) 
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinkedFS(fsys); err != nil {
-			return err
-		}
 	}
 
 	// 2. Set secret(s).
 	{
-		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+		projectRef, err := utils.LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
-		projectRef := string(projectRefBytes)
 
 		var secrets api.CreateSecretsJSONBody
 		if envFilePath != "" {

@@ -111,6 +111,22 @@ func TestSecretSetCommand(t *testing.T) {
 		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
 	})
 
+	t.Run("throws error on malformed secret", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		_, err := fsys.Create(utils.ConfigPath)
+		require.NoError(t, err)
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
+		require.NoError(t, err)
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Run test
+		assert.Error(t, Run(context.Background(), "", []string{"malformed"}, fsys))
+	})
+
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
