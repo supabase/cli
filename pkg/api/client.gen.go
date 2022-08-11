@@ -1015,7 +1015,7 @@ func (r GetProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectResponse
+	JSON201      *ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1037,7 +1037,7 @@ func (r CreateProjectResponse) StatusCode() int {
 type GetFunctionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]map[string]interface{}
+	JSON200      *[]FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1059,7 +1059,7 @@ func (r GetFunctionsResponse) StatusCode() int {
 type CreateFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *map[string]interface{}
+	JSON201      *FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1102,7 +1102,7 @@ func (r DeleteFunctionResponse) StatusCode() int {
 type GetFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *FunctionSlugResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1124,7 +1124,7 @@ func (r GetFunctionResponse) StatusCode() int {
 type UpdateFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1168,7 +1168,7 @@ func (r DeleteSecretsResponse) StatusCode() int {
 type GetSecretsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]map[string]interface{}
+	JSON200      *[]SecretResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1456,12 +1456,12 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	}
 
@@ -1483,7 +1483,7 @@ func ParseGetFunctionsResponse(rsp *http.Response) (*GetFunctionsResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []map[string]interface{}
+		var dest []FunctionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1509,7 +1509,7 @@ func ParseCreateFunctionResponse(rsp *http.Response) (*CreateFunctionResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest map[string]interface{}
+		var dest FunctionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1551,7 +1551,7 @@ func ParseGetFunctionResponse(rsp *http.Response) (*GetFunctionResponse, error) 
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest FunctionSlugResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1577,7 +1577,7 @@ func ParseUpdateFunctionResponse(rsp *http.Response) (*UpdateFunctionResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest FunctionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1629,7 +1629,7 @@ func ParseGetSecretsResponse(rsp *http.Response) (*GetSecretsResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []map[string]interface{}
+		var dest []SecretResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
