@@ -18,9 +18,6 @@ func Run(ctx context.Context, dryRun bool, username, password, database string, 
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if err := utils.AssertIsLinkedFS(fsys); err != nil {
-		return err
-	}
 
 	projectRef, err := utils.LoadProjectRef(fsys)
 	if err != nil {
