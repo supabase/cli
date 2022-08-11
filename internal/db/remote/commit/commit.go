@@ -45,9 +45,6 @@ func Run(ctx context.Context, username, password, database string, fsys afero.Fs
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertIsLinkedFS(fsys); err != nil {
-			return err
-		}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -85,7 +82,15 @@ const (
 )
 
 func run(p utils.Program, ctx context.Context, username, password, database string, fsys afero.Fs) error {
-	defer cleanup()
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := ConnectRemotePostgres(ctx, username, password, database, projectRef)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
 
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
@@ -98,16 +103,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			},
 		},
 	)
-
-	projectRef, err := utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	conn, err := ConnectRemotePostgres(ctx, username, password, database, projectRef)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
+	defer cleanup()
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
