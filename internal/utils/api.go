@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
-	supabase "github.com/supabase/cli/internal/api"
+	supabase "github.com/supabase/cli/pkg/api"
 )
 
 var (
