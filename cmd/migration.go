@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 )
 
@@ -12,6 +13,17 @@ var (
 	migrationCmd = &cobra.Command{
 		Use:   "migration",
 		Short: "Manage database migration scripts",
+	}
+
+	migrationListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List local and remote migrations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+			return list.Run(cmd.Context(), username, password, database, afero.NewOsFs())
+		},
 	}
 
 	migrationNewCmd = &cobra.Command{
@@ -25,6 +37,8 @@ var (
 )
 
 func init() {
+	migrationListCmd.Flags().StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
+	migrationCmd.AddCommand(migrationListCmd)
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
 }
