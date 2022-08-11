@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -37,8 +36,7 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
 )
 
-// TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run(_ctx context.Context, username, password, database string, fsys afero.Fs) error {
+func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(); err != nil {
@@ -52,14 +50,15 @@ func Run(_ctx context.Context, username, password, database string, fsys afero.F
 		}
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	p := utils.NewProgram(model{spinner: s})
+	p := utils.NewProgram(model{cancel: cancel, spinner: s})
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, username, password, database, fsys)
+		errCh <- run(p, ctx, username, password, database, fsys)
 		p.Send(tea.Quit())
 	}()
 
@@ -85,9 +84,7 @@ const (
 	differId = "supabase_db_remote_commit_differ"
 )
 
-var ctx, cancelCtx = context.WithCancel(context.Background())
-
-func run(p utils.Program, username, password, database string, fsys afero.Fs) error {
+func run(p utils.Program, ctx context.Context, username, password, database string, fsys afero.Fs) error {
 	defer cleanup()
 
 	_, _ = utils.Docker.NetworkCreate(
@@ -106,7 +103,7 @@ func run(p utils.Program, username, password, database string, fsys afero.Fs) er
 	if err != nil {
 		return err
 	}
-	conn, err := ConnectRemotePostgres(username, password, database, projectRef)
+	conn, err := ConnectRemotePostgres(ctx, username, password, database, projectRef)
 	if err != nil {
 		return err
 	}
@@ -145,7 +142,7 @@ func run(p utils.Program, username, password, database string, fsys afero.Fs) er
 	}
 
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if err := assertRemoteInSync(conn, fsys); err != nil {
+	if err := assertRemoteInSync(ctx, conn, fsys); err != nil {
 		return err
 	}
 
@@ -348,7 +345,8 @@ EOSQL
 			return err
 		}
 
-		if err := os.WriteFile("supabase/migrations/"+timestamp+"_remote_commit.sql", diffBytes, 0644); err != nil {
+		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+		if err := afero.WriteFile(fsys, path, diffBytes, 0644); err != nil {
 			return err
 		}
 	}
@@ -362,6 +360,7 @@ EOSQL
 }
 
 type model struct {
+	cancel      context.CancelFunc
 	spinner     spinner.Model
 	status      string
 	progress    *progress.Model
@@ -385,7 +384,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			// Stop future runs
-			cancelCtx()
+			m.cancel()
 			// Stop current runs
 			cleanup()
 			return m, tea.Quit
@@ -477,7 +476,7 @@ func AssertPostgresVersionMatch(conn *pgx.Conn) error {
 }
 
 // Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectRemotePostgres(username, password, database, host string) (*pgx.Conn, error) {
+func ConnectRemotePostgres(ctx context.Context, username, password, database, host string) (*pgx.Conn, error) {
 	// Build connection string
 	pgUrl := fmt.Sprintf(
 		"postgresql://%s:%s@db.%s.supabase.co:5432/%s",
@@ -509,7 +508,7 @@ func ConnectRemotePostgres(username, password, database, host string) (*pgx.Conn
 	return conn, nil
 }
 
-func assertRemoteInSync(conn *pgx.Conn, fsys afero.Fs) error {
+func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	// Load remote migrations
 	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
 	if err != nil {
