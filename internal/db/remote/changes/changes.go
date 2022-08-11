@@ -18,39 +18,32 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	pgx "github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
 )
 
-// TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run() error {
+func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-		if err := utils.LoadConfig(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
 	}
 
-	urlBytes, err := os.ReadFile(utils.RemoteDbPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
-	} else if err != nil {
-		return err
-	}
-	url := string(urlBytes)
-
+	ctx, cancel := context.WithCancel(ctx)
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	p := utils.NewProgram(model{spinner: s})
+	p := utils.NewProgram(model{cancel: cancel, spinner: s})
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, url)
+		errCh <- run(p, ctx, username, password, database, fsys)
 		p.Send(tea.Quit())
 	}()
 
@@ -75,12 +68,10 @@ const (
 )
 
 var (
-	ctx, cancelCtx = context.WithCancel(context.Background())
-
 	diff string
 )
 
-func run(p utils.Program, url string) error {
+func run(p utils.Program, ctx context.Context, username, password, database string, fsys afero.Fs) error {
 	defer cleanup()
 
 	_, _ = utils.Docker.NetworkCreate(
@@ -95,7 +86,11 @@ func run(p utils.Program, url string) error {
 		},
 	)
 
-	conn, err := pgx.Connect(ctx, url)
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, projectRef)
 	if err != nil {
 		return err
 	}
@@ -134,44 +129,8 @@ func run(p utils.Program, url string) error {
 	}
 
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"); err != nil {
+	if err := commit.AssertRemoteInSync(ctx, conn, fsys); err != nil {
 		return err
-	} else {
-		remoteMigrations := []string{}
-		for rows.Next() {
-			var version string
-			if err := rows.Scan(&version); err != nil {
-				return err
-			}
-			remoteMigrations = append(remoteMigrations, version)
-		}
-
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-			return err
-		}
-		localMigrations, err := os.ReadDir("supabase/migrations")
-		if err != nil {
-			return err
-		}
-
-		conflictErr := errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold("supabase/migrations") + `. Resolve this by:
-- Updating the project from version control to get the latest ` + utils.Bold("supabase/migrations") + `,
-- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
-- Or failing that, manually inserting/deleting rows from the supabase_migrations.schema_migrations table on the remote database.`)
-
-		if len(remoteMigrations) != len(localMigrations) {
-			return conflictErr
-		}
-
-		for i, remoteTimestamp := range remoteMigrations {
-			localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i].Name())[1]
-
-			if localTimestamp == remoteTimestamp {
-				continue
-			}
-
-			return conflictErr
-		}
 	}
 
 	// 2. Create shadow db and run migrations.
@@ -301,7 +260,7 @@ EOSQL
 				Image: utils.DifferImage,
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
-						" '" + url + "'" +
+						" '" + conn.Config().ConnString() + "'" +
 						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
 				},
 				Labels: map[string]string{
@@ -332,6 +291,7 @@ func cleanup() {
 }
 
 type model struct {
+	cancel      context.CancelFunc
 	spinner     spinner.Model
 	status      string
 	progress    *progress.Model
@@ -350,7 +310,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			// Stop future runs
-			cancelCtx()
+			m.cancel()
 			// Stop current runs
 			cleanup()
 			return m, tea.Quit

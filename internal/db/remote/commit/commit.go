@@ -142,7 +142,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	}
 
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if err := assertRemoteInSync(ctx, conn, fsys); err != nil {
+	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
 		return err
 	}
 
@@ -508,7 +508,7 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	return conn, nil
 }
 
-func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	// Load remote migrations
 	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
 	if err != nil {

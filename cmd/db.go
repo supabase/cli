@@ -100,7 +100,10 @@ var (
 		Use:   "changes",
 		Short: "Print changes on the remote database since the last pushed migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return changes.Run()
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+			return changes.Run(cmd.Context(), username, password, database, afero.NewOsFs())
 		},
 	}
 
