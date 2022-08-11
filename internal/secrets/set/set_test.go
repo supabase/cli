@@ -9,14 +9,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
 
 func TestSecretSetCommand(t *testing.T) {
-	dummy := list.Secret{Name: "my-name", Value: "my-value"}
+	dummy := api.CreateSecretBody{Name: "my-name", Value: "my-value"}
 	dummyEnv := dummy.Name + "=" + dummy.Value
 
 	t.Run("Sets secret via cli args", func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]list.Secret{dummy}).
+			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(200)
 		// Run test
 		assert.NoError(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
@@ -65,7 +65,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]list.Secret{dummy}).
+			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(200)
 		// Run test
 		assert.NoError(t, Run(context.Background(), tmpfile.Name(), []string{}, fsys))
@@ -128,7 +128,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]list.Secret{dummy}).
+			JSON(api.CreateSecretsJSONBody{dummy}).
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
@@ -151,7 +151,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON([]list.Secret{dummy}).
+			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test

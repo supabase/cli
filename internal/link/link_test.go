@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -24,7 +25,7 @@ func TestProjectValidation(t *testing.T) {
 		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(200).
-			JSON([]string{})
+			JSON([]api.FunctionResponse{})
 		// Run test
 		assert.NoError(t, validateProjectRef(context.Background(), project, fsys))
 		// Validate file contents

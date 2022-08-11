@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -38,7 +39,7 @@ func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) 
 				return err
 			}
 			for name, value := range envMap {
-				secret := api.CreateSecretParams{
+				secret := api.CreateSecretBody{
 					Name:  name,
 					Value: value,
 				}
@@ -53,7 +54,7 @@ func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) 
 					return errors.New("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
 				}
 
-				secret := api.CreateSecretParams{
+				secret := api.CreateSecretBody{
 					Name:  name,
 					Value: value,
 				}
@@ -66,7 +67,7 @@ func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) 
 			return err
 		}
 
-		if resp.StatusCode() != 200 {
+		if resp.StatusCode() != http.StatusOK {
 			return errors.New("Unexpected error setting project secrets: " + string(resp.Body))
 		}
 	}
