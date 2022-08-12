@@ -81,8 +81,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			choice, ok := m.list.SelectedItem().(PromptItem)
 			if ok {
-				m.choice.Summary = choice.Summary
-				m.choice.Details = choice.Details
+				m.choice = choice
 			}
 			return m, tea.Quit
 		}
