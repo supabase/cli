@@ -4,8 +4,8 @@ go 1.18
 
 require (
 	github.com/BurntSushi/toml v1.0.0
-	github.com/charmbracelet/bubbles v0.10.3
-	github.com/charmbracelet/bubbletea v0.20.0
+	github.com/charmbracelet/bubbles v0.13.0
+	github.com/charmbracelet/bubbletea v0.21.0
 	github.com/charmbracelet/glamour v0.5.0
 	github.com/charmbracelet/lipgloss v0.5.0
 	github.com/deepmap/oapi-codegen v1.11.0
@@ -22,6 +22,7 @@ require (
 )
 
 require (
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/getkin/kin-openapi v0.94.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
@@ -43,8 +44,10 @@ require (
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/muesli/cancelreader v0.2.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/sahilm/fuzzy v0.1.0 // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.1 // indirect
@@ -59,7 +62,7 @@ require (
 	github.com/Microsoft/go-winio v0.5.2 // indirect
 	github.com/alecthomas/chroma v0.10.0 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/charmbracelet/harmonica v0.1.0 // indirect
+	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/containerd/console v1.0.3 // indirect
 	github.com/containerd/containerd v1.6.2 // indirect
 	github.com/dlclark/regexp2 v1.4.0 // indirect
