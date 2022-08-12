@@ -25,7 +25,7 @@ func (a *EnumFlag) Set(p string) error {
 		return false
 	}
 	if !isIncluded(a.Allowed, p) {
-		return fmt.Errorf("%s is not included in [ %s ]", p, strings.Join(a.Allowed, " | "))
+		return fmt.Errorf("must be one of [ %s ]", strings.Join(a.Allowed, " | "))
 	}
 	a.Value = p
 	return nil
