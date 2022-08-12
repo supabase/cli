@@ -34,7 +34,7 @@ var (
 
 	projectsCreateCmd = &cobra.Command{
 		Use:     "create <project name>",
-		Short:   "Create a new project",
+		Short:   "Create a project on Supabase",
 		Args:    cobra.ExactArgs(1),
 		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
 		PreRun: func(cmd *cobra.Command, args []string) {
@@ -63,7 +63,8 @@ var (
 
 	projectsListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List all projects",
+		Short: "List all Supabase projects",
+		Long:  "List all Supabase projects the logged-in user can access.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return list.Run(ctx, afero.NewOsFs())

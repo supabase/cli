@@ -16,7 +16,8 @@ var (
 
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
-		Short: "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
+		Short: "Delete a Function from Supabase",
+		Long:  "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRef, err := cmd.Flags().GetString("project-ref")
@@ -30,7 +31,8 @@ var (
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy <Function name>",
-		Short: "Deploy a Function to the linked Supabase project",
+		Short: "Deploy a Function to Supabase",
+		Long:  "Deploy a Function to the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			noVerifyJWT, err := cmd.Flags().GetBool("no-verify-jwt")
