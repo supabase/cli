@@ -1,79 +1,39 @@
 package create
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
-type RequestParam struct {
-	OrgId  string `json:"organization_id"`
-	Name   string `json:"name"`
-	DbPass string `json:"db_pass"`
-	Region string `json:"region"`
-	Plan   string `json:"plan"`
-}
-
-func Run(params RequestParam, fsys afero.Fs) error {
-	accessToken, err := utils.LoadAccessTokenFS(fsys)
-	if err != nil {
-		return err
-	}
-
+func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error {
 	// TODO: Prompt missing args.
 	{
 	}
 
-	// POST request, check errors
-	var project list.Project
-	{
-		jsonBytes, err := json.Marshal(params)
-		if err != nil {
-			return err
-		}
+	resp, err := utils.GetSupabase().CreateProjectWithResponse(ctx, params)
+	if err != nil {
+		return err
+	}
 
-		req, err := http.NewRequest("POST", utils.GetSupabaseAPIHost()+"/v1/projects", bytes.NewReader(jsonBytes))
-		if err != nil {
-			return err
-		}
-		req.Header.Add("Authorization", "Bearer "+string(accessToken))
-		req.Header.Add("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		// TODO: remove the StatusOK case after 2022-08-20
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("Unexpected error creating project: %w", err)
-			}
-
-			return errors.New("Unexpected error creating project: " + string(body))
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(body, &project); err != nil {
-			return fmt.Errorf("Failed to create a new project: %w", err)
-		}
+	// TODO: remove the StatusOK case after 2022-08-20
+	// if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.JSON201 == nil {
+		return errors.New("Unexpected error creating project: " + string(resp.Body))
 	}
 
 	// TODO: Poll until PostgREST is reachable.
 	{
 	}
 
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua(utils.GetSupabaseDashboardURL()+"/project/"+project.Id))
+	fmt.Printf(
+		"Created a new project %s at %s\n",
+		utils.Aqua(resp.JSON201.Name),
+		utils.Aqua(utils.GetSupabaseDashboardURL()+"/project/"+resp.JSON201.Id),
+	)
 	return nil
 }
