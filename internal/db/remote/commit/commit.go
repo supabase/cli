@@ -3,6 +3,7 @@ package commit
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	pgx "github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -34,6 +35,11 @@ const (
 CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);
 `
 	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
+)
+
+var (
+	//go:embed templates/dump_initial_migration.sh
+	dumpInitialMigrationScript string
 )
 
 func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
@@ -160,10 +166,13 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 				dbId,
 				&container.Config{
 					Image: utils.DbImage,
-					Env:   []string{"POSTGRES_PASSWORD=postgres"},
+					Env: []string{
+						"POSTGRES_PASSWORD=postgres",
+						"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+						"DB_URL=" + conn.Config().ConnString(),
+					},
 					Entrypoint: []string{
-						"sh", "-c",
-						"pg_dump --schema-only --quote-all-identifier --exclude-schema '" + strings.Join(utils.InternalSchemas, "|") + `' --schema '*' --extension '*' --dbname '` + conn.Config().ConnString() + `' | sed 's/CREATE SCHEMA "public"/-- CREATE SCHEMA "public"/'`,
+						"bash", "-c", dumpInitialMigrationScript,
 					},
 					Labels: map[string]string{
 						"com.supabase.cli.project":   utils.Config.ProjectId,
