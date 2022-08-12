@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
 	"github.com/supabase/cli/internal/db/branch/list"
@@ -87,6 +88,7 @@ var (
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
@@ -105,6 +107,7 @@ var (
 		Short: "Show changes on the remote database",
 		Long:  "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
@@ -116,6 +119,7 @@ var (
 		Use:   "commit",
 		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
@@ -134,28 +138,31 @@ var (
 )
 
 func init() {
+	// Build branch command
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
+	// Build diff command
 	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
 	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
 	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
+	// Build push command
 	pushFlags := dbPushCmd.Flags()
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
-	// pushFlags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
-	// pushFlags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
-	pushFlags.StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
+	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPushCmd)
+	// Build remote command
+	remoteFlags := dbRemoteCmd.PersistentFlags()
+	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
-	commitFlags := dbRemoteCommitCmd.Flags()
-	// commitFlags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
-	// commitFlags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
-	commitFlags.StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
+	// Buidl reset command
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
 }

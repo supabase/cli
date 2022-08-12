@@ -32,7 +32,7 @@ func init() {
 	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.VisitAll(func(f *pflag.Flag) {
 		key := strings.ReplaceAll(f.Name, "-", "_")
-		_ = viper.BindPFlag(key, flags.Lookup(f.Name))
+		cobra.CheckErr(viper.BindPFlag(key, flags.Lookup(f.Name)))
 	})
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
