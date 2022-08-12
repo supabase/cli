@@ -20,8 +20,6 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 		return err
 	}
 
-	// TODO: remove the StatusOK case after 2022-08-20
-	// if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 	if resp.JSON201 == nil {
 		return errors.New("Unexpected error creating project: " + string(resp.Body))
 	}

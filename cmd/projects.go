@@ -23,8 +23,14 @@ var (
 	interactive bool
 	orgId       string
 	dbPassword  string
-	region      utils.EnumFlag
-	plan        utils.EnumFlag
+
+	region = utils.EnumFlag{
+		Allowed: make([]string, len(utils.RegionMap)),
+	}
+	plan = utils.EnumFlag{
+		Allowed: []string{string(api.Free), string(api.Pro)},
+		Value:   string(api.Free),
+	}
 
 	projectsCreateCmd = &cobra.Command{
 		Use:     "create <project name>",
@@ -67,12 +73,11 @@ var (
 
 func init() {
 	// Setup enum flags
-	region.Allowed = make([]string, len(utils.RegionMap))
+	i := 0
 	for k := range utils.RegionMap {
-		region.Allowed = append(region.Allowed, k)
+		region.Allowed[i] = k
+		i++
 	}
-	plan.Allowed = []string{string(api.Free), string(api.Pro)}
-	plan.Value = string(api.Free)
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
 	createFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
