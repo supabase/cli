@@ -2,8 +2,10 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -104,7 +106,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 	// Create list items
 	var listItems []list.Item
 	for _, v := range items {
-		if v.FilterValue() == "" {
+		if strings.TrimSpace(v.FilterValue()) == "" {
 			continue
 		}
 		listItems = append(listItems, v)
@@ -122,16 +124,20 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 	l.Styles.HelpStyle = helpStyle
 	// Create our model
 	ctx, cancel := context.WithCancel(ctx)
-	prog := tea.NewProgram(model{cancel: cancel, list: l})
+	initial := model{cancel: cancel, list: l}
+	prog := tea.NewProgram(initial)
 	state, err := prog.StartReturningModel()
 	if err != nil {
-		return PromptItem{}, err
+		return initial.choice, err
 	}
 	if ctx.Err() != nil {
-		return PromptItem{}, ctx.Err()
+		return initial.choice, ctx.Err()
 	}
 	if m, ok := state.(model); ok {
+		if m.choice == initial.choice {
+			return initial.choice, errors.New("user aborted")
+		}
 		return m.choice, nil
 	}
-	return PromptItem{}, err
+	return initial.choice, err
 }
