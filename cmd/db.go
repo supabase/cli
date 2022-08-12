@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -72,7 +73,8 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if useMigra {
-				return diff.RunMigra(cmd.Context(), schema, file, fsys)
+				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				return diff.RunMigra(ctx, schema, file, fsys)
 			}
 			return diff.Run(file, fsys)
 		},
@@ -87,7 +89,8 @@ var (
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
-			return push.Run(cmd.Context(), dryRun, username, password, database, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return push.Run(ctx, dryRun, username, password, database, afero.NewOsFs())
 		},
 	}
 
@@ -111,7 +114,8 @@ var (
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
-			return commit.Run(cmd.Context(), username, password, database, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return commit.Run(ctx, username, password, database, afero.NewOsFs())
 		},
 	}
 

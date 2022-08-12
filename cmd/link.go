@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -31,7 +32,8 @@ var (
 			}
 
 			fsys := afero.NewOsFs()
-			if err := link.Run(cmd.Context(), projectRef, username, password, database, fsys); err != nil {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			if err := link.Run(ctx, projectRef, username, password, database, fsys); err != nil {
 				return err
 			}
 

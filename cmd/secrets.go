@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"os"
+	"os/signal"
+
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/secrets/list"
@@ -18,7 +21,8 @@ var (
 		Use:   "list",
 		Short: "List all secrets in the linked project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return list.Run(ctx, afero.NewOsFs())
 		},
 	}
 
@@ -30,8 +34,8 @@ var (
 			if err != nil {
 				return err
 			}
-
-			return set.Run(cmd.Context(), envFilePath, args, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return set.Run(ctx, envFilePath, args, afero.NewOsFs())
 		},
 	}
 
@@ -39,7 +43,8 @@ var (
 		Use:   "unset <NAME> ...",
 		Short: "Unset a secret(s) from the linked Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unset.Run(cmd.Context(), args, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return unset.Run(ctx, args, afero.NewOsFs())
 		},
 	}
 )
