@@ -14,7 +14,8 @@ var (
 
 	orgsListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List all organizations the logged-in user belongs",
+		Short: "List all organizations",
+		Long:  "List all organizations the logged-in user belongs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs())
 		},

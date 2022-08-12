@@ -25,7 +25,8 @@ var (
 
 	dbBranchCmd = &cobra.Command{
 		Use:   "branch",
-		Short: "Manage branches. Each branch is associated with a separate database.",
+		Short: "Manage database branches",
+		Long:  "Manage database branches. Each branch is associated with a separate database.",
 	}
 
 	dbBranchCreateCmd = &cobra.Command{
@@ -96,12 +97,13 @@ var (
 
 	dbRemoteCmd = &cobra.Command{
 		Use:   "remote",
-		Short: "Manage remote database connections",
+		Short: "Manage remote databases",
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
 		Use:   "changes",
-		Short: "Print changes on the remote database since the last pushed migration",
+		Short: "Show changes on the remote database",
+		Long:  "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if password == "" {
 				password = PromptPassword(os.Stdin)
@@ -112,7 +114,7 @@ var (
 
 	dbRemoteCommitCmd = &cobra.Command{
 		Use:   "commit",
-		Short: "Commit changes on the remote database since the last pushed migration",
+		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if password == "" {
 				password = PromptPassword(os.Stdin)

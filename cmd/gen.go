@@ -18,7 +18,8 @@ var (
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
-		Short: "Generate types for TypeScript. Must specify either --local or --db-url",
+		Short: "Generate types for TypeScript",
+		Long:  "Generate types for TypeScript. Must specify either --local or --db-url",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			useLocal, err := cmd.Flags().GetBool("local")
 			if err != nil {
@@ -35,8 +36,10 @@ var (
 )
 
 func init() {
-	genTypesTypescriptCmd.Flags().Bool("local", false, "Generate types from the local dev database.")
-	genTypesTypescriptCmd.Flags().String("db-url", "", "Generate types from a database url.")
+	genFlags := genTypesTypescriptCmd.Flags()
+	genFlags.Bool("local", false, "Generate types from the local dev database.")
+	genFlags.String("db-url", "", "Generate types from a database url.")
+	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "db-url")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
 	rootCmd.AddCommand(genCmd)

@@ -7,7 +7,7 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show status of the Supabase local development setup",
+	Short: "Show status of local Supabase containers",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return status.Run()
 	},

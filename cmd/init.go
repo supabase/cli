@@ -11,7 +11,7 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize a project to use Supabase CLI",
+	Short: "Initialize a local project",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fsys := afero.NewOsFs()
 		if err := _init.Run(fsys); err != nil {
