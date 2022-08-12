@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
 	"golang.org/x/term"
@@ -16,7 +17,6 @@ var (
 	// TODO: allow switching roles on backend
 	database = "postgres"
 	username = "postgres"
-	password string
 
 	linkCmd = &cobra.Command{
 		Use:   "link",
@@ -27,6 +27,7 @@ var (
 				return err
 			}
 
+			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
@@ -46,10 +47,9 @@ var (
 func init() {
 	flags := linkCmd.Flags()
 	flags.String("project-ref", "", "Project ref of the Supabase project.")
-	// flags.StringVarP(&database, "database", "d", "postgres", "Name of your remote Postgres database.")
-	// flags.StringVarP(&username, "username", "u", "postgres", "Username to your remote Postgres database.")
-	flags.StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
-	_ = linkCmd.MarkFlagRequired("project-ref")
+	flags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", flags.Lookup("password")))
+	cobra.CheckErr(linkCmd.MarkFlagRequired("project-ref"))
 	rootCmd.AddCommand(linkCmd)
 }
 

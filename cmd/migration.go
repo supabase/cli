@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 )
@@ -19,6 +20,7 @@ var (
 		Use:   "list",
 		Short: "List local and remote migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
 				password = PromptPassword(os.Stdin)
 			}
@@ -37,7 +39,9 @@ var (
 )
 
 func init() {
-	migrationListCmd.Flags().StringVarP(&password, "password", "p", "", "Password to your remote Postgres database.")
+	flags := migrationListCmd.Flags()
+	flags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", flags.Lookup("password")))
 	migrationCmd.AddCommand(migrationListCmd)
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
