@@ -21,13 +21,13 @@ import (
 var (
 	dbCmd = &cobra.Command{
 		Use:   "db",
-		Short: "Manage Postgres databases",
+		Short: "Manage local Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{
 		Use:   "branch",
-		Short: "Manage database branches",
-		Long:  "Manage database branches. Each branch is associated with a separate database.",
+		Short: "Manage local database branches",
+		Long:  "Manage local database branches. Each branch is associated with a separate local database. Forking remote databases is NOT supported.",
 	}
 
 	dbBranchCreateCmd = &cobra.Command{
