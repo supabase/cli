@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/client"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/test/mocks/docker"
 	"github.com/supabase/cli/test/mocks/supabase"
@@ -41,6 +42,10 @@ func TestMain(m *testing.M) {
 		Logger.Fatal(err)
 	}
 	os.Setenv("SUPABASE_INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
+
+	// Configure viper env loader
+	viper.SetEnvPrefix("SUPABASE")
+	viper.AutomaticEnv()
 
 	// run tests
 	exitVal := m.Run()

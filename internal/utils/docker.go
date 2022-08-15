@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/docker/docker/api/types"
@@ -70,6 +71,7 @@ func DockerRun(
 	config *container.Config,
 	hostConfig *container.HostConfig,
 ) (io.Reader, error) {
+	config.Image = GetRegistryImageUrl(config.Image)
 	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
 	if err != nil {
 		return nil, err
@@ -141,6 +143,20 @@ func DockerAddFile(ctx context.Context, container string, fileName string, conte
 		return fmt.Errorf("failed to copy file: %v", err)
 	}
 	return nil
+}
+
+func GetRegistryImageUrl(imageName string) string {
+	const ecr = "public.ecr.aws/t3w2s2c9"
+	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
+	if registry == "" {
+		// Defaults to Supabase public ECR for faster image pull
+		registry = ecr
+	}
+	if registry == ecr {
+		parts := strings.Split(imageName, "/")
+		imageName = parts[len(parts)-1]
+	}
+	return registry + "/" + imageName
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
