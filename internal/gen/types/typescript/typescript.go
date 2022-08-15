@@ -75,13 +75,10 @@ func Run(useLocal bool, dbUrl string) error {
 
 		defer utils.DockerRemoveAll()
 
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
+		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
 			fmt.Fprintln(os.Stderr, "Downloading type generator...")
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.PgmetaImage,
-				types.ImagePullOptions{},
-			)
+			out, err := utils.Docker.ImagePull(ctx, metaImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}

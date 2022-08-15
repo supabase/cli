@@ -143,6 +143,15 @@ func DockerAddFile(ctx context.Context, container string, fileName string, conte
 	return nil
 }
 
+func GetRegistryImageUrl(imageName string) string {
+	registry := viper.GetString("INTERNAL_REGISTRY_HOST")
+	if registry == "" {
+		// Defaults to Supabase public ECR because images pull faster
+		registry = "public.ecr.aws/t3w2s2c9"
+	}
+	return registry + "/" + imageName
+}
+
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := "docker.io/" + imageName
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {

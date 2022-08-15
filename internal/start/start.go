@@ -116,12 +116,9 @@ func run(p utils.Program) error {
 
 	// Pull images.
 	{
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DbImage,
-				types.ImagePullOptions{},
-			)
+		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -129,12 +126,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.KongImage,
-				types.ImagePullOptions{},
-			)
+		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, kongImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -142,12 +136,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.GotrueImage,
-				types.ImagePullOptions{},
-			)
+		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, gotrueImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -155,12 +146,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.InbucketImage,
-				types.ImagePullOptions{},
-			)
+		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, inbucketImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -168,12 +156,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.RealtimeImage,
-				types.ImagePullOptions{},
-			)
+		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, realtimeImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -181,12 +166,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.PostgrestImage,
-				types.ImagePullOptions{},
-			)
+		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, restImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -194,12 +176,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StorageImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.StorageImage,
-				types.ImagePullOptions{},
-			)
+		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, storageImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -207,12 +186,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DifferImage,
-				types.ImagePullOptions{},
-			)
+		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -220,12 +196,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.PgmetaImage,
-				types.ImagePullOptions{},
-			)
+		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, metaImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -233,12 +206,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StudioImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.StudioImage,
-				types.ImagePullOptions{},
-			)
+		studioImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, studioImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -246,12 +216,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DenoRelayImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DenoRelayImage,
-				types.ImagePullOptions{},
-			)
+		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, denoImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}

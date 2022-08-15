@@ -2,10 +2,10 @@ package utils
 
 import (
 	"log"
-	"os"
 	"sync"
 
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
+	"github.com/spf13/viper"
 	supabase "github.com/supabase/cli/pkg/api"
 )
 
@@ -51,7 +51,7 @@ var RegionMap = map[string]string{
 }
 
 func GetSupabaseAPIHost() string {
-	apiHost := os.Getenv("SUPABASE_INTERNAL_API_HOST")
+	apiHost := viper.GetString("INTERNAL_API_HOST")
 	if apiHost == "" {
 		apiHost = "https://api.supabase.io"
 	}

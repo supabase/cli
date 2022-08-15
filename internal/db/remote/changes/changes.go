@@ -99,12 +99,9 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 
 	// Pull images.
 	{
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DbImage,
-				types.ImagePullOptions{},
-			)
+		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -112,12 +109,9 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DifferImage,
-				types.ImagePullOptions{},
-			)
+		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
