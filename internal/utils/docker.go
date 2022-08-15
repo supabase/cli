@@ -71,6 +71,7 @@ func DockerRun(
 	config *container.Config,
 	hostConfig *container.HostConfig,
 ) (io.Reader, error) {
+	config.Image = GetRegistryImageUrl(config.Image)
 	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
 	if err != nil {
 		return nil, err

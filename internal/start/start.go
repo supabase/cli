@@ -206,7 +206,7 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		studioImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
 			out, err := utils.Docker.ImagePull(ctx, studioImage, types.ImagePullOptions{})
 			if err != nil {
