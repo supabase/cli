@@ -81,6 +81,8 @@ var (
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 )
 
+const RegistryPrefix = "public.ecr.aws/t3w2s2c9/"
+
 func run(p utils.Program) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
@@ -116,10 +118,10 @@ func run(p utils.Program) error {
 
 	// Pull images.
 	{
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.DbImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.DbImage,
+				RegistryPrefix+utils.DbImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -129,10 +131,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.KongImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.KongImage,
+				RegistryPrefix+utils.KongImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -142,10 +144,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.GotrueImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.GotrueImage,
+				RegistryPrefix+utils.GotrueImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -155,10 +157,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.InbucketImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.InbucketImage,
+				RegistryPrefix+utils.InbucketImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -168,10 +170,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.RealtimeImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.RealtimeImage,
+				RegistryPrefix+utils.RealtimeImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -181,10 +183,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.PostgrestImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.PostgrestImage,
+				RegistryPrefix+utils.PostgrestImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -194,10 +196,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StorageImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.StorageImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.StorageImage,
+				RegistryPrefix+utils.StorageImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -207,10 +209,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.DifferImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.DifferImage,
+				RegistryPrefix+utils.DifferImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -220,10 +222,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.PgmetaImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.PgmetaImage,
+				RegistryPrefix+utils.PgmetaImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -233,10 +235,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StudioImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.StudioImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.StudioImage,
+				RegistryPrefix+utils.StudioImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
@@ -246,10 +248,10 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DenoRelayImage); err != nil {
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, RegistryPrefix+utils.DenoRelayImage); err != nil {
 			out, err := utils.Docker.ImagePull(
 				ctx,
-				"docker.io/"+utils.DenoRelayImage,
+				RegistryPrefix+utils.DenoRelayImage,
 				types.ImagePullOptions{},
 			)
 			if err != nil {
