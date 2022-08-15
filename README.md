@@ -1,4 +1,4 @@
-# Supabase CLI (WIP)
+# Supabase CLI (v1)
 
 [![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main)
 
