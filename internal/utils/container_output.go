@@ -41,16 +41,14 @@ func ProcessPullOutput(out io.ReadCloser, p Program) error {
 				total:   progress.Progress.Total,
 			}
 
-			var sumCurrent, sumTotal int64
+			var overallProgress float64
 			for _, percentage := range downloads {
-				sumCurrent += percentage.current
-				sumTotal += percentage.total
+				if percentage.total > 0 {
+					progress := float64(percentage.current) / float64(percentage.total)
+					overallProgress += progress / float64(len(downloads))
+				}
 			}
 
-			var overallProgress float64
-			if sumTotal != 0 {
-				overallProgress = float64(sumCurrent) / float64(sumTotal)
-			}
 			p.Send(ProgressMsg(&overallProgress))
 		}
 	}
