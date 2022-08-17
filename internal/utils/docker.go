@@ -160,7 +160,7 @@ func GetRegistryImageUrl(imageName string) string {
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
-	imageUrl := "docker.io/" + imageName
+	imageUrl := GetRegistryImageUrl(imageName)
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
 		return nil
 	}
@@ -185,7 +185,7 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 	}
 	// Create container from image
 	resp, err := Docker.ContainerCreate(ctx, &container.Config{
-		Image: image,
+		Image: GetRegistryImageUrl(image),
 		Env:   env,
 		Cmd:   cmd,
 		Labels: map[string]string{

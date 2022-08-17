@@ -37,10 +37,10 @@ func Run(url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	}
 
 	matches := utils.PostgresUrlPattern.FindStringSubmatch(url)
-	if len(matches) != 4 {
+	if len(matches) != 3 {
 		return errors.New("URL is not a valid Supabase connection string.")
 	}
-	url = "postgresql://postgres:" + u.QueryEscape(matches[1]) + "@" + u.QueryEscape(matches[2]) + matches[3] + "/postgres"
+	url = "postgresql://postgres:" + u.QueryEscape(matches[1]) + "@" + matches[2] + "/postgres"
 
 	config, err := pgx.ParseConfig(url)
 	if err != nil {
