@@ -138,7 +138,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			ctx,
 			dbId,
 			&container.Config{
-				Image: utils.DbImage,
+				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
@@ -250,7 +250,7 @@ EOSQL
 			ctx,
 			differId,
 			&container.Config{
-				Image: utils.DifferImage,
+				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + conn.Config().ConnString() + "'" +
