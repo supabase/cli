@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/h2non/gock.v1"
@@ -23,6 +24,8 @@ const (
 )
 
 func TestPullImage(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
 	t.Run("pulls image if missing", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
@@ -87,6 +90,8 @@ func TestPullImage(t *testing.T) {
 }
 
 func TestRunOnce(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
 	t.Run("runs once in container", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
