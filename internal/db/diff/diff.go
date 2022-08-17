@@ -23,13 +23,13 @@ import (
 )
 
 func SaveDiff(out, file string, fsys afero.Fs) error {
-	if len(diff) < 2 {
+	if len(out) < 2 {
 		fmt.Fprintln(os.Stderr, "No changes found")
 	} else if len(file) > 0 {
 		path := new.GetMigrationPath(file)
-		return afero.WriteFile(fsys, path, []byte(diff), 0644)
+		return afero.WriteFile(fsys, path, []byte(out), 0644)
 	} else {
-		fmt.Println(diff)
+		fmt.Println(out)
 	}
 	return nil
 }
