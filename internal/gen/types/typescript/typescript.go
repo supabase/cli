@@ -10,13 +10,14 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
 var ctx = context.Background()
 
-func Run(useLocal bool, dbUrl string) error {
-	if err := utils.LoadConfig(); err != nil {
+func Run(useLocal bool, dbUrl string, fsys afero.Fs) error {
+	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
 
@@ -61,10 +62,6 @@ func Run(useLocal bool, dbUrl string) error {
 
 	// run typegen on the dbUrl
 	{
-		if err := utils.AssertDockerIsRunning(); err != nil {
-			return err
-		}
-
 		matches := utils.PostgresUrlPattern.FindStringSubmatch(dbUrl)
 		if len(matches) != 3 {
 			return errors.New("URL is not a valid Supabase connection string.")
