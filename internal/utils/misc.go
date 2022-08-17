@@ -34,7 +34,7 @@ const (
 	KongImage      = "library/kong:2.1"
 	InbucketImage  = "inbucket/inbucket:stable"
 	PostgrestImage = "postgrest/postgrest:v9.0.1.20220802"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
+	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	PgmetaImage    = "supabase/postgres-meta:v0.42.1"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage    = "supabase/studio:latest"
