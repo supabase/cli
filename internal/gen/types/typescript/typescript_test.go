@@ -38,7 +38,7 @@ func TestGenLocalCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -59,7 +59,7 @@ func TestGenLocalCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -90,7 +90,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -100,6 +100,10 @@ func TestGenRemoteCommand(t *testing.T) {
 			Get("/v" + version + "/images").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -145,7 +149,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).

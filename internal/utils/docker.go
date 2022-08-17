@@ -185,6 +185,11 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 	if err := DockerPullImageIfNotCached(ctx, image); err != nil {
 		return "", err
 	}
+	// Use network if exists
+	network, err := Docker.NetworkInspect(ctx, NetId, types.NetworkInspectOptions{})
+	if err != nil && !client.IsErrNotFound(err) {
+		return "", err
+	}
 	// Create container from image
 	resp, err := Docker.ContainerCreate(ctx, &container.Config{
 		Image: GetRegistryImageUrl(image),
@@ -195,7 +200,7 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 			"com.docker.compose.project": Config.ProjectId,
 		},
 	}, &container.HostConfig{
-		NetworkMode: container.NetworkMode(NetId),
+		NetworkMode: container.NetworkMode(network.ID),
 		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
