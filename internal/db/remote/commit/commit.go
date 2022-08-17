@@ -477,7 +477,8 @@ func AssertPostgresVersionMatch(conn *pgx.Conn) error {
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string) (*pgx.Conn, error) {
 	// Build connection string
 	pgUrl := fmt.Sprintf(
-		"postgresql://%s:%s@db.%s.supabase.co:5432/%s",
+		// Use port 6543 for connection pooling
+		"postgresql://%s:%s@db.%s.supabase.co:6543/%s",
 		url.QueryEscape(username),
 		url.QueryEscape(password),
 		url.QueryEscape(host),
