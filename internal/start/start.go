@@ -241,7 +241,7 @@ func run(p utils.Program) error {
 			ctx,
 			utils.DbId,
 			&container.Config{
-				Image: utils.DbImage,
+				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
@@ -504,7 +504,7 @@ EOSQL
 			ctx,
 			utils.KongId,
 			&container.Config{
-				Image: utils.KongImage,
+				Image: utils.GetRegistryImageUrl(utils.KongImage),
 				Env: []string{
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
@@ -584,7 +584,7 @@ EOF
 			ctx,
 			utils.GotrueId,
 			&container.Config{
-				Image: utils.GotrueImage,
+				Image: utils.GetRegistryImageUrl(utils.GotrueImage),
 				Env:   env,
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -613,7 +613,7 @@ EOF
 		ctx,
 		utils.InbucketId,
 		&container.Config{
-			Image: utils.InbucketImage,
+			Image: utils.GetRegistryImageUrl(utils.InbucketImage),
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
 				"com.docker.compose.project": utils.Config.ProjectId,
@@ -633,7 +633,7 @@ EOF
 		ctx,
 		utils.RealtimeId,
 		&container.Config{
-			Image: utils.RealtimeImage,
+			Image: utils.GetRegistryImageUrl(utils.RealtimeImage),
 			Env: []string{
 				"PORT=4000",
 				"DB_HOST=" + utils.DbId,
@@ -666,7 +666,7 @@ EOF
 		ctx,
 		utils.RestId,
 		&container.Config{
-			Image: utils.PostgrestImage,
+			Image: utils.GetRegistryImageUrl(utils.PostgrestImage),
 			Env: []string{
 				"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
@@ -692,7 +692,7 @@ EOF
 		ctx,
 		utils.StorageId,
 		&container.Config{
-			Image: utils.StorageImage,
+			Image: utils.GetRegistryImageUrl(utils.StorageImage),
 			Env: []string{
 				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
 				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
@@ -725,7 +725,7 @@ EOF
 		ctx,
 		utils.DifferId,
 		&container.Config{
-			Image:      utils.DifferImage,
+			Image:      utils.GetRegistryImageUrl(utils.DifferImage),
 			Entrypoint: []string{"sleep", "infinity"},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -745,7 +745,7 @@ EOF
 		ctx,
 		utils.PgmetaId,
 		&container.Config{
-			Image: utils.PgmetaImage,
+			Image: utils.GetRegistryImageUrl(utils.PgmetaImage),
 			Env: []string{
 				"PG_META_PORT=8080",
 				"PG_META_DB_HOST=" + utils.DbId,
@@ -768,7 +768,7 @@ EOF
 		ctx,
 		utils.StudioId,
 		&container.Config{
-			Image: utils.StudioImage,
+			Image: utils.GetRegistryImageUrl(utils.StudioImage),
 			Env: []string{
 				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 				"POSTGRES_PASSWORD=postgres",
