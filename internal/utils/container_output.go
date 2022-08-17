@@ -123,6 +123,10 @@ type DiffEntry struct {
 }
 
 func filterDiffOutput(diffBytes []byte) ([]byte, error) {
+	if len(diffBytes) == 0 {
+		return diffBytes, nil
+	}
+
 	var diffJson []DiffEntry
 	if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
 		return nil, err

@@ -24,6 +24,7 @@ import (
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	differ "github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -192,8 +193,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 				return err
 			}
 
-			path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
-			if err := afero.WriteFile(fsys, path, dumpBuf.Bytes(), 0644); err != nil {
+			if err := differ.SaveDiff(dumpBuf.String(), "remote_commit", fsys); err != nil {
 				return err
 			}
 
@@ -344,8 +344,7 @@ EOSQL
 			return err
 		}
 
-		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
-		if err := afero.WriteFile(fsys, path, diffBytes, 0644); err != nil {
+		if err := differ.SaveDiff(string(diffBytes), "remote_commit", fsys); err != nil {
 			return err
 		}
 	}
