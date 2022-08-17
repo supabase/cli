@@ -163,6 +163,8 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
 		return nil
+	} else if !client.IsErrNotFound(err) {
+		return err
 	}
 	out, err := Docker.ImagePull(ctx, imageUrl, types.ImagePullOptions{})
 	if err != nil {

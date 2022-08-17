@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/types/typescript"
 )
@@ -30,7 +31,7 @@ var (
 				return errors.New("Must specify either --local or --db-url")
 			}
 
-			return typescript.Run(local, dbUrl)
+			return typescript.Run(local, dbUrl, afero.NewOsFs())
 		},
 	}
 )
