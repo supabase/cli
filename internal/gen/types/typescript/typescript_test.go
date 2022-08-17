@@ -2,7 +2,6 @@ package typescript
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"testing"
 
@@ -13,17 +12,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
 )
-
-func ListUnmatchedRequests() []string {
-	result := make([]string, len(gock.GetUnmatchedRequests()))
-	for i, r := range gock.GetUnmatchedRequests() {
-		result[i] = fmt.Sprintln(r.Method, r.URL.Path)
-	}
-	return result
-}
 
 func TestGenLocalCommand(t *testing.T) {
 	const version = "1.41"
@@ -49,8 +41,8 @@ func TestGenLocalCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(true, "", fsys))
-		// Validate output
-		assert.False(t, gock.HasUnmatchedRequest(), ListUnmatchedRequests())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error failure to exec", func(t *testing.T) {
@@ -74,8 +66,8 @@ func TestGenLocalCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(true, "", fsys))
-		// Validate output
-		assert.False(t, gock.HasUnmatchedRequest(), ListUnmatchedRequests())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
@@ -127,8 +119,8 @@ func TestGenRemoteCommand(t *testing.T) {
 			JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 0}})
 		// Run test
 		assert.NoError(t, Run(false, dbUrl, fsys))
-		// Validate output
-		assert.False(t, gock.HasUnmatchedRequest(), ListUnmatchedRequests())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
@@ -160,7 +152,7 @@ func TestGenRemoteCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(false, dbUrl, fsys))
-		// Validate output
-		assert.False(t, gock.HasUnmatchedRequest(), ListUnmatchedRequests())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

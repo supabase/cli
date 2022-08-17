@@ -28,7 +28,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
 			MatchType("json").
@@ -43,6 +43,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			})
 		// Run test
 		assert.NoError(t, Run(context.Background(), params, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to load token", func(t *testing.T) {
@@ -56,7 +58,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
 			MatchType("json").
@@ -64,6 +66,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, Run(context.Background(), params, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -73,7 +77,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
 			MatchType("json").
@@ -82,6 +86,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
 		assert.Error(t, Run(context.Background(), params, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on malformed json", func(t *testing.T) {
@@ -91,7 +97,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects").
 			MatchType("json").
@@ -100,5 +106,7 @@ func TestProjectCreateCommand(t *testing.T) {
 			JSON([]string{})
 		// Run test
 		assert.Error(t, Run(context.Background(), params, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
