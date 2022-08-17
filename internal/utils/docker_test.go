@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -45,7 +46,8 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusAccepted)
 		// Run test
 		assert.NoError(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("does nothing if image exists", func(t *testing.T) {
@@ -63,7 +65,8 @@ func TestPullImage(t *testing.T) {
 			JSON(types.ImageInspect{})
 		// Run test
 		assert.NoError(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error if docker is unavailable", func(t *testing.T) {
@@ -80,7 +83,8 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
@@ -102,7 +106,8 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
@@ -150,9 +155,10 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		out, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.NoError(t, err)
-		// Validate output
+		// Validate api
 		assert.Equal(t, "hello world", out)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on container create", func(t *testing.T) {
@@ -178,7 +184,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on container start", func(t *testing.T) {
@@ -208,7 +215,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("stops container on cancel", func(t *testing.T) {
@@ -248,7 +256,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(ctx, imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to parse logs", func(t *testing.T) {
@@ -283,7 +292,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to inspect", func(t *testing.T) {
@@ -326,7 +336,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on non-zero exit code", func(t *testing.T) {
@@ -370,7 +381,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
@@ -390,7 +402,8 @@ func TestExecOnce(t *testing.T) {
 		// Run test
 		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to hijack", func(t *testing.T) {
@@ -409,7 +422,8 @@ func TestExecOnce(t *testing.T) {
 		// Run test
 		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	// TODO: mock tcp hijack

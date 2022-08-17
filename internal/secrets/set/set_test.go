@@ -32,7 +32,7 @@ func TestSecretSetCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
@@ -40,7 +40,8 @@ func TestSecretSetCommand(t *testing.T) {
 			Reply(200)
 		// Run test
 		assert.NoError(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("Sets secret value via env file", func(t *testing.T) {
@@ -62,7 +63,7 @@ func TestSecretSetCommand(t *testing.T) {
 		_, err = tmpfile.Write([]byte(dummyEnv))
 		require.NoError(t, err)
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
@@ -70,7 +71,8 @@ func TestSecretSetCommand(t *testing.T) {
 			Reply(200)
 		// Run test
 		assert.NoError(t, Run(context.Background(), tmpfile.Name(), []string{}, fsys))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
@@ -142,7 +144,7 @@ func TestSecretSetCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
@@ -150,7 +152,8 @@ func TestSecretSetCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -166,7 +169,7 @@ func TestSecretSetCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
@@ -175,6 +178,7 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
 		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

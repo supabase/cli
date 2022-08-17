@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
 )
@@ -69,7 +70,7 @@ func TestDeleteCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -80,6 +81,7 @@ func TestDeleteCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, Run(branch, fsys))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
