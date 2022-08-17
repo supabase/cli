@@ -126,6 +126,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 		return err
 	}
 	// Apply config overrides
+	config.PreferSimpleProtocol = true
 	for _, op := range options {
 		op(config)
 	}
