@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
-	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -76,15 +75,7 @@ func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) 
 	}
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 
-	if len(out) < 2 {
-		fmt.Fprintln(os.Stderr, "No changes found")
-	} else if len(file) > 0 {
-		path := new.GetMigrationPath(file)
-		return afero.WriteFile(fsys, path, []byte(out), 0644)
-	} else {
-		fmt.Println(out)
-	}
-	return nil
+	return SaveDiff(out, file, fsys)
 }
 
 func toBatchQuery(contents string) (batch pgx.Batch) {

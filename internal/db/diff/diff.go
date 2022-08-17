@@ -22,6 +22,18 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+func SaveDiff(out, file string, fsys afero.Fs) error {
+	if len(diff) < 2 {
+		fmt.Fprintln(os.Stderr, "No changes found")
+	} else if len(file) > 0 {
+		path := new.GetMigrationPath(file)
+		return afero.WriteFile(fsys, path, []byte(diff), 0644)
+	} else {
+		fmt.Println(diff)
+	}
+	return nil
+}
+
 // TODO: Handle cleanup on SIGINT/SIGTERM.
 func Run(file string, fsys afero.Fs) error {
 	// Sanity checks.
@@ -55,13 +67,7 @@ func Run(file string, fsys afero.Fs) error {
 		return err
 	}
 
-	if len(file) > 0 {
-		path := new.GetMigrationPath(file)
-		return afero.WriteFile(fsys, path, []byte(diff), 0644)
-	} else {
-		fmt.Println(diff)
-	}
-	return nil
+	return SaveDiff(diff, file, fsys)
 }
 
 var (
