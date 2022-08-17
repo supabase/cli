@@ -37,7 +37,7 @@ func TestPullImage(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
 		gock.New("http:///var/run/docker.sock").
 			Post("/v"+version+"/images/create").
@@ -60,7 +60,7 @@ func TestPullImage(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		// Run test
@@ -79,7 +79,7 @@ func TestPullImage(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
@@ -97,7 +97,7 @@ func TestPullImage(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
 		gock.New("http:///var/run/docker.sock").
 			Post("/v"+version+"/images/create").
@@ -124,7 +124,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -171,7 +171,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -198,7 +198,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -229,7 +229,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -270,7 +270,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -306,7 +306,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
@@ -350,7 +350,7 @@ func TestRunOnce(t *testing.T) {
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		gock.New("http:///var/run/docker.sock").
