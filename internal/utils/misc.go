@@ -35,6 +35,7 @@ const (
 	InbucketImage  = "inbucket/inbucket:stable"
 	PostgrestImage = "postgrest/postgrest:v9.0.1.20220802"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
+	MigraImage     = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage    = "supabase/postgres-meta:v0.42.1"
 	// TODO: Hardcode version once provided upstream.
 	StudioImage    = "supabase/studio:latest"

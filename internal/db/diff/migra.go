@@ -18,10 +18,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	diffImage = "djrobstep/migra:3.0.1621480950"
-)
-
 var (
 	initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
 	//go:embed templates/migra.sh
@@ -163,7 +159,7 @@ func diffSchema(ctx context.Context, source, target string, schema []string) (st
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
-	out, err := utils.DockerRunOnce(ctx, diffImage, env, cmd)
+	out, err := utils.DockerRunOnce(ctx, utils.MigraImage, env, cmd)
 	if err != nil {
 		return "", errors.New("error diffing scheam")
 	}
