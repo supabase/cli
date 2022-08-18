@@ -29,13 +29,7 @@ jobs:
         run: |
           TAG=${{ matrix.src }}
           echo "::set-output name=dst::${TAG##*/}"
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Login to ECR
-        uses: docker/login-action@v2
+      - uses: docker/login-action@v2
         with:
           registry: public.ecr.aws
           username: ${{ secrets.PROD_ACCESS_KEY_ID }}
