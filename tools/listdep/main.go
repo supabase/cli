@@ -11,6 +11,8 @@ import (
 
 func main() {
 	images := []string{
+		utils.Pg13Image,
+		utils.Pg14Image,
 		utils.GotrueImage,
 		utils.RealtimeImage,
 		utils.StorageImage,

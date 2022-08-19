@@ -181,10 +181,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 		case 12:
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
-			DbImage = "supabase/postgres:13.3.0"
+			DbImage = Pg13Image
 			InitialSchemaSql = initialSchemaPg13Sql
 		case 14:
-			DbImage = "supabase/postgres:14.1.0.34"
+			DbImage = Pg14Image
 			InitialSchemaSql = initialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
