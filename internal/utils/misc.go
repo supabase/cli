@@ -21,25 +21,27 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Update initial schemas in internal/utils/templates/initial_schemas when
-// updating any one of these.
+// Update tools/listdep/main.go when adding new docker images
 const (
+	Pg13Image      = "supabase/postgres:13.3.0"
+	Pg14Image      = "supabase/postgres:14.1.0.34"
+	KongImage      = "library/kong:2.8.1"
+	InbucketImage  = "inbucket/inbucket:3.0.3"
+	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
+	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
+	MigraImage     = "djrobstep/migra:3.0.1621480950"
+	PgmetaImage    = "supabase/postgres-meta:v0.42.2"
+	StudioImage    = "supabase/studio:v0.1.0"
+	DenoRelayImage = "supabase/deno-relay:v1.2.1"
+	// Update initial schemas in internal/utils/templates/initial_schemas when
+	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.10.3"
 	RealtimeImage = "supabase/realtime:v0.22.7"
 	StorageImage  = "supabase/storage-api:v0.18.7"
 )
 
 const (
-	ShadowDbName   = "supabase_shadow"
-	KongImage      = "library/kong:2.1"
-	InbucketImage  = "inbucket/inbucket:stable"
-	PostgrestImage = "postgrest/postgrest:v9.0.1.20220802"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage     = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage    = "supabase/postgres-meta:v0.42.1"
-	// TODO: Hardcode version once provided upstream.
-	StudioImage    = "supabase/studio:latest"
-	DenoRelayImage = "supabase/deno-relay:v1.2.1"
+	ShadowDbName = "supabase_shadow"
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
