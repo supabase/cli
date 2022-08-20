@@ -14,7 +14,7 @@ var (
 	//go:embed templates/init_gitignore
 	initGitignore []byte
 
-	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold("supabase") + " to reinitialize.")
+	errAlreadyInitialized = errors.New("Project already initialized. To allow reinitialization remove the directory " + utils.Bold("./supabase"))
 )
 
 func Run(fsys afero.Fs) error {
