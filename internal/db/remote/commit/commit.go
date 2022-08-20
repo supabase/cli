@@ -368,8 +368,7 @@ type model struct {
 }
 
 func cleanup() {
-	utils.DockerRemoveAll()
-	_ = utils.Docker.NetworkRemove(context.Background(), netId)
+	_ = utils.DockerRemoveAll(context.Background(), netId)
 }
 
 func (m model) Init() tea.Cmd {
