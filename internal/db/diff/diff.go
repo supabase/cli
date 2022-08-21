@@ -81,7 +81,7 @@ func run(p utils.Program) error {
 
 	// 1. Create shadow db and run migrations
 	{
-		if err := createShadowDb(ctx, utils.DbId, utils.ShadowDbName); err != nil {
+		if err := ResetDatabase(ctx, utils.DbId, utils.ShadowDbName); err != nil {
 			return err
 		}
 
