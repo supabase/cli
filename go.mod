@@ -76,7 +76,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
-	github.com/jackc/pgconn v1.11.0 // indirect
+	github.com/jackc/pgconn v1.11.0
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgmock v0.0.0-20210724152146-4ad1a8207f65
