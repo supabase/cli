@@ -208,6 +208,30 @@ $$;
 ALTER FUNCTION auth.email() OWNER TO supabase_auth_admin;
 
 --
+-- Name: FUNCTION email(); Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' instead.';
+
+
+--
+-- Name: jwt(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE FUNCTION auth.jwt() RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  select 
+    coalesce(
+        nullif(current_setting('request.jwt.claim', true), ''),
+        nullif(current_setting('request.jwt.claims', true), '')
+    )::jsonb
+$$;
+
+
+ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
+
+--
 -- Name: role(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -225,6 +249,13 @@ $$;
 ALTER FUNCTION auth.role() OWNER TO supabase_auth_admin;
 
 --
+-- Name: FUNCTION role(); Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' instead.';
+
+
+--
 -- Name: uid(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -240,6 +271,13 @@ $$;
 
 
 ALTER FUNCTION auth.uid() OWNER TO supabase_auth_admin;
+
+--
+-- Name: FUNCTION uid(); Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead.';
+
 
 --
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
@@ -1095,31 +1133,91 @@ $$;
 ALTER FUNCTION storage.get_size_by_bucket() OWNER TO supabase_storage_admin;
 
 --
--- Name: search(text, text, integer, integer, integer); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+-- Name: search(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
+CREATE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
+    LANGUAGE plpgsql STABLE
+    AS $_$
+declare
+  v_order_by text;
+  v_sort_order text;
+begin
+  case
+    when sortcolumn = 'name' then
+      v_order_by = 'name';
+    when sortcolumn = 'updated_at' then
+      v_order_by = 'updated_at';
+    when sortcolumn = 'created_at' then
+      v_order_by = 'created_at';
+    when sortcolumn = 'last_accessed_at' then
+      v_order_by = 'last_accessed_at';
+    else
+      v_order_by = 'name';
+  end case;
+
+  case
+    when sortorder = 'asc' then
+      v_sort_order = 'asc';
+    when sortorder = 'desc' then
+      v_sort_order = 'desc';
+    else
+      v_sort_order = 'asc';
+  end case;
+
+  v_order_by = v_order_by || ' ' || v_sort_order;
+
+  return query execute
+    'with folders as (
+       select path_tokens[$1] as folder
+       from storage.objects
+         where objects.name ilike $2 || $3 || ''%''
+           and bucket_id = $4
+           and array_length(regexp_split_to_array(objects.name, ''/''), 1) <> $1
+       group by folder
+       order by folder ' || v_sort_order || '
+     )
+     (select folder as "name",
+            null as id,
+            null as updated_at,
+            null as created_at,
+            null as last_accessed_at,
+            null as metadata from folders)
+     union all
+     (select path_tokens[$1] as "name",
+            id,
+            updated_at,
+            created_at,
+            last_accessed_at,
+            metadata
+     from storage.objects
+     where objects.name ilike $2 || $3 || ''%''
+       and bucket_id = $4
+       and array_length(regexp_split_to_array(objects.name, ''/''), 1) = $1
+     order by ' || v_order_by || ')
+     limit $5
+     offset $6' using levels, prefix, search, bucketname, limits, offsets;
+end;
+$_$;
+
+
+ALTER FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer, search text, sortcolumn text, sortorder text) OWNER TO supabase_storage_admin;
+
+--
+-- Name: update_updated_at_column(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE FUNCTION storage.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-	return query 
-		with files_folders as (
-			select path_tokens[levels] as folder
-			from storage.objects
-			where objects.name ilike prefix || '%'
-			and bucket_id = bucketname
-			GROUP by folder
-			limit limits
-			offset offsets
-		) 
-		select files_folders.folder as name, objects.id, objects.updated_at, objects.created_at, objects.last_accessed_at, objects.metadata from files_folders 
-		left join storage.objects
-		on prefix || files_folders.folder = objects.name and objects.bucket_id=bucketname;
-END
+    NEW.updated_at = now();
+    RETURN NEW; 
+END;
 $$;
 
 
-ALTER FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) OWNER TO supabase_storage_admin;
+ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
 
 SET default_tablespace = '';
 
@@ -1133,7 +1231,8 @@ CREATE TABLE auth.audit_log_entries (
     instance_id uuid,
     id uuid NOT NULL,
     payload json,
-    created_at timestamp with time zone
+    created_at timestamp with time zone,
+    ip_address character varying(64) DEFAULT ''::character varying NOT NULL
 );
 
 
@@ -1453,6 +1552,9 @@ INSERT INTO auth.schema_migrations VALUES ('20220114185221');
 INSERT INTO auth.schema_migrations VALUES ('20220114185340');
 INSERT INTO auth.schema_migrations VALUES ('20220224000811');
 INSERT INTO auth.schema_migrations VALUES ('20220323170000');
+INSERT INTO auth.schema_migrations VALUES ('20220429102000');
+INSERT INTO auth.schema_migrations VALUES ('20220531120530');
+INSERT INTO auth.schema_migrations VALUES ('20220614074223');
 
 
 --
@@ -1509,6 +1611,8 @@ INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd6
 INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-04-14 09:42:55.139121');
 INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-04-14 09:42:55.179168');
 INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:42:55.218331');
+INSERT INTO storage.migrations VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-08-22 19:11:56.538337');
+INSERT INTO storage.migrations VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-08-22 19:11:56.54889');
 
 
 --
@@ -1659,10 +1763,45 @@ CREATE INDEX audit_logs_instance_id_idx ON auth.audit_log_entries USING btree (i
 
 
 --
+-- Name: confirmation_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX confirmation_token_idx ON auth.users USING btree (confirmation_token) WHERE ((confirmation_token)::text !~ '^[0-9 ]*$'::text);
+
+
+--
+-- Name: email_change_token_current_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX email_change_token_current_idx ON auth.users USING btree (email_change_token_current) WHERE ((email_change_token_current)::text !~ '^[0-9 ]*$'::text);
+
+
+--
+-- Name: email_change_token_new_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX email_change_token_new_idx ON auth.users USING btree (email_change_token_new) WHERE ((email_change_token_new)::text !~ '^[0-9 ]*$'::text);
+
+
+--
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX identities_user_id_idx ON auth.identities USING btree (user_id);
+
+
+--
+-- Name: reauthentication_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX reauthentication_token_idx ON auth.users USING btree (reauthentication_token) WHERE ((reauthentication_token)::text !~ '^[0-9 ]*$'::text);
+
+
+--
+-- Name: recovery_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX recovery_token_idx ON auth.users USING btree (recovery_token) WHERE ((recovery_token)::text !~ '^[0-9 ]*$'::text);
 
 
 --
@@ -1747,6 +1886,13 @@ CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_patter
 --
 
 CREATE TRIGGER tr_check_filters BEFORE INSERT OR UPDATE ON realtime.subscription FOR EACH ROW EXECUTE FUNCTION realtime.subscription_check_filters();
+
+
+--
+-- Name: objects update_objects_updated_at; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.update_updated_at_column();
 
 
 --
@@ -1881,6 +2027,14 @@ GRANT ALL ON SCHEMA storage TO dashboard_user;
 --
 
 GRANT ALL ON FUNCTION auth.email() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION jwt(); Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON FUNCTION auth.jwt() TO postgres;
+GRANT ALL ON FUNCTION auth.jwt() TO dashboard_user;
 
 
 --
@@ -2276,63 +2430,48 @@ GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text)
 
 
 --
--- Name: FUNCTION get_built_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION get_built_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION rebuild_on_ddl(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION rebuild_on_ddl(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO postgres;
 GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO anon;
 GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO authenticated;
 GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO service_role;
 
 
 --
--- Name: FUNCTION rebuild_on_drop(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION rebuild_on_drop(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO postgres;
 GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO anon;
 GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO authenticated;
 GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO service_role;
 
 
 --
--- Name: FUNCTION rebuild_schema(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION rebuild_schema(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.rebuild_schema() TO postgres;
 GRANT ALL ON FUNCTION graphql.rebuild_schema() TO anon;
 GRANT ALL ON FUNCTION graphql.rebuild_schema() TO authenticated;
 GRANT ALL ON FUNCTION graphql.rebuild_schema() TO service_role;
 
 
 --
--- Name: FUNCTION variable_definitions_sort(variable_definitions jsonb); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION variable_definitions_sort(variable_definitions jsonb); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO postgres;
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO anon;
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO authenticated;
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO service_role;
-
-
--- --
--- -- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
--- --
--- 
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
 
 
 --
@@ -2433,17 +2572,6 @@ GRANT ALL ON FUNCTION storage.foldername(name text) TO postgres;
 
 
 --
--- Name: FUNCTION search(prefix text, bucketname text, limits integer, levels integer, offsets integer); Type: ACL; Schema: storage; Owner: supabase_storage_admin
---
-
-GRANT ALL ON FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) TO anon;
-GRANT ALL ON FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) TO authenticated;
-GRANT ALL ON FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) TO service_role;
-GRANT ALL ON FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) TO dashboard_user;
-GRANT ALL ON FUNCTION storage.search(prefix text, bucketname text, limits integer, levels integer, offsets integer) TO postgres;
-
-
---
 -- Name: TABLE audit_log_entries; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2500,20 +2628,18 @@ GRANT ALL ON TABLE auth.users TO postgres;
 
 
 --
--- Name: TABLE schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: TABLE schema_version; Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON TABLE graphql.schema_version TO postgres;
 GRANT ALL ON TABLE graphql.schema_version TO anon;
 GRANT ALL ON TABLE graphql.schema_version TO authenticated;
 GRANT ALL ON TABLE graphql.schema_version TO service_role;
 
 
 --
--- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
@@ -2598,33 +2724,33 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL O
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
 
 
 --
