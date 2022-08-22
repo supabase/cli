@@ -83,7 +83,7 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(query).
-			ReplyError(pgerrcode.DuplicateTable, "table \"test\" already exists")
+			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		assert.Error(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})

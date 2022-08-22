@@ -48,8 +48,9 @@ const (
 	TerminateDbSqlFmt = `
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 -- Wait for WAL sender to drop replication slot.
-DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; END';
-`
+DO 'BEGIN WHILE (
+	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
+) > 0 LOOP END LOOP; END';`
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
 
@@ -58,6 +59,7 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 	RemoteDbPath   = "supabase/.temp/remote-db-url"
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
+	SeedDataPath   = "supabase/seed.sql"
 )
 
 var (
