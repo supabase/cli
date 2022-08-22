@@ -270,6 +270,7 @@ func InstallOrUpgradeDeno() error {
 
 	// 1. Determine OS triple
 	var assetFilename string
+	assetsUrl := "https://github.com/denoland/deno/releases/latest/download/"
 	{
 		if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
 			assetFilename = "deno-x86_64-apple-darwin.zip"
@@ -277,6 +278,10 @@ func InstallOrUpgradeDeno() error {
 			assetFilename = "deno-aarch64-apple-darwin.zip"
 		} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 			assetFilename = "deno-x86_64-unknown-linux-gnu.zip"
+		} else if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+			// TODO: version pin to official release once available https://github.com/denoland/deno/issues/1846
+			assetsUrl = "https://github.com/LukeChannings/deno-arm64/releases/latest/download/"
+			assetFilename = "deno-linux-arm64.zip"
 		} else if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
 			assetFilename = "deno-x86_64-pc-windows-msvc.zip"
 		} else {
@@ -286,7 +291,7 @@ func InstallOrUpgradeDeno() error {
 
 	// 2. Download & install Deno binary.
 	{
-		resp, err := http.Get("https://github.com/denoland/deno/releases/latest/download/" + assetFilename)
+		resp, err := http.Get(assetsUrl + assetFilename)
 		if err != nil {
 			return err
 		}
