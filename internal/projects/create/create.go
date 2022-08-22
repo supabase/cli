@@ -1,80 +1,37 @@
 package create
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(name string, orgId uint, dbPassword string, region string, plan string) error {
-	accessToken, err := utils.LoadAccessToken()
-	if err != nil {
-		return err
-	}
-
+func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error {
 	// TODO: Prompt missing args.
 	{
 	}
 
-	// POST request, check errors
-	var project struct {
-		Id     uint   `json:"id"`
-		Ref    string `json:"ref"`
-		Name   string `json:"name"`
-		OrgId  uint   `json:"organization_id"`
-		Region string `json:"region"`
+	resp, err := utils.GetSupabase().CreateProjectWithResponse(ctx, params)
+	if err != nil {
+		return err
 	}
-	{
-		jsonBytes, err := json.Marshal(map[string]interface{}{
-			"organization_id": orgId,
-			"name":            name,
-			"db_pass":         dbPassword,
-			"region":          region,
-			"plan":            plan,
-		})
-		if err != nil {
-			return err
-		}
 
-		req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects", bytes.NewReader(jsonBytes))
-		if err != nil {
-			return err
-		}
-		req.Header.Add("Authorization", "Bearer "+string(accessToken))
-		req.Header.Add("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("Unexpected error creating project: %w", err)
-			}
-
-			return errors.New("Unexpected error creating project: " + string(body))
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(body, &project); err != nil {
-			return fmt.Errorf("Failed to create a new project: %w", err)
-		}
+	if resp.JSON201 == nil {
+		return errors.New("Unexpected error creating project: " + string(resp.Body))
 	}
 
 	// TODO: Poll until PostgREST is reachable.
 	{
 	}
 
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Aqua("https://app.supabase.com/project/"+project.Ref))
+	fmt.Printf(
+		"Created a new project %s at %s\n",
+		utils.Aqua(resp.JSON201.Name),
+		utils.Aqua(utils.GetSupabaseDashboardURL()+"/project/"+resp.JSON201.Id),
+	)
 	return nil
 }

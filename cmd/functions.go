@@ -11,12 +11,13 @@ import (
 var (
 	functionsCmd = &cobra.Command{
 		Use:   "functions",
-		Short: "Supabase Functions",
+		Short: "Manage Supabase Edge functions",
 	}
 
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
-		Short: "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
+		Short: "Delete a Function from Supabase",
+		Long:  "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRef, err := cmd.Flags().GetString("project-ref")
@@ -30,7 +31,8 @@ var (
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy <Function name>",
-		Short: "Deploy a Function to the linked Supabase project.",
+		Short: "Deploy a Function to Supabase",
+		Long:  "Deploy a Function to the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			noVerifyJWT, err := cmd.Flags().GetBool("no-verify-jwt")
@@ -48,7 +50,7 @@ var (
 
 	functionsNewCmd = &cobra.Command{
 		Use:   "new <Function name>",
-		Short: "Create a new Function locally.",
+		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return new.Run(args[0])
@@ -57,7 +59,7 @@ var (
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
-		Short: "Serve a Function locally.",
+		Short: "Serve a Function locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			envFilePath, err := cmd.Flags().GetString("env-file")
@@ -75,11 +77,11 @@ var (
 )
 
 func init() {
-	functionsDeleteCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
-	functionsDeployCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function")
-	functionsDeployCmd.Flags().String("project-ref", "", "Project ref of the Supabase project")
-	functionsServeCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function")
-	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment")
+	functionsDeleteCmd.Flags().String("project-ref", "", "Project ref of the Supabase project.")
+	functionsDeployCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function.")
+	functionsDeployCmd.Flags().String("project-ref", "", "Project ref of the Supabase project.")
+	functionsServeCmd.Flags().Bool("no-verify-jwt", false, "Disable JWT verification for the Function.")
+	functionsServeCmd.Flags().String("env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)

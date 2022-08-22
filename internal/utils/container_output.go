@@ -41,16 +41,14 @@ func ProcessPullOutput(out io.ReadCloser, p Program) error {
 				total:   progress.Progress.Total,
 			}
 
-			var sumCurrent, sumTotal int64
+			var overallProgress float64
 			for _, percentage := range downloads {
-				sumCurrent += percentage.current
-				sumTotal += percentage.total
+				if percentage.total > 0 {
+					progress := float64(percentage.current) / float64(percentage.total)
+					overallProgress += progress / float64(len(downloads))
+				}
 			}
 
-			var overallProgress float64
-			if sumTotal != 0 {
-				overallProgress = float64(sumCurrent) / float64(sumTotal)
-			}
 			p.Send(ProgressMsg(&overallProgress))
 		}
 	}
@@ -125,6 +123,10 @@ type DiffEntry struct {
 }
 
 func filterDiffOutput(diffBytes []byte) ([]byte, error) {
+	if len(diffBytes) == 0 {
+		return diffBytes, nil
+	}
+
 	var diffJson []DiffEntry
 	if err := json.Unmarshal(diffBytes, &diffJson); err != nil {
 		return nil, err
@@ -162,8 +164,7 @@ func filterDiffOutput(diffBytes []byte) ([]byte, error) {
 		}
 
 		isSchemaIgnored := func(schema string) bool {
-			ignoredSchemas := []string{"auth", "extensions", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations"}
-			for _, s := range ignoredSchemas {
+			for _, s := range InternalSchemas {
 				if s == schema {
 					return true
 				}

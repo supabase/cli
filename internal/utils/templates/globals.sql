@@ -107,6 +107,8 @@ GRANT anon TO authenticator GRANTED BY postgres;
 GRANT authenticated TO authenticator GRANTED BY postgres;
 GRANT service_role TO authenticator GRANTED BY postgres;
 GRANT supabase_admin TO authenticator GRANTED BY postgres;
+GRANT supabase_auth_admin TO postgres GRANTED BY supabase_admin;
+GRANT supabase_storage_admin TO postgres GRANTED BY supabase_admin;
 
 
 

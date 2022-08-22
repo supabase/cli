@@ -6,9 +6,9 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -20,7 +20,7 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(); err != nil {
+			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -31,11 +31,7 @@ func Run(slug string, projectRefArg string) error {
 				return err
 			}
 		} else {
-			matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
-			if err != nil {
-				return err
-			}
-			if !matched {
+			if !utils.ProjectRefPattern.MatchString(projectRefArg) {
 				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 			}
 		}
@@ -49,7 +45,7 @@ func Run(slug string, projectRefArg string) error {
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 			if err != nil {
 				return err
 			}
@@ -63,7 +59,7 @@ func Run(slug string, projectRefArg string) error {
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
+		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -78,7 +74,7 @@ func Run(slug string, projectRefArg string) error {
 		case http.StatusNotFound: // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
 		case http.StatusOK: // Function exists
-			req, err := http.NewRequest("DELETE", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
+			req, err := http.NewRequest("DELETE", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 			if err != nil {
 				return err
 			}

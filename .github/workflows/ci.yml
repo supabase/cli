@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -17,7 +20,13 @@ jobs:
 
       - run: |
           if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          go test ./...
+          mkdir  /home/runner/.supabase && chown -R runner /home/runner/.supabase
+          go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
+          go tool cover -func coverage.out | grep total
+
+      - uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: coverage.out
 
   lint:
     name: Lint
@@ -31,4 +40,4 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.46
+          version: v1.47

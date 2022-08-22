@@ -35,10 +35,10 @@ func Run(target string) error {
 		if branch.Name() == target {
 			currBranch, err := utils.GetCurrentBranch()
 			if err != nil {
-				return err
+				currBranch = "main"
 			}
 
-			if err := os.WriteFile("supabase/.branches/_current_branch", []byte(target), 0644); err != nil {
+			if err := os.WriteFile(utils.CurrBranchPath, []byte(target), 0644); err != nil {
 				return err
 			}
 

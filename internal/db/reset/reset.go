@@ -102,7 +102,7 @@ EOSQL
 			}
 		}
 
-		// 3. Apply initial schema + extensions + migrations + seed.
+		// 3. Apply initial schema + migrations + seed.
 
 		p.Send(utils.StatusMsg("Setting up initial schema..."))
 		{
@@ -123,30 +123,6 @@ EOSQL
 			}
 			if errBuf.Len() > 0 {
 				return errors.New("Error resetting database: " + errBuf.String())
-			}
-		}
-
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
-		{
-			extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(extensionsSql),
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error resetting database: " + errBuf.String())
-				}
 			}
 		}
 
@@ -206,9 +182,15 @@ EOSQL
 				// skip
 			} else if err != nil {
 				return err
+			}
+
+			err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
+
+			if err != nil {
+				return err
 			} else {
 				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-c", string(content),
+					"psql", "postgresql://postgres:postgres@localhost/postgres", "-f", "/tmp/seed.sql",
 				})
 				if err != nil {
 					return err
@@ -227,11 +209,13 @@ EOSQL
 		{
 			// Need to connect for PostgREST to connect.
 			if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-				return fmt.Errorf("Error reconnecting database: %w", err)
+				fmt.Fprintf(os.Stderr, "Error reconnecting database: %v", err)
+				return nil
 			}
 
 			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-				return fmt.Errorf("Error reloading PostgREST schema cache: %w", err)
+				fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
+				return nil
 			}
 		}
 

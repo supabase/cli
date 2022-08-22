@@ -1,87 +1,71 @@
 package init
 
 import (
-	"bytes"
 	_ "embed"
 	"errors"
 	"os"
+	"path/filepath"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
 var (
-	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
-	// | sed '/^CREATE ROLE postgres;/d' \
-	// | sed '/^ALTER ROLE postgres WITH /d' \
-	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
-	// pg_dump --dbname $DB_URL
 	//go:embed templates/init_gitignore
 	initGitignore []byte
 
-	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold("supabase") + " to reinitialize.")
+	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
 )
 
-func Run() error {
-	if err := run(); errors.Is(err, errAlreadyInitialized) {
-		return err
-	} else if err != nil {
-		_ = os.RemoveAll("supabase")
-		return err
-	}
-
-	return nil
-}
-
-func run() error {
+func Run(fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if _, err := os.ReadFile("supabase/config.toml"); err == nil {
+		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
 			return errAlreadyInitialized
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
-	if err := utils.MkdirIfNotExist("supabase"); err != nil {
-		return err
-	}
-
 	// 1. Write `config.toml`.
-	if err := utils.WriteConfig(false); err != nil {
+	if err := utils.WriteConfig(fsys, false); err != nil {
 		return err
 	}
 
 	// 2. Append to `.gitignore`.
-	{
-		gitRoot, err := utils.GetGitRoot()
-		if err != nil {
-			return err
-		} else if gitRoot == nil {
-			// skip
-		} else {
-			gitignorePath := *gitRoot + "/.gitignore"
-			gitignore, err := os.ReadFile(gitignorePath)
-			if errors.Is(err, os.ErrNotExist) {
-				if err := os.WriteFile(gitignorePath, initGitignore, 0644); err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			} else if bytes.Contains(gitignore, initGitignore) {
-				// skip
-			} else {
-				f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					return err
-				}
-				if _, err := f.Write(append([]byte("\n"), initGitignore...)); err != nil {
-					return err
-				}
-				if err := f.Close(); err != nil {
-					return err
-				}
-			}
-		}
+	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot == nil {
+		// User not using git
+		return nil
+	}
+
+	ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
+	if err := updateGitIgnore(ignorePath, fsys); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
+	var contents []byte
+
+	if contained, err := afero.FileContainsBytes(fsys, ignorePath, initGitignore); contained {
+		return nil
+	} else if err == nil {
+		// Add a line break when appending
+		contents = append(contents, '\n')
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	f, err := fsys.OpenFile(ignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(append(contents, initGitignore...)); err != nil {
+		return err
 	}
 
 	return nil

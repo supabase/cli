@@ -1,70 +1,84 @@
 package cmd
 
 import (
+	"os"
+	"os/signal"
+
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/branch/create"
 	"github.com/supabase/cli/internal/db/branch/delete"
 	"github.com/supabase/cli/internal/db/branch/list"
-	"github.com/supabase/cli/internal/db/changes"
-	"github.com/supabase/cli/internal/db/commit"
+	"github.com/supabase/cli/internal/db/branch/switch_"
+	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/push"
-	remoteChanges "github.com/supabase/cli/internal/db/remote/changes"
-	remoteCommit "github.com/supabase/cli/internal/db/remote/commit"
-	"github.com/supabase/cli/internal/db/remote/set"
+	"github.com/supabase/cli/internal/db/remote/changes"
+	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/db/switch_"
 )
 
 var (
 	dbCmd = &cobra.Command{
-		Use: "db",
+		Use:   "db",
+		Short: "Manage local Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{
 		Use:   "branch",
-		Short: "Manage branches. Each branch is associated with a separate database.",
+		Short: "Manage local database branches",
+		Long:  "Manage local database branches. Each branch is associated with a separate local database. Forking remote databases is NOT supported.",
 	}
 
 	dbBranchCreateCmd = &cobra.Command{
 		Use:   "create <branch name>",
-		Short: "Create a branch.",
+		Short: "Create a branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(args[0])
+			return create.Run(args[0], afero.NewOsFs())
 		},
 	}
 
 	dbBranchDeleteCmd = &cobra.Command{
 		Use:   "delete <branch name>",
-		Short: "Delete a branch.",
+		Short: "Delete a branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(args[0])
+			return delete.Run(args[0], afero.NewOsFs())
 		},
 	}
 
 	dbBranchListCmd = &cobra.Command{
 		Use:   "list",
-		Short: "List branches.",
+		Short: "List branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run()
+			return list.Run(afero.NewOsFs(), os.Stdout)
 		},
 	}
 
-	dbChangesCmd = &cobra.Command{
-		Use:   "changes",
-		Short: "Diffs the local database with current migrations, then print the diff to standard output.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return changes.Run()
-		},
-	}
-
-	dbCommitCmd = &cobra.Command{
-		Use:   "commit <migration name>",
-		Short: "Diffs the local database with current migrations, writing it as a new migration.",
+	dbSwitchCmd = &cobra.Command{
+		Use:   "switch <branch name>",
+		Short: "Switch the active branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return commit.Run(args[0])
+			return switch_.Run(args[0])
+		},
+	}
+
+	useMigra bool
+	schema   []string
+	file     string
+
+	dbDiffCmd = &cobra.Command{
+		Use:   "diff",
+		Short: "Diffs the local database for schema changes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if useMigra {
+				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+				return diff.RunMigra(ctx, schema, file, fsys)
+			}
+			return diff.Run(file, fsys)
 		},
 	}
 
@@ -72,73 +86,83 @@ var (
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
-		Short: "Push new migrations to the remote database.",
+		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run(dryRun)
+			password := viper.GetString("DB_PASSWORD")
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return push.Run(ctx, dryRun, username, password, database, afero.NewOsFs())
 		},
 	}
 
 	dbRemoteCmd = &cobra.Command{
-		Use: "remote",
-	}
-
-	dbRemoteSetCmd = &cobra.Command{
-		Use:   "set <remote database url>",
-		Short: "Set the remote database to push migrations to.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return set.Run(args[0])
-		},
+		Use:   "remote",
+		Short: "Manage remote databases",
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
 		Use:   "changes",
-		Short: "Print changes on the remote database since the last pushed migration.",
+		Short: "Show changes on the remote database",
+		Long:  "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return remoteChanges.Run()
+			password := viper.GetString("DB_PASSWORD")
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+			return changes.Run(cmd.Context(), username, password, database, afero.NewOsFs())
 		},
 	}
 
 	dbRemoteCommitCmd = &cobra.Command{
 		Use:   "commit",
-		Short: "Commit changes on the remote database since the last pushed migration.",
+		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return remoteCommit.Run()
+			password := viper.GetString("DB_PASSWORD")
+			if password == "" {
+				password = PromptPassword(os.Stdin)
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return commit.Run(ctx, username, password, database, afero.NewOsFs())
 		},
 	}
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
-		Short: "Resets the local database to reflect current migrations. Any changes on the local database that is not committed will be lost.",
+		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return reset.Run()
-		},
-	}
-
-	dbSwitchCmd = &cobra.Command{
-		Use:   "switch <branch name>",
-		Short: "Switch branches.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return switch_.Run(args[0])
 		},
 	}
 )
 
 func init() {
+	// Build branch command
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
+	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
-	dbCmd.AddCommand(dbChangesCmd)
-	dbCmd.AddCommand(dbCommitCmd)
-	dbPushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	// Build diff command
+	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
+	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	dbCmd.AddCommand(dbDiffCmd)
+	// Build push command
+	pushFlags := dbPushCmd.Flags()
+	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPushCmd)
-	dbRemoteCmd.AddCommand(dbRemoteSetCmd)
+	// Build remote command
+	remoteFlags := dbRemoteCmd.PersistentFlags()
+	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
+	// Buidl reset command
 	dbCmd.AddCommand(dbResetCmd)
-	dbCmd.AddCommand(dbSwitchCmd)
 	rootCmd.AddCommand(dbCmd)
 }

@@ -1,40 +1,46 @@
 package cmd
 
 import (
+	"errors"
+
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/types/typescript"
 )
 
 var (
 	genCmd = &cobra.Command{
-		Use: "gen",
+		Use:   "gen",
+		Short: "Run code generation tools",
 	}
 
 	genTypesCmd = &cobra.Command{
-		Use: "types",
+		Use:   "types",
+		Short: "Generate types from Postgres schema",
 	}
+
+	local bool
+	dbUrl string
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
-		Short: "Generate types for TypeScript. Must either specify --local, or --db-url, or be in a linked project (with supabase link)",
+		Short: "Generate types for TypeScript",
+		Long:  "Generate types for TypeScript. Must specify either --local or --db-url",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			isLocal, err := cmd.Flags().GetBool("local")
-			if err != nil {
-				return err
-			}
-			dbUrl, err := cmd.Flags().GetString("db-url")
-			if err != nil {
-				return err
+			if !local && dbUrl == "" {
+				return errors.New("Must specify either --local or --db-url")
 			}
 
-			return typescript.Run(isLocal, dbUrl)
+			return typescript.Run(local, dbUrl, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	genTypesTypescriptCmd.Flags().Bool("local", false, "Generate types from the local dev database")
-	genTypesTypescriptCmd.Flags().String("db-url", "", "Generate types from a database url")
+	genFlags := genTypesTypescriptCmd.Flags()
+	genFlags.BoolVar(&local, "local", false, "Generate types from the local dev database.")
+	genFlags.StringVar(&dbUrl, "db-url", "", "Generate types from a database url.")
+	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "db-url")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
 	rootCmd.AddCommand(genCmd)

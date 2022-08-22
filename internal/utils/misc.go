@@ -17,26 +17,31 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/afero"
 )
 
-// Update initial schemas in internal/utils/templates/initial_schemas when
-// updating any one of these.
+// Update tools/listdep/main.go when adding new docker images
 const (
-	GotrueImage   = "supabase/gotrue:v2.6.18"
-	RealtimeImage = "supabase/realtime:v0.22.4"
-	StorageImage  = "supabase/storage-api:v0.15.0"
+	Pg13Image      = "supabase/postgres:13.3.0"
+	Pg14Image      = "supabase/postgres:14.1.0.34"
+	KongImage      = "library/kong:2.8.1"
+	InbucketImage  = "inbucket/inbucket:3.0.3"
+	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
+	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
+	MigraImage     = "djrobstep/migra:3.0.1621480950"
+	PgmetaImage    = "supabase/postgres-meta:v0.42.2"
+	StudioImage    = "supabase/studio:v0.1.0"
+	DenoRelayImage = "supabase/deno-relay:v1.2.1"
+	// Update initial schemas in internal/utils/templates/initial_schemas when
+	// updating any one of these.
+	GotrueImage   = "supabase/gotrue:v2.10.3"
+	RealtimeImage = "supabase/realtime:v0.22.7"
+	StorageImage  = "supabase/storage-api:v0.18.7"
 )
 
 const (
-	ShadowDbName   = "supabase_shadow"
-	KongImage      = "library/kong:2.1"
-	InbucketImage  = "inbucket/inbucket:stable"
-	PostgrestImage = "postgrest/postgrest:v9.0.0.20220211"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.4"
-	PgmetaImage    = "supabase/postgres-meta:v0.40.0"
-	// TODO: Hardcode version once provided upstream.
-	StudioImage    = "supabase/studio:latest"
-	DenoRelayImage = "supabase/deno-relay:v1.2.0"
+	ShadowDbName = "supabase_shadow"
 
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
@@ -47,10 +52,31 @@ DO 'BEGIN WHILE (SELECT COUNT(*) FROM pg_replication_slots) > 0 LOOP END LOOP; E
 `
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
+
+	ConfigPath     = "supabase/config.toml"
+	ProjectRefPath = "supabase/.temp/project-ref"
+	RemoteDbPath   = "supabase/.temp/remote-db-url"
+	CurrBranchPath = "supabase/.branches/_current_branch"
+	MigrationsDir  = "supabase/migrations"
 )
 
-//go:embed templates/globals.sql
-var GlobalsSql string
+var (
+	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
+	// | sed '/^CREATE ROLE postgres;/d' \
+	// | sed '/^ALTER ROLE postgres WITH /d' \
+	// | sed "/^ALTER ROLE .* WITH .* LOGIN /s/;$/ PASSWORD 'postgres';/"
+	//go:embed templates/globals.sql
+	GlobalsSql string
+
+	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
+	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
+	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?:\/\/postgres:(.*)@(.+)\/postgres$`)
+	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
+	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
+
+	// These schemas are ignored from schema diffs
+	InternalSchemas = []string{"auth", "extensions", "graphql_public", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+)
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
@@ -58,7 +84,11 @@ func GetCurrentTimestamp() string {
 }
 
 func GetCurrentBranch() (string, error) {
-	branch, err := os.ReadFile("supabase/.branches/_current_branch")
+	return GetCurrentBranchFS(afero.NewOsFs())
+}
+
+func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
+	branch, err := afero.ReadFile(fsys, CurrBranchPath)
 	if err != nil {
 		return "", err
 	}
@@ -101,6 +131,10 @@ func AssertSupabaseStartIsRunning() error {
 		return err
 	}
 
+	return AssertSupabaseDbIsRunning()
+}
+
+func AssertSupabaseDbIsRunning() error {
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
 		return errors.New(Aqua("supabase start") + " is not running.")
 	}
@@ -108,14 +142,14 @@ func AssertSupabaseStartIsRunning() error {
 	return nil
 }
 
-func GetGitRoot() (*string, error) {
+func GetGitRoot(fsys afero.Fs) (*string, error) {
 	origWd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 
 	for {
-		_, err := os.ReadDir(".git")
+		_, err := afero.ReadDir(fsys, ".git")
 
 		if err == nil {
 			gitRoot, err := os.Getwd()
@@ -152,7 +186,11 @@ func IsBranchNameReserved(branch string) bool {
 }
 
 func MkdirIfNotExist(path string) error {
-	if err := os.Mkdir(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+	return MkdirIfNotExistFS(afero.NewOsFs(), path)
+}
+
+func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
+	if err := fsys.MkdirAll(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
 
@@ -160,8 +198,12 @@ func MkdirIfNotExist(path string) error {
 }
 
 func AssertSupabaseCliIsSetUp() error {
-	if _, err := os.ReadFile("supabase/config.toml"); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find " + Bold("supabase/config.toml") + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
+	return AssertSupabaseCliIsSetUpFS(afero.NewOsFs())
+}
+
+func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
+	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
+		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
 	} else if err != nil {
 		return err
 	}
@@ -170,13 +212,29 @@ func AssertSupabaseCliIsSetUp() error {
 }
 
 func AssertIsLinked() error {
-	if _, err := os.Stat("supabase/.temp/project-ref"); errors.Is(err, os.ErrNotExist) {
+	return AssertIsLinkedFS(afero.NewOsFs())
+}
+
+func AssertIsLinkedFS(fsys afero.Fs) error {
+	if _, err := fsys.Stat(ProjectRefPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	} else if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func LoadProjectRef(fsys afero.Fs) (string, error) {
+	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
+	if err != nil {
+		return "", errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+	}
+	projectRef := string(projectRefBytes)
+	if !ProjectRefPattern.MatchString(projectRef) {
+		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	}
+	return projectRef, nil
 }
 
 func InstallOrUpgradeDeno() error {
@@ -196,7 +254,7 @@ func InstallOrUpgradeDeno() error {
 	if _, err := os.Stat(denoPath); err == nil {
 		// Upgrade Deno.
 
-		cmd := exec.Command(denoPath, "upgrade")
+		cmd := exec.Command(denoPath, "upgrade", "--version", "1.20.3")
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -266,13 +324,13 @@ func InstallOrUpgradeDeno() error {
 }
 
 func LoadAccessToken() (string, error) {
+	return LoadAccessTokenFS(afero.NewOsFs())
+}
+
+func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 	// Env takes precedence
 	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
-		matched, err := regexp.MatchString(`^sbp_[a-f0-9]{40}$`, accessToken)
-		if err != nil {
-			return "", err
-		}
-		if !matched {
+		if !AccessTokenPattern.MatchString(accessToken) {
 			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 		}
 
@@ -284,7 +342,7 @@ func LoadAccessToken() (string, error) {
 		return "", err
 	}
 	accessTokenPath := filepath.Join(home, ".supabase", "access-token")
-	accessToken, err := os.ReadFile(accessTokenPath)
+	accessToken, err := afero.ReadFile(fsys, accessTokenPath)
 	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
 		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
 	} else if err != nil {

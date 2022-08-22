@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 14.2 (Debian 14.2-1.pgdg110+1)
--- Dumped by pg_dump version 14.2
+-- Dumped from database version 14.3 (Debian 14.3-1.pgdg110+1)
+-- Dumped by pg_dump version 14.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -38,7 +38,7 @@ ALTER SCHEMA extensions OWNER TO postgres;
 -- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
 --
 
-CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA extensions;
 
 
 --
@@ -309,12 +309,6 @@ BEGIN
 
     IF func_is_graphql_resolve
     THEN
-        grant usage on schema graphql to postgres, anon, authenticated, service_role;
-        grant all on function graphql.resolve to postgres, anon, authenticated, service_role;
-
-        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
 
         -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
         create or replace function graphql_public.graphql(
@@ -326,7 +320,6 @@ BEGIN
             returns jsonb
             language sql
         as $$
-            -- This changed
             select graphql.resolve(
                 query := query,
                 variables := coalesce(variables, '{}'),
@@ -335,8 +328,16 @@ BEGIN
             );
         $$;
 
-        grant select on graphql.field, graphql.type, graphql.enum_value to postgres, anon, authenticated, service_role;
-        grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+		-- function in the extension so we need to grant permissions on existing entities AND
+		-- update default permissions to any others that are created after `graphql.resolve`
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
+        grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
+        grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
+		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
     END IF;
 
 END;
@@ -1838,15 +1839,6 @@ GRANT ALL ON SCHEMA extensions TO dashboard_user;
 
 
 --
--- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
---
-
-GRANT USAGE ON SCHEMA public TO anon;
-GRANT USAGE ON SCHEMA public TO authenticated;
-GRANT USAGE ON SCHEMA public TO service_role;
-
-
---
 -- Name: SCHEMA graphql_public; Type: ACL; Schema: -; Owner: supabase_admin
 --
 
@@ -1854,6 +1846,15 @@ GRANT USAGE ON SCHEMA graphql_public TO postgres;
 GRANT USAGE ON SCHEMA graphql_public TO anon;
 GRANT USAGE ON SCHEMA graphql_public TO authenticated;
 GRANT USAGE ON SCHEMA graphql_public TO service_role;
+
+
+--
+-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
+--
+
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT USAGE ON SCHEMA public TO service_role;
 
 
 --
@@ -2275,6 +2276,16 @@ GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text)
 
 
 --
+-- Name: FUNCTION get_built_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+--
+
+GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO postgres;
+GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO anon;
+GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO authenticated;
+GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO service_role;
+
+
+--
 -- Name: FUNCTION rebuild_on_ddl(); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -2312,6 +2323,16 @@ GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jso
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO anon;
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO authenticated;
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO service_role;
+
+
+-- --
+-- -- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
+-- --
+-- 
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
 
 
 --
@@ -2476,6 +2497,26 @@ GRANT ALL ON TABLE auth.schema_migrations TO postgres;
 
 GRANT ALL ON TABLE auth.users TO dashboard_user;
 GRANT ALL ON TABLE auth.users TO postgres;
+
+
+--
+-- Name: TABLE schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+--
+
+GRANT ALL ON TABLE graphql.schema_version TO postgres;
+GRANT ALL ON TABLE graphql.schema_version TO anon;
+GRANT ALL ON TABLE graphql.schema_version TO authenticated;
+GRANT ALL ON TABLE graphql.schema_version TO service_role;
+
+
+--
+-- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+--
+
+GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
+GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
+GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
+GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
 
 
 --
@@ -2798,6 +2839,4 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
-drop extension if exists pg_graphql;
--- Avoids limitation of only being able to load the extension via dashboard
-create extension if not exists pg_graphql schema public;
+drop extension pg_graphql; create extension pg_graphql schema extensions;

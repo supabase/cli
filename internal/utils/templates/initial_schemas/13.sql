@@ -3,7 +3,7 @@
 --
 
 -- Dumped from database version 13.3 (Debian 13.3-1.pgdg100+1)
--- Dumped by pg_dump version 14.2
+-- Dumped by pg_dump version 14.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -295,12 +295,6 @@ BEGIN
 
     IF func_is_graphql_resolve
     THEN
-        grant usage on schema graphql to postgres, anon, authenticated, service_role;
-        grant all on function graphql.resolve to postgres, anon, authenticated, service_role;
-
-        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
-        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
 
         -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
         create or replace function graphql_public.graphql(
@@ -312,7 +306,6 @@ BEGIN
             returns jsonb
             language sql
         as $$
-            -- This changed
             select graphql.resolve(
                 query := query,
                 variables := coalesce(variables, '{}'),
@@ -321,8 +314,16 @@ BEGIN
             );
         $$;
 
-        grant select on graphql.field, graphql.type, graphql.enum_value to postgres, anon, authenticated, service_role;
-        grant execute on function graphql.resolve to postgres, anon, authenticated, service_role;
+		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+		-- function in the extension so we need to grant permissions on existing entities AND
+		-- update default permissions to any others that are created after `graphql.resolve`
+        grant usage on schema graphql to postgres, anon, authenticated, service_role;
+        grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
+        grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
+        grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
+		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
     END IF;
 
 END;
@@ -2741,3 +2742,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 --
 -- PostgreSQL database dump complete
 --
+
+drop extension pg_graphql; create extension pg_graphql schema extensions;

@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 )
 
@@ -91,7 +92,9 @@ type (
 	}
 
 	inbucket struct {
-		Port uint
+		Port     uint
+		SmtpPort uint `toml:"smtp_port"`
+		Pop3Port uint `toml:"pop3_port"`
 	}
 
 	auth struct {
@@ -123,7 +126,12 @@ type (
 )
 
 func LoadConfig() error {
-	if _, err := toml.DecodeFile("supabase/config.toml", &Config); err == nil {
+	return LoadConfigFS(afero.NewOsFs())
+}
+
+func LoadConfigFS(fsys afero.Fs) error {
+	// TODO: provide a config interface for all sub commands to use fsys
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
 		_, _err := os.Stat("supabase/config.json")
@@ -173,10 +181,10 @@ func LoadConfig() error {
 		case 12:
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
-			DbImage = "supabase/postgres:13.3.0"
+			DbImage = Pg13Image
 			InitialSchemaSql = initialSchemaPg13Sql
 		case 14:
-			DbImage = "supabase/postgres:14.1.0.21"
+			DbImage = Pg14Image
 			InitialSchemaSql = initialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
@@ -220,56 +228,48 @@ func LoadConfig() error {
 					ClientId: "",
 					Secret:   "",
 				}
-			}
-		}
-	}
+			} else if Config.Auth.External[ext].Enabled {
+				maybeLoadEnv := func(s string) (string, error) {
+					matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
+					if len(matches) == 0 {
+						return s, nil
+					}
 
-	return nil
-}
+					envName := matches[1]
+					value := os.Getenv(envName)
+					if value == "" {
+						return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
+					}
 
-func InterpolateEnvInConfig() error {
-	maybeLoadEnv := func(s string) (string, error) {
-		matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
-		if len(matches) == 0 {
-			return s, nil
-		}
-
-		envName := matches[1]
-		value := os.Getenv(envName)
-		if value == "" {
-			return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
-		}
-
-		return value, nil
-	}
-
-	for _, ext := range authExternalProviders {
-		if Config.Auth.External[ext].Enabled {
-			var clientId, secret string
-
-			if Config.Auth.External[ext].ClientId == "" {
-				return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
-			} else {
-				v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
-				if err != nil {
-					return err
+					return value, nil
 				}
-				clientId = v
-			}
-			if Config.Auth.External[ext].Secret == "" {
-				return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
-			} else {
-				v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
-				if err != nil {
-					return err
-				}
-				secret = v
-			}
 
-			Config.Auth.External[ext] = provider{
-				Enabled:  true,
-				ClientId: clientId,
-				Secret:   secret,
+				var clientId, secret string
+
+				if Config.Auth.External[ext].ClientId == "" {
+					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+				} else {
+					v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
+					if err != nil {
+						return err
+					}
+					clientId = v
+				}
+				if Config.Auth.External[ext].Secret == "" {
+					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+				} else {
+					v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
+					if err != nil {
+						return err
+					}
+					secret = v
+				}
+
+				Config.Auth.External[ext] = provider{
+					Enabled:  true,
+					ClientId: clientId,
+					Secret:   secret,
+				}
 			}
 		}
 	}
@@ -376,7 +376,7 @@ secret = ""
 	Config.Db.MajorVersion = uint(dbMajorVersion)
 	Config.Auth.SiteUrl = "http://localhost:3000"
 
-	if err := os.WriteFile("supabase/config.toml", []byte(newConfig), 0644); err != nil {
+	if err := os.WriteFile(ConfigPath, []byte(newConfig), 0644); err != nil {
 		return err
 	}
 	if err := os.Remove("supabase/config.json"); err != nil {
@@ -386,7 +386,8 @@ secret = ""
 	return nil
 }
 
-func WriteConfig(test bool) error {
+func WriteConfig(fsys afero.Fs, test bool) error {
+	// Using current directory name as project id
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -408,7 +409,11 @@ func WriteConfig(test bool) error {
 		return err
 	}
 
-	if err := os.WriteFile("supabase/config.toml", initConfigBuf.Bytes(), 0644); err != nil {
+	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
+		return err
+	}
+
+	if err := afero.WriteFile(fsys, ConfigPath, initConfigBuf.Bytes(), 0644); err != nil {
 		return err
 	}
 

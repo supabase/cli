@@ -1,16 +1,18 @@
-# Supabase CLI (WIP)
+# Supabase CLI (v1)
+
+[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main)
 
 [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
-This repository contains all the functionality for our CLI. It is still under heavy development.
+This repository contains all the functionality for our CLI.
 
 - [x] Running Supabase locally
 - [x] Managing database migrations
 - [x] Pushing your local changes to production
 - [x] Create and Deploy Supabase Functions
 - [ ] Manage your Supabase Account
-- [ ] Manage your Supabase Projects
-- [ ] Generating types directly from your database schema
+- [x] Manage your Supabase Projects
+- [x] Generating types directly from your database schema
 - [ ] Generating API and validation schemas from your database
 
 ## Getting started
@@ -66,7 +68,35 @@ brew upgrade supabase
 
 ##### via Linux packages
 
-Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm` file depending on your package manager and run `sudo apk add --allow-untrusted <...>.apk`/`sudo dpkg -i <...>.deb`/`sudo rpm -i <...>.rpm` respectively.
+Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm` file depending on your package manager and run the respective commands.
+
+```sh
+sudo apk add --allow-untrusted <...>.apk
+```
+
+```sh
+sudo dpkg -i <...>.deb
+```
+
+```sh
+sudo rpm -i <...>.rpm
+```
+
+#### Other Platforms
+
+You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
+
+```sh
+go install github.com/supabase/cli@latest
+```
+
+Add a symlink to the binary in `$PATH` for easier access:
+
+```sh
+ln -s "$(go env GOPATH)/cli" /usr/bin/supabase
+```
+
+This works on non-standard linux distros, like archlinux.
 
 ### Run the CLI
 

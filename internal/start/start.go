@@ -39,9 +39,6 @@ func Run() error {
 		if err := utils.LoadConfig(); err != nil {
 			return err
 		}
-		if err := utils.InterpolateEnvInConfig(); err != nil {
-			return err
-		}
 		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
 			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
@@ -109,13 +106,13 @@ func run(p utils.Program) error {
 	)
 
 	// Ensure `_current_branch` file exists.
-	if _, err := os.ReadFile("supabase/.branches/_current_branch"); err == nil {
+	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
 		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
 			return err
 		}
-		if err := os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644); err != nil {
+		if err := os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644); err != nil {
 			return err
 		}
 	} else {
@@ -130,12 +127,9 @@ func run(p utils.Program) error {
 
 	// Pull images.
 	{
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DbImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DbImage,
-				types.ImagePullOptions{},
-			)
+		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -143,12 +137,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.KongImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.KongImage,
-				types.ImagePullOptions{},
-			)
+		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, kongImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -156,12 +147,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.GotrueImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.GotrueImage,
-				types.ImagePullOptions{},
-			)
+		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, gotrueImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -169,12 +157,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.InbucketImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.InbucketImage,
-				types.ImagePullOptions{},
-			)
+		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, inbucketImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -182,12 +167,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.RealtimeImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.RealtimeImage,
-				types.ImagePullOptions{},
-			)
+		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, realtimeImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -195,12 +177,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PostgrestImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.PostgrestImage,
-				types.ImagePullOptions{},
-			)
+		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, restImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -208,12 +187,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StorageImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.StorageImage,
-				types.ImagePullOptions{},
-			)
+		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, storageImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -221,12 +197,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DifferImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DifferImage,
-				types.ImagePullOptions{},
-			)
+		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -234,12 +207,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.PgmetaImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.PgmetaImage,
-				types.ImagePullOptions{},
-			)
+		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, metaImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -247,12 +217,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.StudioImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.StudioImage,
-				types.ImagePullOptions{},
-			)
+		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, studioImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -260,12 +227,9 @@ func run(p utils.Program) error {
 				return err
 			}
 		}
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, "docker.io/"+utils.DenoRelayImage); err != nil {
-			out, err := utils.Docker.ImagePull(
-				ctx,
-				"docker.io/"+utils.DenoRelayImage,
-				types.ImagePullOptions{},
-			)
+		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
+		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
+			out, err := utils.Docker.ImagePull(ctx, denoImage, types.ImagePullOptions{})
 			if err != nil {
 				return err
 			}
@@ -288,7 +252,7 @@ func run(p utils.Program) error {
 			ctx,
 			utils.DbId,
 			&container.Config{
-				Image: utils.DbImage,
+				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
@@ -307,7 +271,7 @@ func run(p utils.Program) error {
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres --host localhost <<'EOSQL'
+				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
 BEGIN;
 ` + utils.GlobalsSql + `
 COMMIT;
@@ -317,6 +281,7 @@ EOSQL
 		if err != nil {
 			return err
 		}
+
 		var errBuf bytes.Buffer
 		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 			return err
@@ -345,7 +310,7 @@ EOSQL
 					}
 
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+						"sh", "-c", `psql --set ON_ERROR_STOP=on --host 127.0.0.1 postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
 CREATE DATABASE "` + branch.Name() + `";
 \connect ` + branch.Name() + `
 BEGIN;
@@ -364,7 +329,7 @@ EOSQL
 					return nil
 				}(); err != nil {
 					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					_ = os.WriteFile("supabase/.branches/_current_branch", []byte("main"), 0644)
+					_ = os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644)
 					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
 				}
 			}
@@ -387,7 +352,7 @@ EOSQL
 			if err := func() error {
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"createdb", "--username", "postgres", "--host", "localhost", "main",
+						"createdb", "--username", "postgres", "--host", "127.0.0.1", "main",
 					})
 					if err != nil {
 						return err
@@ -404,7 +369,7 @@ EOSQL
 				p.Send(utils.StatusMsg("Setting up initial schema..."))
 				{
 					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
+						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --host 127.0.0.1 postgresql://postgres:postgres@localhost/main <<'EOSQL'
 BEGIN;
 ` + utils.InitialSchemaSql + `
 COMMIT;
@@ -420,30 +385,6 @@ EOSQL
 					}
 					if errBuf.Len() > 0 {
 						return errors.New("Error starting database: " + errBuf.String())
-					}
-				}
-
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/extensions.sql") + "..."))
-				{
-					extensionsSql, err := os.ReadFile("supabase/extensions.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						// skip
-					} else if err != nil {
-						return err
-					} else {
-						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(extensionsSql),
-						})
-						if err != nil {
-							return err
-						}
-						var errBuf bytes.Buffer
-						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-							return err
-						}
-						if errBuf.Len() > 0 {
-							return errors.New("Error starting database: " + errBuf.String())
-						}
 					}
 				}
 
@@ -504,9 +445,15 @@ EOSQL
 						// skip
 					} else if err != nil {
 						return err
+					}
+
+					err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
+
+					if err != nil {
+						return err
 					} else {
 						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-c", string(content),
+							"psql", "postgresql://postgres:postgres@localhost/main", "-f", "/tmp/seed.sql",
 						})
 						if err != nil {
 							return err
@@ -533,7 +480,7 @@ EOSQL
 		// Set up current branch.
 		{
 			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
+				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
 BEGIN;
 ` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
 COMMIT;
@@ -568,7 +515,7 @@ EOSQL
 			ctx,
 			utils.KongId,
 			&container.Config{
-				Image: utils.KongImage,
+				Image: utils.GetRegistryImageUrl(utils.KongImage),
 				Env: []string{
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
@@ -648,7 +595,7 @@ EOF
 			ctx,
 			utils.GotrueId,
 			&container.Config{
-				Image: utils.GotrueImage,
+				Image: utils.GetRegistryImageUrl(utils.GotrueImage),
 				Env:   env,
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -664,12 +611,20 @@ EOF
 		}
 	}
 
+	var inbucketPortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+
+	if utils.Config.Inbucket.SmtpPort != 0 {
+		inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+	}
+	if utils.Config.Inbucket.Pop3Port != 0 {
+		inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+	}
 	// Start Inbucket.
 	if _, err := utils.DockerRun(
 		ctx,
 		utils.InbucketId,
 		&container.Config{
-			Image: utils.InbucketImage,
+			Image: utils.GetRegistryImageUrl(utils.InbucketImage),
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
 				"com.docker.compose.project": utils.Config.ProjectId,
@@ -677,7 +632,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}},
+			PortBindings:  inbucketPortBindings,
 			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 		},
 	); err != nil {
@@ -689,7 +644,7 @@ EOF
 		ctx,
 		utils.RealtimeId,
 		&container.Config{
-			Image: utils.RealtimeImage,
+			Image: utils.GetRegistryImageUrl(utils.RealtimeImage),
 			Env: []string{
 				"PORT=4000",
 				"DB_HOST=" + utils.DbId,
@@ -722,7 +677,7 @@ EOF
 		ctx,
 		utils.RestId,
 		&container.Config{
-			Image: utils.PostgrestImage,
+			Image: utils.GetRegistryImageUrl(utils.PostgrestImage),
 			Env: []string{
 				"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
@@ -748,7 +703,7 @@ EOF
 		ctx,
 		utils.StorageId,
 		&container.Config{
-			Image: utils.StorageImage,
+			Image: utils.GetRegistryImageUrl(utils.StorageImage),
 			Env: []string{
 				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
 				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
@@ -781,7 +736,7 @@ EOF
 		ctx,
 		utils.DifferId,
 		&container.Config{
-			Image:      utils.DifferImage,
+			Image:      utils.GetRegistryImageUrl(utils.DifferImage),
 			Entrypoint: []string{"sleep", "infinity"},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -801,7 +756,7 @@ EOF
 		ctx,
 		utils.PgmetaId,
 		&container.Config{
-			Image: utils.PgmetaImage,
+			Image: utils.GetRegistryImageUrl(utils.PgmetaImage),
 			Env: []string{
 				"PG_META_PORT=8080",
 				"PG_META_DB_HOST=" + utils.DbId,
@@ -824,7 +779,7 @@ EOF
 		ctx,
 		utils.StudioId,
 		&container.Config{
-			Image: utils.StudioImage,
+			Image: utils.GetRegistryImageUrl(utils.StudioImage),
 			Env: []string{
 				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 				"POSTGRES_PASSWORD=postgres",

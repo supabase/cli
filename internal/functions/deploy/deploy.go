@@ -11,10 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -23,7 +23,7 @@ func Run(slug string, projectRefArg string, verifyJWT bool) error {
 	// 1. Sanity checks.
 	{
 		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(); err != nil {
+			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -31,8 +31,8 @@ func Run(slug string, projectRefArg string, verifyJWT bool) error {
 		}
 		if len(projectRefArg) == 0 {
 			if err := utils.AssertIsLinked(); err != nil && strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-				fmt.Print(`You can find your project ref from the project's dashboard home page, e.g. https://app.supabase.io/project/<project-ref>.
-Enter your project ref: `)
+				fmt.Printf(`You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
+Enter your project ref: `, utils.GetSupabaseDashboardURL())
 
 				scanner := bufio.NewScanner(os.Stdin)
 				if !scanner.Scan() {
@@ -42,21 +42,17 @@ Enter your project ref: `)
 
 				projectRef := strings.TrimSpace(scanner.Text())
 
-				if err := utils.MkdirIfNotExist("supabase/.temp"); err != nil {
+				if err := utils.MkdirIfNotExist(filepath.Dir(utils.ProjectRefPath)); err != nil {
 					return err
 				}
-				if err := os.WriteFile("supabase/.temp/project-ref", []byte(projectRef), 0644); err != nil {
+				if err := os.WriteFile(utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
 					return err
 				}
 			} else if err != nil {
 				return err
 			}
 		} else {
-			matched, err := regexp.MatchString(`^[a-z]{20}$`, projectRefArg)
-			if err != nil {
-				return err
-			}
-			if !matched {
+			if !utils.ProjectRefPattern.MatchString(projectRefArg) {
 				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 			}
 		}
@@ -93,7 +89,7 @@ Enter your project ref: `)
 			}
 		}
 
-		cmd := exec.Command(denoPath, "bundle", "--quiet", functionPath+"/index.ts")
+		cmd := exec.Command(denoPath, "bundle", "--no-check=remote", "--quiet", functionPath+"/index.ts")
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf
@@ -112,7 +108,7 @@ Enter your project ref: `)
 	{
 		// --project-ref overrides value on disk
 		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile("supabase/.temp/project-ref")
+			projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
 			if err != nil {
 				return err
 			}
@@ -126,7 +122,7 @@ Enter your project ref: `)
 			return err
 		}
 
-		req, err := http.NewRequest("GET", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, nil)
+		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
 		if err != nil {
 			return err
 		}
@@ -139,12 +135,19 @@ Enter your project ref: `)
 
 		switch resp.StatusCode {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-			jsonBytes, err := json.Marshal(map[string]interface{}{"slug": slug, "name": slug, "body": newFunctionBody, "verify_jwt": verifyJWT})
+			jsonBytes, err := json.Marshal(
+				map[string]interface{}{
+					"slug":       slug,
+					"name":       slug,
+					"body":       newFunctionBody,
+					"verify_jwt": verifyJWT,
+				})
 			if err != nil {
 				return err
 			}
 
-			req, err := http.NewRequest("POST", "https://api.supabase.io/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest(
+				"POST", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions", bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -157,7 +160,8 @@ Enter your project ref: `)
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
-			if resp.StatusCode != http.StatusOK {
+			// TODO: remove the StatusOK case after 2022-08-20
+			if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 				if err != nil {
 					return fmt.Errorf("Failed to create a new Function on the Supabase project: %w", err)
 				}
@@ -172,7 +176,8 @@ Enter your project ref: `)
 				return err
 			}
 
-			req, err := http.NewRequest("PATCH", "https://api.supabase.io/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
+			req, err := http.NewRequest(
+				"PATCH", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
 			}
@@ -204,7 +209,7 @@ Enter your project ref: `)
 
 	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef))
 
-	url := fmt.Sprintf("https://app.supabase.io/project/%v/functions/%v/details", projectRef, data.Id)
+	url := fmt.Sprintf("%s/project/%v/functions/%v/details", utils.GetSupabaseDashboardURL(), projectRef, data.Id)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 
 	return nil

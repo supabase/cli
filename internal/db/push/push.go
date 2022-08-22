@@ -4,39 +4,41 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"regexp"
+	"path/filepath"
 
-	pgx "github.com/jackc/pgx/v4"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
 )
 
-var ctx = context.Background()
-
-func Run(dryRun bool) error {
+func Run(ctx context.Context, dryRun bool, username, password, database string, fsys afero.Fs) error {
 	if dryRun {
 		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
 	}
-	urlBytes, err := os.ReadFile("supabase/.temp/remote-db-url")
-	if errors.Is(err, os.ErrNotExist) {
-		return errors.New("Remote database is not set. Run " + utils.Aqua("supabase db remote set") + " first.")
-	} else if err != nil {
+	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	url := string(urlBytes)
 
-	conn, err := pgx.Connect(ctx, url)
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, projectRef)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
 
-	// `schema_migrations` must be a "prefix" of `supabase/migrations`.
+	// Assert db.major_version is compatible.
+	if err := commit.AssertPostgresVersionMatch(conn); err != nil {
+		return err
+	}
 
-	rows, err := conn.Query(ctx, "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version")
+	// If `schema_migrations` is not a "prefix" of list of migrations in repo, fail & warn user.
+	rows, err := conn.Query(ctx, commit.LIST_MIGRATION_VERSION)
 	if err != nil {
 		return fmt.Errorf(`Error querying remote database: %w.
-Try running `+utils.Aqua("supabase db remote set")+".", err)
+Try running `+utils.Aqua("supabase link")+" to reinitialise the project.", err)
 	}
 
 	versions := []string{}
@@ -48,16 +50,13 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		versions = append(versions, version)
 	}
 
-	if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-		return err
-	}
-	migrations, err := os.ReadDir("supabase/migrations")
+	migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 	if err != nil {
-		return err
+		return fmt.Errorf(`No migrations found: %w.
+Try running `+utils.Aqua("supabase migration new")+".", err)
 	}
 
-	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold("supabase/migrations") + ".")
-
+	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
 	if len(versions) > len(migrations) {
 		return fmt.Errorf("%w; Found %d versions and %d migrations.", conflictErr, len(versions), len(migrations))
 	}
@@ -66,11 +65,10 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 		fmt.Println("Applying unapplied migrations...")
 	}
 
-	re := regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	for i, migration := range migrations {
-		matches := re.FindStringSubmatch(migration.Name())
+		matches := utils.MigrateFilePattern.FindStringSubmatch(migration.Name())
 		if len(matches) == 0 {
-			return errors.New("Can't process file in supabase/migrations: " + migration.Name())
+			return errors.New("Can't process file in " + utils.MigrationsDir + ": " + migration.Name())
 		}
 
 		migrationTimestamp := matches[1]
@@ -83,7 +81,7 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 			return fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", conflictErr, versions[i], migrationTimestamp, i)
 		}
 
-		f, err := os.ReadFile("supabase/migrations/" + migration.Name())
+		f, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
 		if err != nil {
 			return err
 		}
@@ -101,10 +99,10 @@ Try running `+utils.Aqua("supabase db remote set")+".", err)
 				if _, err := tx.Exec(ctx, string(f)); err != nil {
 					return fmt.Errorf("%w; while executing migration %s", err, migrationTimestamp)
 				}
-				if _, err := tx.Exec(ctx, "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('"+migrationTimestamp+"');"); err != nil {
+				// Insert a row to `schema_migrations`
+				if _, err := conn.Exec(ctx, commit.INSERT_MIGRATION_VERSION, migrationTimestamp); err != nil {
 					return fmt.Errorf("%w; while inserting migration %s", err, migrationTimestamp)
 				}
-
 				if err := tx.Commit(ctx); err != nil {
 					return fmt.Errorf("%w; while committing migration %s", err, migrationTimestamp)
 				}

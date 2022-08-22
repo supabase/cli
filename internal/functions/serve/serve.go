@@ -84,7 +84,7 @@ func Run(slug string, envFilePath string, verifyJWT bool) error {
 			ctx,
 			utils.DenoRelayId,
 			&container.Config{
-				Image: utils.DenoRelayImage,
+				Image: utils.GetRegistryImageUrl(utils.DenoRelayImage),
 				Env:   env,
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
