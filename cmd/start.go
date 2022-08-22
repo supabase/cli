@@ -9,7 +9,7 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Supabase local development setup.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return start.Run()
+		return start.Run(cmd.Context())
 	},
 }
 
