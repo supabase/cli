@@ -146,9 +146,10 @@ func init() {
 	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
 	// Build diff command
-	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
-	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
-	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	diffFlags := dbDiffCmd.Flags()
+	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
+	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
@@ -163,7 +164,7 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
-	// Buidl reset command
+	// Build reset command
 	dbCmd.AddCommand(dbResetCmd)
 	rootCmd.AddCommand(dbCmd)
 }
