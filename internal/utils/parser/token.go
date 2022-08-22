@@ -59,6 +59,14 @@ func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byt
 }
 
 // Use bufio.Scanner to split a PostgreSQL string into multiple statements.
+//
+// The core problem is to figure out whether the current ; separator is inside
+// an escaped string literal. PostgreSQL has multiple ways of opening a string
+// literal, $$, ', --, /*, etc. We use a FSM to guarantee these states are
+// entered exclusively. If not in one of the above escape states, the next ;
+// token can be parsed as statement separator.
+//
+// Each statement is split as it is, without removing comments or white spaces.
 func Split(sql io.Reader) (stats []string) {
 	t := tokenizer{state: &ReadyState{}}
 	scanner := bufio.NewScanner(sql)
