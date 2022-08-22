@@ -25,8 +25,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-// TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run() error {
+func Run(ctx context.Context) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -46,11 +45,12 @@ func Run() error {
 	s := spinner.NewModel()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	p := utils.NewProgram(model{spinner: s})
+	ctx, cancel := context.WithCancel(ctx)
+	p := utils.NewProgram(model{cancel: cancel, spinner: s})
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p)
+		errCh <- run(p, ctx)
 		p.Send(tea.Quit())
 	}()
 
@@ -73,15 +73,13 @@ func Run() error {
 }
 
 var (
-	ctx, cancelCtx = context.WithCancel(context.Background())
-
 	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed       string
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 )
 
-func run(p utils.Program) error {
+func run(p utils.Program, ctx context.Context) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
@@ -796,6 +794,7 @@ EOF
 }
 
 type model struct {
+	cancel      context.CancelFunc
 	spinner     spinner.Model
 	status      string
 	progress    *progress.Model
@@ -814,7 +813,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			// Stop future runs
-			cancelCtx()
+			m.cancel()
 			// Stop current runs
 			utils.DockerRemoveAll()
 			return m, tea.Quit
