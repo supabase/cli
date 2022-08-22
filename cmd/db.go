@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/db/branch/list"
 	"github.com/supabase/cli/internal/db/branch/switch_"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
@@ -136,6 +137,14 @@ var (
 			return reset.Run(ctx, afero.NewOsFs())
 		},
 	}
+
+	dbLintCmd = &cobra.Command{
+		Use:   "lint",
+		Short: "Checks local database for typing error",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return lint.Run(cmd.Context(), schema, afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -166,5 +175,9 @@ func init() {
 	dbCmd.AddCommand(dbRemoteCmd)
 	// Build reset command
 	dbCmd.AddCommand(dbResetCmd)
+	// Build lint command
+	lintFlags := dbLintCmd.Flags()
+	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	dbCmd.AddCommand(dbLintCmd)
 	rootCmd.AddCommand(dbCmd)
 }
