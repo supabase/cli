@@ -39,13 +39,12 @@ type tokenizer struct {
 
 func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// If we requested more data, resume from last position.
-	for i, width := t.last, 1; i < len(data); i += width {
-		r, width := utf8.DecodeRune(data[i:])
-		t.last = i + width
-		t.state = t.state.Next(r, data[:t.last])
+	for width := 1; t.last < len(data); t.last += width {
+		r, width := utf8.DecodeRune(data[t.last:])
+		end := t.last + width
+		t.state = t.state.Next(r, data[:end])
 		// Emit token
 		if t.state == nil {
-			end := t.last
 			t.last = 0
 			t.state = &ReadyState{}
 			return end, data[:end], nil
@@ -60,6 +59,14 @@ func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byt
 }
 
 // Use bufio.Scanner to split a PostgreSQL string into multiple statements.
+//
+// The core problem is to figure out whether the current ; separator is inside
+// an escaped string literal. PostgreSQL has multiple ways of opening a string
+// literal, $$, ', --, /*, etc. We use a FSM to guarantee these states are
+// entered exclusively. If not in one of the above escape states, the next ;
+// token can be parsed as statement separator.
+//
+// Each statement is split as it is, without removing comments or white spaces.
 func Split(sql io.Reader) (stats []string) {
 	t := tokenizer{state: &ReadyState{}}
 	scanner := bufio.NewScanner(sql)
