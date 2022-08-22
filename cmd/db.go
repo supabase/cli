@@ -132,7 +132,8 @@ var (
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return reset.Run()
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return reset.Run(ctx, afero.NewOsFs())
 		},
 	}
 )
