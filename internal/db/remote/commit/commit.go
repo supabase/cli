@@ -24,6 +24,7 @@ import (
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	differ "github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -159,7 +160,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 				ctx,
 				dbId,
 				&container.Config{
-					Image: utils.DbImage,
+					Image: utils.GetRegistryImageUrl(utils.DbImage),
 					Env: []string{
 						"POSTGRES_PASSWORD=postgres",
 						"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
@@ -192,8 +193,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 				return err
 			}
 
-			path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
-			if err := afero.WriteFile(fsys, path, dumpBuf.Bytes(), 0644); err != nil {
+			if err := differ.SaveDiff(dumpBuf.String(), "remote_commit", fsys); err != nil {
 				return err
 			}
 
@@ -213,7 +213,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			ctx,
 			dbId,
 			&container.Config{
-				Image: utils.DbImage,
+				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
@@ -322,7 +322,7 @@ EOSQL
 			ctx,
 			differId,
 			&container.Config{
-				Image: utils.DifferImage,
+				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + conn.Config().ConnString() + "'" +
@@ -344,8 +344,7 @@ EOSQL
 			return err
 		}
 
-		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
-		if err := afero.WriteFile(fsys, path, diffBytes, 0644); err != nil {
+		if err := differ.SaveDiff(string(diffBytes), "remote_commit", fsys); err != nil {
 			return err
 		}
 	}
@@ -478,7 +477,8 @@ func AssertPostgresVersionMatch(conn *pgx.Conn) error {
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string) (*pgx.Conn, error) {
 	// Build connection string
 	pgUrl := fmt.Sprintf(
-		"postgresql://%s:%s@db.%s.supabase.co:5432/%s",
+		// Use port 6543 for connection pooling
+		"postgresql://%s:%s@db.%s.supabase.co:6543/%s",
 		url.QueryEscape(username),
 		url.QueryEscape(password),
 		url.QueryEscape(host),

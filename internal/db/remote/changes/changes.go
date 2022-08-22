@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -20,6 +19,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
+	differ "github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -57,8 +57,7 @@ func Run(ctx context.Context, username, password, database string, fsys afero.Fs
 		return err
 	}
 
-	fmt.Println(diff)
-	return nil
+	return differ.SaveDiff(diff, "", fsys)
 }
 
 const (
@@ -138,7 +137,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			ctx,
 			dbId,
 			&container.Config{
-				Image: utils.DbImage,
+				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Labels: map[string]string{
@@ -250,7 +249,7 @@ EOSQL
 			ctx,
 			differId,
 			&container.Config{
-				Image: utils.DifferImage,
+				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + conn.Config().ConnString() + "'" +

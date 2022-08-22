@@ -41,11 +41,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		Logger.Fatal(err)
 	}
-	os.Setenv("SUPABASE_INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
-
-	// Configure viper env loader
-	viper.SetEnvPrefix("SUPABASE")
-	viper.AutomaticEnv()
+	viper.Set("INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
 
 	// run tests
 	exitVal := m.Run()

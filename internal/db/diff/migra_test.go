@@ -32,10 +32,10 @@ func TestApplyMigrations(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query("create table test").
 			Reply("SELECT 0").
-			Query("drop table test").
+			Query("drop table test;-- ignore me").
 			Reply("SELECT 0")
 		// Run test
-		assert.NoError(t, applyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
+		assert.NoError(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
 
 	t.Run("ignores empty local directory", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, applyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
+		assert.NoError(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
 
 	t.Run("ignores outdated migrations", func(t *testing.T) {
@@ -60,15 +60,15 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, applyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
+		assert.NoError(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
 
 	t.Run("throws error on invalid postgres url", func(t *testing.T) {
-		assert.Error(t, applyMigrations(context.Background(), "invalid", afero.NewMemMapFs()))
+		assert.Error(t, ApplyMigrations(context.Background(), "invalid", afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on failture to connect", func(t *testing.T) {
-		assert.Error(t, applyMigrations(context.Background(), postgresUrl, afero.NewMemMapFs()))
+		assert.Error(t, ApplyMigrations(context.Background(), postgresUrl, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on failture to send batch", func(t *testing.T) {
@@ -83,8 +83,8 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(query).
-			ReplyError(pgerrcode.DuplicateTable, "table \"test\" already exists")
+			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
-		assert.Error(t, applyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
+		assert.Error(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
 }

@@ -21,13 +21,15 @@ func TestProjectValidation(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(200).
 			JSON([]api.FunctionResponse{})
 		// Run test
 		assert.NoError(t, validateProjectRef(context.Background(), project, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 		// Validate file contents
 		// content, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		// assert.NoError(t, err)
@@ -53,12 +55,14 @@ func TestProjectValidation(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, validateProjectRef(context.Background(), project, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
@@ -69,12 +73,14 @@ func TestProjectValidation(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("https://api.supabase.io").
 			Get("/v1/projects/" + project + "/functions").
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
 		assert.Error(t, validateProjectRef(context.Background(), project, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

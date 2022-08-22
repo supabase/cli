@@ -11,8 +11,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -23,17 +25,19 @@ const (
 )
 
 func TestPullImage(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
 	t.Run("pulls image if missing", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
 		gock.New("http:///var/run/docker.sock").
 			Post("/v"+version+"/images/create").
@@ -42,38 +46,58 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusAccepted)
 		// Run test
 		assert.NoError(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("does nothing if image exists", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		// Run test
 		assert.NoError(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error if docker is unavailable", func(t *testing.T) {
+		// Setup mock docker
+		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
+		defer gock.OffAll()
+		gock.New("http:///var/run/docker.sock").
+			Head("/_ping").
+			Reply(http.StatusOK).
+			SetHeader("API-Version", version).
+			SetHeader("OSType", "linux")
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/images/" + imageId + "/json").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
 		gock.New("http:///var/run/docker.sock").
 			Post("/v"+version+"/images/create").
@@ -82,24 +106,31 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestRunOnce(t *testing.T) {
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
 	t.Run("runs once in container", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -124,46 +155,56 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		out, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.NoError(t, err)
-		// Validate output
+		// Validate api
 		assert.Equal(t, "hello world", out)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on container create", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on container start", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -174,22 +215,27 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("stops container on cancel", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -210,22 +256,27 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(ctx, imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to parse logs", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -241,22 +292,27 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to inspect", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -280,22 +336,27 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on non-zero exit code", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", version).
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/images/docker.io/" + imageId + "/json").
+			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/networks").
+			Reply(http.StatusOK).
+			JSON(types.NetworkResource{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/create").
 			Reply(http.StatusOK).
@@ -320,7 +381,8 @@ func TestRunOnce(t *testing.T) {
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
@@ -328,7 +390,7 @@ func TestExecOnce(t *testing.T) {
 	t.Run("throws error on failure to exec", func(t *testing.T) {
 		// Setup mock server
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -340,13 +402,14 @@ func TestExecOnce(t *testing.T) {
 		// Run test
 		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to hijack", func(t *testing.T) {
 		// Setup mock server
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(Docker))
-		defer gock.Off()
+		defer gock.OffAll()
 		gock.New("http:///var/run/docker.sock").
 			Head("/_ping").
 			Reply(http.StatusOK).
@@ -359,7 +422,8 @@ func TestExecOnce(t *testing.T) {
 		// Run test
 		_, err := DockerExecOnce(context.Background(), containerId, nil, nil)
 		assert.Error(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	// TODO: mock tcp hijack

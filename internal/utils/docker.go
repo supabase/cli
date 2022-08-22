@@ -146,8 +146,10 @@ func DockerAddFile(ctx context.Context, container string, fileName string, conte
 }
 
 func GetRegistryImageUrl(imageName string) string {
+	const hub = "docker.io"
 	const ecr = "public.ecr.aws/t3w2s2c9"
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
+	registry = strings.ToLower(registry)
 	if registry == "" {
 		// Defaults to Supabase public ECR for faster image pull
 		registry = ecr
@@ -156,13 +158,18 @@ func GetRegistryImageUrl(imageName string) string {
 		parts := strings.Split(imageName, "/")
 		imageName = parts[len(parts)-1]
 	}
+	if registry == hub {
+		return imageName
+	}
 	return registry + "/" + imageName
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
-	imageUrl := "docker.io/" + imageName
+	imageUrl := GetRegistryImageUrl(imageName)
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
 		return nil
+	} else if !client.IsErrNotFound(err) {
+		return err
 	}
 	out, err := Docker.ImagePull(ctx, imageUrl, types.ImagePullOptions{})
 	if err != nil {
@@ -183,9 +190,14 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 	if err := DockerPullImageIfNotCached(ctx, image); err != nil {
 		return "", err
 	}
+	// Use network if exists
+	network, err := Docker.NetworkInspect(ctx, NetId, types.NetworkInspectOptions{})
+	if err != nil && !client.IsErrNotFound(err) {
+		return "", err
+	}
 	// Create container from image
 	resp, err := Docker.ContainerCreate(ctx, &container.Config{
-		Image: image,
+		Image: GetRegistryImageUrl(image),
 		Env:   env,
 		Cmd:   cmd,
 		Labels: map[string]string{
@@ -193,7 +205,7 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 			"com.docker.compose.project": Config.ProjectId,
 		},
 	}, &container.HostConfig{
-		NetworkMode: container.NetworkMode(NetId),
+		NetworkMode: container.NetworkMode(network.ID),
 		AutoRemove:  true,
 	}, nil, nil, "")
 	if err != nil {
