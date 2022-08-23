@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -86,16 +87,6 @@ func ResetDatabase(ctx context.Context, container, shadow string) error {
 	return nil
 }
 
-func ToBatchQuery(stats []string) (batch pgx.Batch) {
-	for _, line := range stats {
-		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-		if len(trim) > 0 {
-			batch.Queue(trim)
-		}
-	}
-	return batch
-}
-
 // Applies local migration scripts to a database.
 func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Parse connection url
@@ -135,9 +126,15 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 				return err
 			}
 			defer sql.Close()
-			// Batch migration commands
-			batch := ToBatchQuery(parser.Split(sql))
-			if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+			// Batch migration commands, without using statement cache
+			batch := pgconn.Batch{}
+			for _, line := range parser.Split(sql) {
+				trim := strings.TrimSpace(strings.TrimRight(line, ";"))
+				if len(trim) > 0 {
+					batch.ExecParams(line, nil, nil, nil, nil)
+				}
+			}
+			if err := conn.PgConn().ExecBatch(ctx, &batch).Close(); err != nil {
 				return err
 			}
 		}
