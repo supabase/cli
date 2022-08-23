@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -90,8 +91,14 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 		return err
 	}
 	defer conn.Close(ctx)
-	// Batch seed commands
-	batch := diff.ToBatchQuery(parser.Split(sql))
+	// Batch seed commands, safe to use statement cache
+	batch := pgx.Batch{}
+	for _, line := range parser.Split(sql) {
+		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
+		if len(trim) > 0 {
+			batch.Queue(trim)
+		}
+	}
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return err
 	}
