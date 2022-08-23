@@ -33,7 +33,7 @@ services:
 
   auth:
     container_name: supabase-auth
-    image: supabase/gotrue:v2.6.18
+    image: supabase/gotrue:v2.10.3
     depends_on:
       - db
     restart: unless-stopped
@@ -45,10 +45,10 @@ services:
 
   realtime:
     container_name: supabase-realtime
-    image: supabase/realtime:v0.22.4
+    image: supabase/realtime:v0.22.7
     depends_on:
       - db
-    restart: unless-stopped
+    restart: on-failure
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -60,7 +60,7 @@ services:
 
   storage:
     container_name: supabase-storage
-    image: supabase/storage-api:v0.15.0
+    image: supabase/storage-api:v0.16.6
     depends_on:
       - db
     restart: unless-stopped
