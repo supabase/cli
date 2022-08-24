@@ -38,7 +38,7 @@ jobs:
         with:
           go-version: 1.18
 
-      - uses: goreleaser/goreleaser-action@v2
+      - uses: goreleaser/goreleaser-action@v3
         with:
           distribution: goreleaser
           version: v0.183.0
