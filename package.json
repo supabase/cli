@@ -14,7 +14,7 @@
   "scripts": {
     "preinstall": "node scripts/preinstall.js"
   },
-  "url": "https://github.com/supabase/cli/releases/download/v{{version}}/supabase_{{version}}_{{platform}}_{{arch}}.tar.gz",
+  "url": "https://github.com/supabase/cli/releases/download/v{{version}}/{{bin_name}}_{{version}}_{{platform}}_{{arch}}.tar.gz",
   "bin": "bin/supabase",
   "dependencies": {
     "node-fetch": "^3.2.10",
