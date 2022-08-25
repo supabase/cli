@@ -41,3 +41,4 @@ jobs:
       - uses: golangci/golangci-lint-action@v3
         with:
           version: v1.47
+          args: --timeout 3m --verbose
