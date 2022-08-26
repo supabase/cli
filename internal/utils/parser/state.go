@@ -118,7 +118,13 @@ type TagState struct {
 
 func (s *TagState) Next(r rune, data []byte) State {
 	if r == '$' {
-		return &DollarState{delimiter: data[s.offset:]}
+		// Make a copy since the data slice may be overwritten
+		tag := data[s.offset:]
+		dollar := DollarState{
+			delimiter: make([]byte, len(tag)),
+		}
+		copy(dollar.delimiter, tag)
+		return &dollar
 	}
 	// Valid tag: https://www.postgresql.org/docs/current/sql-syntax-lexical.html
 	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
