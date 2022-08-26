@@ -67,16 +67,16 @@ async function parsePackageJson() {
   // strip the 'v' if necessary v0.0.1 => 0.0.1
   if (version[0] === "v") version = version.substr(1);
 
-  // Binary name on Windows has .exe suffix
-  if (process.platform === "win32") {
-    binName += ".exe";
-  }
-
   // Interpolate variables in URL, if necessary
   url = url.replace(/{{arch}}/g, ARCH_MAPPING[process.arch]);
   url = url.replace(/{{platform}}/g, PLATFORM_MAPPING[process.platform]);
   url = url.replace(/{{version}}/g, version);
   url = url.replace(/{{bin_name}}/g, binName);
+
+  // Binary name on Windows has .exe suffix
+  if (process.platform === "win32") {
+    binName += ".exe";
+  }
 
   return { binName, binPath, url, version };
 }
