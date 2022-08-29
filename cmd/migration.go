@@ -31,7 +31,13 @@ var (
 	migrationNewCmd = &cobra.Command{
 		Use:   "new <migration name>",
 		Short: "Create an empty migration script",
-		Args:  cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				cmd.Help()
+				os.Exit(0)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return new.Run(args[0], os.Stdin, afero.NewOsFs())
 		},
