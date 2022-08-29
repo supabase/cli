@@ -56,13 +56,15 @@ func TestLintCommand(t *testing.T) {
 	// Setup mock postgres
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
-	conn.Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+	conn.Query("begin").Reply("BEGIN").
+		Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
 		Reply("CREATE EXTENSION").
 		Query(checkSchemaScript, "public").
 		Reply("SELECT 1", map[string]interface{}{
 			"proname":                "f1",
 			"plpgsql_check_function": string(data),
-		})
+		}).
+		Query("rollback").Reply("ROLLBACK")
 	// Run test
 	var out bytes.Buffer
 	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", &out, fsys, conn.Intercept))
@@ -111,7 +113,8 @@ func TestLintDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+		conn.Query("begin").Reply("BEGIN").
+			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 2", map[string]interface{}{
@@ -120,7 +123,8 @@ func TestLintDatabase(t *testing.T) {
 			}, map[string]interface{}{
 				"proname":                "f2",
 				"plpgsql_check_function": string(r2),
-			})
+			}).
+			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
@@ -137,8 +141,10 @@ func TestLintDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
-			ReplyError(pgerrcode.UndefinedFile, `could not open extension control file "/usr/share/postgresql/14/extension/plpgsql_check.control": No such file or directory"`)
+		conn.Query("begin").Reply("BEGIN").
+			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			ReplyError(pgerrcode.UndefinedFile, `could not open extension control file "/usr/share/postgresql/14/extension/plpgsql_check.control": No such file or directory"`).
+			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
@@ -153,13 +159,15 @@ func TestLintDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+		conn.Query("begin").Reply("BEGIN").
+			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 1", map[string]interface{}{
 				"proname":                "f1",
 				"plpgsql_check_function": "malformed",
-			})
+			}).
+			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)

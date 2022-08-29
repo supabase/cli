@@ -101,7 +101,12 @@ func ConnectLocalPostgres(ctx context.Context, host string, port uint, database 
 }
 
 func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Result, error) {
-	// Enable plpgsql_check
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Always rollback since lint should not have side effects
+	defer tx.Rollback(context.Background())
 	enable := "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
 	if _, err := conn.Exec(ctx, enable); err != nil {
 		return nil, err
