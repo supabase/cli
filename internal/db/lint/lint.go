@@ -132,13 +132,19 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		if err != nil {
 			return nil, err
 		}
+		// Parse result row
 		for rows.Next() {
-			data := rows.RawValues()
-			r, err := toResult(data)
-			if err != nil {
+			var name string
+			var data []byte
+			if err := rows.Scan(&name, &data); err != nil {
 				return nil, err
 			}
-			r.Function = s + "." + r.Function
+			var r Result
+			if err := json.Unmarshal(data, &r); err != nil {
+				return nil, err
+			}
+			// Update function name
+			r.Function = s + "." + name
 			result = append(result, r)
 		}
 		err = rows.Err()
@@ -146,16 +152,6 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 			return nil, err
 		}
 	}
-	return result, nil
-}
-
-func toResult(data [][]byte) (Result, error) {
-	var result Result
-	name := string(data[0])
-	if err := json.Unmarshal(data[1], &result); err != nil {
-		return result, err
-	}
-	result.Function = name
 	return result, nil
 }
 
