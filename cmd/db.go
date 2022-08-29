@@ -148,7 +148,7 @@ var (
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, os.Stdout, afero.NewOsFs())
+			return lint.Run(cmd.Context(), schema, level.Value, afero.NewOsFs())
 		},
 	}
 )

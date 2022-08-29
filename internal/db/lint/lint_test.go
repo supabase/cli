@@ -43,7 +43,7 @@ func TestLintCommand(t *testing.T) {
 		Issues: []Issue{{
 			Level:   AllowedLevels[1],
 			Message: `record "r" has no field "c"`,
-			Statement: Statement{
+			Statement: &Statement{
 				LineNumber: "6",
 				Text:       "RAISE",
 			},
@@ -66,10 +66,7 @@ func TestLintCommand(t *testing.T) {
 		}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
-	var out bytes.Buffer
-	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", &out, fsys, conn.Intercept))
-	// Validate output
-	assert.NotEmpty(t, out)
+	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", fsys, conn.Intercept))
 }
 
 func TestLintDatabase(t *testing.T) {
@@ -79,7 +76,7 @@ func TestLintDatabase(t *testing.T) {
 			Issues: []Issue{{
 				Level:   AllowedLevels[1],
 				Message: `record "r" has no field "c"`,
-				Statement: Statement{
+				Statement: &Statement{
 					LineNumber: "6",
 					Text:       "RAISE",
 				},
@@ -95,11 +92,11 @@ func TestLintDatabase(t *testing.T) {
 			Issues: []Issue{{
 				Level:   AllowedLevels[1],
 				Message: `relation "t2" does not exist`,
-				Statement: Statement{
+				Statement: &Statement{
 					LineNumber: "4",
 					Text:       "FOR over SELECT rows",
 				},
-				Query: Query{
+				Query: &Query{
 					Position: "15",
 					Text:     "SELECT * FROM t2",
 				},
@@ -132,6 +129,58 @@ func TestLintDatabase(t *testing.T) {
 		defer mock.Close(ctx)
 		// Run test
 		result, err := LintDatabase(ctx, mock, []string{"public"})
+		assert.NoError(t, err)
+		// Validate result
+		assert.ElementsMatch(t, expected, result)
+	})
+
+	t.Run("supports multiple schema", func(t *testing.T) {
+		expected := []Result{{
+			Function: "public.where_clause",
+			Issues: []Issue{{
+				Level:   AllowedLevels[0],
+				Message: "target type is different type than source type",
+				Statement: &Statement{
+					LineNumber: "32",
+					Text:       "statement block",
+				},
+				Hint:     "The input expression type does not have an assignment cast to the target type.",
+				Detail:   `cast "text" value to "text[]" type`,
+				Context:  `during statement block local variable "clause_arr" initialization on line 3`,
+				SQLState: pgerrcode.DatatypeMismatch,
+			}},
+		}, {
+			Function: "private.f2",
+			Issues:   []Issue{},
+		}}
+		r1, err := json.Marshal(expected[0])
+		require.NoError(t, err)
+		r2, err := json.Marshal(expected[1])
+		require.NoError(t, err)
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			Reply("CREATE EXTENSION").
+			Query(checkSchemaScript, "public").
+			Reply("SELECT 1", map[string]interface{}{
+				"proname":                "where_clause",
+				"plpgsql_check_function": string(r1),
+			}).
+			Query(checkSchemaScript, "private").
+			Reply("SELECT 1", map[string]interface{}{
+				"proname":                "f2",
+				"plpgsql_check_function": string(r2),
+			}).
+			Query("rollback").Reply("ROLLBACK")
+		// Connect to mock
+		ctx := context.Background()
+		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		require.NoError(t, err)
+		defer mock.Close(ctx)
+		// Run test
+		result, err := LintDatabase(ctx, mock, []string{"public", "private"})
 		assert.NoError(t, err)
 		// Validate result
 		assert.ElementsMatch(t, expected, result)
@@ -192,54 +241,44 @@ func TestConnectLocal(t *testing.T) {
 	})
 }
 
-func TestMultipleSchema(t *testing.T) {
-	expected := []Result{{
-		Function: "public.where_clause",
+func TestPrintResult(t *testing.T) {
+	result := []Result{{
+		Function: "public.f1",
 		Issues: []Issue{{
-			Level:   AllowedLevels[0],
-			Message: "target type is different type than source type",
-			Statement: Statement{
-				LineNumber: "32",
-				Text:       "statement block",
-			},
-			Hint:     "The input expression type does not have an assignment cast to the target type.",
-			Detail:   `cast "text" value to "text[]" type`,
-			Context:  `during statement block local variable "clause_arr" initialization on line 3`,
-			SQLState: pgerrcode.DatatypeMismatch,
+			Level:   "warning",
+			Message: "test 1a",
+		}, {
+			Level:   "error",
+			Message: "test 1b",
 		}},
 	}, {
 		Function: "private.f2",
-		Issues:   []Issue{},
+		Issues: []Issue{{
+			Level:   "warning extra",
+			Message: "test 2",
+		}},
 	}}
-	r1, err := json.Marshal(expected[0])
-	require.NoError(t, err)
-	r2, err := json.Marshal(expected[1])
-	require.NoError(t, err)
-	// Setup mock postgres
-	conn := pgtest.NewConn()
-	defer conn.Close(t)
-	conn.Query("begin").Reply("BEGIN").
-		Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
-		Reply("CREATE EXTENSION").
-		Query(checkSchemaScript, "public").
-		Reply("SELECT 1", map[string]interface{}{
-			"proname":                "where_clause",
-			"plpgsql_check_function": string(r1),
-		}).
-		Query(checkSchemaScript, "private").
-		Reply("SELECT 1", map[string]interface{}{
-			"proname":                "f2",
-			"plpgsql_check_function": string(r2),
-		}).
-		Query("rollback").Reply("ROLLBACK")
-	// Connect to mock
-	ctx := context.Background()
-	mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
-	require.NoError(t, err)
-	defer mock.Close(ctx)
-	// Run test
-	result, err := LintDatabase(ctx, mock, []string{"public", "private"})
-	assert.NoError(t, err)
-	// Validate result
-	assert.ElementsMatch(t, expected, result)
+
+	t.Run("filters warning level", func(t *testing.T) {
+		// Run test
+		var out bytes.Buffer
+		assert.NoError(t, printResultJSON(result, toEnum("warning"), &out))
+		// Validate output
+		var actual []Result
+		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))
+		assert.ElementsMatch(t, result, actual)
+	})
+
+	t.Run("filters error level", func(t *testing.T) {
+		// Run test
+		var out bytes.Buffer
+		assert.NoError(t, printResultJSON(result, toEnum("error"), &out))
+		// Validate output
+		var actual []Result
+		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))
+		assert.ElementsMatch(t, []Result{{
+			Function: result[0].Function,
+			Issues:   []Issue{result[0].Issues[1]},
+		}}, actual)
+	})
 }
