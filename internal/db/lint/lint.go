@@ -16,6 +16,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+const ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
+
 var (
 	AllowedLevels = []string{
 		"warning",
@@ -113,8 +115,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
-	enable := "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
-	if _, err := conn.Exec(ctx, enable); err != nil {
+	if _, err := conn.Exec(ctx, ENABLE_PGSQL_CHECK); err != nil {
 		return nil, err
 	}
 	// Batch prepares statements
