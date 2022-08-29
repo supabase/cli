@@ -33,7 +33,7 @@ var (
 		Short: "Create an empty migration script",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				cmd.Help()
+				_ = cmd.Help()
 				os.Exit(0)
 			}
 			return nil
