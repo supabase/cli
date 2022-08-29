@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var (
@@ -138,11 +139,16 @@ var (
 		},
 	}
 
+	level = utils.EnumFlag{
+		Allowed: lint.AllowedLevels,
+		Value:   lint.AllowedLevels[0],
+	}
+
 	dbLintCmd = &cobra.Command{
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, afero.NewOsFs())
+			return lint.Run(cmd.Context(), schema, level.Value, os.Stdout, afero.NewOsFs())
 		},
 	}
 )
@@ -178,6 +184,7 @@ func init() {
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
 	rootCmd.AddCommand(dbCmd)
 }
