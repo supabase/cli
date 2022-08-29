@@ -2,6 +2,7 @@ package pgtest
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"testing"
@@ -106,16 +107,17 @@ func (r *MockConn) lastQuery() *extendedQueryStep {
 // Adds a server reply using text protocol format.
 //
 // TODO: support binary protocol
-func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
+func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	q := r.lastQuery()
 	// Add field description
 	if len(rows) > 0 {
 		var desc pgproto3.RowDescription
-		for k, v := range rows[0] {
+		for i, v := range rows[0] {
+			name := fmt.Sprintf("c_%02d", i)
 			if dt, ok := ci.DataTypeForValue(v); ok {
 				size := getDataTypeSize(v)
 				desc.Fields = append(desc.Fields, pgproto3.FieldDescription{
-					Name:                 []byte(k),
+					Name:                 []byte(name),
 					TableOID:             17131,
 					TableAttributeNumber: 1,
 					DataTypeOID:          dt.OID,

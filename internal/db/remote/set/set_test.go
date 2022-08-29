@@ -28,7 +28,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", map[string]interface{}{"version": version})
+			Reply("SELECT 1", []interface{}{version})
 		// Run test
 		assert.NoError(t, Run(postgresUrl, fsys, conn.Intercept))
 	})
@@ -141,7 +141,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", map[string]interface{}{"version": "20220727064247"})
+			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
 	})
@@ -160,7 +160,7 @@ func TestDbRemoteSetCommand(t *testing.T) {
 		conn.Query(CHECK_MIGRATION_EXISTS).
 			Reply("SELECT 0").
 			Query(LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", map[string]interface{}{"version": "20220727064247"})
+			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
 		assert.Error(t, Run(postgresUrl, fsys, conn.Intercept))
 	})

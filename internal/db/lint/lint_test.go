@@ -60,10 +60,7 @@ func TestLintCommand(t *testing.T) {
 		Query(ENABLE_PGSQL_CHECK).
 		Reply("CREATE EXTENSION").
 		Query(checkSchemaScript, "public").
-		Reply("SELECT 1", map[string]interface{}{
-			"proname":                "f1",
-			"plpgsql_check_function": string(data),
-		}).
+		Reply("SELECT 1", []interface{}{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
 	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", fsys, conn.Intercept))
@@ -114,13 +111,10 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 2", map[string]interface{}{
-				"proname":                "f1",
-				"plpgsql_check_function": string(r1),
-			}, map[string]interface{}{
-				"proname":                "f2",
-				"plpgsql_check_function": string(r2),
-			}).
+			Reply("SELECT 2",
+				[]interface{}{"f1", string(r1)},
+				[]interface{}{"f2", string(r2)},
+			).
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
@@ -164,15 +158,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", map[string]interface{}{
-				"proname":                "where_clause",
-				"plpgsql_check_function": string(r1),
-			}).
+			Reply("SELECT 1", []interface{}{"where_clause", string(r1)}).
 			Query(checkSchemaScript, "private").
-			Reply("SELECT 1", map[string]interface{}{
-				"proname":                "f2",
-				"plpgsql_check_function": string(r2),
-			}).
+			Reply("SELECT 1", []interface{}{"f2", string(r2)}).
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
@@ -212,10 +200,7 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", map[string]interface{}{
-				"proname":                "f1",
-				"plpgsql_check_function": "malformed",
-			}).
+			Reply("SELECT 1", []interface{}{"f1", "malformed"}).
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
