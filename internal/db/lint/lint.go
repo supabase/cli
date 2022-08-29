@@ -106,7 +106,10 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		return nil, err
 	}
 	// Always rollback since lint should not have side effects
-	defer tx.Rollback(context.Background())
+	defer func() {
+		err := tx.Rollback(context.Background())
+		fmt.Fprintln(os.Stderr, err)
+	}()
 	enable := "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
 	if _, err := conn.Exec(ctx, enable); err != nil {
 		return nil, err
