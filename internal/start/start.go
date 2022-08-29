@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
@@ -82,7 +83,7 @@ var (
 )
 
 func run(p utils.Program) error {
-	_, _ = utils.Docker.NetworkCreate(
+	_, err := utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
 		types.NetworkCreate{
@@ -93,6 +94,13 @@ func run(p utils.Program) error {
 			},
 		},
 	)
+
+	// matching against public interface because concrete type is private, error.As only works for types */
+	if _, ok := err.(errdefs.ErrConflict); ok {
+		// error becuase network already exists, no need to propagate to user
+	} else {
+		return err
+	}
 
 	// Ensure `_current_branch` file exists.
 	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
