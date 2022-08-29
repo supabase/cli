@@ -131,7 +131,7 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 			for _, line := range parser.Split(sql) {
 				trim := strings.TrimSpace(strings.TrimRight(line, ";"))
 				if len(trim) > 0 {
-					batch.ExecParams(line, nil, nil, nil, nil)
+					batch.ExecParams(trim, nil, nil, nil, nil)
 				}
 			}
 			if err := conn.PgConn().ExecBatch(ctx, &batch).Close(); err != nil {

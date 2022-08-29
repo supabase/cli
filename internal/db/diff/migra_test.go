@@ -17,7 +17,6 @@ func TestApplyMigrations(t *testing.T) {
 	const postgresUrl = "postgresql://postgres:password@localhost:5432/postgres"
 
 	t.Run("applies migrations from local directory", func(t *testing.T) {
-		t.Skip("pgmock does not support batch query")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration
@@ -33,8 +32,10 @@ func TestApplyMigrations(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query("create table test").
 			Reply("SELECT 0").
-			Query("drop table test;-- ignore me").
-			Reply("SELECT 0")
+			Query("drop table test").
+			Reply("SELECT 0").
+			Query("-- ignore me").
+			Reply("")
 		// Run test
 		assert.NoError(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
@@ -73,7 +74,6 @@ func TestApplyMigrations(t *testing.T) {
 	})
 
 	t.Run("throws error on failture to send batch", func(t *testing.T) {
-		t.Skip("pgmock does not support batch query")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration

@@ -500,11 +500,7 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	if viper.GetBool("DEBUG") {
 		debug.SetupPGX(config)
 	}
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
+	return pgx.ConnectConfig(ctx, config)
 }
 
 func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

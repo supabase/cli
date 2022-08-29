@@ -51,12 +51,12 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	if err := SeedDatabase(ctx, url, fsys); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := SeedDatabase(ctx, url, fsys, opts...); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
 	fmt.Fprintln(os.Stderr, "Activating branch...")
-	if err := ActivateDatabase(ctx, branch); err != nil {
+	if err := ActivateDatabase(ctx, branch, opts...); err != nil {
 		return err
 	}
 
