@@ -57,7 +57,7 @@ func TestLintCommand(t *testing.T) {
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
 	conn.Query("begin").Reply("BEGIN").
-		Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+		Query(ENABLE_PGSQL_CHECK).
 		Reply("CREATE EXTENSION").
 		Query(checkSchemaScript, "public").
 		Reply("SELECT 1", map[string]interface{}{
@@ -111,7 +111,7 @@ func TestLintDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 2", map[string]interface{}{
@@ -161,7 +161,7 @@ func TestLintDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 1", map[string]interface{}{
@@ -191,7 +191,7 @@ func TestLintDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			Query(ENABLE_PGSQL_CHECK).
 			ReplyError(pgerrcode.UndefinedFile, `could not open extension control file "/usr/share/postgresql/14/extension/plpgsql_check.control": No such file or directory"`).
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
@@ -209,7 +209,7 @@ func TestLintDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 1", map[string]interface{}{
