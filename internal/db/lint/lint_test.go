@@ -191,3 +191,55 @@ func TestConnectLocal(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestMultipleSchema(t *testing.T) {
+	expected := []Result{{
+		Function: "public.where_clause",
+		Issues: []Issue{{
+			Level:   AllowedLevels[0],
+			Message: "target type is different type than source type",
+			Statement: Statement{
+				LineNumber: "32",
+				Text:       "statement block",
+			},
+			Hint:     "The input expression type does not have an assignment cast to the target type.",
+			Detail:   `cast "text" value to "text[]" type`,
+			Context:  `during statement block local variable "clause_arr" initialization on line 3`,
+			SQLState: pgerrcode.DatatypeMismatch,
+		}},
+	}, {
+		Function: "private.f2",
+		Issues:   []Issue{},
+	}}
+	r1, err := json.Marshal(expected[0])
+	require.NoError(t, err)
+	r2, err := json.Marshal(expected[1])
+	require.NoError(t, err)
+	// Setup mock postgres
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	conn.Query("begin").Reply("BEGIN").
+		Query("CREATE EXTENSION IF NOT EXISTS plpgsql_check").
+		Reply("CREATE EXTENSION").
+		Query(checkSchemaScript, "public").
+		Reply("SELECT 1", map[string]interface{}{
+			"proname":                "where_clause",
+			"plpgsql_check_function": string(r1),
+		}).
+		Query(checkSchemaScript, "private").
+		Reply("SELECT 1", map[string]interface{}{
+			"proname":                "f2",
+			"plpgsql_check_function": string(r2),
+		}).
+		Query("rollback").Reply("ROLLBACK")
+	// Connect to mock
+	ctx := context.Background()
+	mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+	// Run test
+	result, err := LintDatabase(ctx, mock, []string{"public", "private"})
+	assert.NoError(t, err)
+	// Validate result
+	assert.ElementsMatch(t, expected, result)
+}
