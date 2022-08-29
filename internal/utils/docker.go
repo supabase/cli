@@ -113,9 +113,9 @@ func DockerRemoveContainers(ctx context.Context) {
 	wg.Wait()
 }
 
-func DockerRemoveAll(ctx context.Context, netId string) error {
+func DockerRemoveAll(ctx context.Context, netId string) {
 	DockerRemoveContainers(ctx)
-	return Docker.NetworkRemove(ctx, netId)
+	_ = Docker.NetworkRemove(ctx, netId)
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {

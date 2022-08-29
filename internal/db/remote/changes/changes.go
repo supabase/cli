@@ -92,7 +92,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			},
 		},
 	)
-	defer cleanup()
+	defer utils.DockerRemoveAll(context.Background(), netId)
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
@@ -277,10 +277,6 @@ EOSQL
 	return nil
 }
 
-func cleanup() {
-	_ = utils.DockerRemoveAll(context.Background(), netId)
-}
-
 type model struct {
 	cancel      context.CancelFunc
 	spinner     spinner.Model
@@ -303,7 +299,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			m.cancel()
 			// Stop current runs
-			cleanup()
+			utils.DockerRemoveAll(context.Background(), netId)
 			return m, tea.Quit
 		default:
 			return m, nil

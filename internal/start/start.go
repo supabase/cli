@@ -61,7 +61,7 @@ func Run(ctx context.Context) error {
 		return errors.New("Aborted " + utils.Aqua("supabase start") + ".")
 	}
 	if err := <-errCh; err != nil {
-		_ = utils.DockerRemoveAll(context.Background(), utils.NetId)
+		utils.DockerRemoveAll(context.Background(), utils.NetId)
 		return err
 	}
 
