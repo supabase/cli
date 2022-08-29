@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -28,14 +29,14 @@ type LintLevel int
 
 func toEnum(level string) LintLevel {
 	for i, curr := range AllowedLevels {
-		if curr == level {
+		if strings.HasPrefix(level, curr) {
 			return LintLevel(i)
 		}
 	}
 	return -1
 }
 
-func Run(ctx context.Context, schema []string, level string, stdout io.Writer, fsys afero.Fs, opts ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -53,17 +54,7 @@ func Run(ctx context.Context, schema []string, level string, stdout io.Writer, f
 	if err != nil {
 		return err
 	}
-	filtered := filterResult(result, toEnum(level))
-	// Print output
-	if len(filtered) == 0 {
-		return nil
-	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(filtered); err != nil {
-		return err
-	}
-	return nil
+	return printResultJSON(result, toEnum(level), os.Stdout)
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
@@ -79,6 +70,17 @@ func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
 		}
 	}
 	return filtered
+}
+
+func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) error {
+	filtered := filterResult(result, minLevel)
+	if len(filtered) == 0 {
+		return nil
+	}
+	// Pretty print output
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(filtered)
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
@@ -107,8 +109,9 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 	}
 	// Always rollback since lint should not have side effects
 	defer func() {
-		err := tx.Rollback(context.Background())
-		fmt.Fprintln(os.Stderr, err)
+		if err := tx.Rollback(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}()
 	enable := "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
 	if _, err := conn.Exec(ctx, enable); err != nil {
@@ -166,14 +169,14 @@ type Statement struct {
 }
 
 type Issue struct {
-	Level     string    `json:"level"`
-	Message   string    `json:"message"`
-	Statement Statement `json:"statement,omitempty"`
-	Query     Query     `json:"query,omitempty"`
-	Hint      string    `json:"hint,omitempty"`
-	Detail    string    `json:"detail,omitempty"`
-	Context   string    `json:"context,omitempty"`
-	SQLState  string    `json:"sqlState,omitempty"`
+	Level     string     `json:"level"`
+	Message   string     `json:"message"`
+	Statement *Statement `json:"statement,omitempty"`
+	Query     *Query     `json:"query,omitempty"`
+	Hint      string     `json:"hint,omitempty"`
+	Detail    string     `json:"detail,omitempty"`
+	Context   string     `json:"context,omitempty"`
+	SQLState  string     `json:"sqlState,omitempty"`
 }
 
 type Result struct {
