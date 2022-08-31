@@ -232,7 +232,13 @@ func run(p utils.Program, ctx context.Context) error {
 	{
 		cmd := []string{}
 		if utils.Config.Db.MajorVersion >= 14 {
-			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
+			cmd = []string{"postgres",
+				"-c", "config_file=/etc/postgresql/postgresql.conf",
+				// One log file per hour, 24 hours retention
+				"-c", "log_filename=server_%H00_UTC.log",
+				"-c", "log_rotation_age=60",
+				"-c", "log_truncate_on_rotation=on",
+			}
 		}
 
 		if _, err := utils.DockerRun(
