@@ -61,8 +61,7 @@ func Run(ctx context.Context) error {
 		return errors.New("Aborted " + utils.Aqua("supabase start") + ".")
 	}
 	if err := <-errCh; err != nil {
-		utils.DockerRemoveAll()
-		_ = utils.Docker.NetworkRemove(context.Background(), utils.NetId)
+		utils.DockerRemoveAll(context.Background(), utils.NetId)
 		return err
 	}
 
@@ -819,7 +818,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			m.cancel()
 			// Stop current runs
-			utils.DockerRemoveAll()
+			utils.DockerRemoveAll(context.Background(), utils.NetId)
 			return m, tea.Quit
 		default:
 			return m, nil

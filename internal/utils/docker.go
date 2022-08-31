@@ -90,14 +90,14 @@ func DockerRun(
 	return resp.Reader, nil
 }
 
-func DockerRemoveAll() {
+func DockerRemoveContainers(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	for _, container := range containers {
 		wg.Add(1)
 
 		go func(container string) {
-			if err := Docker.ContainerRemove(context.Background(), container, types.ContainerRemoveOptions{
+			if err := Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
 				RemoveVolumes: true,
 				Force:         true,
 			}); err != nil {
@@ -111,6 +111,11 @@ func DockerRemoveAll() {
 	}
 
 	wg.Wait()
+}
+
+func DockerRemoveAll(ctx context.Context, netId string) {
+	DockerRemoveContainers(ctx)
+	_ = Docker.NetworkRemove(ctx, netId)
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
