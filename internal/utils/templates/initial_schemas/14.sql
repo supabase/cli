@@ -1352,7 +1352,8 @@ CREATE TABLE auth.refresh_tokens (
     revoked boolean,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    parent character varying(255)
+    parent character varying(255),
+    session_id uuid
 );
 
 
@@ -1402,6 +1403,27 @@ ALTER TABLE auth.schema_migrations OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.schema_migrations IS 'Auth: Manages updates to the auth system.';
+
+
+--
+-- Name: sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE auth.sessions (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone
+);
+
+
+ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a user.';
 
 
 --
@@ -1604,6 +1626,7 @@ INSERT INTO auth.schema_migrations VALUES ('20220323170000');
 INSERT INTO auth.schema_migrations VALUES ('20220429102000');
 INSERT INTO auth.schema_migrations VALUES ('20220531120530');
 INSERT INTO auth.schema_migrations VALUES ('20220614074223');
+INSERT INTO auth.schema_migrations VALUES ('20220811173540');
 
 
 --
@@ -1734,6 +1757,14 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 ALTER TABLE ONLY auth.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1962,6 +1993,22 @@ ALTER TABLE ONLY auth.identities
 
 ALTER TABLE ONLY auth.refresh_tokens
     ADD CONSTRAINT refresh_tokens_parent_fkey FOREIGN KEY (parent) REFERENCES auth.refresh_tokens(token);
+
+
+--
+-- Name: refresh_tokens refresh_tokens_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.refresh_tokens
+    ADD CONSTRAINT refresh_tokens_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
 
 --
@@ -2532,16 +2579,6 @@ GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jso
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO service_role;
 
 
--- --
--- -- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
--- --
-
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
-
-
 --
 -- Name: FUNCTION apply_rls(wal jsonb, max_record_bytes integer); Type: ACL; Schema: realtime; Owner: supabase_admin
 --
@@ -2685,6 +2722,14 @@ GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO postgres;
 
 GRANT ALL ON TABLE auth.schema_migrations TO dashboard_user;
 GRANT ALL ON TABLE auth.schema_migrations TO postgres;
+
+
+--
+-- Name: TABLE sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+GRANT ALL ON TABLE auth.sessions TO postgres;
 
 
 --
