@@ -1676,9 +1676,6 @@ INSERT INTO auth.schema_migrations VALUES ('20220811173540');
 -- Data for Name: key; Type: TABLE DATA; Schema: pgsodium; Owner: postgres
 --
 
-COPY pgsodium.key (id, status, created, expires, key_type, key_id, key_context, comment, user_data) FROM stdin;
-b7482983-61fb-468e-8849-f0200d378159	default	2022-09-02 14:56:40.424799	\N	\N	1	\\x7067736f6469756d	This is the default key used for vault.secrets	\N
-\.
 
 
 --
@@ -2650,10 +2647,10 @@ GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jso
 -- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
 --
 
-GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
-GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
-GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
-GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
 
 
 --
