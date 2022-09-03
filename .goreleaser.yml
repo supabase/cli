@@ -13,11 +13,6 @@ builds:
       - linux_amd64
       - linux_arm64
       - windows_amd64
-    overrides:
-      - goos: darwin
-        env:
-          # https://github.com/golang/go/issues/12524
-          - CGO_ENABLED=1
 changelog:
   skip: true
 brews:

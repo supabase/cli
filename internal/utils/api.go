@@ -1,8 +1,12 @@
 package utils
 
 import (
+	"context"
 	"log"
+	"net"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
 	"github.com/spf13/viper"
@@ -13,6 +17,35 @@ var (
 	clientOnce sync.Once
 	apiClient  *supabase.ClientWithResponses
 )
+
+func withFallbackResolver(c *supabase.Client) error {
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	dialer.Resolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			// Go resolver may not work on macOS https://github.com/golang/go/issues/12524
+			conn, err := dialer.DialContext(ctx, network, address)
+			if err != nil {
+				// Retry with CloudFlare DNS resolver
+				return dialer.DialContext(ctx, "udp", "1.1.1.1:53")
+			}
+			return conn, err
+		},
+	}
+	c.Client = &http.Client{
+		// Other settings are the same as http.DefaultTransport
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+	return nil
+}
 
 func GetSupabase() *supabase.ClientWithResponses {
 	clientOnce.Do(func() {
@@ -27,6 +60,7 @@ func GetSupabase() *supabase.ClientWithResponses {
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
 			supabase.WithRequestEditorFn(provider.Intercept),
+			withFallbackResolver,
 		)
 		if err != nil {
 			log.Fatalln(err)
