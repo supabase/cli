@@ -2,11 +2,11 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
 	"github.com/spf13/viper"
@@ -18,6 +18,57 @@ var (
 	apiClient  *supabase.ClientWithResponses
 )
 
+const (
+	// Ref: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
+	dnsIPv4Type uint16 = 1
+	dnsIPv6Type uint16 = 28
+)
+
+type dnsAnswer struct {
+	Type uint16 `json:"type"`
+	Data string `json:"data"`
+}
+
+type dnsResponse struct {
+	Answer []dnsAnswer `json:",omitempty"`
+}
+
+// Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
+func fallbackLookupIP(ctx context.Context, address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return ""
+	}
+	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://1.1.1.1/dns-query?name="+host, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Add("accept", "application/dns-json")
+	// Sends request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return ""
+	}
+	// Parses response
+	var data dnsResponse
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&data); err != nil {
+		return ""
+	}
+	// Look for first valid IP
+	for _, answer := range data.Answer {
+		if answer.Type == dnsIPv4Type || answer.Type == dnsIPv6Type {
+			return net.JoinHostPort(answer.Data, port)
+		}
+	}
+	return ""
+}
+
 func GetSupabase() *supabase.ClientWithResponses {
 	clientOnce.Do(func() {
 		token, err := LoadAccessToken()
@@ -28,22 +79,18 @@ func GetSupabase() *supabase.ClientWithResponses {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		// Setup fallback resolver on default transport
-		dialer := &net.Dialer{Timeout: 15 * time.Second}
-		dialer.Resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				// Go resolver may not work on macOS https://github.com/golang/go/issues/12524
-				conn, err := dialer.DialContext(ctx, network, address)
-				if err != nil {
-					// Retry with CloudFlare DNS resolver
-					return dialer.DialContext(ctx, "udp", "1.1.1.1:53")
+		if t, ok := http.DefaultTransport.(*http.Transport); ok {
+			dialContext := t.DialContext
+			t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				conn, err := dialContext(ctx, network, address)
+				// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
+				if err, ok := err.(*net.OpError); ok && err.Op == "dial" {
+					if ip := fallbackLookupIP(ctx, address); ip != "" {
+						return dialContext(ctx, network, ip)
+					}
 				}
 				return conn, err
-			},
-		}
-		if t, ok := http.DefaultTransport.(*http.Transport); ok {
-			t.DialContext = dialer.DialContext
+			}
 		}
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
