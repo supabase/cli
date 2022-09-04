@@ -54,7 +54,7 @@ func fallbackLookupIP(ctx context.Context, address string) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
 	// Parses response
