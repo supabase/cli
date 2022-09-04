@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils"
 )
 
 // Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
@@ -17,6 +18,11 @@ var rootCmd = &cobra.Command{
 	Version:       version,
 	SilenceErrors: true,
 	SilenceUsage:  true,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if viper.GetBool("DEBUG") {
+			cmd.SetContext(utils.WithTraceContext(cmd.Context()))
+		}
+	},
 }
 
 func Execute() {

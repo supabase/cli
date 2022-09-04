@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/textproto"
 	"sync"
 
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
@@ -71,37 +72,54 @@ func fallbackLookupIP(ctx context.Context, address string) string {
 	return ""
 }
 
-func withTraceContext(ctx context.Context) context.Context {
+func WithTraceContext(ctx context.Context) context.Context {
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(info httptrace.DNSStartInfo) {
-			log.Println("DNS start:", info)
-			// d.DNS.Host = info.Host
+			log.Printf("DNS Start: %+v\n", info)
 		},
 		DNSDone: func(info httptrace.DNSDoneInfo) {
-			log.Println("DNS done:", info)
-			// d.DNS.Address = info.Addrs
-			// d.DNS.Error = info.Err
+			if info.Err != nil {
+				log.Println("DNS Error:", info.Err)
+			} else {
+				log.Printf("DNS Done: %+v\n", info)
+			}
 		},
 		ConnectStart: func(network, addr string) {
-			log.Println("Connect start:", network, addr)
+			log.Println("Connect Start:", network, addr)
 		},
 		ConnectDone: func(network, addr string, err error) {
-			log.Println("Connect done:", network, addr, err)
+			if err != nil {
+				log.Println("Connect Error:", network, addr, err)
+			} else {
+				log.Println("Connect Done:", network, addr)
+			}
 		},
 		TLSHandshakeStart: func() {
-			log.Println("TLS start")
+			log.Println("TLS Start")
 		},
 		TLSHandshakeDone: func(cs tls.ConnectionState, err error) {
-			log.Println("TLS done:", cs, err)
+			if err != nil {
+				log.Println("TLS Error:", err)
+			} else {
+				log.Printf("TLS Done: %+v\n", cs)
+			}
 		},
-		WroteHeaders: func() {
-			log.Println("Wrote all request headers")
+		WroteHeaderField: func(key string, value []string) {
+			log.Println("Sent Header:", key, value)
 		},
 		WroteRequest: func(wr httptrace.WroteRequestInfo) {
-			log.Println("Wrote all request:", wr)
+			if wr.Err != nil {
+				log.Println("Send Error:", wr.Err)
+			} else {
+				log.Println("Send Done")
+			}
+		},
+		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			log.Println("Recv 1xx:", code, header)
+			return nil
 		},
 		GotFirstResponseByte: func() {
-			log.Println("First received response byte")
+			log.Println("Recv First Byte")
 		},
 	}
 	return httptrace.WithClientTrace(ctx, trace)
@@ -120,9 +138,6 @@ func GetSupabase() *supabase.ClientWithResponses {
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
 			dialContext := t.DialContext
 			t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-				if viper.GetBool("DEBUG") {
-					ctx = withTraceContext(ctx)
-				}
 				conn, err := dialContext(ctx, network, address)
 				// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
 				if err, ok := err.(*net.OpError); ok && err.Op == "dial" {
