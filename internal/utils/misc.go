@@ -37,7 +37,7 @@ const (
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.15.3"
 	RealtimeImage = "supabase/realtime:v0.22.7"
-	StorageImage  = "supabase/storage-api:v0.18.7"
+	StorageImage  = "supabase/storage-api:v0.20.1"
 )
 
 const (

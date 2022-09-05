@@ -171,7 +171,7 @@ EOSQL
 		}
 
 		p.Send(utils.StatusMsg("Resetting database..."))
-		if err := differ.ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
+		if err := differ.ResetDatabase(ctx, dbId, "postgres"); err != nil {
 			return err
 		}
 
