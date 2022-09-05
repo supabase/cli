@@ -7,7 +7,7 @@ pg_dump \
     --exclude-schema "$EXCLUDED_SCHEMAS" \
     --schema '*' \
     --extension '*' \
+    --no-comments \
     --dbname "$DB_URL" \
-| sed 's/CREATE SCHEMA "public"/-- CREATE SCHEMA "public"/' \
-| sed 's/COMMENT ON EXTENSION/-- COMMENT ON EXTENSION/' \
+| sed 's/CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed 's/ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/'

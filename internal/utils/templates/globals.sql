@@ -53,7 +53,7 @@ ALTER ROLE authenticated SET statement_timeout TO '8s';
 -- User Config "authenticator"
 --
 
-ALTER ROLE authenticator SET session_preload_libraries TO 'supautils', 'safeupdate';
+ALTER ROLE authenticator SET session_preload_libraries TO 'safeupdate';
 --
 -- User Configurations
 --

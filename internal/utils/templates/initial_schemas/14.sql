@@ -58,6 +58,15 @@ CREATE SCHEMA graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
+--
+
+CREATE SCHEMA pgbouncer;
+
+
+ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
+
+--
 -- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
@@ -385,6 +394,7 @@ BEGIN
 
     IF func_is_graphql_resolve
     THEN
+        DROP FUNCTION IF EXISTS graphql_public.graphql;
 
         -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
         create or replace function graphql_public.graphql(
@@ -618,6 +628,25 @@ ALTER FUNCTION extensions.set_graphql_placeholder() OWNER TO supabase_admin;
 
 COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
 
+
+--
+-- Name: get_auth(text); Type: FUNCTION; Schema: pgbouncer; Owner: postgres
+--
+
+CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, password text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+    RAISE WARNING 'PgBouncer auth request: %', p_usename;
+
+    RETURN QUERY
+    SELECT usename::TEXT, passwd::TEXT FROM pg_catalog.pg_shadow
+    WHERE usename = p_usename;
+END;
+$$;
+
+
+ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO postgres;
 
 --
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
@@ -1667,13 +1696,13 @@ INSERT INTO auth.schema_migrations VALUES ('20220811173540');
 
 
 --
+-- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
 -- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
---
-
-
-
---
--- Data for Name: key; Type: TABLE DATA; Schema: pgsodium; Owner: postgres
 --
 
 
@@ -2651,6 +2680,14 @@ GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jso
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION get_auth(p_usename text); Type: ACL; Schema: pgbouncer; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION pgbouncer.get_auth(p_usename text) FROM PUBLIC;
+GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
