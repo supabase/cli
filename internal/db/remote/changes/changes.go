@@ -170,25 +170,9 @@ EOSQL
 			return errors.New("Error starting shadow database: " + errBuf.String())
 		}
 
-		{
-			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting shadow database: " + errBuf.String())
-			}
+		p.Send(utils.StatusMsg("Resetting database..."))
+		if err := differ.ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
+			return err
 		}
 
 		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
