@@ -77,7 +77,7 @@ var (
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{"auth", "extensions", "graphql_public", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema", "pgsodium"}
+	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
 )
 
 func GetCurrentTimestamp() string {
