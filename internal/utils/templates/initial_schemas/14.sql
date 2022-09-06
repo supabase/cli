@@ -2846,8 +2846,8 @@ GRANT ALL ON TABLE auth.schema_migrations TO postgres;
 -- Name: TABLE sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
-GRANT ALL ON TABLE auth.sessions TO dashboard_user;
 GRANT ALL ON TABLE auth.sessions TO postgres;
+GRANT ALL ON TABLE auth.sessions TO dashboard_user;
 
 
 --

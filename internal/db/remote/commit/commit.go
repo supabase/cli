@@ -152,9 +152,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			return err
 		}
 
-		if len(localMigrations) == 0 {
-			strings.Join(utils.InternalSchemas, "|")
-
+		if viper.GetBool("INTERNAL_DUMP") && len(localMigrations) == 0 {
 			// Use pg_dump instead of schema diff
 			out, err := utils.DockerRun(
 				ctx,
