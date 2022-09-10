@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -99,6 +100,36 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	}
 	defer conn.Close(context.Background())
 
+	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
+	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
+		return err
+	}
+
+	timestamp := utils.GetCurrentTimestamp()
+
+	// 2. Special case if this is the first migration
+	if localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil && len(localMigrations) == 0 {
+		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
+
+		// Use pg_dump instead of schema diff
+		out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
+			"POSTGRES_PASSWORD=postgres",
+			"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+			"DB_URL=" + conn.Config().ConnString(),
+		}, []string{"bash", "-c", dumpInitialMigrationScript})
+		if err != nil {
+			return errors.New("Error running pg_dump on remote database: " + err.Error())
+		}
+
+		// Insert a row to `schema_migrations`
+		if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
+			return err
+		}
+
+		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+		return afero.WriteFile(fsys, path, []byte(out), 0644)
+	}
+
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		netId,
@@ -135,67 +166,6 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
-		}
-	}
-
-	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
-		return err
-	}
-
-	timestamp := utils.GetCurrentTimestamp()
-
-	// 2. Special case if this is the first migration
-	{
-		localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-		if err != nil {
-			return err
-		}
-
-		if len(localMigrations) == 0 {
-			// Use pg_dump instead of schema diff
-			out, err := utils.DockerRun(
-				ctx,
-				dbId,
-				&container.Config{
-					Image: utils.GetRegistryImageUrl(utils.DbImage),
-					Env: []string{
-						"POSTGRES_PASSWORD=postgres",
-						"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
-						"DB_URL=" + conn.Config().ConnString(),
-					},
-					Entrypoint: []string{
-						"bash", "-c", dumpInitialMigrationScript,
-					},
-					Labels: map[string]string{
-						"com.supabase.cli.project":   utils.Config.ProjectId,
-						"com.docker.compose.project": utils.Config.ProjectId,
-					},
-				},
-				&container.HostConfig{NetworkMode: netId},
-			)
-			if err != nil {
-				return err
-			}
-
-			var dumpBuf, errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(&dumpBuf, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error running pg_dump on remote database: " + errBuf.String())
-			}
-
-			// Insert a row to `schema_migrations`
-			if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
-				return err
-			}
-
-			if err := differ.SaveDiff(dumpBuf.String(), "remote_commit", fsys); err != nil {
-				return err
-			}
-
-			return nil
 		}
 	}
 
