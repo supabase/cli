@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -296,7 +295,13 @@ EOSQL
 			return err
 		}
 
-		if err := differ.SaveDiff(string(diffBytes), "remote_commit", fsys); err != nil {
+		// Ignore header comments
+		if len(diffBytes) <= 350 {
+			return nil
+		}
+
+		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+		if err := afero.WriteFile(fsys, path, diffBytes, 0644); err != nil {
 			return err
 		}
 	}
