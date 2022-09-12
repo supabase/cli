@@ -260,7 +260,7 @@ func run(p utils.Program, ctx context.Context) error {
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
@@ -531,7 +531,7 @@ EOF
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
@@ -599,7 +599,7 @@ EOF
 			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
@@ -628,7 +628,7 @@ EOF
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
 			PortBindings:  inbucketPortBindings,
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -662,7 +662,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		}); err != nil {
 		return err
 	}
@@ -687,7 +687,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -720,7 +720,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -740,7 +740,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -763,7 +763,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -792,7 +792,7 @@ EOF
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
 			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
