@@ -107,6 +107,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	timestamp := utils.GetCurrentTimestamp()
 
 	// 2. Special case if this is the first migration
+	// MigrationsDir should exist and be readable after AssertRemoteInSync call
 	if localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil && len(localMigrations) == 0 {
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
 
