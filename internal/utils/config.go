@@ -69,6 +69,7 @@ type (
 		Studio    studio
 		Inbucket  inbucket
 		Auth      auth
+		ValueFile valueFile `toml:"value_file"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -114,6 +115,16 @@ type (
 		Enabled  bool
 		ClientId string `toml:"client_id"`
 		Secret   string
+	}
+
+	valueFile struct {
+		Path           string
+		FileType       string `toml:"type"`
+		ApiURL         string `toml:"api_url"`
+		DbURL          string `toml:"db_url"`
+		InbucketURL    string `toml:"inbucket_url"`
+		AnonKey        string `toml:"anon_key"`
+		ServiceRoleKey string `toml:"service_role_key"`
 	}
 
 	// TODO
@@ -259,6 +270,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			}
 		}
+
+		if Config.ValueFile.FileType != "env" && Config.ValueFile.FileType != "" {
+			return errors.New("Only env value files are supported at the moment")
+		}
+
 	}
 
 	return nil

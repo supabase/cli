@@ -25,7 +25,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context) error {
+func Run(ctx context.Context, useValueFile bool) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
@@ -65,8 +65,12 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
-	utils.ShowStatus()
+	if useValueFile {
+		utils.SaveValues()
+	} else {
+		fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
+		utils.ShowStatus()
+	}
 
 	return nil
 }

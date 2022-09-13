@@ -60,3 +60,10 @@ enable_confirmations = false
 enabled = false
 client_id = ""
 secret = ""
+
+[value_file]
+path = "./.env.local"
+type = "env"
+anon_key = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+service_role_key = "SUPABASE_SERVICE_ROLE_KEY"
+api_url = "NEXT_PUBLIC_SUPABASE_URL"
