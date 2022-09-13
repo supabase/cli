@@ -380,3 +380,42 @@ func ShowStatus() {
         ` + Aqua("anon key") + `: ` + AnonKey + `
 ` + Aqua("service_role key") + `: ` + ServiceRoleKey)
 }
+
+func SaveValues() error {
+	fmt.Println("Saving file")
+
+	if Config.ValueFile.Path == "" {
+		return errors.New("Path for value_file is required")
+	}
+
+	f, err := os.Create(Config.ValueFile.Path)
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	if api := Config.ValueFile.ApiURL; api != "" {
+		f.WriteString(api + `=http://localhost:` + strconv.FormatUint(uint64(Config.Api.Port), 10) + "\n")
+	}
+
+	if db := Config.ValueFile.DbURL; db != "" {
+		f.WriteString(db + `=postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres` + "\n")
+	}
+
+	if inbucket := Config.ValueFile.InbucketURL; inbucket != "" {
+		f.WriteString(inbucket + `=http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + "\n")
+	}
+
+	if anon := Config.ValueFile.AnonKey; anon != "" {
+		f.WriteString(anon + "=" + AnonKey + "\n")
+	}
+
+	if serviceRole := Config.ValueFile.ServiceRoleKey; serviceRole != "" {
+		f.WriteString(serviceRole + "=" + ServiceRoleKey + "\n")
+	}
+
+	f.Sync()
+
+	return nil
+}
