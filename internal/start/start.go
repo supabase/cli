@@ -242,6 +242,8 @@ func run(p utils.Program, ctx context.Context) error {
 				"-c", "log_rotation_age=60",
 				"-c", "log_rotation_size=0",
 				"-c", "log_truncate_on_rotation=on",
+				// Ref: https://postgrespro.com/list/thread-id/2448092
+				"-c", `search_path="$user",public,extensions`,
 			}
 		}
 
