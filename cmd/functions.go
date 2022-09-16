@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"os"
+	"os/signal"
+
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
@@ -44,7 +48,8 @@ var (
 				return err
 			}
 
-			return deploy.Run(args[0], projectRef, !noVerifyJWT)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, afero.NewOsFs())
 		},
 	}
 
