@@ -78,7 +78,8 @@ var (
 				return err
 			}
 
-			return serve.Run(args[0], envFilePath, !noVerifyJWT)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, afero.NewOsFs())
 		},
 	}
 )
