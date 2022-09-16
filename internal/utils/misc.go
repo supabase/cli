@@ -82,6 +82,7 @@ var (
 	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
 )
 
+// Used by unit tests
 var (
 	DenoPathOverride string
 )
