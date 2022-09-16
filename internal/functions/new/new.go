@@ -19,7 +19,7 @@ var (
 
 func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	funcDir := "supabase/functions/" + slug
+	funcDir := filepath.Join(utils.FunctionsDir, slug)
 	{
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
