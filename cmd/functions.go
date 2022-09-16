@@ -29,7 +29,8 @@ var (
 				return err
 			}
 
-			return delete.Run(args[0], projectRef)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return delete.Run(ctx, args[0], projectRef, afero.NewOsFs())
 		},
 	}
 
