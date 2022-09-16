@@ -48,11 +48,13 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 		if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ProjectRefPath)); err != nil {
-			return err
-		}
-		if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
-			return err
+		if len(projectRefArg) == 0 {
+			if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ProjectRefPath)); err != nil {
+				return err
+			}
+			if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
+				return err
+			}
 		}
 		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
 			return err
