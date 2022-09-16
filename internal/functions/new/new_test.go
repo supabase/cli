@@ -2,11 +2,13 @@ package new
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func TestNewCommand(t *testing.T) {
@@ -16,7 +18,8 @@ func TestNewCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run(context.Background(), "test-func", fsys))
 		// Validate output
-		content, err := afero.ReadFile(fsys, "supabase/functions/test-func/index.ts")
+		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
+		content, err := afero.ReadFile(fsys, funcPath)
 		assert.NoError(t, err)
 		assert.Equal(t, index, string(content))
 	})
@@ -28,7 +31,8 @@ func TestNewCommand(t *testing.T) {
 	t.Run("throws error on duplicate slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, fsys.Mkdir("supabase/functions/test-func", 0755))
+		funcDir := filepath.Join(utils.FunctionsDir, "test-func")
+		require.NoError(t, fsys.Mkdir(funcDir, 0755))
 		// Run test
 		assert.Error(t, Run(context.Background(), "test-func", fsys))
 	})
