@@ -58,7 +58,8 @@ var (
 		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new.Run(args[0])
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return new.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
 
