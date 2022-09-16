@@ -73,17 +73,18 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 			return err
 		}
 
-		functionPath := "supabase/functions/" + slug
+		functionPath := filepath.Join(utils.FunctionsDir, slug)
 		if _, err := fsys.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
 			// allow deploy from within supabase/
-			functionPath = "functions/" + slug
+			functionPath = filepath.Join("functions", slug)
 			if _, err := fsys.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
 				// allow deploy from current directory
 				functionPath = slug
 			}
 		}
 
-		cmd := exec.CommandContext(ctx, denoPath, "bundle", "--no-check=remote", "--quiet", functionPath+"/index.ts")
+		args := []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
+		cmd := exec.CommandContext(ctx, denoPath, args...)
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf
