@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"os"
+	"os/signal"
+
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
@@ -25,7 +29,8 @@ var (
 				return err
 			}
 
-			return delete.Run(args[0], projectRef)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return delete.Run(ctx, args[0], projectRef, afero.NewOsFs())
 		},
 	}
 
@@ -44,7 +49,8 @@ var (
 				return err
 			}
 
-			return deploy.Run(args[0], projectRef, !noVerifyJWT)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, afero.NewOsFs())
 		},
 	}
 
@@ -53,7 +59,8 @@ var (
 		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new.Run(args[0])
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return new.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
 

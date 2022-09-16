@@ -1,9 +1,9 @@
 package delete
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -11,29 +11,31 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(slug string, projectRefArg string) error {
+func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) error {
 	// 1. Sanity checks.
+	projectRef := projectRefArg
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if _, err := utils.LoadAccessToken(); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
+		if _, err := utils.LoadAccessTokenFS(fsys); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
+			if err := login.Run(os.Stdin, fsys); err != nil {
 				return err
 			}
 		} else if err != nil {
 			return err
 		}
 		if len(projectRefArg) == 0 {
-			if err := utils.AssertIsLinked(); err != nil {
+			ref, err := utils.LoadProjectRef(fsys)
+			if err != nil {
 				return err
 			}
-		} else {
-			if !utils.ProjectRefPattern.MatchString(projectRefArg) {
-				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-			}
+			projectRef = ref
+		} else if !utils.ProjectRefPattern.MatchString(projectRefArg) {
+			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
@@ -41,64 +43,25 @@ func Run(slug string, projectRefArg string) error {
 	}
 
 	// 2. Delete Function.
-	var projectRef string
 	{
-		// --project-ref overrides value on disk
-		if len(projectRefArg) == 0 {
-			projectRefBytes, err := os.ReadFile(utils.ProjectRefPath)
-			if err != nil {
-				return err
-			}
-			projectRef = string(projectRefBytes)
-		} else {
-			projectRef = projectRefArg
-		}
-
-		accessToken, err := utils.LoadAccessToken()
+		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug, &api.GetFunctionParams{})
 		if err != nil {
 			return err
 		}
 
-		req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Add("Authorization", "Bearer "+string(accessToken))
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		switch resp.StatusCode {
+		switch resp.StatusCode() {
 		case http.StatusNotFound: // Function doesn't exist
 			return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
 		case http.StatusOK: // Function exists
-			req, err := http.NewRequest("DELETE", utils.GetSupabaseAPIHost()+"/v1/projects/"+projectRef+"/functions/"+slug, nil)
+			resp, err := utils.GetSupabase().DeleteFunctionWithResponse(ctx, projectRef, slug)
 			if err != nil {
 				return err
 			}
-			req.Header.Add("Authorization", "Bearer "+string(accessToken))
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return err
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != 200 {
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return fmt.Errorf("Failed to delete Function %v on the Supabase project: %w", utils.Aqua(slug), err)
-				}
-
-				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project: " + string(body))
+			if resp.StatusCode() != http.StatusOK {
+				return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project: " + string(resp.Body))
 			}
 		default:
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("Unexpected error deleting Function: %w", err)
-			}
-
-			return errors.New("Unexpected error deleting Function: " + string(body))
+			return errors.New("Unexpected error deleting Function: " + string(resp.Body))
 		}
 	}
 

@@ -59,6 +59,7 @@ DO 'BEGIN WHILE (
 	RemoteDbPath   = "supabase/.temp/remote-db-url"
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
+	FunctionsDir   = "supabase/functions"
 	SeedDataPath   = "supabase/seed.sql"
 )
 
@@ -75,9 +76,15 @@ var (
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?:\/\/postgres:(.*)@(.+)\/postgres$`)
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
+	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 	// These schemas are ignored from schema diffs
 	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+)
+
+// Used by unit tests
+var (
+	DenoPathOverride string
 )
 
 func GetCurrentTimestamp() string {
@@ -239,34 +246,40 @@ func LoadProjectRef(fsys afero.Fs) (string, error) {
 	return projectRef, nil
 }
 
-func InstallOrUpgradeDeno() error {
+func GetDenoPath() (string, error) {
+	if len(DenoPathOverride) > 0 {
+		return DenoPathOverride, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
-	}
-	if err := MkdirIfNotExist(filepath.Join(home, ".supabase")); err != nil {
-		return err
+		return "", err
 	}
 	denoBinName := "deno"
 	if runtime.GOOS == "windows" {
 		denoBinName = "deno.exe"
 	}
 	denoPath := filepath.Join(home, ".supabase", denoBinName)
+	return denoPath, nil
+}
 
-	if _, err := os.Stat(denoPath); err == nil {
+func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
+	denoPath, err := GetDenoPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-
-		cmd := exec.Command(denoPath, "upgrade", "--version", "1.20.3")
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-
-		return nil
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.20.3")
+		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
 	// Install Deno.
+	if err := MkdirIfNotExistFS(fsys, filepath.Dir(denoPath)); err != nil {
+		return err
+	}
 
 	// 1. Determine OS triple
 	var assetFilename string
@@ -291,7 +304,11 @@ func InstallOrUpgradeDeno() error {
 
 	// 2. Download & install Deno binary.
 	{
-		resp, err := http.Get(assetsUrl + assetFilename)
+		req, err := http.NewRequestWithContext(ctx, "GET", assetsUrl+assetFilename, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -322,7 +339,7 @@ func InstallOrUpgradeDeno() error {
 			return err
 		}
 
-		if err := os.WriteFile(denoPath, denoBytes, 0755); err != nil {
+		if err := afero.WriteFile(fsys, denoPath, denoBytes, 0755); err != nil {
 			return err
 		}
 	}
@@ -360,11 +377,7 @@ func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 }
 
 func ValidateFunctionSlug(slug string) error {
-	matched, err := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_-]*$`, slug)
-	if err != nil {
-		return err
-	}
-	if !matched {
+	if !FuncSlugPattern.MatchString(slug) {
 		return errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	}
 
