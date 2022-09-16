@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -25,7 +24,6 @@ func init() {
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "bundle" || os.Args[1] == "upgrade") {
-		fmt.Println("ea09bff03b3894b79e335f77a0f71d75adf263e9")
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
