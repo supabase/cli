@@ -90,10 +90,10 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 
 	// 4. Start Function.
 	localFuncDir := filepath.Join(utils.FunctionsDir, slug)
-	relayFuncPath := filepath.Join(relayFuncDir, slug, "index.ts")
+	dockerFuncPath := relayFuncDir + "/" + slug + "/index.ts"
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
 	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, []string{
-		"deno", "cache", relayFuncPath,
+		"deno", "cache", dockerFuncPath,
 	}); err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", relayFuncPath,
+					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", dockerFuncPath,
 				},
 				AttachStderr: true,
 				AttachStdout: true,
