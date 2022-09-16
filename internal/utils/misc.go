@@ -59,6 +59,7 @@ DO 'BEGIN WHILE (
 	RemoteDbPath   = "supabase/.temp/remote-db-url"
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
+	FunctionsDir   = "supabase/functions"
 	SeedDataPath   = "supabase/seed.sql"
 )
 
