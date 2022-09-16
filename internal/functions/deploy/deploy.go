@@ -54,7 +54,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 		if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
 			return err
 		}
-		if err := utils.InstallOrUpgradeDeno(fsys); err != nil {
+		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
 			return err
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {

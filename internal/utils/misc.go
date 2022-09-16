@@ -260,7 +260,7 @@ func GetDenoPath() (string, error) {
 	return denoPath, nil
 }
 
-func InstallOrUpgradeDeno(fsys afero.Fs) error {
+func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	denoPath, err := GetDenoPath()
 	if err != nil {
 		return err
@@ -268,7 +268,7 @@ func InstallOrUpgradeDeno(fsys afero.Fs) error {
 
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-		cmd := exec.Command(denoPath, "upgrade", "--version", "1.20.3")
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.20.3")
 		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -302,7 +302,11 @@ func InstallOrUpgradeDeno(fsys afero.Fs) error {
 
 	// 2. Download & install Deno binary.
 	{
-		resp, err := http.Get(assetsUrl + assetFilename)
+		req, err := http.NewRequestWithContext(ctx, "GET", assetsUrl+assetFilename, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
