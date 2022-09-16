@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"testing"
@@ -15,17 +16,17 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func init() {
-	// Setup fake deno binary
-	if denoPath, err := os.Executable(); err == nil {
-		utils.DenoPathOverride = denoPath
-	}
-}
-
 func TestMain(m *testing.M) {
+	// Setup fake deno binary
 	if len(os.Args) > 1 && (os.Args[1] == "bundle" || os.Args[1] == "upgrade") {
 		os.Exit(0)
 	}
+	denoPath, err := os.Executable()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	utils.DenoPathOverride = denoPath
+	// Run test suite
 	os.Exit(m.Run())
 }
 
