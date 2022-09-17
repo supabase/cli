@@ -1,84 +1,81 @@
 package switch_
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"path/filepath"
 
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/jackc/pgx/v4"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/lint"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
-var ctx = context.Background()
+func Run(ctx context.Context, target string, fsys afero.Fs) error {
+	// 1. Sanity checks
+	{
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+			return err
+		}
+		if target != "main" && utils.IsBranchNameReserved(target) {
+			return errors.New("Cannot switch branch " + utils.Aqua(target) + ": branch name is reserved.")
+		}
+		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), target)
+		if _, err := fsys.Stat(branchPath); errors.Is(err, os.ErrNotExist) {
+			return errors.New("Branch " + utils.Aqua(target) + " does not exist.")
+		} else if err != nil {
+			return err
+		}
+	}
 
-func Run(target string) error {
-	if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+	// 2. Update current branch file
+	currBranch, err := utils.GetCurrentBranchFS(fsys)
+	if err != nil {
+		currBranch = "main"
+	}
+
+	if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(target), 0644); err != nil {
 		return err
 	}
 
-	errBranchNotExist := errors.New("Branch " + utils.Aqua(target) + " does not exist.")
-
-	branches, err := os.ReadDir("supabase/.branches")
-	if errors.Is(err, os.ErrNotExist) {
-		return errBranchNotExist
+	// 3. Switch Postgres database
+	if err := swapDatabase(ctx, currBranch, target); err != nil {
+		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to rollback branch", utils.Aqua(currBranch)+":", err)
+		}
+		return errors.New("Error switching to branch " + utils.Aqua(target) + ": " + err.Error())
 	}
 
-	for _, branch := range branches {
-		if branch.Name() == "_current_branch" {
-			continue
-		}
+	fmt.Println("Switched to branch " + utils.Aqua(target) + ".")
+	return nil
+}
 
-		if branch.Name() == target {
-			currBranch, err := utils.GetCurrentBranch()
-			if err != nil {
-				currBranch = "main"
-			}
-
-			if err := os.WriteFile(utils.CurrBranchPath, []byte(target), 0644); err != nil {
-				return err
-			}
-
-			// Prevent new db connections to be established while db is recreated.
-			if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
-				return err
-			}
-
-			// Recreate current branch.
-			{
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
-COMMIT;
-ALTER DATABASE postgres RENAME TO "` + currBranch + `";
-ALTER DATABASE "` + target + `" RENAME TO postgres;
-EOSQL
-`,
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error switching to branch " + utils.Aqua(target) + ": " + errBuf.String())
-				}
-			}
-
-			if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-				return err
-			}
-
-			fmt.Println("Switched to branch " + utils.Aqua(target) + ".")
-			return nil
-		}
+func swapDatabase(ctx context.Context, source, target string, options ...func(*pgx.ConnConfig)) error {
+	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	if err != nil {
+		return err
 	}
-
-	return errBranchNotExist
+	defer conn.Close(ctx)
+	if err := reset.DisconnectClients(ctx, conn); err != nil {
+		return err
+	}
+	defer reset.RestartDatabase(ctx)
+	drop := "ALTER DATABASE postgres RENAME TO " + source + ";"
+	if _, err := conn.Exec(ctx, drop); err != nil {
+		return err
+	}
+	swap := "ALTER DATABASE " + target + " RENAME TO postgres;"
+	if _, err := conn.Exec(ctx, swap); err != nil {
+		return err
+	}
+	return nil
 }

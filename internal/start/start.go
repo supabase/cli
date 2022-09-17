@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -269,7 +270,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
+			"sh", "-c", "until pg_isready --username postgres --host $(hostname --ip-address); do sleep 0.1; done " +
 				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
 BEGIN;
 ` + utils.GlobalsSql + `
@@ -491,6 +492,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
+			defer reset.RestartDatabase(ctx)
 			var errBuf bytes.Buffer
 			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
