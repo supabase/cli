@@ -21,7 +21,7 @@ func Run(fsys afero.Fs, out io.Writer) error {
 
 	currBranch, _ := utils.GetCurrentBranchFS(fsys)
 	for _, branch := range branches {
-		if branch.Name() == "_current_branch" {
+		if branch.Name() == filepath.Base(utils.CurrBranchPath) {
 			continue
 		}
 

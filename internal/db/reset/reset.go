@@ -122,6 +122,24 @@ func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.C
 		return err
 	}
 	defer conn.Close(ctx)
+	if err := DisconnectClients(ctx, conn); err != nil {
+		return err
+	}
+	// Some extensions must be manually restarted after pg_terminate_backend
+	// Ref: https://github.com/citusdata/pg_cron/issues/99
+	defer RestartDatabase(ctx)
+	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
+	if _, err := conn.Exec(ctx, drop); err != nil {
+		return err
+	}
+	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
+	if _, err := conn.Exec(ctx, swap); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	// Must be executed separately because running in transaction is unsupported
 	disconn := "ALTER DATABASE postgres ALLOW_CONNECTIONS false;"
 	if _, err := conn.Exec(ctx, disconn); err != nil {
@@ -134,13 +152,11 @@ func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.C
 	if _, err := conn.Exec(ctx, term); err != nil {
 		return err
 	}
-	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
-	if _, err := conn.Exec(ctx, drop); err != nil {
-		return err
-	}
-	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
-	if _, err := conn.Exec(ctx, swap); err != nil {
-		return err
-	}
 	return nil
+}
+
+func RestartDatabase(ctx context.Context) {
+	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
+	}
 }
