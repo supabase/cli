@@ -54,7 +54,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 		})
 
 		env := []string{
-			"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"JWT_SECRET=" + utils.JWTSecret,
 			"DENO_ORIGIN=http://localhost:8000",
 		}
 		if verifyJWT {
