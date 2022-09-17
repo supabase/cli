@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -64,6 +65,8 @@ func TestLintCommand(t *testing.T) {
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
 	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", fsys, conn.Intercept))
+	// Validate api
+	assert.Empty(t, apitest.ListUnmatchedRequests())
 }
 
 func TestLintDatabase(t *testing.T) {

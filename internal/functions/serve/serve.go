@@ -27,9 +27,6 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertDockerIsRunning(); err != nil {
-			return err
-		}
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
