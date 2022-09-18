@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -10,10 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -22,44 +19,19 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 	// 1. Sanity checks.
 	projectRef := projectRefArg
 	{
-		if _, err := utils.LoadAccessTokenFS(fsys); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(os.Stdin, fsys); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
 		if len(projectRefArg) == 0 {
-			if err := utils.AssertIsLinkedFS(fsys); err != nil && strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-				fmt.Printf(`You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
-Enter your project ref: `, utils.GetSupabaseDashboardURL())
-
-				scanner := bufio.NewScanner(os.Stdin)
-				if !scanner.Scan() {
-					fmt.Println("Cancelled " + utils.Aqua("supabase functions deploy") + ".")
-					return nil
-				}
-
-				projectRef = strings.TrimSpace(scanner.Text())
-			} else if err != nil {
+			ref, err := utils.LoadProjectRef(fsys)
+			if err != nil {
 				return err
 			}
-		}
-		if !utils.ProjectRefPattern.MatchString(projectRef) {
+			projectRef = ref
+		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
-		if len(projectRefArg) == 0 {
-			if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ProjectRefPath)); err != nil {
-				return err
-			}
-			if err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644); err != nil {
-				return err
-			}
-		}
-		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
+		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if err := utils.ValidateFunctionSlug(slug); err != nil {
+		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
 			return err
 		}
 	}
@@ -96,6 +68,10 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 	}
 
 	// 3. Deploy new Function.
+	return deployFunction(ctx, projectRef, slug, newFunctionBody, verifyJWT)
+}
+
+func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody string, verifyJWT bool) error {
 	var deployedFuncId string
 	{
 		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug, &api.GetFunctionParams{})
