@@ -83,6 +83,18 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 		); err != nil {
 			return err
 		}
+
+		go func() {
+			<-ctx.Done()
+			if ctx.Err() != nil {
+				if err := utils.Docker.ContainerRemove(context.Background(), utils.DenoRelayId, types.ContainerRemoveOptions{
+					RemoveVolumes: true,
+					Force:         true,
+				}); err != nil {
+					fmt.Fprintln(os.Stderr, "Failed to remove container:", utils.DenoRelayId, err)
+				}
+			}
+		}()
 	}
 
 	// 4. Start Function.
@@ -138,18 +150,6 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 		if err != nil {
 			return err
 		}
-
-		go func() {
-			<-ctx.Done()
-			if ctx.Err() != nil {
-				if err := utils.Docker.ContainerRemove(context.Background(), utils.DenoRelayId, types.ContainerRemoveOptions{
-					RemoveVolumes: true,
-					Force:         true,
-				}); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to remove container:", utils.DenoRelayId, err)
-				}
-			}
-		}()
 
 		if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader); err != nil {
 			return err
