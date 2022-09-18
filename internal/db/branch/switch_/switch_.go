@@ -14,7 +14,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, target string, fsys afero.Fs) error {
+func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -37,29 +37,30 @@ func Run(ctx context.Context, target string, fsys afero.Fs) error {
 		}
 	}
 
-	// 2. Update current branch file
+	// 2. Check current branch
 	currBranch, err := utils.GetCurrentBranchFS(fsys)
 	if err != nil {
+		// Assume we are on main branch
 		currBranch = "main"
 	}
 
-	if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(target), 0644); err != nil {
-		return err
-	}
-
 	// 3. Switch Postgres database
-	if err := swapDatabase(ctx, currBranch, target); err != nil {
-		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to rollback branch", utils.Aqua(currBranch)+":", err)
-		}
+	if currBranch == target {
+		fmt.Println("Already on branch " + utils.Aqua(target) + ".")
+	} else if err := switchDatabase(ctx, currBranch, target, options...); err != nil {
 		return errors.New("Error switching to branch " + utils.Aqua(target) + ": " + err.Error())
+	} else {
+		fmt.Println("Switched to branch " + utils.Aqua(target) + ".")
 	}
 
-	fmt.Println("Switched to branch " + utils.Aqua(target) + ".")
+	// 4. Update current branch
+	if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(target), 0644); err != nil {
+		return errors.New("Unable to update local branch file. Fix by running: echo '" + target + "' > " + utils.CurrBranchPath)
+	}
 	return nil
 }
 
-func swapDatabase(ctx context.Context, source, target string, options ...func(*pgx.ConnConfig)) error {
+func switchDatabase(ctx context.Context, source, target string, options ...func(*pgx.ConnConfig)) error {
 	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
 	if err != nil {
 		return err
@@ -69,12 +70,16 @@ func swapDatabase(ctx context.Context, source, target string, options ...func(*p
 		return err
 	}
 	defer reset.RestartDatabase(ctx)
-	drop := "ALTER DATABASE postgres RENAME TO " + source + ";"
-	if _, err := conn.Exec(ctx, drop); err != nil {
+	backup := "ALTER DATABASE postgres RENAME TO " + source + ";"
+	if _, err := conn.Exec(ctx, backup); err != nil {
 		return err
 	}
-	swap := "ALTER DATABASE " + target + " RENAME TO postgres;"
-	if _, err := conn.Exec(ctx, swap); err != nil {
+	rename := "ALTER DATABASE " + target + " RENAME TO postgres;"
+	if _, err := conn.Exec(ctx, rename); err != nil {
+		rollback := "ALTER DATABASE " + source + " RENAME TO postgres;"
+		if _, err := conn.Exec(ctx, rollback); err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to rollback database:", err)
+		}
 		return err
 	}
 	return nil
