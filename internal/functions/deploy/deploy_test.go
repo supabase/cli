@@ -161,7 +161,7 @@ func TestDeployCommand(t *testing.T) {
 		// Run test
 		err = Run(context.Background(), "test-func", project, false, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "bundle failed")
+		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
