@@ -5,11 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -18,16 +15,6 @@ func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) 
 	// 1. Sanity checks.
 	projectRef := projectRefArg
 	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
-		if _, err := utils.LoadAccessTokenFS(fsys); err != nil && strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
-			if err := login.Run(os.Stdin, fsys); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
 		if len(projectRefArg) == 0 {
 			ref, err := utils.LoadProjectRef(fsys)
 			if err != nil {
