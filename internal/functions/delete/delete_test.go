@@ -19,7 +19,6 @@ func TestDeleteCommand(t *testing.T) {
 	t.Run("deletes function from project", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
@@ -37,38 +36,44 @@ func TestDeleteCommand(t *testing.T) {
 			Reply(http.StatusOK)
 		// Run test
 		assert.NoError(t, Run(context.Background(), "test-func", "", fsys))
-	})
-
-	t.Run("throws error if uninitialised", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", "test-project", fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on malformed ref", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup invalid project ref
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte("test-project"), 0644))
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", "test-project", fsys))
-		assert.Error(t, Run(context.Background(), "test-func", "", fsys))
+		err := Run(context.Background(), "test-func", "", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Invalid project ref format.")
+	})
+
+	t.Run("throws error on malformed ref arg", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), "test-func", "test-project", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		assert.Error(t, Run(context.Background(), "@", project, fsys))
+		err := Run(context.Background(), "@", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -80,13 +85,15 @@ func TestDeleteCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/test-func").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", project, fsys))
+		err := Run(context.Background(), "test-func", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -98,13 +105,15 @@ func TestDeleteCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", project, fsys))
+		err := Run(context.Background(), "test-func", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Unexpected error deleting Function:")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing function", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -116,13 +125,15 @@ func TestDeleteCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusNotFound)
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", project, fsys))
+		err := Run(context.Background(), "test-func", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on delete failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -138,13 +149,15 @@ func TestDeleteCommand(t *testing.T) {
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", project, fsys))
+		err := Run(context.Background(), "test-func", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Failed to delete Function test-func on the Supabase project:")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on delete network failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -160,6 +173,9 @@ func TestDeleteCommand(t *testing.T) {
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", project, fsys))
+		err := Run(context.Background(), "test-func", project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
