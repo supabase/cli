@@ -492,7 +492,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
-			defer reset.RestartDatabase(ctx)
+			defer reset.RestartDatabase(context.Background())
 			var errBuf bytes.Buffer
 			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err

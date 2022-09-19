@@ -69,7 +69,7 @@ func switchDatabase(ctx context.Context, source, target string, options ...func(
 	if err := reset.DisconnectClients(ctx, conn); err != nil {
 		return err
 	}
-	defer reset.RestartDatabase(ctx)
+	defer reset.RestartDatabase(context.Background())
 	backup := "ALTER DATABASE postgres RENAME TO " + source + ";"
 	if _, err := conn.Exec(ctx, backup); err != nil {
 		return err
