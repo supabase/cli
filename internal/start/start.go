@@ -510,7 +510,11 @@ EOSQL
 	// Start Kong.
 	{
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.Config.ProjectId}); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
+			ProjectId:      utils.Config.ProjectId,
+			AnonKey:        utils.AnonKey,
+			ServiceRoleKey: utils.ServiceRoleKey,
+		}); err != nil {
 			return err
 		}
 
@@ -563,7 +567,7 @@ EOF
 			"GOTRUE_JWT_AUD=authenticated",
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"GOTRUE_JWT_SECRET=" + utils.JWTSecret,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -656,7 +660,7 @@ EOF
 				"DB_SSL=false",
 				"SLOT_NAME=supabase_realtime",
 				"TEMPORARY_SLOT=true",
-				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"JWT_SECRET=" + utils.JWTSecret,
 				"SECURE_CHANNELS=true",
 				"REPLICATION_MODE=RLS",
 				"REPLICATION_POLL_INTERVAL=100",
@@ -684,7 +688,7 @@ EOF
 				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
 				"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
 				"PGRST_DB_ANON_ROLE=anon",
-				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -706,10 +710,10 @@ EOF
 		&container.Config{
 			Image: utils.GetRegistryImageUrl(utils.StorageImage),
 			Env: []string{
-				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"ANON_KEY=" + utils.AnonKey,
+				"SERVICE_KEY=" + utils.ServiceRoleKey,
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
-				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
 				"FILE_SIZE_LIMIT=52428800",
 				"STORAGE_BACKEND=file",
@@ -787,8 +791,8 @@ EOF
 
 				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-				"SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"SUPABASE_ANON_KEY=" + utils.AnonKey,
+				"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,

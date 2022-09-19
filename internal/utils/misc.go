@@ -53,6 +53,7 @@ DO 'BEGIN WHILE (
 ) > 0 LOOP END LOOP; END';`
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
+	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 
 	ConfigPath     = "supabase/config.toml"
 	ProjectRefPath = "supabase/.temp/project-ref"
