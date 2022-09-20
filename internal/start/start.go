@@ -67,12 +67,8 @@ func Run(ctx context.Context, useValueFile bool) error {
 		return err
 	}
 
-	if useValueFile {
-		utils.SaveValues()
-	} else {
-		fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
-		utils.ShowStatus()
-	}
+	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
+	utils.ShowStatus()
 
 	return nil
 }

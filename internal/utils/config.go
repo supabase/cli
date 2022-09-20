@@ -69,7 +69,6 @@ type (
 		Studio    studio
 		Inbucket  inbucket
 		Auth      auth
-		ValueFile valueFile `toml:"value_file"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -79,21 +78,25 @@ type (
 		Schemas         []string
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
+		ApiURL          string   `toml:"api_url_env_var"`
 	}
 
 	db struct {
 		Port         uint
-		MajorVersion uint `toml:"major_version"`
+		MajorVersion uint   `toml:"major_version"`
+		DbURL        string `toml:"db_url_env_var"`
 	}
 
 	studio struct {
-		Port uint
+		Port      uint
+		StudioURL string `toml:"studio_url_env_var"`
 	}
 
 	inbucket struct {
-		Port     uint
-		SmtpPort uint `toml:"smtp_port"`
-		Pop3Port uint `toml:"pop3_port"`
+		Port        uint
+		SmtpPort    uint   `toml:"smtp_port"`
+		Pop3Port    uint   `toml:"pop3_port"`
+		InbucketURL string `toml:"inbucket_url_env_var"`
 	}
 
 	auth struct {
@@ -103,6 +106,8 @@ type (
 		EnableSignup           *bool    `toml:"enable_signup"`
 		Email                  email
 		External               map[string]provider
+		AnonKey                string `toml:"anon_key_env_var"`
+		ServiceRoleKey         string `toml:"service_role_key_env_var"`
 	}
 
 	email struct {
@@ -115,16 +120,6 @@ type (
 		Enabled  bool
 		ClientId string `toml:"client_id"`
 		Secret   string
-	}
-
-	valueFile struct {
-		Path           string
-		FileType       string `toml:"type"`
-		ApiURL         string `toml:"api_url"`
-		DbURL          string `toml:"db_url"`
-		InbucketURL    string `toml:"inbucket_url"`
-		AnonKey        string `toml:"anon_key"`
-		ServiceRoleKey string `toml:"service_role_key"`
 	}
 
 	// TODO
@@ -170,6 +165,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Api.MaxRows == 0 {
 			Config.Api.MaxRows = 1000
 		}
+		if Config.Api.ApiURL == "" {
+			Config.Api.ApiURL = "API_URL"
+		}
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
@@ -187,14 +185,29 @@ func LoadConfigFS(fsys afero.Fs) error {
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
+		if Config.Db.DbURL == "" {
+			Config.Db.DbURL = "DB_URL"
+		}
 		if Config.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
+		}
+		if Config.Studio.StudioURL == "" {
+			Config.Studio.StudioURL = "STUDIO_URL"
 		}
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
+		if Config.Inbucket.InbucketURL == "" {
+			Config.Inbucket.InbucketURL = "INBUCKET_URL"
+		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
+		}
+		if Config.Auth.AnonKey == "" {
+			Config.Auth.AnonKey = "ANON_KEY"
+		}
+		if Config.Auth.ServiceRoleKey == "" {
+			Config.Auth.ServiceRoleKey = "SERVICE_ROLE_KEY"
 		}
 		if Config.Auth.JwtExpiry == 0 {
 			Config.Auth.JwtExpiry = 3600
@@ -270,11 +283,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			}
 		}
-
-		if Config.ValueFile.FileType != "env" && Config.ValueFile.FileType != "" {
-			return errors.New("Only env value files are supported at the moment")
-		}
-
 	}
 
 	return nil

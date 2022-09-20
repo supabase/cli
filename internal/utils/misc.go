@@ -386,50 +386,11 @@ func ValidateFunctionSlug(slug string) error {
 }
 
 func ShowStatus() {
-	fmt.Println(`
-         ` + Aqua("API URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Api.Port), 10) + `
-          ` + Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres
-      ` + Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Studio.Port), 10) + `
-    ` + Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + `
-        ` + Aqua("anon key") + `: ` + AnonKey + `
-` + Aqua("service_role key") + `: ` + ServiceRoleKey)
-}
-
-func SaveValues() error {
-	fmt.Println("Saving file")
-
-	if Config.ValueFile.Path == "" {
-		return errors.New("Path for value_file is required")
-	}
-
-	f, err := os.Create(Config.ValueFile.Path)
-	if err != nil {
-		return err
-	}
-
-	defer f.Close()
-
-	if api := Config.ValueFile.ApiURL; api != "" {
-		f.WriteString(api + `=http://localhost:` + strconv.FormatUint(uint64(Config.Api.Port), 10) + "\n")
-	}
-
-	if db := Config.ValueFile.DbURL; db != "" {
-		f.WriteString(db + `=postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres` + "\n")
-	}
-
-	if inbucket := Config.ValueFile.InbucketURL; inbucket != "" {
-		f.WriteString(inbucket + `=http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + "\n")
-	}
-
-	if anon := Config.ValueFile.AnonKey; anon != "" {
-		f.WriteString(anon + "=" + AnonKey + "\n")
-	}
-
-	if serviceRole := Config.ValueFile.ServiceRoleKey; serviceRole != "" {
-		f.WriteString(serviceRole + "=" + ServiceRoleKey + "\n")
-	}
-
-	f.Sync()
-
-	return nil
+	fmt.Fprint(os.Stdout,
+		Config.Api.ApiURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Api.Port), 10)+"\n"+
+			Config.Db.DbURL+`=postgresql://postgres:postgres@localhost:`+strconv.FormatUint(uint64(Config.Db.Port), 10)+"/postgres\n"+
+			Config.Studio.StudioURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Studio.Port), 10)+"\n"+
+			Config.Inbucket.InbucketURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Inbucket.Port), 10)+"\n"+
+			Config.Auth.AnonKey+`=`+AnonKey+"\n"+
+			Config.Auth.ServiceRoleKey+`=`+ServiceRoleKey)
 }

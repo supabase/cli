@@ -13,6 +13,7 @@ extra_search_path = ["extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
+api_url_env_var="NEXT_PUBLIC_SUPABASE_URL"
 
 [db]
 # Port to use for the local database URL.
@@ -44,6 +45,8 @@ additional_redirect_urls = ["https://localhost:3000"]
 jwt_expiry = 3601
 # Allow/disallow new user signups to your project.
 enable_signup = true
+service_role_key_env_var = "SUPABASE_SERVICE_ROLE_KEY"
+anon_key_env_var = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
@@ -60,10 +63,3 @@ enable_confirmations = false
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"
 secret = "env(AZURE_SECRET)"
-
-[value_file]
-path = "./.env.local"
-type = "env"
-anon_key = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
-service_role_key = "SUPABASE_SERVICE_ROLE_KEY"
-api_url = "NEXT_PUBLIC_SUPABASE_URL"
