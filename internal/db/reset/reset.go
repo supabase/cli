@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -16,6 +17,10 @@ import (
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
+)
+
+var (
+	healthTimeout = 5 * time.Second
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -158,5 +163,21 @@ func RestartDatabase(ctx context.Context) {
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
+		return
 	}
+	// Poll for healthy database
+	now := time.Now()
+	expiry := now.Add(healthTimeout)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for t := now; t.Before(expiry); t = <-ticker.C {
+		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil && resp.State.Health.Status == "healthy" {
+			// TODO: update storage-api to handle postgres restarts
+			if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
+			}
+			return
+		}
+	}
+	fmt.Fprintln(os.Stderr, "Database is not healthy.")
 }

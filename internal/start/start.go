@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -255,6 +256,12 @@ func run(p utils.Program, ctx context.Context) error {
 				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "pg_isready", "-h", "localhost", "-p", "5432"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,

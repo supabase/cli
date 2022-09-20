@@ -45,7 +45,7 @@ func TestSwitchCommand(t *testing.T) {
 			JSON(types.ContainerJSON{})
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers").
-			Reply(http.StatusOK)
+			Reply(http.StatusServiceUnavailable)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -289,7 +289,7 @@ func TestSwitchDatabase(t *testing.T) {
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
-			Reply(http.StatusOK)
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
 		// Check error
@@ -325,7 +325,7 @@ func TestSwitchDatabase(t *testing.T) {
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
 			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
-			Reply(http.StatusOK)
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
 		// Check error
