@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -258,6 +260,12 @@ func run(p utils.Program, ctx context.Context) error {
 				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "pg_isready", "-u", "postgres", "-h", "localhost", "-p", "5432"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,
@@ -273,7 +281,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
+			"sh", "-c", "until pg_isready --username postgres --host $(hostname --ip-address); do sleep 0.1; done " +
 				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
 BEGIN;
 ` + utils.GlobalsSql + `
@@ -495,6 +503,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
+			defer reset.RestartDatabase(context.Background())
 			var errBuf bytes.Buffer
 			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err

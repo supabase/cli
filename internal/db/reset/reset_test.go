@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
@@ -210,5 +211,62 @@ func TestActivateDatabase(t *testing.T) {
 			ReplyError(pgerrcode.DuplicateDatabase, `database "postgres" already exists`)
 		// Run test
 		assert.Error(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
+	})
+}
+
+func TestRestartDatabase(t *testing.T) {
+	const version = "1.41"
+
+	t.Run("restarts storage api", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		// Setup mock docker
+		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		defer gock.OffAll()
+		gock.New("http:///var/run/docker.sock").
+			Head("/_ping").
+			Reply(http.StatusOK).
+			SetHeader("API-Version", version).
+			SetHeader("OSType", "linux")
+		gock.New("http:///var/run/docker.sock").
+			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		gock.New("http:///var/run/docker.sock").
+			Get("/v" + version + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Health: &types.Health{
+						Status: "healthy",
+					},
+				},
+			}})
+		utils.StorageId = "test-storage"
+		gock.New("http:///var/run/docker.sock").
+			Post("/v" + version + "/containers/" + utils.StorageId + "/restart").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		RestartDatabase(context.Background())
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("timeout health check", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		healthTimeout = 0 * time.Second
+		// Setup mock docker
+		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		defer gock.OffAll()
+		gock.New("http:///var/run/docker.sock").
+			Head("/_ping").
+			Reply(http.StatusOK).
+			SetHeader("API-Version", version).
+			SetHeader("OSType", "linux")
+		gock.New("http:///var/run/docker.sock").
+			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		// Run test
+		RestartDatabase(context.Background())
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
