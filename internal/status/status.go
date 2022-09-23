@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/afero"
@@ -34,17 +35,21 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		utils.PgmetaId,
 		utils.StudioId,
 	}
+	return showServiceHealth(ctx, services, os.Stderr)
+}
+
+func showServiceHealth(ctx context.Context, services []string, stderr io.Writer) error {
 	for _, name := range services {
 		resp, err := utils.Docker.ContainerInspect(ctx, name)
 		if err != nil {
 			return fmt.Errorf("container %s not found. Have your run %s?", name, utils.Aqua("supabase start"))
 		}
 		if !resp.State.Running {
-			fmt.Fprintln(os.Stderr, name, "container is not running:", resp.State.Status)
+			fmt.Fprintln(stderr, name, "container is not running:", resp.State.Status)
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, utils.Aqua("supabase"), "local development setup is running.")
+	fmt.Fprintln(stderr, utils.Aqua("supabase"), "local development setup is running.")
 	utils.ShowStatus()
 	return nil
 }
