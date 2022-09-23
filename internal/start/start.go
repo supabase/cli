@@ -257,7 +257,7 @@ func run(p utils.Program, ctx context.Context) error {
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "pg_isready", "-u", "postgres", "-h", "localhost", "-p", "5432"},
+					Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
