@@ -42,6 +42,8 @@ func TestMain(m *testing.M) {
 		Logger.Fatal(err)
 	}
 	viper.Set("INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
+	os.Setenv("SUPABASE_ACCESS_TOKEN", supabase.AccessToken)
+	os.Setenv("HOME", TempDir)
 
 	// run tests
 	exitVal := m.Run()
