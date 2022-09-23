@@ -81,8 +81,9 @@ func TestStatusCommand(t *testing.T) {
 			Get("/v" + version + "/containers").
 			Reply(http.StatusNotFound)
 		// Run test
-		Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys)
 		// Check error
+		assert.ErrorContains(t, err, "container not found. Have your run supabase start?")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
