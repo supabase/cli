@@ -20,7 +20,6 @@ jobs:
 
       - run: |
           if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          mkdir  /home/runner/.supabase && chown -R runner /home/runner/.supabase
           go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
           go tool cover -func coverage.out | grep total
 
