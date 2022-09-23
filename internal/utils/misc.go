@@ -391,6 +391,7 @@ func ShowStatus() {
           ` + Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres
       ` + Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Studio.Port), 10) + `
     ` + Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + `
+      ` + Aqua("JWT secret") + `: ` + JWTSecret + `
         ` + Aqua("anon key") + `: ` + AnonKey + `
 ` + Aqua("service_role key") + `: ` + ServiceRoleKey)
 }
