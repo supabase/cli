@@ -393,4 +393,5 @@ func ShowStatus() {
 			Config.Inbucket.InbucketURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Inbucket.Port), 10)+"\n"+
 			Config.Auth.AnonKey+`=`+AnonKey+"\n"+
 			Config.Auth.ServiceRoleKey+`=`+ServiceRoleKey)
+
 }

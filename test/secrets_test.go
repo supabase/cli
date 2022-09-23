@@ -38,8 +38,6 @@ func (suite *SecretsTestSuite) TestList() {
 	list.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 
-	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)
-	os.Setenv("SUPABASE_ACCESS_TOKEN", key)
 	ref := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
 	require.NoError(suite.T(), ioutil.WriteFile(utils.ProjectRefPath, []byte(ref), os.FileMode(0755)))
 
@@ -58,7 +56,7 @@ func (suite *SecretsTestSuite) TestList() {
 	defer suite.mtx.RUnlock()
 	require.Contains(suite.T(), suite.ids, ref)
 	require.Contains(suite.T(), suite.headers, http.Header{
-		"Authorization":   []string{fmt.Sprintf("Bearer %s", key)},
+		"Authorization":   []string{fmt.Sprintf("Bearer %s", supabase.AccessToken)},
 		"Accept-Encoding": []string{"gzip"},
 		"User-Agent":      []string{"Go-http-client/1.1"},
 	})
