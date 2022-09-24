@@ -6,6 +6,15 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	// Default max capacity is 64 * 1024 which is not enough for certain lines
+	// containing e.g. geographical data.
+	// 256K ought to be enough for anybody...
+	maxScannerCapacity = 256 * 1024
+	// Equal to `startBufSize` from `bufio/scan.go`
+	startBufSize = 4096
+)
+
 // State transition table for tokenizer:
 //
 //   Ready -> Ready (default)
@@ -70,6 +79,11 @@ func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byt
 func Split(sql io.Reader) (stats []string, err error) {
 	t := tokenizer{state: &ReadyState{}}
 	scanner := bufio.NewScanner(sql)
+
+	// Increase scanner capacity to support very long lines containing e.g. geodata
+	buf := make([]byte, startBufSize)
+	scanner.Buffer(buf, maxScannerCapacity)
+
 	scanner.Split(t.ScanToken)
 	for scanner.Scan() {
 		token := scanner.Text()
