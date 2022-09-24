@@ -67,7 +67,7 @@ func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byt
 // token can be parsed as statement separator.
 //
 // Each statement is split as it is, without removing comments or white spaces.
-func Split(sql io.Reader) (stats []string) {
+func Split(sql io.Reader) (stats []string, err error) {
 	t := tokenizer{state: &ReadyState{}}
 	scanner := bufio.NewScanner(sql)
 	scanner.Split(t.ScanToken)
@@ -75,5 +75,5 @@ func Split(sql io.Reader) (stats []string) {
 		token := scanner.Text()
 		stats = append(stats, token)
 	}
-	return stats
+	return stats, scanner.Err()
 }
