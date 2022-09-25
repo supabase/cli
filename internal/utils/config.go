@@ -114,6 +114,7 @@ type (
 		Enabled  bool
 		ClientId string `toml:"client_id"`
 		Secret   string
+		Url      string
 	}
 
 	// TODO
@@ -231,7 +232,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return value, nil
 				}
 
-				var clientId, secret string
+				var clientId, secret, url string
 
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
@@ -252,10 +253,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 					secret = v
 				}
 
+				if Config.Auth.External[ext].Url != "" {
+
+					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
+					if err != nil {
+						return err
+					}
+					url = v
+				}
+
 				Config.Auth.External[ext] = provider{
 					Enabled:  true,
 					ClientId: clientId,
 					Secret:   secret,
+					Url:      url,
 				}
 			}
 		}
