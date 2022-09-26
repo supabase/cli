@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -190,5 +191,17 @@ func GetSupabaseDashboardURL() string {
 		return "https://app.supabase.green"
 	default:
 		return "http://localhost:8082"
+	}
+}
+
+func GetSupabaseDbHost(projectRef string) string {
+	// TODO: query projects api for db_host
+	switch GetSupabaseAPIHost() {
+	case "https://api.supabase.com", "https://api.supabase.io":
+		return fmt.Sprintf("db.%s.supabase.co", projectRef)
+	case "https://api.supabase.green":
+		return fmt.Sprintf("db.%s.supabase.red", projectRef)
+	default:
+		return "http://localhost:5432"
 	}
 }
