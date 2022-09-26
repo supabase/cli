@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -460,7 +461,7 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	}
 	// Fallback to postgres when pgbouncer is unavailable
 	config.Port = 5432
-	fmt.Println("Retrying...", config.Host, config.Port)
+	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
 	return pgx.ConnectConfig(ctx, config)
 }
 
