@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
@@ -431,10 +433,10 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	// Build connection string
 	pgUrl := fmt.Sprintf(
 		// Use port 6543 for connection pooling
-		"postgresql://%s:%s@db.%s.supabase.co:6543/%s",
+		"postgresql://%s:%s@%s:6543/%s?connect_timeout=3",
 		url.QueryEscape(username),
 		url.QueryEscape(password),
-		url.QueryEscape(host),
+		utils.GetSupabaseDbHost(url.QueryEscape(host)),
 		url.QueryEscape(database),
 	)
 	// Parse connection url
@@ -453,6 +455,13 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	if viper.GetBool("DEBUG") {
 		debug.SetupPGX(config)
 	}
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if !pgconn.Timeout(err) {
+		return conn, err
+	}
+	// Fallback to postgres when pgbouncer is unavailable
+	config.Port = 5432
+	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
 	return pgx.ConnectConfig(ctx, config)
 }
 
