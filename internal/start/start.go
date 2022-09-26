@@ -535,6 +535,7 @@ EOSQL
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
+					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 				},

@@ -254,7 +254,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 
 				if Config.Auth.External[ext].Url != "" {
-
 					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
 					if err != nil {
 						return err
