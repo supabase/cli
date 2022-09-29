@@ -276,6 +276,9 @@ func run(p utils.Program, ctx context.Context) error {
 			return err
 		}
 
+		if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
+			fmt.Fprintln(os.Stderr, "Database is not healthy.")
+		}
 		out, err := utils.DockerExec(ctx, utils.DbId, []string{
 			"sh", "-c", "until pg_isready --username postgres --host $(hostname --ip-address); do sleep 0.1; done " +
 				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
