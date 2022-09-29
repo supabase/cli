@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -169,6 +170,21 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/" + imageName
 }
 
+func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {
+	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+	for i := time.Duration(1); retries > 0; retries-- {
+		if err == nil {
+			break
+		}
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Retrying after %d seconds...\n", i)
+		time.Sleep(i * time.Second)
+		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+		i *= 2
+	}
+	return out, err
+}
+
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
@@ -176,7 +192,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	} else if !client.IsErrNotFound(err) {
 		return err
 	}
-	out, err := Docker.ImagePull(ctx, imageUrl, types.ImagePullOptions{})
+	out, err := DockerImagePullWithRetry(ctx, imageUrl, 2)
 	if err != nil {
 		return err
 	}
