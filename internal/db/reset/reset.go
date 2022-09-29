@@ -98,7 +98,11 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 	defer conn.Close(ctx)
 	// Batch seed commands, safe to use statement cache
 	batch := pgx.Batch{}
-	for _, line := range parser.Split(sql) {
+	lines, err := parser.Split(sql)
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
 		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
 		if len(trim) > 0 {
 			batch.Queue(trim)

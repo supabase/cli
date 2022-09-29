@@ -533,6 +533,11 @@ EOSQL
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
+					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
+					// sizeable response headers azure can generate
+					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
+					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
+					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 				},
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
 ` + kongConfigBuf.String() + `
@@ -599,6 +604,12 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 			)
+
+			if config.Url != "" {
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url),
+				)
+			}
 		}
 
 		if _, err := utils.DockerRun(

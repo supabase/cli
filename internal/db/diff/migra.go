@@ -128,7 +128,11 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 			defer sql.Close()
 			// Batch migration commands, without using statement cache
 			batch := pgconn.Batch{}
-			for _, line := range parser.Split(sql) {
+			lines, err := parser.Split(sql)
+			if err != nil {
+				return err
+			}
+			for _, line := range lines {
 				trim := strings.TrimSpace(strings.TrimRight(line, ";"))
 				if len(trim) > 0 {
 					batch.ExecParams(trim, nil, nil, nil, nil)
