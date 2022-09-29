@@ -279,25 +279,10 @@ func run(p utils.Program, ctx context.Context) error {
 		if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
 			fmt.Fprintln(os.Stderr, "Database is not healthy.")
 		}
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "until pg_isready --username postgres --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
-BEGIN;
-` + utils.GlobalsSql + `
-COMMIT;
-EOSQL
-`,
-		})
-		if err != nil {
+		env := []string{"SCHEMA=" + utils.GlobalsSql}
+		global := []string{"/bin/bash", "-c", "psql --username postgres --host 127.0.0.1 -c $SCHEMA"}
+		if _, err := utils.DockerExecOnce(ctx, utils.DbId, env, global); err != nil {
 			return err
-		}
-
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error starting database: " + errBuf.String())
 		}
 	}
 
