@@ -99,6 +99,17 @@ func TestPullImage(t *testing.T) {
 		gock.New("http:///var/run/docker.sock").
 			Get("/v" + version + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
+		// Total 3 tries
+		gock.New("http:///var/run/docker.sock").
+			Post("/v"+version+"/images/create").
+			MatchParam("fromImage", imageId).
+			MatchParam("tag", "latest").
+			Reply(http.StatusServiceUnavailable)
+		gock.New("http:///var/run/docker.sock").
+			Post("/v"+version+"/images/create").
+			MatchParam("fromImage", imageId).
+			MatchParam("tag", "latest").
+			Reply(http.StatusServiceUnavailable)
 		gock.New("http:///var/run/docker.sock").
 			Post("/v"+version+"/images/create").
 			MatchParam("fromImage", imageId).
