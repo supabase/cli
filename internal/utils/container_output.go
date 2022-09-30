@@ -143,7 +143,7 @@ func filterDiffOutput(diffBytes []byte) ([]byte, error) {
 		}
 
 		switch diffEntry.Type {
-		case "function", "mview", "table", "trigger_function", "type", "view":
+		case "extension", "function", "mview", "table", "trigger_function", "type", "view":
 			// skip
 		default:
 			continue

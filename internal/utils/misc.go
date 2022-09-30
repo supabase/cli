@@ -24,7 +24,7 @@ import (
 // Update tools/listdep/main.go when adding new docker images
 const (
 	Pg13Image      = "supabase/postgres:13.3.0"
-	Pg14Image      = "supabase/postgres:14.1.0.66"
+	Pg14Image      = "supabase/postgres:14.1.0.71"
 	KongImage      = "library/kong:2.8.1"
 	InbucketImage  = "inbucket/inbucket:3.0.3"
 	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
