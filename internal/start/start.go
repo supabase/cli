@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -61,8 +63,7 @@ func Run(ctx context.Context) error {
 		return errors.New("Aborted " + utils.Aqua("supabase start") + ".")
 	}
 	if err := <-errCh; err != nil {
-		utils.DockerRemoveAll()
-		_ = utils.Docker.NetworkRemove(context.Background(), utils.NetId)
+		utils.DockerRemoveAll(context.Background(), utils.NetId)
 		return err
 	}
 
@@ -116,7 +117,7 @@ func run(p utils.Program, ctx context.Context) error {
 	{
 		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -126,7 +127,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, kongImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -136,7 +137,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, gotrueImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -146,7 +147,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, inbucketImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -156,7 +157,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, realtimeImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -166,7 +167,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, restImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -176,7 +177,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, storageImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -186,7 +187,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -196,7 +197,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, metaImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -206,7 +207,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, studioImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -216,7 +217,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, denoImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -232,7 +233,20 @@ func run(p utils.Program, ctx context.Context) error {
 	{
 		cmd := []string{}
 		if utils.Config.Db.MajorVersion >= 14 {
-			cmd = []string{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"}
+			cmd = []string{"postgres",
+				"-c", "config_file=/etc/postgresql/postgresql.conf",
+				// One log file per hour, 24 hours retention
+				"-c", "log_destination=csvlog",
+				"-c", "logging_collector=on",
+				"-c", "log_directory=/var/log/postgresql",
+				"-c", "log_filename=server_%H00_UTC.log",
+				"-c", "log_file_mode=0640",
+				"-c", "log_rotation_age=60",
+				"-c", "log_rotation_size=0",
+				"-c", "log_truncate_on_rotation=on",
+				// Ref: https://postgrespro.com/list/thread-id/2448092
+				"-c", `search_path="$user",public,extensions`,
+			}
 		}
 
 		if _, err := utils.DockerRun(
@@ -242,6 +256,12 @@ func run(p utils.Program, ctx context.Context) error {
 				Image: utils.GetRegistryImageUrl(utils.DbImage),
 				Env:   []string{"POSTGRES_PASSWORD=postgres"},
 				Cmd:   cmd,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
 					"com.docker.compose.project": utils.Config.ProjectId,
@@ -250,31 +270,19 @@ func run(p utils.Program, ctx context.Context) error {
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
 		}
 
-		out, err := utils.DockerExec(ctx, utils.DbId, []string{
-			"sh", "-c", "until pg_isready --host $(hostname --ip-address); do sleep 0.1; done " +
-				`&& psql --username postgres --host 127.0.0.1 <<'EOSQL'
-BEGIN;
-` + utils.GlobalsSql + `
-COMMIT;
-EOSQL
-`,
-		})
-		if err != nil {
-			return err
+		if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
+			fmt.Fprintln(os.Stderr, "Database is not healthy.")
 		}
-
-		var errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
+		env := []string{"SCHEMA=" + utils.GlobalsSql}
+		global := []string{"/bin/bash", "-c", `psql --username postgres --host 127.0.0.1 -c "$SCHEMA"`}
+		if _, err := utils.DockerExecOnce(ctx, utils.DbId, env, global); err != nil {
 			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New("Error starting database: " + errBuf.String())
 		}
 	}
 
@@ -479,6 +487,7 @@ EOSQL
 			if err != nil {
 				return err
 			}
+			defer reset.RestartDatabase(context.Background())
 			var errBuf bytes.Buffer
 			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
 				return err
@@ -494,7 +503,11 @@ EOSQL
 	// Start Kong.
 	{
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId string }{ProjectId: utils.Config.ProjectId}); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
+			ProjectId:      utils.Config.ProjectId,
+			AnonKey:        utils.AnonKey,
+			ServiceRoleKey: utils.ServiceRoleKey,
+		}); err != nil {
 			return err
 		}
 
@@ -508,6 +521,11 @@ EOSQL
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors,key-auth",
+					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
+					// sizeable response headers azure can generate
+					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
+					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
+					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 				},
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
 ` + kongConfigBuf.String() + `
@@ -521,7 +539,7 @@ EOF
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
@@ -547,7 +565,7 @@ EOF
 			"GOTRUE_JWT_AUD=authenticated",
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+			"GOTRUE_JWT_SECRET=" + utils.JWTSecret,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -574,6 +592,12 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 			)
+
+			if config.Url != "" {
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url),
+				)
+			}
 		}
 
 		if _, err := utils.DockerRun(
@@ -589,7 +613,7 @@ EOF
 			},
 			&container.HostConfig{
 				NetworkMode:   container.NetworkMode(utils.NetId),
-				RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 		); err != nil {
 			return err
@@ -618,7 +642,7 @@ EOF
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
 			PortBindings:  inbucketPortBindings,
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -640,7 +664,7 @@ EOF
 				"DB_SSL=false",
 				"SLOT_NAME=supabase_realtime",
 				"TEMPORARY_SLOT=true",
-				"JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"JWT_SECRET=" + utils.JWTSecret,
 				"SECURE_CHANNELS=true",
 				"REPLICATION_MODE=RLS",
 				"REPLICATION_POLL_INTERVAL=100",
@@ -652,7 +676,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		}); err != nil {
 		return err
 	}
@@ -668,7 +692,7 @@ EOF
 				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
 				"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
 				"PGRST_DB_ANON_ROLE=anon",
-				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -677,7 +701,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -690,10 +714,10 @@ EOF
 		&container.Config{
 			Image: utils.GetRegistryImageUrl(utils.StorageImage),
 			Env: []string{
-				"ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"ANON_KEY=" + utils.AnonKey,
+				"SERVICE_KEY=" + utils.ServiceRoleKey,
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
-				"PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long",
+				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
 				"FILE_SIZE_LIMIT=52428800",
 				"STORAGE_BACKEND=file",
@@ -710,7 +734,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -730,7 +754,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -753,7 +777,7 @@ EOF
 		},
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -771,8 +795,8 @@ EOF
 
 				"SUPABASE_URL=http://" + utils.KongId + ":8000",
 				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-				"SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs",
-				"SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU",
+				"SUPABASE_ANON_KEY=" + utils.AnonKey,
+				"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
 			},
 			Labels: map[string]string{
 				"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -782,7 +806,7 @@ EOF
 		&container.HostConfig{
 			NetworkMode:   container.NetworkMode(utils.NetId),
 			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
-			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
 	); err != nil {
 		return err
@@ -813,7 +837,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			m.cancel()
 			// Stop current runs
-			utils.DockerRemoveAll()
+			utils.DockerRemoveAll(context.Background(), utils.NetId)
 			return m, tea.Quit
 		default:
 			return m, nil

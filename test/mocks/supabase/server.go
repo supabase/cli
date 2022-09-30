@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 const (
@@ -12,6 +13,8 @@ const (
 	KeyAlphabet = "abcdef0123456789"
 	KeyLength   = 40
 )
+
+var AccessToken = "sbp_" + gonanoid.MustGenerate(KeyAlphabet, KeyLength)
 
 // Server struct with route handlers
 type Server struct {

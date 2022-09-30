@@ -24,20 +24,20 @@ import (
 // Update tools/listdep/main.go when adding new docker images
 const (
 	Pg13Image      = "supabase/postgres:13.3.0"
-	Pg14Image      = "supabase/postgres:14.1.0.34"
+	Pg14Image      = "supabase/postgres:14.1.0.71"
 	KongImage      = "library/kong:2.8.1"
 	InbucketImage  = "inbucket/inbucket:3.0.3"
 	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage     = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage    = "supabase/postgres-meta:v0.42.2"
+	PgmetaImage    = "supabase/postgres-meta:v0.45.0"
 	StudioImage    = "supabase/studio:v0.1.0"
 	DenoRelayImage = "supabase/deno-relay:v1.2.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.10.3"
+	GotrueImage   = "supabase/gotrue:v2.15.3"
 	RealtimeImage = "supabase/realtime:v0.22.7"
-	StorageImage  = "supabase/storage-api:v0.18.7"
+	StorageImage  = "supabase/storage-api:v0.20.1"
 )
 
 const (
@@ -53,12 +53,14 @@ DO 'BEGIN WHILE (
 ) > 0 LOOP END LOOP; END';`
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
+	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 
 	ConfigPath     = "supabase/config.toml"
 	ProjectRefPath = "supabase/.temp/project-ref"
 	RemoteDbPath   = "supabase/.temp/remote-db-url"
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
+	FunctionsDir   = "supabase/functions"
 	SeedDataPath   = "supabase/seed.sql"
 )
 
@@ -75,9 +77,15 @@ var (
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?:\/\/postgres:(.*)@(.+)\/postgres$`)
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
+	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{"auth", "extensions", "graphql_public", "pgbouncer", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+)
+
+// Used by unit tests
+var (
+	DenoPathOverride string
 )
 
 func GetCurrentTimestamp() string {
@@ -239,34 +247,40 @@ func LoadProjectRef(fsys afero.Fs) (string, error) {
 	return projectRef, nil
 }
 
-func InstallOrUpgradeDeno() error {
+func GetDenoPath() (string, error) {
+	if len(DenoPathOverride) > 0 {
+		return DenoPathOverride, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
-	}
-	if err := MkdirIfNotExist(filepath.Join(home, ".supabase")); err != nil {
-		return err
+		return "", err
 	}
 	denoBinName := "deno"
 	if runtime.GOOS == "windows" {
 		denoBinName = "deno.exe"
 	}
 	denoPath := filepath.Join(home, ".supabase", denoBinName)
+	return denoPath, nil
+}
 
-	if _, err := os.Stat(denoPath); err == nil {
+func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
+	denoPath, err := GetDenoPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-
-		cmd := exec.Command(denoPath, "upgrade", "--version", "1.20.3")
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-
-		return nil
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.20.3")
+		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
 	// Install Deno.
+	if err := MkdirIfNotExistFS(fsys, filepath.Dir(denoPath)); err != nil {
+		return err
+	}
 
 	// 1. Determine OS triple
 	var assetFilename string
@@ -291,7 +305,11 @@ func InstallOrUpgradeDeno() error {
 
 	// 2. Download & install Deno binary.
 	{
-		resp, err := http.Get(assetsUrl + assetFilename)
+		req, err := http.NewRequestWithContext(ctx, "GET", assetsUrl+assetFilename, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -322,7 +340,7 @@ func InstallOrUpgradeDeno() error {
 			return err
 		}
 
-		if err := os.WriteFile(denoPath, denoBytes, 0755); err != nil {
+		if err := afero.WriteFile(fsys, denoPath, denoBytes, 0755); err != nil {
 			return err
 		}
 	}
@@ -360,11 +378,7 @@ func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 }
 
 func ValidateFunctionSlug(slug string) error {
-	matched, err := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_-]*$`, slug)
-	if err != nil {
-		return err
-	}
-	if !matched {
+	if !FuncSlugPattern.MatchString(slug) {
 		return errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	}
 
@@ -377,6 +391,7 @@ func ShowStatus() {
           ` + Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres
       ` + Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Studio.Port), 10) + `
     ` + Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + `
+      ` + Aqua("JWT secret") + `: ` + JWTSecret + `
         ` + Aqua("anon key") + `: ` + AnonKey + `
 ` + Aqua("service_role key") + `: ` + ServiceRoleKey)
 }

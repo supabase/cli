@@ -60,3 +60,6 @@ enable_confirmations = false
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"
 secret = "env(AZURE_SECRET)"
+# Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
+# or any other third-party OIDC providers.
+url = "https://login.microsoftonline.com/tenant"

@@ -73,11 +73,6 @@ async function parsePackageJson() {
   url = url.replace(/{{version}}/g, version);
   url = url.replace(/{{bin_name}}/g, binName);
 
-  // Binary name on Windows has .exe suffix
-  if (process.platform === "win32") {
-    binName += ".exe";
-  }
-
   return { binName, binPath, url, version };
 }
 
@@ -93,10 +88,11 @@ async function main() {
   const opts = await parsePackageJson();
   await fs.promises.mkdir(opts.binPath, { recursive: true });
 
-  // First we will Un-GZip, then we will untar. So once untar is completed,
-  // binary is downloaded into `downloadPath`. Verify the binary and call it good
+  // First we will Un-GZip, then we will untar.
   const ungz = zlib.createGunzip();
-  const untar = tar.x({ cwd: opts.binPath }, [opts.binName]);
+  // Binary name on Windows has .exe suffix
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const untar = tar.x({ cwd: opts.binPath }, [opts.binName + ext]);
 
   console.info("Downloading", opts.url);
   const resp = await fetch(opts.url);
@@ -105,6 +101,12 @@ async function main() {
     untar.on("error", reject);
     untar.on("end", () => resolve());
   });
+
+  // Creates a hardlink for npm to find the binary on Windows
+  if (ext) {
+    const bin = path.join(opts.binPath, opts.binName);
+    await fs.promises.link(bin + ext, bin);
+  }
 
   // TODO: verify checksums
   console.info("Installed Supabase CLI successfully");

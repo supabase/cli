@@ -34,7 +34,8 @@ func TestSplit(t *testing.T) {
 
 	sql, err := os.Open(filepath.Join(testdata, "all.sql"))
 	require.NoError(t, err)
-	stats := Split(sql)
+	stats, err := Split(sql)
+	require.NoError(t, err)
 
 	assert.ElementsMatch(t, fixture, stats[:len(fixture)])
 }

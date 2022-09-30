@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -16,6 +17,10 @@ import (
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
+)
+
+var (
+	healthTimeout = 5 * time.Second
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -93,7 +98,11 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 	defer conn.Close(ctx)
 	// Batch seed commands, safe to use statement cache
 	batch := pgx.Batch{}
-	for _, line := range parser.Split(sql) {
+	lines, err := parser.Split(sql)
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
 		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
 		if len(trim) > 0 {
 			batch.Queue(trim)
@@ -122,6 +131,22 @@ func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.C
 		return err
 	}
 	defer conn.Close(ctx)
+	if err := DisconnectClients(ctx, conn); err != nil {
+		return err
+	}
+	defer RestartDatabase(context.Background())
+	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
+	if _, err := conn.Exec(ctx, drop); err != nil {
+		return err
+	}
+	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
+	if _, err := conn.Exec(ctx, swap); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	// Must be executed separately because running in transaction is unsupported
 	disconn := "ALTER DATABASE postgres ALLOW_CONNECTIONS false;"
 	if _, err := conn.Exec(ctx, disconn); err != nil {
@@ -134,13 +159,36 @@ func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.C
 	if _, err := conn.Exec(ctx, term); err != nil {
 		return err
 	}
-	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
-	if _, err := conn.Exec(ctx, drop); err != nil {
-		return err
-	}
-	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
-	if _, err := conn.Exec(ctx, swap); err != nil {
-		return err
-	}
 	return nil
+}
+
+func RestartDatabase(ctx context.Context) {
+	// Some extensions must be manually restarted after pg_terminate_backend
+	// Ref: https://github.com/citusdata/pg_cron/issues/99
+	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
+		return
+	}
+	if !WaitForHealthyDatabase(ctx, healthTimeout) {
+		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+		return
+	}
+	// TODO: update storage-api to handle postgres restarts
+	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
+	}
+}
+
+func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
+	// Poll for container health status
+	now := time.Now()
+	expiry := now.Add(timeout)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for t := now; t.Before(expiry); t = <-ticker.C {
+		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil && resp.State.Health.Status == "healthy" {
+			return true
+		}
+	}
+	return false
 }

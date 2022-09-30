@@ -58,6 +58,38 @@ CREATE SCHEMA graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
+--
+
+CREATE SCHEMA pgbouncer;
+
+
+ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
+
+--
+-- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA pgsodium;
+
+
+ALTER SCHEMA pgsodium OWNER TO postgres;
+
+--
+-- Name: pgsodium; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgsodium WITH SCHEMA pgsodium;
+
+
+--
+-- Name: EXTENSION pgsodium; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pgsodium IS 'Pgsodium is a modern cryptography library for Postgres.';
+
+
+--
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -74,6 +106,20 @@ CREATE SCHEMA storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
+
+--
+-- Name: pg_stat_statements; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
+
+
+--
+-- Name: EXTENSION pg_stat_statements; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pg_stat_statements IS 'track planning and execution statistics of all SQL statements executed';
+
 
 --
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
@@ -362,6 +408,7 @@ BEGIN
 
     IF func_is_graphql_resolve
     THEN
+        DROP FUNCTION IF EXISTS graphql_public.graphql;
 
         -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
         create or replace function graphql_public.graphql(
@@ -595,6 +642,25 @@ ALTER FUNCTION extensions.set_graphql_placeholder() OWNER TO supabase_admin;
 
 COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
 
+
+--
+-- Name: get_auth(text); Type: FUNCTION; Schema: pgbouncer; Owner: postgres
+--
+
+CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, password text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+    RAISE WARNING 'PgBouncer auth request: %', p_usename;
+
+    RETURN QUERY
+    SELECT usename::TEXT, passwd::TEXT FROM pg_catalog.pg_shadow
+    WHERE usename = p_usename;
+END;
+$$;
+
+
+ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO postgres;
 
 --
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
@@ -1366,7 +1432,8 @@ CREATE TABLE auth.refresh_tokens (
     revoked boolean,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    parent character varying(255)
+    parent character varying(255),
+    session_id uuid
 );
 
 
@@ -1416,6 +1483,27 @@ ALTER TABLE auth.schema_migrations OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.schema_migrations IS 'Auth: Manages updates to the auth system.';
+
+
+--
+-- Name: sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE auth.sessions (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone
+);
+
+
+ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a user.';
 
 
 --
@@ -1618,6 +1706,13 @@ INSERT INTO auth.schema_migrations VALUES ('20220323170000');
 INSERT INTO auth.schema_migrations VALUES ('20220429102000');
 INSERT INTO auth.schema_migrations VALUES ('20220531120530');
 INSERT INTO auth.schema_migrations VALUES ('20220614074223');
+INSERT INTO auth.schema_migrations VALUES ('20220811173540');
+
+
+--
+-- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
 
 
 --
@@ -1748,6 +1843,14 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 ALTER TABLE ONLY auth.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1976,6 +2079,22 @@ ALTER TABLE ONLY auth.identities
 
 ALTER TABLE ONLY auth.refresh_tokens
     ADD CONSTRAINT refresh_tokens_parent_fkey FOREIGN KEY (parent) REFERENCES auth.refresh_tokens(token);
+
+
+--
+-- Name: refresh_tokens refresh_tokens_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.refresh_tokens
+    ADD CONSTRAINT refresh_tokens_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
 
 --
@@ -2249,6 +2368,27 @@ GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO dashboard_user;
 --
 
 GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric); Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone); Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements_reset(userid oid, dbid oid, queryid bigint); Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint) TO dashboard_user;
 
 
 --
@@ -2546,14 +2686,29 @@ GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jso
 GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO service_role;
 
 
--- --
--- -- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
--- --
+--
+-- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
+--
 
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
 -- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION get_auth(p_usename text); Type: ACL; Schema: pgbouncer; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION pgbouncer.get_auth(p_usename text) FROM PUBLIC;
+GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
+
+
+--
+-- Name: SEQUENCE key_key_id_seq; Type: ACL; Schema: pgsodium; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE pgsodium.key_key_id_seq TO pgsodium_keyiduser;
 
 
 --
@@ -2702,11 +2857,33 @@ GRANT ALL ON TABLE auth.schema_migrations TO postgres;
 
 
 --
+-- Name: TABLE sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sessions TO postgres;
+GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+
+
+--
 -- Name: TABLE users; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
 GRANT ALL ON TABLE auth.users TO dashboard_user;
 GRANT ALL ON TABLE auth.users TO postgres;
+
+
+--
+-- Name: TABLE pg_stat_statements; Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON TABLE extensions.pg_stat_statements TO dashboard_user;
+
+
+--
+-- Name: TABLE pg_stat_statements_info; Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 
 
 --
@@ -2727,6 +2904,13 @@ GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
+
+
+--
+-- Name: TABLE valid_key; Type: ACL; Schema: pgsodium; Owner: postgres
+--
+
+GRANT ALL ON TABLE pgsodium.valid_key TO pgsodium_keyiduser;
 
 
 --
@@ -2865,6 +3049,20 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyiduser;
 
 
 --

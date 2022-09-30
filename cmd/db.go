@@ -64,7 +64,8 @@ var (
 		Short: "Switch the active branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return switch_.Run(args[0])
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return switch_.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
 

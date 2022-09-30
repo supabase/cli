@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
@@ -99,6 +101,37 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	}
 	defer conn.Close(context.Background())
 
+	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
+	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
+		return err
+	}
+
+	timestamp := utils.GetCurrentTimestamp()
+
+	// 2. Special case if this is the first migration
+	// MigrationsDir should exist and be readable after AssertRemoteInSync call
+	if localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil && len(localMigrations) == 0 {
+		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
+
+		// Use pg_dump instead of schema diff
+		out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
+			"POSTGRES_PASSWORD=postgres",
+			"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+			"DB_URL=" + conn.Config().ConnString(),
+		}, []string{"bash", "-c", dumpInitialMigrationScript})
+		if err != nil {
+			return errors.New("Error running pg_dump on remote database: " + err.Error())
+		}
+
+		// Insert a row to `schema_migrations`
+		if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
+			return err
+		}
+
+		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+		return afero.WriteFile(fsys, path, []byte(out), 0644)
+	}
+
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		netId,
@@ -110,7 +143,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			},
 		},
 	)
-	defer cleanup()
+	defer utils.DockerRemoveAll(context.Background(), netId)
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
@@ -118,7 +151,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	{
 		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -128,76 +161,13 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
 			if err != nil {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
-		}
-	}
-
-	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
-		return err
-	}
-
-	timestamp := utils.GetCurrentTimestamp()
-
-	// 2. Special case if this is the first migration
-	{
-		localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-		if err != nil {
-			return err
-		}
-
-		if len(localMigrations) == 0 {
-			strings.Join(utils.InternalSchemas, "|")
-
-			// Use pg_dump instead of schema diff
-			out, err := utils.DockerRun(
-				ctx,
-				dbId,
-				&container.Config{
-					Image: utils.GetRegistryImageUrl(utils.DbImage),
-					Env: []string{
-						"POSTGRES_PASSWORD=postgres",
-						"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
-						"DB_URL=" + conn.Config().ConnString(),
-					},
-					Entrypoint: []string{
-						"bash", "-c", dumpInitialMigrationScript,
-					},
-					Labels: map[string]string{
-						"com.supabase.cli.project":   utils.Config.ProjectId,
-						"com.docker.compose.project": utils.Config.ProjectId,
-					},
-				},
-				&container.HostConfig{NetworkMode: netId},
-			)
-			if err != nil {
-				return err
-			}
-
-			var dumpBuf, errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(&dumpBuf, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error running pg_dump on remote database: " + errBuf.String())
-			}
-
-			// Insert a row to `schema_migrations`
-			if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
-				return err
-			}
-
-			if err := differ.SaveDiff(dumpBuf.String(), "remote_commit", fsys); err != nil {
-				return err
-			}
-
-			return nil
 		}
 	}
 
@@ -246,25 +216,9 @@ EOSQL
 			return errors.New("Error starting shadow database: " + errBuf.String())
 		}
 
-		{
-			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting shadow database: " + errBuf.String())
-			}
+		p.Send(utils.StatusMsg("Resetting database..."))
+		if err := differ.ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
+			return err
 		}
 
 		migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
@@ -294,7 +248,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+				"sh", "-c", "PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/" + utils.ShadowDbName + ` <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -326,7 +280,7 @@ EOSQL
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + conn.Config().ConnString() + "'" +
-						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
+						" 'postgresql://postgres:postgres@" + dbId + ":5432/" + utils.ShadowDbName + "'",
 				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -344,7 +298,13 @@ EOSQL
 			return err
 		}
 
-		if err := differ.SaveDiff(string(diffBytes), "remote_commit", fsys); err != nil {
+		// Ignore header comments
+		if len(diffBytes) <= 350 {
+			return nil
+		}
+
+		path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
+		if err := afero.WriteFile(fsys, path, diffBytes, 0644); err != nil {
 			return err
 		}
 	}
@@ -367,11 +327,6 @@ type model struct {
 	width int
 }
 
-func cleanup() {
-	utils.DockerRemoveAll()
-	_ = utils.Docker.NetworkRemove(context.Background(), netId)
-}
-
 func (m model) Init() tea.Cmd {
 	return spinner.Tick
 }
@@ -384,7 +339,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			m.cancel()
 			// Stop current runs
-			cleanup()
+			utils.DockerRemoveAll(context.Background(), netId)
 			return m, tea.Quit
 		default:
 			return m, nil
@@ -478,10 +433,10 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	// Build connection string
 	pgUrl := fmt.Sprintf(
 		// Use port 6543 for connection pooling
-		"postgresql://%s:%s@db.%s.supabase.co:6543/%s",
+		"postgresql://%s:%s@%s:6543/%s?connect_timeout=3",
 		url.QueryEscape(username),
 		url.QueryEscape(password),
-		url.QueryEscape(host),
+		utils.GetSupabaseDbHost(url.QueryEscape(host)),
 		url.QueryEscape(database),
 	)
 	// Parse connection url
@@ -500,6 +455,13 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	if viper.GetBool("DEBUG") {
 		debug.SetupPGX(config)
 	}
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if !pgconn.Timeout(err) {
+		return conn, err
+	}
+	// Fallback to postgres when pgbouncer is unavailable
+	config.Port = 5432
+	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
 	return pgx.ConnectConfig(ctx, config)
 }
 

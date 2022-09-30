@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/test/mocks/supabase"
 )
 
@@ -37,8 +38,7 @@ func (suite *LinkTestSuite) TestLink() {
 	link, _, err := suite.cmd.Find([]string{"link"})
 	link.SetContext(context.Background())
 	require.NoError(suite.T(), err)
-	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)
-	os.Setenv("SUPABASE_ACCESS_TOKEN", key)
+
 	id := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
 	require.NoError(suite.T(), link.Flags().Set("project-ref", id))
 	require.NoError(suite.T(), link.Flags().Set("password", "postgres"))
@@ -50,7 +50,7 @@ func (suite *LinkTestSuite) TestLink() {
 	defer suite.mtx.RUnlock()
 	require.Contains(suite.T(), suite.ids, id)
 	require.Contains(suite.T(), suite.headers, http.Header{
-		"Authorization":   []string{fmt.Sprintf("Bearer %s", key)},
+		"Authorization":   []string{fmt.Sprintf("Bearer %s", supabase.AccessToken)},
 		"Accept-Encoding": []string{"gzip"},
 		"User-Agent":      []string{"Go-http-client/1.1"},
 	})
@@ -77,7 +77,7 @@ func (suite *LinkTestSuite) SetupTest() {
 		suite.addHeaders(c.Request.Header)
 		suite.addID(c.Params.ByName("id"))
 
-		c.JSON(http.StatusOK, gin.H{})
+		c.JSON(http.StatusOK, []api.FunctionResponse{})
 	}
 }
 
