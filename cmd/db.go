@@ -158,7 +158,8 @@ var (
 		Use:   "test",
 		Short: "Tests local database with pgTAP.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return test.Run(afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return test.Run(ctx, afero.NewOsFs())
 		},
 	}
 )
