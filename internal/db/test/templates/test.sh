@@ -16,7 +16,7 @@ pg_prove -h localhost -U postgres -r "$@"
 cleanup() {
     # save the return code of the script
     status=$?
-    # disable pgtap
+    # disable pgtap if previously not enabled
     if [ -z "$notice" ]; then
         psql -h localhost -U postgres -p 5432 -d postgres -c "drop extension if exists pgtap"
     fi
