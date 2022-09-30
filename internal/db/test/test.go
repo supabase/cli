@@ -5,15 +5,12 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -27,31 +24,17 @@ var (
 	testScript string
 )
 
-func Run(fsys afero.Fs) error {
+func Run(ctx context.Context, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
 	}
-
-	ctx := context.Background()
-	// Trap Ctrl+C and call cancel on the context:
-	// https://medium.com/@matryer/make-ctrl-c-cancel-the-context-context-bd006a8ad6ff
-	ctx, cancel := context.WithCancel(ctx)
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	defer func() {
-		signal.Stop(c)
-		cancel()
-	}()
-	go func() {
-		select {
-		case <-c:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
 
 	var buf bytes.Buffer
 	if err := compress(testDir, &buf, fsys); err != nil {
@@ -62,36 +45,14 @@ func Run(fsys afero.Fs) error {
 		return err
 	}
 
-	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
-		Cmd:          []string{"/bin/sh", "-c", testScript},
-		Env:          []string{"TEST_DIR=" + testDir},
-		WorkingDir:   dstPath,
-		AttachStderr: true,
-		AttachStdout: true,
-	})
+	env := []string{"TEST_DIR=" + dstPath + "/" + testDir}
+	cmd := []string{"/bin/sh", "-c", testScript}
+	out, err := utils.DockerExecOnce(ctx, utils.DbId, env, cmd)
 	if err != nil {
 		return err
 	}
-	// Read exec output
-	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return err
-	}
-	// Capture error details
-	var errBuf bytes.Buffer
-	var outBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(&outBuf, &errBuf, resp.Reader); err != nil {
-		return err
-	}
-	fmt.Println(outBuf.String())
-	// Get the exit code
-	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
-	if err != nil {
-		return err
-	}
-	if iresp.ExitCode > 0 {
-		return errors.New("unit tests failed " + errBuf.String())
-	}
+
+	fmt.Println(out)
 	return nil
 }
 
