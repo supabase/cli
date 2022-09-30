@@ -100,7 +100,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	{
 		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
 			if err != nil {
 				return err
 			}

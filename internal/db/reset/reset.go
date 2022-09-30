@@ -169,19 +169,26 @@ func RestartDatabase(ctx context.Context) {
 		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
 		return
 	}
-	// Poll for healthy database
+	if !WaitForHealthyDatabase(ctx, healthTimeout) {
+		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+		return
+	}
+	// TODO: update storage-api to handle postgres restarts
+	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
+	}
+}
+
+func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
+	// Poll for container health status
 	now := time.Now()
-	expiry := now.Add(healthTimeout)
+	expiry := now.Add(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for t := now; t.Before(expiry); t = <-ticker.C {
 		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil && resp.State.Health.Status == "healthy" {
-			// TODO: update storage-api to handle postgres restarts
-			if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
-			}
-			return
+			return true
 		}
 	}
-	fmt.Fprintln(os.Stderr, "Database is not healthy.")
+	return false
 }
