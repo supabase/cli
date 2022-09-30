@@ -127,7 +127,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, kongImage, 2)
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, gotrueImage, 2)
 			if err != nil {
 				return err
 			}
@@ -147,7 +147,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, inbucketImage, 2)
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, realtimeImage, 2)
 			if err != nil {
 				return err
 			}
@@ -167,7 +167,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, restImage, 2)
 			if err != nil {
 				return err
 			}
@@ -177,7 +177,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, storageImage, 2)
 			if err != nil {
 				return err
 			}
@@ -187,7 +187,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
 			if err != nil {
 				return err
 			}
@@ -197,7 +197,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, metaImage, 2)
 			if err != nil {
 				return err
 			}
@@ -207,7 +207,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, studioImage, 2)
 			if err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ func run(p utils.Program, ctx context.Context) error {
 		}
 		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
+			out, err := utils.DockerImagePullWithRetry(ctx, denoImage, 2)
 			if err != nil {
 				return err
 			}
