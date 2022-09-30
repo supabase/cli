@@ -95,7 +95,7 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	// Batch seed commands, safe to use statement cache
 	batch := pgx.Batch{}
 	lines, err := parser.Split(sql)
@@ -130,7 +130,7 @@ func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.C
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	if err := DisconnectClients(ctx, conn); err != nil {
 		return err
 	}

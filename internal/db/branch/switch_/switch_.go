@@ -65,7 +65,7 @@ func switchDatabase(ctx context.Context, source, target string, options ...func(
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	if err := reset.DisconnectClients(ctx, conn); err != nil {
 		return err
 	}

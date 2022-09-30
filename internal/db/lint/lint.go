@@ -51,7 +51,7 @@ func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	result, err := LintDatabase(ctx, conn, schema)
 	if err != nil {
 		return err
