@@ -638,7 +638,7 @@ EOF
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
-				"FILE_SIZE_LIMIT=52428800",
+				fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 				"STORAGE_BACKEND=file",
 				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
 				"TENANT_ID=stub",
