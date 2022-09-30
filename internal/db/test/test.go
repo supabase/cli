@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -45,9 +46,18 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	env := []string{"TEST_DIR=" + dstPath + "/" + testDir}
-	cmd := []string{"/bin/sh", "-c", testScript}
-	out, err := utils.DockerExecOnce(ctx, utils.DbId, env, cmd)
+	subdirs := []string{dstPath + "/" + testDir}
+	if err := afero.Walk(fsys, testDir, func(path string, info fs.FileInfo, err error) error {
+		if info.IsDir() {
+			subdirs = append(subdirs, dstPath+"/"+path)
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+
+	cmd := append([]string{"/bin/sh", "-c", testScript}, subdirs...)
+	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
 	if err != nil {
 		return err
 	}
