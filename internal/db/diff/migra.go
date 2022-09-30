@@ -103,7 +103,7 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	// Apply migrations
 	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
 		for i, migration := range migrations {
