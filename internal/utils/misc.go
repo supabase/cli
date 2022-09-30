@@ -75,6 +75,7 @@ DO 'BEGIN WHILE (
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
 	FunctionsDir   = "supabase/functions"
+	DbTestsDir     = "supabase/tests"
 	SeedDataPath   = "supabase/seed.sql"
 )
 

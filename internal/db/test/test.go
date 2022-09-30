@@ -7,17 +7,12 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-)
-
-const (
-	testDir = "supabase/tests"
 )
 
 var (
@@ -38,7 +33,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	var buf bytes.Buffer
-	if err := compress(testDir, &buf, fsys); err != nil {
+	if err := compress(utils.DbTestsDir, &buf, fsys); err != nil {
 		return err
 	}
 	dstPath := "/tmp"
@@ -46,23 +41,14 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	subdirs := []string{dstPath + "/" + testDir}
-	if err := afero.Walk(fsys, testDir, func(path string, info fs.FileInfo, err error) error {
-		if info.IsDir() {
-			subdirs = append(subdirs, dstPath+"/"+path)
-		}
-		return err
-	}); err != nil {
-		return err
-	}
-
-	cmd := append([]string{"/bin/sh", "-c", testScript}, subdirs...)
+	// Requires unix path inside container
+	cmd := []string{"/bin/bash", "-c", testScript, dstPath + "/" + utils.DbTestsDir}
 	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(out)
+	fmt.Print(out)
 	return nil
 }
 
