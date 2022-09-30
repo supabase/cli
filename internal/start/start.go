@@ -280,7 +280,7 @@ func run(p utils.Program, ctx context.Context) error {
 			fmt.Fprintln(os.Stderr, "Database is not healthy.")
 		}
 		env := []string{"SCHEMA=" + utils.GlobalsSql}
-		global := []string{"/bin/bash", "-c", "psql --username postgres --host 127.0.0.1 -c $SCHEMA"}
+		global := []string{"/bin/bash", "-c", `psql --username postgres --host 127.0.0.1 -c "$SCHEMA"`}
 		if _, err := utils.DockerExecOnce(ctx, utils.DbId, env, global); err != nil {
 			return err
 		}
