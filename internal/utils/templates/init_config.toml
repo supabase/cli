@@ -33,6 +33,10 @@ port = 54324
 smtp_port = 54325
 pop3_port = 54326
 
+[storage]
+# The maximum file size allowed.
+file_size_limit_bytes = 52428800
+
 [auth]
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.

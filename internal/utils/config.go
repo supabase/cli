@@ -68,6 +68,7 @@ type (
 		Db        db
 		Studio    studio
 		Inbucket  inbucket
+		Storage   storage
 		Auth      auth
 		// TODO
 		// Scripts   scripts
@@ -93,6 +94,10 @@ type (
 		Port     uint
 		SmtpPort uint `toml:"smtp_port"`
 		Pop3Port uint `toml:"pop3_port"`
+	}
+
+	storage struct {
+		FileSizeLimit uint `toml:"file_size_limit_bytes"`
 	}
 
 	auth struct {
@@ -182,6 +187,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
+		}
+		if Config.Storage.FileSizeLimit == 0 {
+			Config.Storage.FileSizeLimit = 52428800
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
