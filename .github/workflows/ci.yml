@@ -5,11 +5,15 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
   test:
     name: Test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
@@ -29,6 +33,7 @@ jobs:
 
   lint:
     name: Lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
@@ -41,3 +46,13 @@ jobs:
         with:
           version: v1.47
           args: --timeout 3m --verbose
+
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+      - run: go run main.go init
+      - run: go run main.go start
