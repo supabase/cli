@@ -124,6 +124,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
@@ -132,6 +135,9 @@ func run(p utils.Program, ctx context.Context) error {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
@@ -144,6 +150,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
@@ -152,6 +161,9 @@ func run(p utils.Program, ctx context.Context) error {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
@@ -164,6 +176,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
@@ -172,6 +187,9 @@ func run(p utils.Program, ctx context.Context) error {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
@@ -184,6 +202,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
@@ -192,6 +213,9 @@ func run(p utils.Program, ctx context.Context) error {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
@@ -204,6 +228,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
@@ -214,6 +241,9 @@ func run(p utils.Program, ctx context.Context) error {
 			if err := utils.ProcessPullOutput(out, p); err != nil {
 				return err
 			}
+			if err := out.Close(); err != nil {
+				return err
+			}
 		}
 		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
@@ -222,6 +252,9 @@ func run(p utils.Program, ctx context.Context) error {
 				return err
 			}
 			if err := utils.ProcessPullOutput(out, p); err != nil {
+				return err
+			}
+			if err := out.Close(); err != nil {
 				return err
 			}
 		}
