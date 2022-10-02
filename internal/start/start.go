@@ -80,6 +80,27 @@ var (
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 )
 
+func pullImage(p utils.Program, ctx context.Context, image string) error {
+	imageUrl := utils.GetRegistryImageUrl(image)
+	_, _, err := utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
+	for i := 0; i < 3; i++ {
+		if err == nil {
+			break
+		}
+		var out io.ReadCloser
+		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, 2)
+		if err != nil {
+			break
+		}
+		defer out.Close()
+		if err := utils.ProcessPullOutput(out, p); err != nil {
+			p.Send(utils.ProgressMsg(nil))
+		}
+		_, _, err = utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
+	}
+	return err
+}
+
 func run(p utils.Program, ctx context.Context) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
@@ -115,146 +136,11 @@ func run(p utils.Program, ctx context.Context) error {
 
 	// Pull images.
 	{
-		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
+		if err := pullImage(p, ctx, utils.DbImage); err != nil {
+			return err
 		}
-		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, kongImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, gotrueImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, inbucketImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, realtimeImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, restImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, storageImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, metaImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, studioImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-		}
-		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, denoImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-			if err := out.Close(); err != nil {
+		for _, image := range utils.ServiceImages {
+			if err := pullImage(p, ctx, image); err != nil {
 				return err
 			}
 		}
