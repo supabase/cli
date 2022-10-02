@@ -21,7 +21,6 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Update tools/listdep/main.go when adding new docker images
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.71"
