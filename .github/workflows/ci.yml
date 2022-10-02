@@ -42,6 +42,7 @@ jobs:
           args: --timeout 3m --verbose
 
   start:
+    name: Start
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
