@@ -3,6 +3,7 @@ package utils
 import (
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
@@ -30,5 +31,53 @@ func TestConfigParsing(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, true))
 		assert.Error(t, LoadConfigFS(fsys))
+	})
+}
+
+func TestFileSizeLimitConfigParsing(t *testing.T) {
+	t.Run("test file size limit parsing number", func(t *testing.T) {
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = 5000000
+		`, &Config)
+		if assert.NoError(t, err) {
+			assert.Equal(t, int64(5000000), Config.Storage.FileSizeLimit.Value)
+		}
+	})
+
+	t.Run("test file size limit parsing bytes unit", func(t *testing.T) {
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = "5MB"
+		`, &Config)
+		if assert.NoError(t, err) {
+			assert.Equal(t, int64(5000000), Config.Storage.FileSizeLimit.Value)
+		}
+	})
+
+	t.Run("test file size limit parsing string number", func(t *testing.T) {
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = "5000000"
+		`, &Config)
+		if assert.NoError(t, err) {
+			assert.Equal(t, int64(5000000), Config.Storage.FileSizeLimit.Value)
+		}
+	})
+
+	t.Run("test file size limit parsing bad datatype", func(t *testing.T) {
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = []
+		`, &Config)
+		assert.Error(t, err)
+	})
+
+	t.Run("test file size limit parsing bad string data", func(t *testing.T) {
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = "foobar"
+		`, &Config)
+		assert.Error(t, err)
 	})
 }
