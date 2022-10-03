@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/spf13/afero"
 )
 
@@ -97,7 +98,7 @@ type (
 	}
 
 	storage struct {
-		FileSizeLimit uint `toml:"file_size_limit_bytes"`
+		FileSizeLimit string `toml:"file_size_limit"`
 	}
 
 	auth struct {
@@ -188,8 +189,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
-		if Config.Storage.FileSizeLimit == 0 {
-			Config.Storage.FileSizeLimit = 52428800
+		if Config.Storage.FileSizeLimit == "" {
+			Config.Storage.FileSizeLimit = 5 * units.MB
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
