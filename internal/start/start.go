@@ -22,7 +22,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
-	"github.com/docker/go-units"
 	"github.com/muesli/reflow/wrap"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
@@ -710,11 +709,6 @@ EOF
 
 	// Start Storage.
 	{
-		file_size_limit_bytes, err := units.FromHumanSize(utils.Config.Storage.FileSizeLimit)
-		if err != nil {
-			return err
-		}
-
 		if _, err := utils.DockerRun(
 			ctx,
 			utils.StorageId,
@@ -726,7 +720,7 @@ EOF
 					"POSTGREST_URL=http://" + utils.RestId + ":3000",
 					"PGRST_JWT_SECRET=" + utils.JWTSecret,
 					"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
-					fmt.Sprintf("FILE_SIZE_LIMIT=%v", file_size_limit_bytes),
+					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit.Value),
 					"STORAGE_BACKEND=file",
 					"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
 					"TENANT_ID=stub",

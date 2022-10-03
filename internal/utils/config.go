@@ -60,6 +60,17 @@ var (
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
 )
 
+// Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
+type sizeInBytes struct {
+	Value int64
+}
+
+func (a *sizeInBytes) UnmarshalText(text []byte) error {
+	var err error
+	a.Value, err = units.FromHumanSize(string(text))
+	return err
+}
+
 var Config config
 
 type (
@@ -98,7 +109,7 @@ type (
 	}
 
 	storage struct {
-		FileSizeLimit string `toml:"file_size_limit"`
+		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
 	}
 
 	auth struct {
@@ -189,8 +200,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
-		if Config.Storage.FileSizeLimit == "" {
-			Config.Storage.FileSizeLimit = 5 * units.MB
+		if Config.Storage.FileSizeLimit.Value == 0 {
+			Config.Storage.FileSizeLimit.Value = 5 * units.MB
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
