@@ -34,8 +34,8 @@ smtp_port = 54325
 pop3_port = 54326
 
 [storage]
-# The maximum file size allowed.
-file_size_limit_bytes = 52428800
+# The maximum file size allowed (e.g. "5MB", "500KB").
+file_size_limit = "5MB"
 
 [auth]
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
