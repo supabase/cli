@@ -113,7 +113,7 @@ require (
 	golang.org/x/sys v0.0.0-20220818161305-2296e01440c6 // indirect
 	golang.org/x/term v0.0.0-20220722155259-a9ba230a4035
 	golang.org/x/text v0.3.7 // indirect
-	google.golang.org/grpc v1.49.0
+	google.golang.org/grpc v1.50.0
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
