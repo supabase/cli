@@ -708,38 +708,36 @@ EOF
 	}
 
 	// Start Storage.
-	{
-		if _, err := utils.DockerRun(
-			ctx,
-			utils.StorageId,
-			&container.Config{
-				Image: utils.GetRegistryImageUrl(utils.StorageImage),
-				Env: []string{
-					"ANON_KEY=" + utils.AnonKey,
-					"SERVICE_KEY=" + utils.ServiceRoleKey,
-					"POSTGREST_URL=http://" + utils.RestId + ":3000",
-					"PGRST_JWT_SECRET=" + utils.JWTSecret,
-					"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
-					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit.Value),
-					"STORAGE_BACKEND=file",
-					"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
-					"TENANT_ID=stub",
-					// TODO: https://github.com/supabase/storage-api/issues/55
-					"REGION=stub",
-					"GLOBAL_S3_BUCKET=stub",
-				},
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.Config.ProjectId,
-					"com.docker.compose.project": utils.Config.ProjectId,
-				},
+	if _, err := utils.DockerRun(
+		ctx,
+		utils.StorageId,
+		&container.Config{
+			Image: utils.GetRegistryImageUrl(utils.StorageImage),
+			Env: []string{
+				"ANON_KEY=" + utils.AnonKey,
+				"SERVICE_KEY=" + utils.ServiceRoleKey,
+				"POSTGREST_URL=http://" + utils.RestId + ":3000",
+				"PGRST_JWT_SECRET=" + utils.JWTSecret,
+				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
+				fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit.Value),
+				"STORAGE_BACKEND=file",
+				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
+				"TENANT_ID=stub",
+				// TODO: https://github.com/supabase/storage-api/issues/55
+				"REGION=stub",
+				"GLOBAL_S3_BUCKET=stub",
 			},
-			&container.HostConfig{
-				NetworkMode:   container.NetworkMode(utils.NetId),
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+			Labels: map[string]string{
+				"com.supabase.cli.project":   utils.Config.ProjectId,
+				"com.docker.compose.project": utils.Config.ProjectId,
 			},
-		); err != nil {
-			return err
-		}
+		},
+		&container.HostConfig{
+			NetworkMode:   container.NetworkMode(utils.NetId),
+			RestartPolicy: container.RestartPolicy{Name: "always"},
+		},
+	); err != nil {
+		return err
 	}
 
 	// Start diff tool.
