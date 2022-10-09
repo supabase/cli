@@ -61,13 +61,13 @@ var (
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
-type sizeInBytes struct {
-	Value int64
-}
+type sizeInBytes int64
 
-func (a *sizeInBytes) UnmarshalText(text []byte) error {
-	var err error
-	a.Value, err = units.FromHumanSize(string(text))
+func (s *sizeInBytes) UnmarshalText(text []byte) error {
+	size, err := units.RAMInBytes(string(text))
+	if err == nil {
+		*s = sizeInBytes(size)
+	}
 	return err
 }
 
@@ -200,8 +200,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
-		if Config.Storage.FileSizeLimit.Value == 0 {
-			Config.Storage.FileSizeLimit.Value = 5 * units.MB
+		if Config.Storage.FileSizeLimit == 0 {
+			Config.Storage.FileSizeLimit = 50 * units.MiB
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
