@@ -57,6 +57,17 @@ func TestFileSizeLimitConfigParsing(t *testing.T) {
 		}
 	})
 
+	t.Run("test file size limit parsing binary bytes unit", func(t *testing.T) {
+		var testConfig config
+		_, err := toml.Decode(`
+		[storage]
+		file_size_limit = "5MiB"
+		`, &testConfig)
+		if assert.NoError(t, err) {
+			assert.Equal(t, sizeInBytes(5242880), testConfig.Storage.FileSizeLimit)
+		}
+	})
+
 	t.Run("test file size limit parsing string number", func(t *testing.T) {
 		var testConfig config
 		_, err := toml.Decode(`

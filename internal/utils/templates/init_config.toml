@@ -35,7 +35,7 @@ pop3_port = 54326
 
 [storage]
 # The maximum file size allowed (e.g. "5MB", "500KB").
-file_size_limit = "5MB"
+file_size_limit = "50MiB"
 
 [auth]
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
