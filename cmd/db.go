@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -149,7 +150,17 @@ var (
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return lint.Run(ctx, schema, level.Value, afero.NewOsFs())
+		},
+	}
+
+	dbTestCmd = &cobra.Command{
+		Use:   "test",
+		Short: "Tests local database with pgTAP.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return test.Run(ctx, afero.NewOsFs())
 		},
 	}
 )
@@ -187,5 +198,7 @@ func init() {
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
+	// Build test command
+	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
 }
