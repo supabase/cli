@@ -222,10 +222,6 @@ func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
 	return nil
 }
 
-func AssertSupabaseCliIsSetUp() error {
-	return AssertSupabaseCliIsSetUpFS(afero.NewOsFs())
-}
-
 func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")

@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -126,24 +127,28 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 				return err
 			}
 			defer sql.Close()
-			// Batch migration commands, without using statement cache
-			batch := pgconn.Batch{}
-			lines, err := parser.Split(sql)
-			if err != nil {
-				return err
-			}
-			for _, line := range lines {
-				trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-				if len(trim) > 0 {
-					batch.ExecParams(trim, nil, nil, nil, nil)
-				}
-			}
-			if err := conn.PgConn().ExecBatch(ctx, &batch).Close(); err != nil {
+			if err := BatchExecDDL(ctx, conn, sql); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
+	// Batch migration commands, without using statement cache
+	batch := pgconn.Batch{}
+	lines, err := parser.Split(sql)
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
+		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
+		if len(trim) > 0 {
+			batch.ExecParams(trim, nil, nil, nil, nil)
+		}
+	}
+	return conn.PgConn().ExecBatch(ctx, &batch).Close()
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.

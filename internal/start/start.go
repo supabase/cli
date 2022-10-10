@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,26 +21,28 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context) error {
+func Run(ctx context.Context, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-		if err := utils.LoadConfig(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
+		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
 	}
@@ -52,7 +55,7 @@ func Run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, ctx)
+		errCh <- run(p, ctx, fsys)
 		p.Send(tea.Quit())
 	}()
 
@@ -101,7 +104,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 	return err
 }
 
-func run(p utils.Program, ctx context.Context) error {
+func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
 	_, _ = utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
@@ -115,19 +118,20 @@ func run(p utils.Program, ctx context.Context) error {
 	)
 
 	// Ensure `_current_branch` file exists.
-	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
+	branchDir := filepath.Dir(utils.CurrBranchPath)
+	if _, err := afero.ReadFile(fsys, utils.CurrBranchPath); err == nil {
 		// skip
 	} else if errors.Is(err, os.ErrNotExist) {
-		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
+		if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
 			return err
 		}
-		if err := os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644); err != nil {
+		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644); err != nil {
 			return err
 		}
 	} else {
 		return err
 	}
-	currBranch, err := utils.GetCurrentBranch()
+	currBranch, err := utils.GetCurrentBranchFS(fsys)
 	if err != nil {
 		return err
 	}
@@ -198,118 +202,93 @@ func run(p utils.Program, ctx context.Context) error {
 		if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
 			fmt.Fprintln(os.Stderr, "Database is not healthy.")
 		}
-		env := []string{"SCHEMA=" + utils.GlobalsSql}
-		global := []string{"/bin/bash", "-c", `psql --username postgres --host 127.0.0.1 -c "$SCHEMA"`}
-		if _, err := utils.DockerExecOnce(ctx, utils.DbId, env, global); err != nil {
-			return err
-		}
+	}
+
+	// Initialise globals
+	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres")
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+		return err
 	}
 
 	p.Send(utils.StatusMsg("Restoring branches..."))
 
 	// Restore branches.
 	{
-		if branches, err := os.ReadDir("supabase/.branches"); err == nil {
-			for _, branch := range branches {
-				if branch.Name() == "_current_branch" {
-					continue
-				}
-
-				if err := func() error {
-					content, err := os.ReadFile("supabase/.branches/" + branch.Name() + "/dump.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						return errors.New("Branch was not dumped.")
-					} else if err != nil {
-						return err
-					}
-
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --set ON_ERROR_STOP=on --host 127.0.0.1 postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-CREATE DATABASE "` + branch.Name() + `";
-\connect ` + branch.Name() + `
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						return err
-					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
-						return fmt.Errorf("Error starting database: %w", err)
-					}
-
-					return nil
-				}(); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					_ = os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644)
-					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
-				}
-			}
-		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches", 0755); err != nil {
-				return err
-			}
-		} else {
+		branches, err := afero.ReadDir(fsys, branchDir)
+		if err != nil {
 			return err
+		}
+		for _, branch := range branches {
+			if branch.Name() == filepath.Base(utils.CurrBranchPath) {
+				continue
+			}
+
+			if err := func() error {
+				dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
+				content, err := fsys.Open(dumpPath)
+				if errors.Is(err, os.ErrNotExist) {
+					return errors.New("Branch was not dumped.")
+				} else if err != nil {
+					return err
+				}
+				defer content.Close()
+				// TODO: handle extensions that require postgres db
+				createDb := `CREATE DATABASE "` + branch.Name() + `";`
+				if _, err := conn.Exec(ctx, createDb); err != nil {
+					return err
+				}
+				// Connect to branch database
+				branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
+				if err != nil {
+					return err
+				}
+				defer branchConn.Close(context.Background())
+				// Restore dump
+				return diff.BatchExecDDL(ctx, branchConn, content)
+			}(); err != nil {
+				_ = fsys.RemoveAll(filepath.Join(branchDir, branch.Name()))
+				_ = afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
+				fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
+			}
 		}
 
 		// Ensure `main` branch exists.
-		if _, err := os.ReadDir("supabase/.branches/main"); err == nil {
+		branchPath := filepath.Join(branchDir, "main")
+		if _, err := afero.ReadDir(fsys, branchPath); err == nil {
 			// skip
 		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches/main", 0755); err != nil {
+			if err := fsys.Mkdir(branchPath, 0755); err != nil {
 				return err
 			}
 
 			if err := func() error {
-				{
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"createdb", "--username", "postgres", "--host", "127.0.0.1", "main",
-					})
-					if err != nil {
-						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error creating database: " + errBuf.String())
-					}
+				createDb := `CREATE DATABASE "main";`
+				if _, err := conn.Exec(ctx, createDb); err != nil {
+					return err
 				}
 
 				p.Send(utils.StatusMsg("Setting up initial schema..."))
-				{
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --host 127.0.0.1 postgresql://postgres:postgres@localhost/main <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error starting database: " + errBuf.String())
-					}
-				}
-
-				if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-					return err
-				}
-				migrations, err := os.ReadDir("supabase/migrations")
+				branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "main")
 				if err != nil {
 					return err
 				}
-
+				defer branchConn.Close(context.Background())
+				// Initializing schema
+				if err := diff.BatchExecDDL(ctx, branchConn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+					return err
+				}
+				// Applying migrations
+				if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+					return err
+				}
+				migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
+				if err != nil {
+					return err
+				}
 				for i, migration := range migrations {
 					// NOTE: To handle backward-compatibility.
 					// `<timestamp>_init.sql` as the first migration (prev
@@ -326,65 +305,25 @@ EOSQL
 					}
 
 					p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
-
-					content, err := os.ReadFile("supabase/migrations/" + migration.Name())
+					sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, migration.Name()))
 					if err != nil {
 						return err
 					}
-
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
+					defer sql.Close()
+					if err := diff.BatchExecDDL(ctx, branchConn, sql); err != nil {
 						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error starting database: " + errBuf.String())
 					}
 				}
 
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
-				{
-					content, err := os.ReadFile("supabase/seed.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						// skip
-					} else if err != nil {
-						return err
-					}
-
-					err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
-
-					if err != nil {
-						return err
-					} else {
-						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-f", "/tmp/seed.sql",
-						})
-						if err != nil {
-							return err
-						}
-						var errBuf bytes.Buffer
-						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-							return err
-						}
-						if errBuf.Len() > 0 {
-							return errors.New("Error starting database: " + errBuf.String())
-						}
-					}
+				p.Send(utils.StatusMsg("Applying " + utils.Bold(utils.SeedDataPath) + "..."))
+				if content, err := fsys.Open(utils.SeedDataPath); err == nil {
+					return reset.BatchExecSQL(ctx, branchConn, content)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
 				}
-
 				return nil
 			}(); err != nil {
-				_ = os.RemoveAll("supabase/.branches/main")
+				_ = fsys.RemoveAll(branchPath)
 				return err
 			}
 		} else {
@@ -392,28 +331,8 @@ EOSQL
 		}
 
 		// Set up current branch.
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
-COMMIT;
-DROP DATABASE postgres;
-ALTER DATABASE "` + currBranch + `" RENAME TO postgres;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			defer reset.RestartDatabase(context.Background())
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting database: " + errBuf.String())
-			}
+		if err := reset.ActivateDatabase(ctx, currBranch); err != nil {
+			return err
 		}
 	}
 

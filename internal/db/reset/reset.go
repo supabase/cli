@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -96,6 +97,10 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 		return err
 	}
 	defer conn.Close(context.Background())
+	return BatchExecSQL(ctx, conn, sql)
+}
+
+func BatchExecSQL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
 	// Batch seed commands, safe to use statement cache
 	batch := pgx.Batch{}
 	lines, err := parser.Split(sql)
@@ -108,10 +113,7 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 			batch.Queue(trim)
 		}
 	}
-	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
-		return err
-	}
-	return nil
+	return conn.SendBatch(ctx, &batch).Close()
 }
 
 func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.ConnConfig)) error {
