@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/muesli/reflow/wrap"
@@ -102,7 +103,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 }
 
 func run(p utils.Program, ctx context.Context) error {
-	_, _ = utils.Docker.NetworkCreate(
+	if _, err := utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
 		types.NetworkCreate{
@@ -112,7 +113,10 @@ func run(p utils.Program, ctx context.Context) error {
 				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
-	)
+	); err != nil && !errdefs.IsConflict(err) {
+		// if error is network already exists, no need to propagate to user
+		return err
+	}
 
 	// Ensure `_current_branch` file exists.
 	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
