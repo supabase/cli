@@ -20,7 +20,7 @@ SET row_security = off;
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA auth;
+CREATE SCHEMA IF NOT EXISTS auth;
 
 
 ALTER SCHEMA auth OWNER TO supabase_admin;
@@ -29,7 +29,7 @@ ALTER SCHEMA auth OWNER TO supabase_admin;
 -- Name: extensions; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA extensions;
+CREATE SCHEMA IF NOT EXISTS extensions;
 
 
 ALTER SCHEMA extensions OWNER TO postgres;
@@ -52,7 +52,7 @@ COMMENT ON EXTENSION pg_graphql IS 'GraphQL support';
 -- Name: graphql_public; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA graphql_public;
+CREATE SCHEMA IF NOT EXISTS graphql_public;
 
 
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
@@ -61,7 +61,7 @@ ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
-CREATE SCHEMA pgbouncer;
+CREATE SCHEMA IF NOT EXISTS pgbouncer;
 
 
 ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
@@ -70,7 +70,7 @@ ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
 -- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA pgsodium;
+CREATE SCHEMA IF NOT EXISTS pgsodium;
 
 
 ALTER SCHEMA pgsodium OWNER TO postgres;
@@ -93,7 +93,7 @@ COMMENT ON EXTENSION pgsodium IS 'Pgsodium is a modern cryptography library for 
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA realtime;
+CREATE SCHEMA IF NOT EXISTS realtime;
 
 
 ALTER SCHEMA realtime OWNER TO supabase_admin;
@@ -102,7 +102,7 @@ ALTER SCHEMA realtime OWNER TO supabase_admin;
 -- Name: storage; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA storage;
+CREATE SCHEMA IF NOT EXISTS storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
@@ -241,7 +241,7 @@ ALTER TYPE realtime.wal_rls OWNER TO supabase_admin;
 -- Name: email(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.email() RETURNS text
+CREATE OR REPLACE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -265,7 +265,7 @@ COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' ins
 -- Name: jwt(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.jwt() RETURNS jsonb
+CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -282,7 +282,7 @@ ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
 -- Name: role(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.role() RETURNS text
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -306,7 +306,7 @@ COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' inste
 -- Name: uid(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.uid() RETURNS uuid
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -330,7 +330,7 @@ COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
 --
 
-CREATE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -379,7 +379,7 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 -- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $_$
 DECLARE
@@ -443,7 +443,7 @@ COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg
 -- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
 --
 
-CREATE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -499,7 +499,7 @@ COMMENT ON FUNCTION extensions.grant_pg_net_access() IS 'Grants access to pg_net
 -- Name: pgrst_ddl_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -534,7 +534,7 @@ ALTER FUNCTION extensions.pgrst_ddl_watch() OWNER TO supabase_admin;
 -- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -567,7 +567,7 @@ ALTER FUNCTION extensions.pgrst_drop_watch() OWNER TO supabase_admin;
 -- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $_$
     DECLARE
@@ -633,7 +633,7 @@ COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeh
 -- Name: get_auth(text); Type: FUNCTION; Schema: pgbouncer; Owner: postgres
 --
 
-CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, password text)
+CREATE OR REPLACE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, password text)
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 BEGIN
@@ -652,7 +652,7 @@ ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO postgres;
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer DEFAULT (1024 * 1024)) RETURNS SETOF realtime.wal_rls
+CREATE OR REPLACE FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer DEFAULT (1024 * 1024)) RETURNS SETOF realtime.wal_rls
     LANGUAGE plpgsql
     AS $$
       declare
@@ -940,7 +940,7 @@ ALTER FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) OWNER TO 
 -- Name: build_prepared_statement_sql(text, regclass, realtime.wal_column[]); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) RETURNS text
+CREATE OR REPLACE FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) RETURNS text
     LANGUAGE sql
     AS $$
       /*
@@ -975,7 +975,7 @@ ALTER FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name tex
 -- Name: cast(text, regtype); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime."cast"(val text, type_ regtype) RETURNS jsonb
+CREATE OR REPLACE FUNCTION realtime."cast"(val text, type_ regtype) RETURNS jsonb
     LANGUAGE plpgsql IMMUTABLE
     AS $$
     declare
@@ -993,7 +993,7 @@ ALTER FUNCTION realtime."cast"(val text, type_ regtype) OWNER TO supabase_admin;
 -- Name: check_equality_op(realtime.equality_op, regtype, text, text); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) RETURNS boolean
+CREATE OR REPLACE FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE
     AS $$
     /*
@@ -1025,7 +1025,7 @@ ALTER FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype
 -- Name: is_visible_through_filters(realtime.wal_column[], realtime.user_defined_filter[]); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) RETURNS boolean
+CREATE OR REPLACE FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) RETURNS boolean
     LANGUAGE sql IMMUTABLE
     AS $$
         /*
@@ -1061,7 +1061,7 @@ ALTER FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[]
 -- Name: quote_wal2json(regclass); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.quote_wal2json(entity regclass) RETURNS text
+CREATE OR REPLACE FUNCTION realtime.quote_wal2json(entity regclass) RETURNS text
     LANGUAGE sql IMMUTABLE STRICT
     AS $$
       select
@@ -1101,7 +1101,7 @@ ALTER FUNCTION realtime.quote_wal2json(entity regclass) OWNER TO supabase_admin;
 -- Name: subscription_check_filters(); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.subscription_check_filters() RETURNS trigger
+CREATE OR REPLACE FUNCTION realtime.subscription_check_filters() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
     /*
@@ -1165,7 +1165,7 @@ ALTER FUNCTION realtime.subscription_check_filters() OWNER TO supabase_admin;
 -- Name: to_regrole(text); Type: FUNCTION; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE FUNCTION realtime.to_regrole(role_name text) RETURNS regrole
+CREATE OR REPLACE FUNCTION realtime.to_regrole(role_name text) RETURNS regrole
     LANGUAGE sql IMMUTABLE
     AS $$ select role_name::regrole $$;
 
@@ -1176,7 +1176,7 @@ ALTER FUNCTION realtime.to_regrole(role_name text) OWNER TO supabase_admin;
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.extension(name text) RETURNS text
+CREATE OR REPLACE FUNCTION storage.extension(name text) RETURNS text
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -1197,7 +1197,7 @@ ALTER FUNCTION storage.extension(name text) OWNER TO supabase_storage_admin;
 -- Name: filename(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.filename(name text) RETURNS text
+CREATE OR REPLACE FUNCTION storage.filename(name text) RETURNS text
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -1215,7 +1215,7 @@ ALTER FUNCTION storage.filename(name text) OWNER TO supabase_storage_admin;
 -- Name: foldername(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.foldername(name text) RETURNS text[]
+CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -1233,7 +1233,7 @@ ALTER FUNCTION storage.foldername(name text) OWNER TO supabase_storage_admin;
 -- Name: get_size_by_bucket(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.get_size_by_bucket() RETURNS TABLE(size bigint, bucket_id text)
+CREATE OR REPLACE FUNCTION storage.get_size_by_bucket() RETURNS TABLE(size bigint, bucket_id text)
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -1251,7 +1251,7 @@ ALTER FUNCTION storage.get_size_by_bucket() OWNER TO supabase_storage_admin;
 -- Name: search(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
+CREATE OR REPLACE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
     LANGUAGE plpgsql STABLE
     AS $_$
 declare
@@ -1322,7 +1322,7 @@ ALTER FUNCTION storage.search(prefix text, bucketname text, limits integer, leve
 -- Name: update_updated_at_column(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.update_updated_at_column() RETURNS trigger
+CREATE OR REPLACE FUNCTION storage.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
