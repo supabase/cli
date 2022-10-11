@@ -2938,5 +2938,3 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 --
 -- PostgreSQL database dump complete
 --
-
-drop extension pg_graphql; create extension pg_graphql schema extensions;
