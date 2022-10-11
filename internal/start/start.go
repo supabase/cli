@@ -83,7 +83,7 @@ var (
 )
 
 func run(p utils.Program) error {
-	_, err := utils.Docker.NetworkCreate(
+	if _, err := utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
 		types.NetworkCreate{
@@ -93,12 +93,8 @@ func run(p utils.Program) error {
 				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
-	)
-
-	// matching against public interface because concrete type is private, error.As only works for types */
-	if _, ok := err.(errdefs.ErrConflict); ok {
-		// error becuase network already exists, no need to propagate to user
-	} else {
+	); err != nil && !errdefs.IsConflict(err) {
+		// if error is network already exists, no need to propagate to user
 		return err
 	}
 
