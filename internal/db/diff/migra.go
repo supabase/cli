@@ -105,6 +105,10 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 		return err
 	}
 	defer conn.Close(context.Background())
+	return MigrateDatabase(ctx, conn, fsys)
+}
+
+func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	// Apply migrations
 	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
 		for i, migration := range migrations {

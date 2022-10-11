@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -117,25 +116,6 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
 		},
 	)
 
-	// Ensure `_current_branch` file exists.
-	branchDir := filepath.Dir(utils.CurrBranchPath)
-	if _, err := afero.ReadFile(fsys, utils.CurrBranchPath); err == nil {
-		// skip
-	} else if errors.Is(err, os.ErrNotExist) {
-		if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
-			return err
-		}
-		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644); err != nil {
-			return err
-		}
-	} else {
-		return err
-	}
-	currBranch, err := utils.GetCurrentBranchFS(fsys)
-	if err != nil {
-		return err
-	}
-
 	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
@@ -218,120 +198,98 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
 
 	// Restore branches.
 	{
+		// Create branch dir if missing
+		branchDir := filepath.Dir(utils.CurrBranchPath)
+		if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
+			return err
+		}
 		branches, err := afero.ReadDir(fsys, branchDir)
 		if err != nil {
 			return err
 		}
+		// Ensure `_current_branch` file exists.
+		currBranch, err := utils.GetCurrentBranchFS(fsys)
+		if errors.Is(err, os.ErrNotExist) {
+			currBranch = "main"
+			if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		// Restore every branch dump
 		for _, branch := range branches {
-			if branch.Name() == filepath.Base(utils.CurrBranchPath) {
+			if !branch.IsDir() {
 				continue
 			}
-
-			if err := func() error {
-				dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
-				content, err := fsys.Open(dumpPath)
-				if errors.Is(err, os.ErrNotExist) {
-					return errors.New("Branch was not dumped.")
-				} else if err != nil {
+			dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
+			content, err := fsys.Open(dumpPath)
+			if errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintln(os.Stderr, "Error restoring "+utils.Aqua(branch.Name())+": branch was not dumped.")
+				if err := fsys.RemoveAll(filepath.Dir(dumpPath)); err != nil {
 					return err
 				}
-				defer content.Close()
-				// TODO: handle extensions that require postgres db
-				createDb := `CREATE DATABASE "` + branch.Name() + `";`
-				if _, err := conn.Exec(ctx, createDb); err != nil {
+				continue
+			} else if err != nil {
+				return err
+			}
+			defer content.Close()
+			// Restore current branch to postgres directly
+			if branch.Name() == currBranch {
+				if err := diff.BatchExecDDL(ctx, conn, content); err != nil {
 					return err
 				}
-				// Connect to branch database
-				branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
-				if err != nil {
-					return err
-				}
-				defer branchConn.Close(context.Background())
-				// Restore dump
-				return diff.BatchExecDDL(ctx, branchConn, content)
-			}(); err != nil {
-				_ = fsys.RemoveAll(filepath.Join(branchDir, branch.Name()))
-				_ = afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
-				fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
+				continue
+			}
+			// TODO: restoring non-main branch may break extensions that require postgres
+			createDb := `CREATE DATABASE "` + branch.Name() + `";`
+			if _, err := conn.Exec(ctx, createDb); err != nil {
+				return err
+			}
+			// Connect to branch database
+			branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
+			if err != nil {
+				return err
+			}
+			defer branchConn.Close(context.Background())
+			// Restore dump, reporting any error
+			if err := diff.BatchExecDDL(ctx, branchConn, content); err != nil {
+				return err
 			}
 		}
+		// Initialise main branch.
+		if _, err := fsys.Stat(filepath.Join(branchDir, currBranch)); errors.Is(err, os.ErrNotExist) {
 
-		// Ensure `main` branch exists.
-		branchPath := filepath.Join(branchDir, "main")
-		if _, err := afero.ReadDir(fsys, branchPath); err == nil {
-			// skip
-		} else if errors.Is(err, os.ErrNotExist) {
-			if err := fsys.Mkdir(branchPath, 0755); err != nil {
+			p.Send(utils.StatusMsg("Setting up initial schema..."))
+
+			if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 				return err
 			}
 
-			if err := func() error {
-				createDb := `CREATE DATABASE "main";`
-				if _, err := conn.Exec(ctx, createDb); err != nil {
-					return err
-				}
+			if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+				return err
+			}
 
-				p.Send(utils.StatusMsg("Setting up initial schema..."))
-				branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "main")
-				if err != nil {
-					return err
-				}
-				defer branchConn.Close(context.Background())
-				// Initializing schema
-				if err := diff.BatchExecDDL(ctx, branchConn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-					return err
-				}
-				// Applying migrations
-				if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-					return err
-				}
-				migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-				if err != nil {
-					return err
-				}
-				for i, migration := range migrations {
-					// NOTE: To handle backward-compatibility.
-					// `<timestamp>_init.sql` as the first migration (prev
-					// versions of the CLI) is deprecated.
-					if i == 0 {
-						matches := regexp.MustCompile(`([0-9]{14})_init\.sql`).FindStringSubmatch(migration.Name())
-						if len(matches) == 2 {
-							if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err != nil {
-								return err
-							} else if timestamp < 20211209000000 {
-								continue
-							}
-						}
-					}
+			if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
+				return err
+			}
 
-					p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
-					sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, migration.Name()))
-					if err != nil {
-						return err
-					}
-					defer sql.Close()
-					if err := diff.BatchExecDDL(ctx, branchConn, sql); err != nil {
-						return err
-					}
-				}
+			p.Send(utils.StatusMsg("Applying " + utils.Bold(utils.SeedDataPath) + "..."))
 
-				p.Send(utils.StatusMsg("Applying " + utils.Bold(utils.SeedDataPath) + "..."))
-				if content, err := fsys.Open(utils.SeedDataPath); err == nil {
-					return reset.BatchExecSQL(ctx, branchConn, content)
-				} else if !errors.Is(err, os.ErrNotExist) {
+			if content, err := fsys.Open(utils.SeedDataPath); err == nil {
+				defer content.Close()
+				if err := reset.BatchExecSQL(ctx, conn, content); err != nil {
 					return err
 				}
-				return nil
-			}(); err != nil {
-				_ = fsys.RemoveAll(branchPath)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+
+			// Ensure `main` branch exists.
+			if err := fsys.Mkdir(filepath.Join(branchDir, currBranch), 0755); err != nil {
 				return err
 			}
 		} else {
-			return err
-		}
-
-		// Set up current branch.
-		if err := reset.ActivateDatabase(ctx, currBranch); err != nil {
 			return err
 		}
 	}
