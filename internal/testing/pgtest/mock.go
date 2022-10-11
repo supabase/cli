@@ -2,6 +2,7 @@ package pgtest
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"testing"
@@ -64,17 +65,29 @@ func (r *MockConn) Intercept(config *pgx.ConnConfig) {
 	config.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return r.server.DialContext(ctx)
 	}
-	config.PreferSimpleProtocol = true
 	config.TLSConfig = nil
 	// Add startup message
 	r.script.Steps = append(r.getStartupMessage(config), r.script.Steps...)
 }
 
-// Adds a simple query to the mock connection.
-//
-// TODO: support prepared statements that involve multiple round trips, ie. Parse -> Bind.
-func (r *MockConn) Query(sql string) *MockConn {
-	r.script.Steps = append(r.script.Steps, pgmock.ExpectMessage(&pgproto3.Query{String: sql}))
+// Adds a simple query or prepared statement to the mock connection.
+func (r *MockConn) Query(sql string, args ...interface{}) *MockConn {
+	var oids []uint32
+	var params [][]byte
+	for _, v := range args {
+		if dt, ok := ci.DataTypeForValue(v); ok {
+			if err := dt.Value.Set(v); err != nil {
+				continue
+			}
+			value, err := (dt.Value).(pgtype.TextEncoder).EncodeText(ci, []byte{})
+			if err != nil {
+				continue
+			}
+			params = append(params, value)
+			oids = append(oids, dt.OID)
+		}
+	}
+	r.script.Steps = append(r.script.Steps, ExpectQuery(sql, params, oids))
 	return r
 }
 
@@ -87,18 +100,24 @@ func getDataTypeSize(v interface{}) int16 {
 	return int16(t.Size())
 }
 
+func (r *MockConn) lastQuery() *extendedQueryStep {
+	return r.script.Steps[len(r.script.Steps)-1].(*extendedQueryStep)
+}
+
 // Adds a server reply using text protocol format.
 //
 // TODO: support binary protocol
-func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
+func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
+	q := r.lastQuery()
 	// Add field description
 	if len(rows) > 0 {
 		var desc pgproto3.RowDescription
-		for k, v := range rows[0] {
+		for i, v := range rows[0] {
+			name := fmt.Sprintf("c_%02d", i)
 			if dt, ok := ci.DataTypeForValue(v); ok {
 				size := getDataTypeSize(v)
 				desc.Fields = append(desc.Fields, pgproto3.FieldDescription{
-					Name:                 []byte(k),
+					Name:                 []byte(name),
 					TableOID:             17131,
 					TableAttributeNumber: 1,
 					DataTypeOID:          dt.OID,
@@ -108,11 +127,11 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 				})
 			}
 		}
-		r.script.Steps = append(r.script.Steps, pgmock.SendMessage(&desc))
+		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&desc))
+	} else {
+		// No data is optional, but we add for completeness
+		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&pgproto3.NoData{}))
 	}
-	// Note: Postgres emits field descriptions even if no rows are returned. However,
-	// pgx does not care about it so we do not need to handle the else case.
-
 	// Add row data
 	for _, data := range rows {
 		var dr pgproto3.DataRow
@@ -126,15 +145,16 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 				}
 			}
 		}
-		r.script.Steps = append(r.script.Steps, pgmock.SendMessage(&dr))
+		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&dr))
 	}
-
 	// Add completion message
-	r.script.Steps = append(
-		r.script.Steps,
-		pgmock.SendMessage(&pgproto3.CommandComplete{CommandTag: []byte(tag)}),
-		pgmock.SendMessage(&pgproto3.ReadyForQuery{TxStatus: 'I'}),
-	)
+	var complete pgproto3.BackendMessage
+	if tag == "" {
+		complete = &pgproto3.EmptyQueryResponse{}
+	} else {
+		complete = &pgproto3.CommandComplete{CommandTag: []byte(tag)}
+	}
+	q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(complete))
 	return r
 }
 
@@ -142,15 +162,15 @@ func (r *MockConn) Reply(tag string, rows ...map[string]interface{}) *MockConn {
 //
 // TODO: simulate a notice reply
 func (r *MockConn) ReplyError(code, message string) *MockConn {
-	r.script.Steps = append(
-		r.script.Steps,
+	q := r.lastQuery()
+	q.reply.Steps = append(
+		q.reply.Steps,
 		pgmock.SendMessage(&pgproto3.ErrorResponse{
 			Severity:            "ERROR",
 			SeverityUnlocalized: "ERROR",
 			Code:                code,
 			Message:             message,
 		}),
-		pgmock.SendMessage(&pgproto3.ReadyForQuery{TxStatus: 'I'}),
 	)
 	return r
 }
@@ -189,7 +209,7 @@ func NewWithStatus(status map[string]string) *MockConn {
 			return
 		}
 		// Always expect clients to terminate the request
-		mock.script.Steps = append(mock.script.Steps, pgmock.ExpectMessage(&pgproto3.Terminate{}))
+		mock.script.Steps = append(mock.script.Steps, ExpectTerminate())
 		err = mock.script.Run(pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn))
 		if err != nil {
 			mock.errChan <- err

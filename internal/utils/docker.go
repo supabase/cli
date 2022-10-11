@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -90,14 +91,14 @@ func DockerRun(
 	return resp.Reader, nil
 }
 
-func DockerRemoveAll() {
+func DockerRemoveContainers(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	for _, container := range containers {
 		wg.Add(1)
 
 		go func(container string) {
-			if err := Docker.ContainerRemove(context.Background(), container, types.ContainerRemoveOptions{
+			if err := Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
 				RemoveVolumes: true,
 				Force:         true,
 			}); err != nil {
@@ -111,6 +112,11 @@ func DockerRemoveAll() {
 	}
 
 	wg.Wait()
+}
+
+func DockerRemoveAll(ctx context.Context, netId string) {
+	DockerRemoveContainers(ctx)
+	_ = Docker.NetworkRemove(ctx, netId)
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
@@ -164,6 +170,21 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/" + imageName
 }
 
+func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {
+	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+	for i := time.Duration(1); retries > 0; retries-- {
+		if err == nil {
+			break
+		}
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Retrying after %d seconds...\n", i)
+		time.Sleep(i * time.Second)
+		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+		i *= 2
+	}
+	return out, err
+}
+
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
@@ -171,7 +192,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	} else if !client.IsErrNotFound(err) {
 		return err
 	}
-	out, err := Docker.ImagePull(ctx, imageUrl, types.ImagePullOptions{})
+	out, err := DockerImagePullWithRetry(ctx, imageUrl, 2)
 	if err != nil {
 		return err
 	}

@@ -19,8 +19,6 @@ CREATE ROLE authenticator;
 ALTER ROLE authenticator WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
 CREATE ROLE dashboard_user;
 ALTER ROLE dashboard_user WITH NOSUPERUSER INHERIT CREATEROLE CREATEDB NOLOGIN REPLICATION NOBYPASSRLS;
-CREATE ROLE pgbouncer;
-ALTER ROLE pgbouncer WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
 CREATE ROLE service_role;
 ALTER ROLE service_role WITH NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION BYPASSRLS;
 CREATE ROLE supabase_admin;
@@ -55,7 +53,7 @@ ALTER ROLE authenticated SET statement_timeout TO '8s';
 -- User Config "authenticator"
 --
 
-ALTER ROLE authenticator SET session_preload_libraries TO 'supautils', 'safeupdate';
+ALTER ROLE authenticator SET session_preload_libraries TO 'safeupdate';
 --
 -- User Configurations
 --

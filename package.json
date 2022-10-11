@@ -1,0 +1,28 @@
+{
+  "name": "supabase",
+  "version": "0.0.0-automated",
+  "description": "Supabase CLI",
+  "repository": "supabase/cli",
+  "homepage": "https://supabase.com/docs/reference/cli",
+  "bugs": "https://github.com/supabase/cli/issues",
+  "license": "MIT",
+  "author": "Supabase",
+  "type": "module",
+  "files": [
+    "scripts"
+  ],
+  "scripts": {
+    "preinstall": "node scripts/preinstall.js"
+  },
+  "url": "https://github.com/supabase/cli/releases/download/v{{version}}/{{bin_name}}_{{version}}_{{platform}}_{{arch}}.tar.gz",
+  "bin": "bin/supabase",
+  "dependencies": {
+    "node-fetch": "^3.2.10",
+    "tar": "6.1.11"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ]
+  }
+}

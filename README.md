@@ -4,7 +4,7 @@
 
 [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
 
-This repository contains all the functionality for our CLI.
+This repository contains all the functionality for Supabase CLI.
 
 - [x] Running Supabase locally
 - [x] Managing database migrations
@@ -18,6 +18,20 @@ This repository contains all the functionality for our CLI.
 ## Getting started
 
 ### Install the CLI
+
+#### NodeJS
+
+Available via [NPM](https://www.npmjs.com). To install:
+
+```bash
+npm i supabase
+```
+
+To run:
+
+```bash
+npx supabase -h
+```
 
 #### macOS
 

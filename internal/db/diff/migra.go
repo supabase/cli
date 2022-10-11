@@ -11,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/parser"
 )
 
 var (
@@ -43,13 +45,13 @@ func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) 
 	}
 
 	fmt.Fprintln(os.Stderr, "Creating shadow database...")
-	if err := createShadowDb(ctx, utils.DbId, utils.ShadowDbName); err != nil {
+	if err := ResetDatabase(ctx, utils.DbId, utils.ShadowDbName); err != nil {
 		return err
 	}
 
 	fmt.Fprintln(os.Stderr, "Initialising schema...")
 	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/%s", utils.Config.Db.Port, utils.ShadowDbName)
-	if err := applyMigrations(ctx, url, fsys, opts...); err != nil {
+	if err := ApplyMigrations(ctx, url, fsys, opts...); err != nil {
 		return err
 	}
 
@@ -74,29 +76,9 @@ func RunMigra(ctx context.Context, schema []string, file string, fsys afero.Fs) 
 	return SaveDiff(out, file, fsys)
 }
 
-func toBatchQuery(contents string) (batch pgx.Batch) {
-	var lines []string
-	for _, line := range strings.Split(contents, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) == 0 || strings.HasPrefix(trimmed, "--") {
-			continue
-		}
-		lines = append(lines, trimmed)
-		if strings.HasSuffix(trimmed, ";") {
-			query := strings.Join(lines, "\n")
-			batch.Queue(query[:len(query)-1])
-			lines = nil
-		}
-	}
-	if len(lines) > 0 {
-		batch.Queue(strings.Join(lines, "\n"))
-	}
-	return batch
-}
-
-// Creates a fresh database inside supabase_cli_db container.
-func createShadowDb(ctx context.Context, container, shadow string) error {
-	// Reset shadow database
+// Creates a fresh database inside a Postgres container.
+func ResetDatabase(ctx context.Context, container, shadow string) error {
+	// Our initial schema should not exceed the maximum size of an env var, ~32KB
 	env := []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql}
 	cmd := []string{"/bin/bash", "-c", resetShadowScript}
 	if _, err := utils.DockerExecOnce(ctx, container, env, cmd); err != nil {
@@ -106,14 +88,13 @@ func createShadowDb(ctx context.Context, container, shadow string) error {
 }
 
 // Applies local migration scripts to a database.
-func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Parse connection url
 	config, err := pgx.ParseConfig(url)
 	if err != nil {
 		return err
 	}
 	// Apply config overrides
-	config.PreferSimpleProtocol = true
 	for _, op := range options {
 		op(config)
 	}
@@ -122,7 +103,7 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	// Apply migrations
 	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
 		for i, migration := range migrations {
@@ -140,12 +121,24 @@ func applyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 				}
 			}
 			fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(migration.Name())+"...")
-			contents, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
+			sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, migration.Name()))
 			if err != nil {
 				return err
 			}
-			batch := toBatchQuery(string(contents))
-			if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+			defer sql.Close()
+			// Batch migration commands, without using statement cache
+			batch := pgconn.Batch{}
+			lines, err := parser.Split(sql)
+			if err != nil {
+				return err
+			}
+			for _, line := range lines {
+				trim := strings.TrimSpace(strings.TrimRight(line, ";"))
+				if len(trim) > 0 {
+					batch.ExecParams(trim, nil, nil, nil, nil)
+				}
+			}
+			if err := conn.PgConn().ExecBatch(ctx, &batch).Close(); err != nil {
 				return err
 			}
 		}

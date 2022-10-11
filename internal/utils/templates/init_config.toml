@@ -33,6 +33,10 @@ port = 54324
 smtp_port = 54325
 pop3_port = 54326
 
+[storage]
+# The maximum file size allowed (e.g. "5MB", "500KB").
+file_size_limit = "50MiB"
+
 [auth]
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
@@ -60,3 +64,6 @@ enable_confirmations = false
 enabled = false
 client_id = ""
 secret = ""
+# Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
+# or any other third-party OIDC providers.
+url = ""

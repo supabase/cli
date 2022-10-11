@@ -1,320 +1,194 @@
 package reset
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/muesli/reflow/wrap"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
+	"github.com/spf13/afero"
+	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/parser"
 )
-
-// TODO: Handle cleanup on SIGINT/SIGTERM.
-func Run() error {
-	// Sanity checks.
-	{
-		if err := utils.AssertSupabaseStartIsRunning(); err != nil {
-			return err
-		}
-
-		branch, err := utils.GetCurrentBranch()
-		if err != nil {
-			return err
-		}
-		currBranch = branch
-	}
-
-	s := spinner.NewModel()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	p := utils.NewProgram(model{spinner: s})
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- run(p)
-		p.Send(tea.Quit())
-	}()
-
-	if err := p.Start(); err != nil {
-		return err
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted " + utils.Aqua("supabase db reset") + ".")
-	}
-	if err := <-errCh; err != nil {
-		return err
-	}
-
-	fmt.Println("Finished " + utils.Aqua("supabase db reset") + " on branch " + utils.Aqua(currBranch) + ".")
-	return nil
-}
 
 var (
-	ctx, cancelCtx = context.WithCancel(context.Background())
-
-	currBranch string
+	healthTimeout = 5 * time.Second
 )
 
-func run(p utils.Program) error {
-	defer cleanup()
+func Run(ctx context.Context, fsys afero.Fs) error {
+	// Sanity checks.
+	{
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+			return err
+		}
+	}
 
-	// 1. Prevent new db connections to be established while db is recreated.
-	if err := utils.Docker.NetworkDisconnect(ctx, utils.NetId, utils.DbId, false); err != nil {
+	branch, err := utils.GetCurrentBranchFS(fsys)
+	if err != nil {
+		// Assume we are on main branch
+		branch = "main"
+	}
+
+	var opts []func(*pgx.ConnConfig)
+	if viper.GetBool("DEBUG") {
+		opts = append(opts, debug.SetupPGX)
+	}
+
+	fmt.Fprintln(os.Stderr, "Resetting database...")
+	if err := diff.ResetDatabase(ctx, utils.DbId, branch); err != nil {
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Resetting database..."))
-
-	if err := func() error {
-		// 2. Recreate db.
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
-COMMIT;
-DROP DATABASE postgres;
-CREATE DATABASE postgres;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error resetting database: " + errBuf.String())
-			}
-		}
-
-		// 3. Apply initial schema + migrations + seed.
-
-		p.Send(utils.StatusMsg("Setting up initial schema..."))
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error resetting database: " + errBuf.String())
-			}
-		}
-
-		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-			return err
-		}
-		migrations, err := os.ReadDir("supabase/migrations")
-		if err != nil {
-			return err
-		}
-
-		for i, migration := range migrations {
-			// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
-			// the first migration (prev versions of the CLI) is deprecated.
-			if i == 0 {
-				matches := regexp.MustCompile(`([0-9]{14})_init\.sql`).FindStringSubmatch(migration.Name())
-				if len(matches) == 2 {
-					if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err != nil {
-						return err
-					} else if timestamp < 20211209000000 {
-						continue
-					}
-				}
-			}
-
-			p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
-
-			content, err := os.ReadFile("supabase/migrations/" + migration.Name())
-			if err != nil {
-				return err
-			}
-
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error resetting database: " + errBuf.String())
-			}
-		}
-
-		p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
-		{
-			content, err := os.ReadFile("supabase/seed.sql")
-			if errors.Is(err, os.ErrNotExist) {
-				// skip
-			} else if err != nil {
-				return err
-			}
-
-			err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
-
-			if err != nil {
-				return err
-			} else {
-				out, err := utils.DockerExec(ctx, utils.DbId, []string{
-					"psql", "postgresql://postgres:postgres@localhost/postgres", "-f", "/tmp/seed.sql",
-				})
-				if err != nil {
-					return err
-				}
-				var errBuf bytes.Buffer
-				if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-					return err
-				}
-				if errBuf.Len() > 0 {
-					return errors.New("Error resetting database: " + errBuf.String())
-				}
-			}
-		}
-
-		// Reload PostgREST schema cache.
-		{
-			// Need to connect for PostgREST to connect.
-			if err := utils.Docker.NetworkConnect(ctx, utils.NetId, utils.DbId, &network.EndpointSettings{}); err != nil {
-				fmt.Fprintf(os.Stderr, "Error reconnecting database: %v", err)
-				return nil
-			}
-
-			if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
-				return nil
-			}
-		}
-
-		return nil
-	}(); err != nil {
-		_ = os.RemoveAll("supabase/.branches/" + currBranch)
+	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/%s", utils.Config.Db.Port, branch)
+	if err := diff.ApplyMigrations(ctx, url, fsys, opts...); err != nil {
 		return err
 	}
 
+	if err := SeedDatabase(ctx, url, fsys, opts...); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	fmt.Fprintln(os.Stderr, "Activating branch...")
+	if err := ActivateDatabase(ctx, branch, opts...); err != nil {
+		return err
+	}
+
+	// Reload PostgREST schema cache.
+	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
+	}
+
+	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
 	return nil
 }
 
-func cleanup() {
-	_ = utils.Docker.NetworkConnect(context.Background(), utils.NetId, utils.DbId, &network.EndpointSettings{})
+func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	sql, err := fsys.Open(utils.SeedDataPath)
+	if err != nil {
+		return err
+	}
+	defer sql.Close()
+	fmt.Fprintln(os.Stderr, "Seeding data...")
+	// Parse connection url
+	config, err := pgx.ParseConfig(url)
+	if err != nil {
+		return err
+	}
+	// Apply config overrides
+	for _, op := range options {
+		op(config)
+	}
+	// Connect to database
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	// Batch seed commands, safe to use statement cache
+	batch := pgx.Batch{}
+	lines, err := parser.Split(sql)
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
+		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
+		if len(trim) > 0 {
+			batch.Queue(trim)
+		}
+	}
+	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
-type model struct {
-	spinner     spinner.Model
-	status      string
-	progress    *progress.Model
-	psqlOutputs []string
-
-	width int
+func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.ConnConfig)) error {
+	// Parse connection url
+	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/template1", utils.Config.Db.Port)
+	config, err := pgx.ParseConfig(url)
+	if err != nil {
+		return err
+	}
+	// Apply config overrides
+	for _, op := range options {
+		op(config)
+	}
+	// Connect to database
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := DisconnectClients(ctx, conn); err != nil {
+		return err
+	}
+	defer RestartDatabase(context.Background())
+	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
+	if _, err := conn.Exec(ctx, drop); err != nil {
+		return err
+	}
+	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
+	if _, err := conn.Exec(ctx, swap); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (m model) Init() tea.Cmd {
-	return spinner.Tick
+func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
+	// Must be executed separately because running in transaction is unsupported
+	disconn := "ALTER DATABASE postgres ALLOW_CONNECTIONS false;"
+	if _, err := conn.Exec(ctx, disconn); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName {
+			return err
+		}
+	}
+	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")
+	if _, err := conn.Exec(ctx, term); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			// Stop future runs
-			cancelCtx()
-			// Stop current runs
-			cleanup()
-			return m, tea.Quit
-		default:
-			return m, nil
-		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		return m, nil
-	case spinner.TickMsg:
-		spinnerModel, cmd := m.spinner.Update(msg)
-		m.spinner = spinnerModel
-		return m, cmd
-	case progress.FrameMsg:
-		if m.progress == nil {
-			return m, nil
-		}
-
-		tmp, cmd := m.progress.Update(msg)
-		progressModel := tmp.(progress.Model)
-		m.progress = &progressModel
-		return m, cmd
-	case utils.StatusMsg:
-		m.status = string(msg)
-		return m, nil
-	case utils.ProgressMsg:
-		if msg == nil {
-			m.progress = nil
-			return m, nil
-		}
-
-		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithGradient("#1c1c1c", "#34b27b"))
-			m.progress = &progressModel
-		}
-
-		return m, m.progress.SetPercent(*msg)
-	case utils.PsqlMsg:
-		if msg == nil {
-			m.psqlOutputs = []string{}
-			return m, nil
-		}
-
-		m.psqlOutputs = append(m.psqlOutputs, *msg)
-		if len(m.psqlOutputs) > 5 {
-			m.psqlOutputs = m.psqlOutputs[1:]
-		}
-		return m, nil
-	default:
-		return m, nil
+func RestartDatabase(ctx context.Context) {
+	// Some extensions must be manually restarted after pg_terminate_backend
+	// Ref: https://github.com/citusdata/pg_cron/issues/99
+	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
+		return
+	}
+	if !WaitForHealthyDatabase(ctx, healthTimeout) {
+		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+		return
+	}
+	// TODO: update storage-api to handle postgres restarts
+	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
 	}
 }
 
-func (m model) View() string {
-	var progress string
-	if m.progress != nil {
-		progress = "\n\n" + m.progress.View()
+func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
+	// Poll for container health status
+	now := time.Now()
+	expiry := now.Add(timeout)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for t := now; t.Before(expiry); t = <-ticker.C {
+		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil && resp.State.Health.Status == "healthy" {
+			return true
+		}
 	}
-
-	var psqlOutputs string
-	if len(m.psqlOutputs) > 0 {
-		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
-	}
-
-	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
+	return false
 }

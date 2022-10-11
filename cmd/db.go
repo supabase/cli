@@ -12,10 +12,13 @@ import (
 	"github.com/supabase/cli/internal/db/branch/list"
 	"github.com/supabase/cli/internal/db/branch/switch_"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/test"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var (
@@ -61,7 +64,8 @@ var (
 		Short: "Switch the active branch",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return switch_.Run(args[0])
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return switch_.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
 
@@ -132,7 +136,31 @@ var (
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return reset.Run()
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return reset.Run(ctx, afero.NewOsFs())
+		},
+	}
+
+	level = utils.EnumFlag{
+		Allowed: lint.AllowedLevels,
+		Value:   lint.AllowedLevels[0],
+	}
+
+	dbLintCmd = &cobra.Command{
+		Use:   "lint",
+		Short: "Checks local database for typing error",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return lint.Run(ctx, schema, level.Value, afero.NewOsFs())
+		},
+	}
+
+	dbTestCmd = &cobra.Command{
+		Use:   "test",
+		Short: "Tests local database with pgTAP.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return test.Run(ctx, afero.NewOsFs())
 		},
 	}
 )
@@ -145,9 +173,10 @@ func init() {
 	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
 	// Build diff command
-	dbDiffCmd.Flags().BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
-	dbDiffCmd.Flags().StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
-	dbDiffCmd.Flags().StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	diffFlags := dbDiffCmd.Flags()
+	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
+	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
@@ -162,7 +191,14 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
-	// Buidl reset command
+	// Build reset command
 	dbCmd.AddCommand(dbResetCmd)
+	// Build lint command
+	lintFlags := dbLintCmd.Flags()
+	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	lintFlags.Var(&level, "level", "Error level to emit.")
+	dbCmd.AddCommand(dbLintCmd)
+	// Build test command
+	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
 }

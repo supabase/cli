@@ -92,7 +92,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 			},
 		},
 	)
-	defer cleanup()
+	defer utils.DockerRemoveAll(context.Background(), netId)
 
 	p.Send(utils.StatusMsg("Pulling images..."))
 
@@ -100,7 +100,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	{
 		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, dbImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		}
 		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
 		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.Docker.ImagePull(ctx, diffImage, types.ImagePullOptions{})
+			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
 			if err != nil {
 				return err
 			}
@@ -170,25 +170,9 @@ EOSQL
 			return errors.New("Error starting shadow database: " + errBuf.String())
 		}
 
-		{
-			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting shadow database: " + errBuf.String())
-			}
+		p.Send(utils.StatusMsg("Resetting database..."))
+		if err := differ.ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
+			return err
 		}
 
 		if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
@@ -221,7 +205,7 @@ EOSQL
 			}
 
 			out, err := utils.DockerExec(ctx, dbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
+				"sh", "-c", "PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/" + utils.ShadowDbName + ` <<'EOSQL'
 BEGIN;
 ` + string(content) + `
 COMMIT;
@@ -253,7 +237,7 @@ EOSQL
 				Entrypoint: []string{
 					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
 						" '" + conn.Config().ConnString() + "'" +
-						" 'postgresql://postgres:postgres@" + dbId + ":5432/postgres'",
+						" 'postgresql://postgres:postgres@" + dbId + ":5432/" + utils.ShadowDbName + "'",
 				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
@@ -275,11 +259,6 @@ EOSQL
 	}
 
 	return nil
-}
-
-func cleanup() {
-	utils.DockerRemoveAll()
-	_ = utils.Docker.NetworkRemove(context.Background(), netId)
 }
 
 type model struct {
@@ -304,7 +283,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stop future runs
 			m.cancel()
 			// Stop current runs
-			cleanup()
+			utils.DockerRemoveAll(context.Background(), netId)
 			return m, tea.Quit
 		default:
 			return m, nil

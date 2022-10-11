@@ -2,6 +2,7 @@ package integration
 
 // Basic imports
 import (
+	"context"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/docker/docker/api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -29,6 +31,7 @@ type StatusTestSuite struct {
 func (suite *StatusTestSuite) TestStatus() {
 	// run command
 	status, _, err := suite.cmd.Find([]string{"status"})
+	status.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 
 	// set stdout to write into file so we can capture cmd output
@@ -58,6 +61,7 @@ func (suite *StatusTestSuite) TestStatus() {
 	require.Contains(suite.T(), string(contents), "DB URL: postgresql://postgres:postgres@localhost:54322/postgres")
 	require.Contains(suite.T(), string(contents), "Studio URL: http://localhost:54323")
 	require.Contains(suite.T(), string(contents), "Inbucket URL: http://localhost:54324")
+	require.Contains(suite.T(), string(contents), "JWT secret: super-secret-jwt-token-with-at-least-32-characters-long")
 	require.Contains(suite.T(), string(contents), "anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
 	require.Contains(suite.T(), string(contents), "service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
 }
@@ -76,7 +80,11 @@ func (suite *StatusTestSuite) SetupTest() {
 	// implement mocks
 	DockerMock.ContainerInspectHandler = func(c *gin.Context) {
 		suite.addParams(c.Copy())
-		c.JSON(http.StatusOK, gin.H{})
+		c.JSON(http.StatusOK, types.ContainerJSON{
+			ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{Running: true},
+			},
+		})
 	}
 }
 

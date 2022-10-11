@@ -8,12 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"text/template"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -61,6 +60,17 @@ var (
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
 )
 
+// Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
+type sizeInBytes int64
+
+func (s *sizeInBytes) UnmarshalText(text []byte) error {
+	size, err := units.RAMInBytes(string(text))
+	if err == nil {
+		*s = sizeInBytes(size)
+	}
+	return err
+}
+
 var Config config
 
 type (
@@ -70,6 +80,7 @@ type (
 		Db        db
 		Studio    studio
 		Inbucket  inbucket
+		Storage   storage
 		Auth      auth
 		// TODO
 		// Scripts   scripts
@@ -97,6 +108,10 @@ type (
 		Pop3Port uint `toml:"pop3_port"`
 	}
 
+	storage struct {
+		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
+	}
+
 	auth struct {
 		SiteUrl                string   `toml:"site_url"`
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
@@ -116,6 +131,7 @@ type (
 		Enabled  bool
 		ClientId string `toml:"client_id"`
 		Secret   string
+		Url      string
 	}
 
 	// TODO
@@ -131,20 +147,9 @@ func LoadConfig() error {
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// TODO: provide a config interface for all sub commands to use fsys
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err == nil {
-		// skip
-	} else if errors.Is(err, os.ErrNotExist) {
-		_, _err := os.Stat("supabase/config.json")
-		if errors.Is(_err, os.ErrNotExist) {
-			return fmt.Errorf("Missing config: %w", err)
-		} else if _err != nil {
-			return fmt.Errorf("Failed to read config: %w", _err)
-		}
-
-		if err := handleDeprecatedConfig(); err != nil {
-			return err
-		}
-	} else {
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("Missing config: %w", err)
+	} else if err != nil {
 		return fmt.Errorf("Failed to read config: %w", err)
 	}
 
@@ -195,6 +200,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
+		if Config.Storage.FileSizeLimit == 0 {
+			Config.Storage.FileSizeLimit = 50 * units.MiB
+		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
@@ -244,7 +252,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return value, nil
 				}
 
-				var clientId, secret string
+				var clientId, secret, url string
 
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
@@ -265,122 +273,22 @@ func LoadConfigFS(fsys afero.Fs) error {
 					secret = v
 				}
 
+				if Config.Auth.External[ext].Url != "" {
+					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
+					if err != nil {
+						return err
+					}
+					url = v
+				}
+
 				Config.Auth.External[ext] = provider{
 					Enabled:  true,
 					ClientId: clientId,
 					Secret:   secret,
+					Url:      url,
 				}
 			}
 		}
-	}
-
-	return nil
-}
-
-// TODO: Remove this after 2022-08-15.
-func handleDeprecatedConfig() error {
-	fmt.Println("WARNING: Found deprecated supabase/config.json. Converting to supabase/config.toml. Refer to release notes for details.")
-
-	viper.SetConfigFile("supabase/config.json")
-	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("Failed to read config: %w", err)
-	}
-
-	var inbucketPort uint
-	if viper.IsSet("ports.inbucket") {
-		inbucketPort = viper.GetUint("ports.inbucket")
-	} else {
-		inbucketPort = 54324
-	}
-	dbVersion := viper.GetString("dbVersion")
-	dbMajorVersion, err := strconv.ParseUint(dbVersion[:len(dbVersion)-4], 10, 64)
-	if err != nil {
-		return err
-	}
-
-	newConfig := fmt.Sprintf(
-		`# A string used to distinguish different Supabase projects on the same host. Defaults to the working
-# directory name when running supabase init.
-project_id = "%s"
-
-[api]
-# Port to use for the API URL.
-port = %d
-# Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
-# endpoints. public and storage are always included.
-schemas = []
-# Extra schemas to add to the search_path of every request.
-extra_search_path = ["extensions"]
-# The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
-# for accidental or malicious requests.
-max_rows = 1000
-
-[db]
-# Port to use for the local database URL.
-port = %d
-# The database major version to use. This has to be the same as your remote database's. Run SHOW
-# server_version; on the remote database to check.
-major_version = %d
-
-[studio]
-# Port to use for Supabase Studio.
-port = %d
-
-# Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
-# are monitored, and you can view the emails that would have been sent from the web interface.
-[inbucket]
-# Port to use for the email testing server web interface.
-port = %d
-
-[auth]
-# The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
-# in emails.
-site_url = "http://localhost:3000"
-# A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://localhost:3000"]
-# How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one
-# week).
-jwt_expiry = 3600
-# Allow/disallow new user signups to your project.
-enable_signup = true
-
-[auth.email]
-# Allow/disallow new user signups via email to your project.
-enable_signup = true
-# If enabled, a user will be required to confirm any email change on both the old, and new email
-# addresses. If disabled, only the new email is required to confirm.
-double_confirm_changes = true
-# If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
-
-# Use an external OAuth provider. The full list of providers are: apple, azure, bitbucket,
-# discord, facebook, github, gitlab, google, twitch, twitter, slack, spotify.
-[auth.external.apple]
-enabled = false
-client_id = ""
-secret = ""
-`,
-		viper.GetString("projectId"),
-		viper.GetUint("ports.api"),
-		viper.GetUint("ports.db"),
-		dbMajorVersion,
-		viper.GetUint("ports.studio"),
-		inbucketPort,
-	)
-
-	Config.ProjectId = viper.GetString("projectId")
-	Config.Api.Port = viper.GetUint("ports.api")
-	Config.Db.Port = viper.GetUint("ports.db")
-	Config.Studio.Port = viper.GetUint("ports.studio")
-	Config.Inbucket.Port = inbucketPort
-	Config.Db.MajorVersion = uint(dbMajorVersion)
-	Config.Auth.SiteUrl = "http://localhost:3000"
-
-	if err := os.WriteFile(ConfigPath, []byte(newConfig), 0644); err != nil {
-		return err
-	}
-	if err := os.Remove("supabase/config.json"); err != nil {
-		return err
 	}
 
 	return nil
