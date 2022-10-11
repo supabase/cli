@@ -36,10 +36,10 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertDockerIsRunning(); err != nil {
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
 		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
