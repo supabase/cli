@@ -115,3 +115,4 @@ GRANT supabase_storage_admin TO postgres GRANTED BY supabase_admin;
 -- PostgreSQL database cluster dump complete
 --
 
+RESET ALL;

@@ -3234,3 +3234,4 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 --
 
 drop extension pg_graphql; create extension pg_graphql schema extensions;
+RESET ALL;
