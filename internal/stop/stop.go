@@ -42,7 +42,6 @@ func stop(ctx context.Context) error {
 	args := filters.NewArgs(
 		filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId),
 	)
-	// Remove containers.
 	containers, err := utils.Docker.ContainerList(ctx, types.ContainerListOptions{
 		All:     true,
 		Filters: args,
@@ -50,13 +49,12 @@ func stop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
+	// Remove containers.
 	ids := make([]string, len(containers))
 	for i, c := range containers {
 		ids[i] = c.ID
 	}
 	utils.DockerRemoveContainers(ctx, ids)
-
 	// Remove networks.
 	_, err = utils.Docker.NetworksPrune(ctx, args)
 	return err
