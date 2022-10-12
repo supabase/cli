@@ -23,7 +23,7 @@ func Run(ctx context.Context, username, password, database string, fsys afero.Fs
 	if err != nil {
 		return err
 	}
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, projectRef)
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
 	if err != nil {
 		return err
 	}
