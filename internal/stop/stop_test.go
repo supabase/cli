@@ -22,6 +22,7 @@ func TestStopCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
+		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
 		defer gock.OffAll()
@@ -47,6 +48,10 @@ func TestStopCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+		// Check branches removed
+		exists, err := afero.Exists(fsys, utils.CurrBranchPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 
 	t.Run("throws error on invalid config", func(t *testing.T) {
@@ -103,6 +108,7 @@ func TestStopCommand(t *testing.T) {
 		err := Run(context.Background(), afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
@@ -133,6 +139,7 @@ func TestStopCommand(t *testing.T) {
 		err := Run(context.Background(), afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
