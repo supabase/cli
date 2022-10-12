@@ -274,15 +274,15 @@ EOSQL
 	{
 		p.Send(utils.StatusMsg("Committing changes on remote database as a new migration..."))
 
+		src := fmt.Sprintf(`"dbname='%s' user='%s' host='%s' port=5432 password='%s'"`, database, username, host, password)
+		dst := fmt.Sprintf(`"dbname='%s' user=postgres host='%s' port=5432 password=postgres"`, utils.ShadowDbName, dbId)
 		out, err := utils.DockerRun(
 			ctx,
 			differId,
 			&container.Config{
 				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
-					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
-						" '" + conn.Config().ConnString() + "'" +
-						" 'postgresql://postgres:postgres@" + dbId + ":5432/" + utils.ShadowDbName + "'",
+					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " + src + " " + dst,
 				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
