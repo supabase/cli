@@ -91,7 +91,7 @@ func DockerRun(
 	return resp.Reader, nil
 }
 
-func DockerRemoveContainers(ctx context.Context) {
+func DockerRemoveContainers(ctx context.Context, containers []string) {
 	var wg sync.WaitGroup
 
 	for _, container := range containers {
@@ -115,7 +115,7 @@ func DockerRemoveContainers(ctx context.Context) {
 }
 
 func DockerRemoveAll(ctx context.Context, netId string) {
-	DockerRemoveContainers(ctx)
+	DockerRemoveContainers(ctx, containers)
 	_ = Docker.NetworkRemove(ctx, netId)
 }
 
