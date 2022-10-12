@@ -207,8 +207,8 @@ func GetGitRoot(fsys afero.Fs) (*string, error) {
 }
 
 // If the `os.Getwd()` is within a supabase project, this will change
-// the current working directory to the root of the given project. 
-// Otherwise, the `os.Getwd()` is kept as is. 
+// the current working directory to the root of the given project.
+// Otherwise, the `os.Getwd()` is kept as is.
 func TryChangeWorkDirToProjectRoot() {
 	fsys := afero.NewOsFs()
 	origWd, err := os.Getwd()
