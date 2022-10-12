@@ -202,6 +202,6 @@ func GetSupabaseDbHost(projectRef string) string {
 	case "https://api.supabase.green":
 		return fmt.Sprintf("db.%s.supabase.red", projectRef)
 	default:
-		return "http://localhost:5432"
+		return fmt.Sprintf("db.%s.supabase.red", projectRef)
 	}
 }
