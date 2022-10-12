@@ -4,7 +4,9 @@
 package api
 
 const (
-	BearerScopes = "bearer.Scopes"
+	ApiKeyHeaderScopes = "apiKeyHeader.Scopes"
+	ApiKeyParamScopes  = "apiKeyParam.Scopes"
+	BearerScopes       = "bearer.Scopes"
 )
 
 // Defines values for CreateProjectBodyPlan.
@@ -59,6 +61,7 @@ type CreateOrganizationBody struct {
 // CreateProjectBody defines model for CreateProjectBody.
 type CreateProjectBody struct {
 	DbPass         string                  `json:"db_pass"`
+	KpsEnabled     *bool                   `json:"kps_enabled,omitempty"`
 	Name           string                  `json:"name"`
 	OrganizationId string                  `json:"organization_id"`
 	Plan           CreateProjectBodyPlan   `json:"plan"`
@@ -129,11 +132,21 @@ type SecretResponse struct {
 	Value string `json:"value"`
 }
 
+// TypescriptResponse defines model for TypescriptResponse.
+type TypescriptResponse struct {
+	Types string `json:"types"`
+}
+
 // UpdateFunctionBody defines model for UpdateFunctionBody.
 type UpdateFunctionBody struct {
 	Body      *string `json:"body,omitempty"`
 	Name      *string `json:"name,omitempty"`
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
+}
+
+// UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
+type UpdatePgsodiumConfigBody struct {
+	RootKey string `json:"root_key"`
 }
 
 // CreateOrganizationJSONBody defines parameters for CreateOrganization.
@@ -153,6 +166,9 @@ type GetFunctionParams struct {
 // UpdateFunctionJSONBody defines parameters for UpdateFunction.
 type UpdateFunctionJSONBody = UpdateFunctionBody
 
+// UpdateConfigJSONBody defines parameters for UpdateConfig.
+type UpdateConfigJSONBody = UpdatePgsodiumConfigBody
+
 // DeleteSecretsJSONBody defines parameters for DeleteSecrets.
 type DeleteSecretsJSONBody = []string
 
@@ -170,6 +186,9 @@ type CreateFunctionJSONRequestBody = CreateFunctionJSONBody
 
 // UpdateFunctionJSONRequestBody defines body for UpdateFunction for application/json ContentType.
 type UpdateFunctionJSONRequestBody = UpdateFunctionJSONBody
+
+// UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
+type UpdateConfigJSONRequestBody = UpdateConfigJSONBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
