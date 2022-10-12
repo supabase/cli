@@ -108,10 +108,6 @@ func GetCurrentTimestamp() string {
 	return time.Now().UTC().Format("20060102150405")
 }
 
-func GetCurrentBranch() (string, error) {
-	return GetCurrentBranchFS(afero.NewOsFs())
-}
-
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
 	branch, err := afero.ReadFile(fsys, CurrBranchPath)
 	if err != nil {
@@ -149,14 +145,6 @@ func NewError(s string) error {
 	}
 
 	return errors.New(s)
-}
-
-func AssertSupabaseStartIsRunning() error {
-	if err := LoadConfig(); err != nil {
-		return err
-	}
-
-	return AssertSupabaseDbIsRunning()
 }
 
 func AssertSupabaseDbIsRunning() error {
@@ -230,10 +218,6 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	}
 
 	return nil
-}
-
-func AssertIsLinked() error {
-	return AssertIsLinkedFS(afero.NewOsFs())
 }
 
 func AssertIsLinkedFS(fsys afero.Fs) error {
