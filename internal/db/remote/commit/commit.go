@@ -95,7 +95,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	if err != nil {
 		return err
 	}
-	conn, err := ConnectRemotePostgres(ctx, username, password, database, projectRef)
+	conn, err := ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
 	if err != nil {
 		return err
 	}
@@ -436,7 +436,7 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 		"postgresql://%s:%s@%s:6543/%s?connect_timeout=3",
 		url.QueryEscape(username),
 		url.QueryEscape(password),
-		utils.GetSupabaseDbHost(url.QueryEscape(host)),
+		url.QueryEscape(host),
 		url.QueryEscape(database),
 	)
 	// Parse connection url
