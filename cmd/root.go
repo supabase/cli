@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"log"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,7 +24,11 @@ var rootCmd = &cobra.Command{
 		if viper.GetBool("DEBUG") {
 			cmd.SetContext(utils.WithTraceContext(cmd.Context()))
 		}
-		
+
+		workdir := viper.GetString("DIR")
+		if err := os.Chdir(workdir); err != nil {
+			log.Fatal(err)
+		}
 		utils.TryChangeWorkDirToProjectRoot()
 	},
 }
@@ -37,7 +43,14 @@ func init() {
 		viper.AutomaticEnv()
 	})
 	flags := rootCmd.PersistentFlags()
+	workdir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	flags.Bool("debug", false, "output debug logs to stderr")
+	flags.StringP("dir", "d", workdir, "a path to a supabase project directory")
+
 	flags.VisitAll(func(f *pflag.Flag) {
 		key := strings.ReplaceAll(f.Name, "-", "_")
 		cobra.CheckErr(viper.BindPFlag(key, flags.Lookup(f.Name)))
