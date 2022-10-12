@@ -95,7 +95,22 @@ var (
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+	InternalSchemas = []string{
+		"auth",
+		"extensions",
+		"graphql",
+		"graphql_public",
+		"pgbouncer",
+		"pgsodium",
+		"pgsodium_masks",
+		"realtime",
+		"storage",
+		"supabase_functions",
+		"supabase_migrations",
+		"pg_catalog",
+		"pg_toast",
+		"information_schema",
+	}
 )
 
 // Used by unit tests
