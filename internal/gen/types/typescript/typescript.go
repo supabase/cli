@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -14,9 +15,69 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var ctx = context.Background()
+func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, dbUrl string, schemas []string, fsys afero.Fs) error {
+	coalesce := func(args ...[]string) []string {
+		for _, arg := range args {
+			if len(arg) != 0 {
+				return arg
+			}
+		}
+		return []string{}
+	}
 
-func Run(useLocal bool, dbUrl string, fsys afero.Fs) error {
+	// Generating types on `projectId` and `dbUrl` should work without `supabase
+	// init` - i.e. we shouldn't try to load the config for these cases.
+
+	if projectId != "" {
+		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, func(_ context.Context, req *http.Request) error {
+			q := req.URL.Query()
+			q.Add("included_schemas", strings.Join(coalesce(schemas, []string{"public"}), ","))
+			req.URL.RawQuery = q.Encode()
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		if resp.JSON200 == nil {
+			return errors.New("failed to retrieve generated types: " + string(resp.Body))
+		}
+
+		fmt.Print(resp.JSON200.Types)
+		return nil
+	}
+
+	if dbUrl != "" {
+		matches := utils.PostgresUrlPattern.FindStringSubmatch(dbUrl)
+		if len(matches) != 3 {
+			return errors.New("URL is not a valid Supabase connection string.")
+		}
+		escaped := fmt.Sprintf(
+			"postgresql://postgres:%s@%s/postgres",
+			url.QueryEscape(matches[1]),
+			matches[2],
+		)
+
+		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
+			"PG_META_DB_URL=" + escaped,
+		}, []string{
+			"node",
+			"bin/src/server/app.js",
+			"gen",
+			"types",
+			"typescript",
+			"--include-schemas",
+			strings.Join(coalesce(schemas, []string{"public"}), ","),
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Print(out)
+		return nil
+	}
+
+	// only load config on `--local` or `--linked`
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
@@ -34,7 +95,13 @@ func Run(useLocal bool, dbUrl string, fsys afero.Fs) error {
 					"PG_META_DB_HOST=" + utils.DbId,
 				},
 				Cmd: []string{
-					"node", "bin/src/server/app.js", "gen", "types", "typescript", "--include-schemas", strings.Join(append([]string{"public"}, utils.Config.Api.Schemas...), ","),
+					"node",
+					"bin/src/server/app.js",
+					"gen",
+					"types",
+					"typescript",
+					"--include-schemas",
+					strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
 				},
 				AttachStderr: true,
 				AttachStdout: true,
@@ -60,34 +127,28 @@ func Run(useLocal bool, dbUrl string, fsys afero.Fs) error {
 		return nil
 	}
 
-	// run typegen on the dbUrl
-	{
-		matches := utils.PostgresUrlPattern.FindStringSubmatch(dbUrl)
-		if len(matches) != 3 {
-			return errors.New("URL is not a valid Supabase connection string.")
+	if useLinked {
+		projectId, err := utils.LoadProjectRef(fsys)
+		if err != nil {
+			return err
 		}
-		escaped := fmt.Sprintf(
-			"postgresql://postgres:%s@%s/postgres",
-			url.QueryEscape(matches[1]),
-			matches[2],
-		)
 
-		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
-			"PG_META_DB_URL=" + escaped,
-		}, []string{
-			"node",
-			"bin/src/server/app.js",
-			"gen",
-			"types",
-			"typescript",
-			"--include-schemas",
-			strings.Join(append(utils.Config.Api.Schemas, "public"), ","),
+		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, func(_ context.Context, req *http.Request) error {
+			q := req.URL.Query()
+			q.Add("included_schemas", strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","))
+			req.URL.RawQuery = q.Encode()
+			return nil
 		})
 		if err != nil {
 			return err
 		}
 
-		fmt.Print(out)
+		if resp.JSON200 == nil {
+			return errors.New("failed to retrieve generated types: " + string(resp.Body))
+		}
+
+		fmt.Print(resp.JSON200.Types)
+		return nil
 	}
 
 	return nil
