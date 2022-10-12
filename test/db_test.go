@@ -2,7 +2,7 @@ package integration
 
 // Basic imports
 import (
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -43,7 +43,7 @@ func (suite *DBTestSuite) SetupTest() {
 	// add docker mock handlers
 	DockerMock.ExecCreateHandler = func(c *gin.Context) {
 		suite.addParams(c.Copy())
-		body, err := ioutil.ReadAll(c.Request.Body)
+		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "error reading body",
@@ -61,7 +61,7 @@ func (suite *DBTestSuite) SetupTest() {
 
 	DockerMock.ExecStartHandler = func(c *gin.Context) {
 		suite.addParams(c.Copy())
-		body, err := ioutil.ReadAll(c.Request.Body)
+		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "error reading body",

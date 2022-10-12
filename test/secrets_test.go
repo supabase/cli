@@ -4,7 +4,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
@@ -39,10 +38,10 @@ func (suite *SecretsTestSuite) TestList() {
 	require.NoError(suite.T(), err)
 
 	ref := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
-	require.NoError(suite.T(), ioutil.WriteFile(utils.ProjectRefPath, []byte(ref), os.FileMode(0755)))
+	require.NoError(suite.T(), os.WriteFile(utils.ProjectRefPath, []byte(ref), os.FileMode(0755)))
 
 	// set stdout to write into file so we can capture cmd output
-	tmpfile, err := ioutil.TempFile(suite.tempDir, "output")
+	tmpfile, err := os.CreateTemp(suite.tempDir, "output")
 	require.NoError(suite.T(), err)
 	defer os.Remove(tmpfile.Name()) // clean up
 	oldStdout := os.Stdout
@@ -61,7 +60,7 @@ func (suite *SecretsTestSuite) TestList() {
 		"User-Agent":      []string{"Go-http-client/1.1"},
 	})
 
-	contents, err := ioutil.ReadFile(tmpfile.Name())
+	contents, err := os.ReadFile(tmpfile.Name())
 	require.NoError(suite.T(), err)
 	require.Contains(suite.T(), string(contents), "some-key")
 	require.Contains(suite.T(), string(contents), "another")

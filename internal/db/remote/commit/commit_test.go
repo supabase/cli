@@ -17,6 +17,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 
 		// Run test
 		c, err := ConnectRemotePostgres(context.Background(), "username", "password", "database", "localhost", conn.Intercept)
+		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.NoError(t, err)
 	})
@@ -29,8 +30,8 @@ func TestConnectRemotePostgres(t *testing.T) {
 		// Run test
 		password := "pass word"
 		c, err := ConnectRemotePostgres(context.Background(), "username", password, "database", "localhost", conn.Intercept)
-		defer c.Close(context.Background())
 		require.NoError(t, err)
+		defer c.Close(context.Background())
 		assert.Equal(t, password, c.Config().Password)
 	})
 }

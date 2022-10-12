@@ -3,7 +3,6 @@ package integration
 // Basic imports
 import (
 	"context"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,7 +34,7 @@ func (suite *StatusTestSuite) TestStatus() {
 	require.NoError(suite.T(), err)
 
 	// set stdout to write into file so we can capture cmd output
-	tmpfile, err := ioutil.TempFile(suite.tempDir, "output")
+	tmpfile, err := os.CreateTemp(suite.tempDir, "output")
 	require.NoError(suite.T(), err)
 	defer os.Remove(tmpfile.Name()) // clean up
 	oldStdout := os.Stdout
@@ -55,7 +54,7 @@ func (suite *StatusTestSuite) TestStatus() {
 		},
 	})
 
-	contents, err := ioutil.ReadFile(tmpfile.Name())
+	contents, err := os.ReadFile(tmpfile.Name())
 	require.NoError(suite.T(), err)
 	require.Contains(suite.T(), string(contents), "API URL: http://localhost:54321")
 	require.Contains(suite.T(), string(contents), "DB URL: postgresql://postgres:postgres@localhost:54322/postgres")

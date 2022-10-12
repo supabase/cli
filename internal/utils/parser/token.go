@@ -17,30 +17,29 @@ const (
 
 // State transition table for tokenizer:
 //
-//   Ready -> Ready (default)
-//   Ready -> Error (on invalid syntax)
-//   Ready -> Done (on ;, emit token)
-//   Ready -> Done (on EOF, emit token)
+//	Ready -> Ready (default)
+//	Ready -> Error (on invalid syntax)
+//	Ready -> Done (on ;, emit token)
+//	Ready -> Done (on EOF, emit token)
 //
-//   Ready -> Comment (on --)
-//   Comment -> Comment (default)
-//   Comment -> Ready (on \n)
+//	Ready -> Comment (on --)
+//	Comment -> Comment (default)
+//	Comment -> Ready (on \n)
 //
-//   Ready -> Block (on /*)
-//   Block -> Block (on /*, +-depth)
-//   Block -> Ready (on */, depth 0)
+//	Ready -> Block (on /*)
+//	Block -> Block (on /*, +-depth)
+//	Block -> Ready (on */, depth 0)
 //
-//   Ready -> Quote (on ')
-//   Quote -> Quote (on '', default)
-//   Quote -> Ready (on ')
+//	Ready -> Quote (on ')
+//	Quote -> Quote (on '', default)
+//	Quote -> Ready (on ')
 //
-//   Ready -> Dollar (on $tag$)
-//   Dollar -> Dollar (default)
-//   Dollar -> Ready (on $tag$)
+//	Ready -> Dollar (on $tag$)
+//	Dollar -> Dollar (default)
+//	Dollar -> Ready (on $tag$)
 //
-//   Ready -> Escape (on \)
-//   Escape -> Ready (on next)
-//
+//	Ready -> Escape (on \)
+//	Escape -> Ready (on next)
 type tokenizer struct {
 	state State
 	last  int
