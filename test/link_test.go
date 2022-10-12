@@ -4,7 +4,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
@@ -56,7 +55,7 @@ func (suite *LinkTestSuite) TestLink() {
 	})
 	_, err = os.Stat(utils.ProjectRefPath)
 	require.NoError(suite.T(), err)
-	ref, err := ioutil.ReadFile(utils.ProjectRefPath)
+	ref, err := os.ReadFile(utils.ProjectRefPath)
 	require.NoError(suite.T(), err)
 	require.Equal(suite.T(), id, string(ref))
 }

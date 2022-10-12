@@ -107,17 +107,17 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 
 // Wraps a command string in markdown style code block, ie.
 //
-//   ```sh
-//   echo "hello world"
-//   ```
+//	```sh
+//	echo "hello world"
+//	```
 func mdCodeBlock(script string, language string) string {
 	return "```" + language + "\n" + strings.Trim(script, "\n") + "\n```"
 }
 
 // Yaml lib generates incorrect yaml with long strings that do not contain \n.
 //
-//   example: 'a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a
-//     a a a a a a '
+//	example: 'a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a
+//	  a a a a a a '
 func forceMultiLine(s string) string {
 	if len(s) > 60 && !strings.Contains(s, "\n") {
 		s = s + "\n"
