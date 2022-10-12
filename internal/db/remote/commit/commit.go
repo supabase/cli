@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -429,21 +428,19 @@ func AssertPostgresVersionMatch(conn *pgx.Conn) error {
 }
 
 // Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectRemotePostgres(ctx context.Context, username, password, database, host string) (*pgx.Conn, error) {
+func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	// Build connection string
-	pgUrl := fmt.Sprintf(
-		// Use port 6543 for connection pooling
-		"postgresql://%s:%s@%s:6543/%s?connect_timeout=3",
-		url.QueryEscape(username),
-		url.QueryEscape(password),
-		url.QueryEscape(host),
-		url.QueryEscape(database),
-	)
+	// Use port 6543 for connection pooling
+	pgUrl := "postgresql://:@:6543/?connect_timeout=3"
 	// Parse connection url
 	config, err := pgx.ParseConfig(pgUrl)
 	if err != nil {
 		return nil, err
 	}
+	config.User = username
+	config.Password = password
+	config.Host = host
+	config.Database = database
 	// Simple protocol is preferred over pgx default Parse -> Bind flow because
 	//   1. Using a single command for each query reduces RTT over an Internet connection.
 	//   2. Performance gains from using the alternate binary protocol is negligible because
@@ -452,6 +449,10 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	//      Since CLI workloads are one-off scripts, we don't use connection pooling and hence
 	//      don't benefit from per connection server side cache.
 	config.PreferSimpleProtocol = true
+	// Apply config overrides
+	for _, op := range options {
+		op(config)
+	}
 	if viper.GetBool("DEBUG") {
 		debug.SetupPGX(config)
 	}
