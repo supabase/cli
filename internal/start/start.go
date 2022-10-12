@@ -186,31 +186,14 @@ func initDatabase(p utils.Program, ctx context.Context, fsys afero.Fs, options .
 	}
 
 	p.Send(utils.StatusMsg("Setting up initial schema..."))
-
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return err
-	}
-
-	if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
-		return err
-	}
-
-	p.Send(utils.StatusMsg("Applying " + utils.Bold(utils.SeedDataPath) + "..."))
-
-	if content, err := fsys.Open(utils.SeedDataPath); err == nil {
-		defer content.Close()
-		if err := reset.BatchExecSQL(ctx, conn, content); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := reset.InitialiseDatabase(ctx, conn, fsys); err != nil {
 		return err
 	}
 
 	// Ensure `main` branch exists.
+	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+		return err
+	}
 	return fsys.Mkdir(filepath.Join(branchDir, currBranch), 0755)
 }
 

@@ -2,10 +2,9 @@ package reset
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -25,7 +25,8 @@ func TestResetCommand(t *testing.T) {
 	const version = "1.41"
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), afero.NewMemMapFs()))
+		err := Run(context.Background(), afero.NewMemMapFs())
+		assert.ErrorContains(t, err, "Missing config: open supabase/config.toml: file does not exist")
 	})
 
 	t.Run("throws error on db is not started", func(t *testing.T) {
@@ -44,12 +45,13 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + version + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys))
-		// Validate api
+		err := Run(context.Background(), fsys)
+		// Check error
+		assert.ErrorContains(t, err, "supabase start is not running.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on failure to exec", func(t *testing.T) {
+	t.Run("throws error on failure to recreate", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -63,21 +65,85 @@ func TestResetCommand(t *testing.T) {
 			SetHeader("OSType", "linux")
 		gock.New("http:///var/run/docker.sock").
 			Get("/v" + version + "/containers").
-			Reply(200).
+			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers").
-			Reply(http.StatusServiceUnavailable)
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
+			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys))
-		// Validate api
+		err := Run(context.Background(), fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
-func TestSeedDatabase(t *testing.T) {
-	const postgresUrl = "postgresql://postgres:password@localhost:5432/postgres"
+func TestResetDatabase(t *testing.T) {
+	t.Run("initialises postgres database", func(t *testing.T) {
+		utils.Config.Db.Port = 54322
+		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA")
+		// Run test
+		assert.NoError(t, resetDatabase(context.Background(), fsys, conn.Intercept))
+	})
 
+	t.Run("throws error on connect failure", func(t *testing.T) {
+		utils.Config.Db.Port = 0
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := resetDatabase(context.Background(), fsys)
+		// Check error
+		assert.ErrorContains(t, err, "invalid port")
+	})
+
+	t.Run("throws error on duplicate schema", func(t *testing.T) {
+		utils.Config.Db.Port = 54322
+		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.InitialSchemaSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		// Run test
+		err := resetDatabase(context.Background(), fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
+	})
+
+	t.Run("throws error on migration failure", func(t *testing.T) {
+		utils.Config.Db.Port = 54322
+		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "table.sql")
+		sql := "CREATE TABLE example()"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA").
+			Query(sql).
+			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
+		// Run test
+		err := resetDatabase(context.Background(), fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: table "example" already exists (SQLSTATE 42710)`)
+	})
+}
+
+func TestSeedDatabase(t *testing.T) {
 	t.Run("seeds from file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -89,30 +155,20 @@ func TestSeedDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			Reply("INSERT 0 1")
-		// Run test
-		assert.NoError(t, SeedDatabase(context.Background(), postgresUrl, fsys, conn.Intercept))
-	})
-
-	t.Run("throws error on missing seed", func(t *testing.T) {
-		// Run test
-		err := SeedDatabase(context.Background(), postgresUrl, afero.NewMemMapFs())
-		// Check error
-		if assert.Error(t, err) {
-			assert.True(t, errors.Is(err, os.ErrNotExist))
-		}
-	})
-
-	t.Run("throws error on malformed url", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup seed file
-		_, err := fsys.Create(utils.SeedDataPath)
+		// Connect to mock
+		ctx := context.Background()
+		mock, err := lint.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
 		require.NoError(t, err)
+		defer mock.Close(ctx)
 		// Run test
-		assert.Error(t, SeedDatabase(context.Background(), "malformed", fsys))
+		assert.NoError(t, SeedDatabase(ctx, mock, fsys))
 	})
 
-	t.Run("throws error on postgres", func(t *testing.T) {
+	t.Run("ignores missing seed", func(t *testing.T) {
+		assert.NoError(t, SeedDatabase(context.Background(), nil, afero.NewMemMapFs()))
+	})
+
+	t.Run("throws error on insert failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup seed file
@@ -123,15 +179,20 @@ func TestSeedDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
+		// Connect to mock
+		ctx := context.Background()
+		mock, err := lint.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
+		require.NoError(t, err)
+		defer mock.Close(ctx)
 		// Run test
-		assert.Error(t, SeedDatabase(context.Background(), postgresUrl, fsys, conn.Intercept))
+		err = SeedDatabase(ctx, mock, fsys)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
 	})
 }
 
-func TestActivateDatabase(t *testing.T) {
-	const branch = "main"
-
-	t.Run("activates main branch", func(t *testing.T) {
+func TestRecreateDatabase(t *testing.T) {
+	t.Run("resets postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -142,13 +203,18 @@ func TestActivateDatabase(t *testing.T) {
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
 			Reply("DROP DATABASE").
-			Query("ALTER DATABASE " + branch + " RENAME TO postgres;").
-			Reply("ALTER DATABASE")
+			Query("CREATE DATABASE postgres;").
+			Reply("CREATE DATABASE")
 		// Run test
-		assert.NoError(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
+		assert.NoError(t, RecreateDatabase(context.Background(), conn.Intercept))
 	})
 
-	t.Run("continues on missing database", func(t *testing.T) {
+	t.Run("throws error on invalid port", func(t *testing.T) {
+		utils.Config.Db.Port = 0
+		assert.ErrorContains(t, RecreateDatabase(context.Background()), "invalid port")
+	})
+
+	t.Run("continues on disconnecting missing database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -158,16 +224,9 @@ func TestActivateDatabase(t *testing.T) {
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			ReplyError(pgerrcode.UndefinedTable, `relation "pg_stat_activity" does not exist`)
 		// Run test
-		assert.Error(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
-	})
-
-	t.Run("throws error on invalid port", func(t *testing.T) {
-		// Default port 0
-		assert.Error(t, ActivateDatabase(context.Background(), branch))
-		// Setup invalid port
-		utils.Config.Db.Port = 65536
-		// Run test
-		assert.Error(t, ActivateDatabase(context.Background(), branch))
+		err := RecreateDatabase(context.Background(), conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: relation "pg_stat_activity" does not exist (SQLSTATE 42P01)`)
 	})
 
 	t.Run("throws error on failure to disconnect", func(t *testing.T) {
@@ -178,7 +237,9 @@ func TestActivateDatabase(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
 		// Run test
-		assert.Error(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
+		err := RecreateDatabase(context.Background(), conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
 	})
 
 	t.Run("throws error on failure to drop", func(t *testing.T) {
@@ -193,24 +254,9 @@ func TestActivateDatabase(t *testing.T) {
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`)
 		// Run test
-		assert.Error(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
-	})
-
-	t.Run("throws error on failure to swap", func(t *testing.T) {
-		utils.Config.Db.Port = 54322
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
-			Reply("ALTER DATABASE").
-			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
-			Reply("DO").
-			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
-			Reply("DROP DATABASE").
-			Query("ALTER DATABASE "+branch+" RENAME TO postgres;").
-			ReplyError(pgerrcode.DuplicateDatabase, `database "postgres" already exists`)
-		// Run test
-		assert.Error(t, ActivateDatabase(context.Background(), branch, conn.Intercept))
+		err := RecreateDatabase(context.Background(), conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: database "postgres" is used by an active logical replication slot (SQLSTATE 55006)`)
 	})
 }
 
