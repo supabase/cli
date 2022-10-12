@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -69,6 +70,84 @@ func TestGenLocalCommand(t *testing.T) {
 		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestGenLinkedCommand(t *testing.T) {
+	t.Run("generates typescript types", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup valid projectId id
+		projectId := apitest.RandomProjectRef()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectId), 0644))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		gock.New("https://api.supabase.io").
+			Get("/v1/projects/" + projectId + "/types/typescript").
+			Reply(200).
+			JSON(api.TypescriptResponse{Types: ""})
+		// Run test
+		assert.NoError(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on missing config file", func(t *testing.T) {
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, afero.NewMemMapFs()))
+	})
+
+	t.Run("throws error on missing project id", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Run test
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+	})
+
+	t.Run("throws error on missing access token", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup valid projectId id
+		projectId := apitest.RandomProjectRef()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectId), 0644))
+		// Run test
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+	})
+}
+
+func TestGenProjectIdCommand(t *testing.T) {
+	t.Run("generates typescript types", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid projectId id
+		projectId := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		gock.New("https://api.supabase.io").
+			Get("/v1/projects/" + projectId + "/types/typescript").
+			Reply(200).
+			JSON(api.TypescriptResponse{Types: ""})
+		// Run test
+		assert.NoError(t, Run(context.Background(), false, false, projectId, "", []string{}, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on missing access token", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid projectId id
+		projectId := apitest.RandomProjectRef()
+		// Run test
+		assert.Error(t, Run(context.Background(), false, false, projectId, "", []string{}, fsys))
 	})
 }
 
