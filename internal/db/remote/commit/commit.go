@@ -274,8 +274,8 @@ EOSQL
 	{
 		p.Send(utils.StatusMsg("Committing changes on remote database as a new migration..."))
 
-		src := fmt.Sprintf(`"dbname='%s' user='%s' host='%s' port=5432 password='%s'"`, database, username, host, password)
-		dst := fmt.Sprintf(`"dbname='%s' user=postgres host='%s' port=5432 password=postgres"`, utils.ShadowDbName, dbId)
+		src := fmt.Sprintf(`"dbname='%s' user='%s' host='%s' password='%s'"`, database, username, host, password)
+		dst := fmt.Sprintf(`"dbname='%s' user=postgres host='%s' password=postgres"`, utils.ShadowDbName, dbId)
 		out, err := utils.DockerRun(
 			ctx,
 			differId,
