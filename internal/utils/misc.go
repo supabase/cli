@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -201,6 +203,49 @@ func GetGitRoot(fsys afero.Fs) (*string, error) {
 		if err := os.Chdir(".."); err != nil {
 			return nil, err
 		}
+	}
+}
+
+// If the `os.Getwd()` is within a supabase project, this will change
+// the current working directory to the root of the given project. 
+// Otherwise, the `os.Getwd()` is kept as is. 
+func TryChangeWorkDirToProjectRoot() {
+	fsys := afero.NewOsFs()
+	origWd, err := os.Getwd()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		cwd, err := os.Getwd()
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		isSupaProj, err := afero.Exists(fsys, path.Join(cwd, ConfigPath))
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if isSupaProj {
+			return
+		}
+
+		if isRootDirectory(cwd) {
+			break
+		}
+
+		if err := os.Chdir(".."); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// change back to the original directory if no supabase project was found
+	if err := os.Chdir(origWd); err != nil {
+		log.Fatal(err)
 	}
 }
 

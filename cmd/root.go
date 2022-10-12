@@ -22,6 +22,8 @@ var rootCmd = &cobra.Command{
 		if viper.GetBool("DEBUG") {
 			cmd.SetContext(utils.WithTraceContext(cmd.Context()))
 		}
+		
+		utils.TryChangeWorkDirToProjectRoot()
 	},
 }
 
