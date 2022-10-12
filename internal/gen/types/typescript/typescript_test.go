@@ -2,6 +2,7 @@ package typescript
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestGenLocalCommand(t *testing.T) {
 	const version = "1.41"
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		assert.Error(t, Run(true, "", afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error when db is not started", func(t *testing.T) {
@@ -40,7 +41,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + version + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(true, "", fsys))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -65,7 +66,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Post("/v" + version + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(true, "", fsys))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -77,9 +78,6 @@ func TestGenRemoteCommand(t *testing.T) {
 	const containerId = "test-container"
 
 	t.Run("generates type from remote db", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
 		defer gock.OffAll()
@@ -118,27 +116,17 @@ func TestGenRemoteCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 0}})
 		// Run test
-		assert.NoError(t, Run(false, dbUrl, fsys))
+		assert.NoError(t, Run(context.Background(), false, false, "", dbUrl, []string{}, afero.NewMemMapFs()))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
-		assert.Error(t, Run(false, "", afero.NewMemMapFs()))
-	})
-
 	t.Run("throws error on malformed db url", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		assert.Error(t, Run(false, "", fsys))
+		assert.Error(t, Run(context.Background(), false, false, "", "foo", []string{}, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error when docker is not started", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
 		defer gock.OffAll()
@@ -151,7 +139,7 @@ func TestGenRemoteCommand(t *testing.T) {
 			Get("/v" + version + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(false, dbUrl, fsys))
+		assert.Error(t, Run(context.Background(), false, false, "", dbUrl, []string{}, afero.NewMemMapFs()))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
