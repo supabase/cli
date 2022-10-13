@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, dbUrl string, schemas []string, fsys afero.Fs) error {
@@ -29,11 +29,9 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 	// init` - i.e. we shouldn't try to load the config for these cases.
 
 	if projectId != "" {
-		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, func(_ context.Context, req *http.Request) error {
-			q := req.URL.Query()
-			q.Add("included_schemas", strings.Join(coalesce(schemas, []string{"public"}), ","))
-			req.URL.RawQuery = q.Encode()
-			return nil
+		included := strings.Join(coalesce(schemas, []string{"public"}), ",")
+		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
+			IncludedSchemas: &included,
 		})
 		if err != nil {
 			return err
@@ -133,11 +131,9 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
-		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, func(_ context.Context, req *http.Request) error {
-			q := req.URL.Query()
-			q.Add("included_schemas", strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","))
-			req.URL.RawQuery = q.Encode()
-			return nil
+		included := strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ",")
+		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
+			IncludedSchemas: &included,
 		})
 		if err != nil {
 			return err
