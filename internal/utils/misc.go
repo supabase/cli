@@ -219,7 +219,7 @@ func GetProjectRoot(fsys afero.Fs) (string, error) {
 			break
 		}
 	}
-	return origWd, nil
+	return origWd, err
 }
 
 func IsBranchNameReserved(branch string) bool {
