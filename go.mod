@@ -68,7 +68,7 @@ require (
 	github.com/containerd/console v1.0.3 // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/go-units v0.4.0
+	github.com/docker/go-units v0.5.0
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/gin-gonic/gin v1.8.1
 	github.com/gogo/protobuf v1.3.2 // indirect

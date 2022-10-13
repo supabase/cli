@@ -94,7 +94,8 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	if err != nil {
 		return err
 	}
-	conn, err := ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
+	host := utils.GetSupabaseDbHost(projectRef)
+	conn, err := ConnectRemotePostgres(ctx, username, password, database, host)
 	if err != nil {
 		return err
 	}
@@ -114,9 +115,11 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 
 		// Use pg_dump instead of schema diff
 		out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
-			"POSTGRES_PASSWORD=postgres",
+			"PGHOST=" + host,
+			"PGUSER=" + username,
+			"PGPASSWORD=" + password,
 			"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
-			"DB_URL=" + conn.Config().ConnString(),
+			"DB_URL=" + database,
 		}, []string{"bash", "-c", dumpInitialMigrationScript})
 		if err != nil {
 			return errors.New("Error running pg_dump on remote database: " + err.Error())
@@ -271,15 +274,15 @@ EOSQL
 	{
 		p.Send(utils.StatusMsg("Committing changes on remote database as a new migration..."))
 
+		src := fmt.Sprintf(`"dbname='%s' user='%s' host='%s' password='%s'"`, database, username, host, password)
+		dst := fmt.Sprintf(`"dbname='%s' user=postgres host='%s' password=postgres"`, utils.ShadowDbName, dbId)
 		out, err := utils.DockerRun(
 			ctx,
 			differId,
 			&container.Config{
 				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
-					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
-						" '" + conn.Config().ConnString() + "'" +
-						" 'postgresql://postgres:postgres@" + dbId + ":5432/" + utils.ShadowDbName + "'",
+					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " + src + " " + dst,
 				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,

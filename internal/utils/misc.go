@@ -95,7 +95,22 @@ var (
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+	InternalSchemas = []string{
+		"auth",
+		"extensions",
+		"graphql",
+		"graphql_public",
+		"pgbouncer",
+		"pgsodium",
+		"pgsodium_masks",
+		"realtime",
+		"storage",
+		"supabase_functions",
+		"supabase_migrations",
+		"pg_catalog",
+		"pg_toast",
+		"information_schema",
+	}
 )
 
 // Used by unit tests
@@ -106,10 +121,6 @@ var (
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
 	return time.Now().UTC().Format("20060102150405")
-}
-
-func GetCurrentBranch() (string, error) {
-	return GetCurrentBranchFS(afero.NewOsFs())
 }
 
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
@@ -149,14 +160,6 @@ func NewError(s string) error {
 	}
 
 	return errors.New(s)
-}
-
-func AssertSupabaseStartIsRunning() error {
-	if err := LoadConfig(); err != nil {
-		return err
-	}
-
-	return AssertSupabaseDbIsRunning()
 }
 
 func AssertSupabaseDbIsRunning() error {
@@ -230,10 +233,6 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	}
 
 	return nil
-}
-
-func AssertIsLinked() error {
-	return AssertIsLinkedFS(afero.NewOsFs())
 }
 
 func AssertIsLinkedFS(fsys afero.Fs) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -75,7 +76,8 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	if err != nil {
 		return err
 	}
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, projectRef)
+	host := utils.GetSupabaseDbHost(projectRef)
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host)
 	if err != nil {
 		return err
 	}
@@ -229,15 +231,15 @@ EOSQL
 	{
 		p.Send(utils.StatusMsg("Generating changes on the remote database since the last migration..."))
 
+		src := fmt.Sprintf(`"dbname='%s' user='%s' host='%s' password='%s'"`, database, username, host, password)
+		dst := fmt.Sprintf(`"dbname='%s' user=postgres host='%s' password=postgres"`, utils.ShadowDbName, dbId)
 		out, err := utils.DockerRun(
 			ctx,
 			differId,
 			&container.Config{
 				Image: utils.GetRegistryImageUrl(utils.DifferImage),
 				Entrypoint: []string{
-					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff" +
-						" '" + conn.Config().ConnString() + "'" +
-						" 'postgresql://postgres:postgres@" + dbId + ":5432/" + utils.ShadowDbName + "'",
+					"sh", "-c", "/venv/bin/python3 -u cli.py --json-diff " + src + " " + dst,
 				},
 				Labels: map[string]string{
 					"com.supabase.cli.project":   utils.Config.ProjectId,
