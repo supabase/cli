@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -18,10 +20,19 @@ var rootCmd = &cobra.Command{
 	Version:       version,
 	SilenceErrors: true,
 	SilenceUsage:  true,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if viper.GetBool("DEBUG") {
 			cmd.SetContext(utils.WithTraceContext(cmd.Context()))
 		}
+
+		workdir := viper.GetString("WORKDIR")
+		if workdir == "" {
+			var err error
+			if workdir, err = utils.GetProjectRoot(afero.NewOsFs()); err != nil {
+				return err
+			}
+		}
+		return os.Chdir(workdir)
 	},
 }
 
@@ -35,7 +46,10 @@ func init() {
 		viper.AutomaticEnv()
 	})
 	flags := rootCmd.PersistentFlags()
+
 	flags.Bool("debug", false, "output debug logs to stderr")
+	flags.String("workdir", "", "path to a Supabase project directory")
+
 	flags.VisitAll(func(f *pflag.Flag) {
 		key := strings.ReplaceAll(f.Name, "-", "_")
 		cobra.CheckErr(viper.BindPFlag(key, flags.Lookup(f.Name)))

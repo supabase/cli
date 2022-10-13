@@ -204,6 +204,24 @@ func GetGitRoot(fsys afero.Fs) (*string, error) {
 	}
 }
 
+// If the `os.Getwd()` is within a supabase project, this will return
+// the root of the given project as the current working directory.
+// Otherwise, the `os.Getwd()` is kept as is.
+func GetProjectRoot(fsys afero.Fs) (string, error) {
+	origWd, err := os.Getwd()
+	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
+		var isSupaProj bool
+		path := filepath.Join(cwd, ConfigPath)
+		if isSupaProj, err = afero.Exists(fsys, path); isSupaProj {
+			return cwd, nil
+		}
+		if isRootDirectory(cwd) {
+			break
+		}
+	}
+	return origWd, err
+}
+
 func IsBranchNameReserved(branch string) bool {
 	switch branch {
 	case "_current_branch", "main", "supabase_shadow", "postgres", "template0", "template1":
