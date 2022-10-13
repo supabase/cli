@@ -48,8 +48,8 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return errors.New("URL is not a valid Supabase connection string.")
 		}
 		escaped := fmt.Sprintf(
-			"postgresql://postgres:%s@%s/postgres",
-			url.PathEscape(matches[1]),
+			"postgresql://%s@%s/postgres",
+			url.UserPassword("postgres", matches[1]),
 			matches[2],
 		)
 
