@@ -49,7 +49,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 		}
 		escaped := fmt.Sprintf(
 			"postgresql://postgres:%s@%s/postgres",
-			url.QueryEscape(matches[1]),
+			url.PathEscape(matches[1]),
 			matches[2],
 		)
 
