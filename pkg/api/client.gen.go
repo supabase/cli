@@ -147,7 +147,7 @@ type ClientInterface interface {
 	CreateSecrets(ctx context.Context, ref string, body CreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTypescriptTypes request
-	GetTypescriptTypes(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetOrganizations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -402,8 +402,8 @@ func (c *Client) CreateSecrets(ctx context.Context, ref string, body CreateSecre
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetTypescriptTypes(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTypescriptTypesRequest(c.Server, ref)
+func (c *Client) GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTypescriptTypesRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -995,7 +995,7 @@ func NewCreateSecretsRequestWithBody(server string, ref string, contentType stri
 }
 
 // NewGetTypescriptTypesRequest generates requests for GetTypescriptTypes
-func NewGetTypescriptTypesRequest(server string, ref string) (*http.Request, error) {
+func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescriptTypesParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1019,6 +1019,26 @@ func NewGetTypescriptTypesRequest(server string, ref string) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
+
+	queryValues := queryURL.Query()
+
+	if params.IncludedSchemas != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "included_schemas", runtime.ParamLocationQuery, *params.IncludedSchemas); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	queryURL.RawQuery = queryValues.Encode()
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
@@ -1128,7 +1148,7 @@ type ClientWithResponsesInterface interface {
 	CreateSecretsWithResponse(ctx context.Context, ref string, body CreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSecretsResponse, error)
 
 	// GetTypescriptTypes request
-	GetTypescriptTypesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
+	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
 }
 
 type GetOrganizationsResponse struct {
@@ -1642,8 +1662,8 @@ func (c *ClientWithResponses) CreateSecretsWithResponse(ctx context.Context, ref
 }
 
 // GetTypescriptTypesWithResponse request returning *GetTypescriptTypesResponse
-func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error) {
-	rsp, err := c.GetTypescriptTypes(ctx, ref, reqEditors...)
+func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error) {
+	rsp, err := c.GetTypescriptTypes(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

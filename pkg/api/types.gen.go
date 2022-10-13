@@ -175,6 +175,11 @@ type DeleteSecretsJSONBody = []string
 // CreateSecretsJSONBody defines parameters for CreateSecrets.
 type CreateSecretsJSONBody = []CreateSecretBody
 
+// GetTypescriptTypesParams defines parameters for GetTypescriptTypes.
+type GetTypescriptTypesParams struct {
+	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+}
+
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
 type CreateOrganizationJSONRequestBody = CreateOrganizationJSONBody
 
