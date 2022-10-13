@@ -1,15 +1,12 @@
 package typescript
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -85,43 +82,22 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
-		exec, err := utils.Docker.ContainerExecCreate(
-			ctx,
-			utils.PgmetaId,
-			types.ExecConfig{
-				Env: []string{
-					"PG_META_DB_HOST=" + utils.DbId,
-				},
-				Cmd: []string{
-					"node",
-					"bin/src/server/app.js",
-					"gen",
-					"types",
-					"typescript",
-					"--include-schemas",
-					strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
-				},
-				AttachStderr: true,
-				AttachStdout: true,
-			},
-		)
+		out, err := utils.DockerExecOnce(ctx, utils.PgmetaId, []string{
+			"PG_META_DB_HOST=" + utils.DbId,
+		}, []string{
+			"node",
+			"bin/src/server/app.js",
+			"gen",
+			"types",
+			"typescript",
+			"--include-schemas",
+			strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
+		})
 		if err != nil {
 			return err
 		}
 
-		resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-		if err != nil {
-			return err
-		}
-		var genBuf, errBuf bytes.Buffer
-		if _, err := stdcopy.StdCopy(&genBuf, &errBuf, resp.Reader); err != nil {
-			return err
-		}
-		if errBuf.Len() > 0 {
-			return errors.New(errBuf.String())
-		}
-
-		fmt.Print(genBuf.String())
+		fmt.Print(out)
 		return nil
 	}
 
