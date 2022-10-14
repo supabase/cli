@@ -106,6 +106,23 @@ type ClientInterface interface {
 
 	CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// Remove request
+	Remove(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCustomHostnameConfig request
+	GetCustomHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Activate request
+	Activate(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCustomHostnameConfig request with any body
+	CreateCustomHostnameConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateCustomHostnameConfig(ctx context.Context, ref string, body CreateCustomHostnameConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Reverify request
+	Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetFunctions request
 	GetFunctions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -212,6 +229,78 @@ func (c *Client) CreateProjectWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) Remove(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCustomHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCustomHostnameConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) Activate(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateCustomHostnameConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomHostnameConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateCustomHostnameConfig(ctx context.Context, ref string, body CreateCustomHostnameConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCustomHostnameConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReverifyRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -544,6 +633,189 @@ func NewCreateProjectRequestWithBody(server string, contentType string, body io.
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveRequest generates requests for Remove
+func NewRemoveRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCustomHostnameConfigRequest generates requests for GetCustomHostnameConfig
+func NewGetCustomHostnameConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewActivateRequest generates requests for Activate
+func NewActivateRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname/activate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateCustomHostnameConfigRequest calls the generic CreateCustomHostnameConfig builder with application/json body
+func NewCreateCustomHostnameConfigRequest(server string, ref string, body CreateCustomHostnameConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCustomHostnameConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCreateCustomHostnameConfigRequestWithBody generates requests for CreateCustomHostnameConfig with any type of body
+func NewCreateCustomHostnameConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname/initialize", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReverifyRequest generates requests for Reverify
+func NewReverifyRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname/reverify", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1107,6 +1379,23 @@ type ClientWithResponsesInterface interface {
 
 	CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
 
+	// Remove request
+	RemoveWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveResponse, error)
+
+	// GetCustomHostnameConfig request
+	GetCustomHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetCustomHostnameConfigResponse, error)
+
+	// Activate request
+	ActivateWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ActivateResponse, error)
+
+	// CreateCustomHostnameConfig request with any body
+	CreateCustomHostnameConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomHostnameConfigResponse, error)
+
+	CreateCustomHostnameConfigWithResponse(ctx context.Context, ref string, body CreateCustomHostnameConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomHostnameConfigResponse, error)
+
+	// Reverify request
+	ReverifyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ReverifyResponse, error)
+
 	// GetFunctions request
 	GetFunctionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetFunctionsResponse, error)
 
@@ -1233,6 +1522,115 @@ func (r CreateProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RemoveResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCustomHostnameConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *UpdateCustomHostnameResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCustomHostnameConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCustomHostnameConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *UpdateCustomHostnameResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateCustomHostnameConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *UpdateCustomHostnameResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCustomHostnameConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCustomHostnameConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReverifyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *UpdateCustomHostnameResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ReverifyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReverifyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1531,6 +1929,59 @@ func (c *ClientWithResponses) CreateProjectWithResponse(ctx context.Context, bod
 	return ParseCreateProjectResponse(rsp)
 }
 
+// RemoveWithResponse request returning *RemoveResponse
+func (c *ClientWithResponses) RemoveWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveResponse, error) {
+	rsp, err := c.Remove(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveResponse(rsp)
+}
+
+// GetCustomHostnameConfigWithResponse request returning *GetCustomHostnameConfigResponse
+func (c *ClientWithResponses) GetCustomHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetCustomHostnameConfigResponse, error) {
+	rsp, err := c.GetCustomHostnameConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCustomHostnameConfigResponse(rsp)
+}
+
+// ActivateWithResponse request returning *ActivateResponse
+func (c *ClientWithResponses) ActivateWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ActivateResponse, error) {
+	rsp, err := c.Activate(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateResponse(rsp)
+}
+
+// CreateCustomHostnameConfigWithBodyWithResponse request with arbitrary body returning *CreateCustomHostnameConfigResponse
+func (c *ClientWithResponses) CreateCustomHostnameConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCustomHostnameConfigResponse, error) {
+	rsp, err := c.CreateCustomHostnameConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomHostnameConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateCustomHostnameConfigWithResponse(ctx context.Context, ref string, body CreateCustomHostnameConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCustomHostnameConfigResponse, error) {
+	rsp, err := c.CreateCustomHostnameConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCustomHostnameConfigResponse(rsp)
+}
+
+// ReverifyWithResponse request returning *ReverifyResponse
+func (c *ClientWithResponses) ReverifyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ReverifyResponse, error) {
+	rsp, err := c.Reverify(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReverifyResponse(rsp)
+}
+
 // GetFunctionsWithResponse request returning *GetFunctionsResponse
 func (c *ClientWithResponses) GetFunctionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetFunctionsResponse, error) {
 	rsp, err := c.GetFunctions(ctx, ref, reqEditors...)
@@ -1764,6 +2215,126 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest ProjectResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveResponse parses an HTTP response from a RemoveWithResponse call
+func ParseRemoveResponse(rsp *http.Response) (*RemoveResponse, error) {
+	bodyBytes, err := ioutil.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetCustomHostnameConfigResponse parses an HTTP response from a GetCustomHostnameConfigWithResponse call
+func ParseGetCustomHostnameConfigResponse(rsp *http.Response) (*GetCustomHostnameConfigResponse, error) {
+	bodyBytes, err := ioutil.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCustomHostnameConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateCustomHostnameResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateResponse parses an HTTP response from a ActivateWithResponse call
+func ParseActivateResponse(rsp *http.Response) (*ActivateResponse, error) {
+	bodyBytes, err := ioutil.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UpdateCustomHostnameResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCustomHostnameConfigResponse parses an HTTP response from a CreateCustomHostnameConfigWithResponse call
+func ParseCreateCustomHostnameConfigResponse(rsp *http.Response) (*CreateCustomHostnameConfigResponse, error) {
+	bodyBytes, err := ioutil.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCustomHostnameConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UpdateCustomHostnameResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReverifyResponse parses an HTTP response from a ReverifyWithResponse call
+func ParseReverifyResponse(rsp *http.Response) (*ReverifyResponse, error) {
+	bodyBytes, err := ioutil.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReverifyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UpdateCustomHostnameResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
