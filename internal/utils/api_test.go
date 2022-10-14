@@ -116,4 +116,60 @@ func TestFallbackDNS(t *testing.T) {
 		assert.Equal(t, "", ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("resolves CNAMEs with CloudFlare", func(t *testing.T) {
+		defer gock.OffAll()
+		gock.New("https://1.1.1.1").
+			Get("/dns-query").
+			MatchParam("name", host).
+			MatchParam("type", "CNAME").
+			MatchHeader("accept", "application/dns-json").
+			Reply(http.StatusOK).
+			JSON(&dnsResponse{Answer: []dnsAnswer{
+				{Type: cnameType, Data: "foobarbaz.supabase.co"},
+			}})
+		// Run test
+		cname, err := ResolveCNAME(context.Background(), host)
+		// Validate output
+		assert.Equal(t, "foobarbaz.supabase.co", cname)
+		assert.Nil(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("missing CNAMEs return an error", func(t *testing.T) {
+		defer gock.OffAll()
+		gock.New("https://1.1.1.1").
+			Get("/dns-query").
+			MatchParam("name", host).
+			MatchParam("type", "CNAME").
+			MatchHeader("accept", "application/dns-json").
+			Reply(http.StatusOK).
+			JSON(&dnsResponse{Answer: []dnsAnswer{}})
+		// Run test
+		cname, err := ResolveCNAME(context.Background(), host)
+		// Validate output
+		assert.Empty(t, cname)
+		assert.ErrorContains(t, err, "failed to locate appropriate CNAME record for api.supabase.io")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("missing CNAMEs return an error", func(t *testing.T) {
+		defer gock.OffAll()
+		gock.New("https://1.1.1.1").
+			Get("/dns-query").
+			MatchParam("name", host).
+			MatchParam("type", "CNAME").
+			MatchHeader("accept", "application/dns-json").
+			Reply(http.StatusOK).
+			JSON(&dnsResponse{Answer: []dnsAnswer{
+				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			}})
+		// Run test
+		cname, err := ResolveCNAME(context.Background(), host)
+		// Validate output
+		assert.Empty(t, cname)
+		assert.ErrorContains(t, err, "failed to locate appropriate CNAME record for api.supabase.io")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 }
