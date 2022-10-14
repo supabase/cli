@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"io"
 	"unicode/utf8"
+
+	"github.com/spf13/viper"
 )
 
 const (
@@ -81,7 +83,11 @@ func Split(sql io.Reader) (stats []string, err error) {
 
 	// Increase scanner capacity to support very long lines containing e.g. geodata
 	buf := make([]byte, startBufSize)
-	scanner.Buffer(buf, maxScannerCapacity)
+	maxbuf := viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")
+	if maxbuf == 0 {
+		maxbuf = maxScannerCapacity
+	}
+	scanner.Buffer(buf, int(maxbuf))
 
 	scanner.Split(t.ScanToken)
 	for scanner.Scan() {
