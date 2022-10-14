@@ -2,8 +2,12 @@ package stop
 
 import (
 	"context"
+	_ "embed"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -11,7 +15,12 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+var (
+	//go:embed templates/dump.sh
+	dumpScript string
+)
+
+func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -23,19 +32,47 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		}
 	}
 
+	if backup {
+		if err := backupDatabase(ctx, fsys); err != nil {
+			return err
+		}
+	}
+
 	// Stop all services
 	if err := stop(ctx); err != nil {
 		return err
 	}
-
-	// Remove other branches
-	branchDir := filepath.Dir(utils.CurrBranchPath)
-	if err := fsys.RemoveAll(branchDir); err != nil {
-		return err
-	}
 	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
 
+	if !backup {
+		// Remove other branches
+		branchDir := filepath.Dir(utils.CurrBranchPath)
+		if err := fsys.RemoveAll(branchDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}
+
 	return nil
+}
+
+func backupDatabase(ctx context.Context, fsys afero.Fs) error {
+	out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
+		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+		"DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
+	}, []string{"bash", "-c", dumpScript})
+	if err != nil {
+		return errors.New("Error running pg_dump on local database: " + err.Error())
+	}
+	branch, err := utils.GetCurrentBranchFS(fsys)
+	if err != nil {
+		branch = "main"
+	}
+	branchDir := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
+		return err
+	}
+	path := filepath.Join(branchDir, "dump.sql")
+	return afero.WriteFile(fsys, path, []byte(out), 0644)
 }
 
 func stop(ctx context.Context) error {
