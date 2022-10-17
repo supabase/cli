@@ -12,11 +12,12 @@ import (
 
 func main() {
 	root := cmd.GetRootCmd()
+	root.InitDefaultCompletionCmd()
 	spec := SpecDoc{
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.0.0",
+			Version:     "1.8.5",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -89,7 +90,7 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		Id:          strings.ReplaceAll(cmd.CommandPath(), " ", "-"),
 		Title:       cmd.CommandPath(),
 		Summary:     forceMultiLine(cmd.Short),
-		Description: forceMultiLine(cmd.Long),
+		Description: forceMultiLine(strings.ReplaceAll(cmd.Long, "\t", "    ")),
 		Subcommands: subcommands,
 	}
 
