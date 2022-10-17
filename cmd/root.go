@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -37,7 +38,16 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
-	cobra.CheckErr(rootCmd.Execute())
+	if err := rootCmd.Execute(); err != nil {
+		if viper.GetBool("DEBUG") {
+			cobra.CheckErr(err)
+		}
+
+		fmt.Fprintf(os.Stderr, `Error: %v
+Try rerunning the command with --debug to troubleshoot the error.
+`, err)
+		os.Exit(1)
+	}
 }
 
 func init() {
