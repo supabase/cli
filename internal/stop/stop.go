@@ -17,7 +17,13 @@ import (
 
 var (
 	//go:embed templates/dump.sh
-	dumpScript string
+	dumpScript    string
+	ignoreSchemas = []string{
+		"extensions",
+		"pgbouncer",
+		"pgsodium",
+		"pgsodium_masks",
+	}
 )
 
 func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
@@ -57,7 +63,7 @@ func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 
 func backupDatabase(ctx context.Context, fsys afero.Fs) error {
 	out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
-		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+		"EXCLUDED_SCHEMAS=" + strings.Join(ignoreSchemas, "|"),
 		"DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 	}, []string{"bash", "-c", dumpScript})
 	if err != nil {
