@@ -76,7 +76,7 @@ func (s *BlockState) Next(r rune, data []byte) State {
 	return s
 }
 
-// Opened a single quote '
+// Opened a single quote ' or double quote "
 type QuoteState struct {
 	delimiter rune
 	escape    bool
