@@ -45,7 +45,7 @@ services:
 
   realtime:
     container_name: supabase-realtime
-    image: supabase/realtime:v0.22.7
+    image: supabase/realtime:v0.25.0
     depends_on:
       - db
     restart: on-failure
@@ -86,7 +86,7 @@ services:
 -- 00-initial-schema.sql
 --
 
--- Set up reatime 
+-- Set up realtime
 -- create publication supabase_realtime; -- defaults to empty publication
 create publication supabase_realtime;
 
