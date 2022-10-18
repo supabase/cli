@@ -12,8 +12,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
-var version string
+var (
+	// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+	version      string
+	experimental bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:           "supabase",
@@ -64,6 +67,9 @@ func init() {
 		key := strings.ReplaceAll(f.Name, "-", "_")
 		cobra.CheckErr(viper.BindPFlag(key, flags.Lookup(f.Name)))
 	})
+
+	flags.BoolVar(&experimental, "experimental", false, "enable experimental features")
+
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
