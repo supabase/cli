@@ -16,12 +16,13 @@ type ReadyState struct{}
 
 func (s *ReadyState) Next(r rune, data []byte) State {
 	switch r {
-	// ; never appears in identifiers so it's safe to ignore "
 	case '$':
 		offset := len(data) - utf8.RuneLen(r)
 		return &TagState{offset: offset}
 	case '\'':
-		return &QuoteState{}
+		fallthrough
+	case '"':
+		return &QuoteState{delimiter: r}
 	case '-':
 		return &CommentState{}
 	case '/':
@@ -77,13 +78,14 @@ func (s *BlockState) Next(r rune, data []byte) State {
 
 // Opened a single quote '
 type QuoteState struct {
-	escape bool
+	delimiter rune
+	escape    bool
 }
 
 func (s *QuoteState) Next(r rune, data []byte) State {
 	if s.escape {
 		// Preserve escaped quote ''
-		if r == '\'' {
+		if r == s.delimiter {
 			s.escape = false
 			return s
 		}
@@ -91,7 +93,7 @@ func (s *QuoteState) Next(r rune, data []byte) State {
 		state := &ReadyState{}
 		return state.Next(r, data)
 	}
-	if r == '\'' {
+	if r == s.delimiter {
 		s.escape = true
 	}
 	return s

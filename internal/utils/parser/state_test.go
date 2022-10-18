@@ -20,7 +20,7 @@ func TestLineComment(t *testing.T) {
 		sql := "SELECT --; 1"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"SELECT --; 1"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("not started", func(t *testing.T) {
@@ -43,14 +43,14 @@ func TestBlockComment(t *testing.T) {
 		sql := "SELECT /* ; */ 1;"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"SELECT /* ; */ 1;"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("nested block", func(t *testing.T) {
 		sql := "SELECT /*; /*;*/ ;*/ 1"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"SELECT /*; /*;*/ ;*/ 1"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("not started", func(t *testing.T) {
@@ -89,14 +89,14 @@ func TestDollarQuote(t *testing.T) {
 		sql := "$tag$ any ; string$tag$"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"$tag$ any ; string$tag$"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("anonymous tag", func(t *testing.T) {
 		sql := "$$\"Dane's horse\"$$"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"$$\"Dane's horse\"$$"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("not started", func(t *testing.T) {
@@ -112,14 +112,14 @@ func TestSingleQuote(t *testing.T) {
 		sql := "SELECT ';' 1"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"SELECT ';' 1"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("preserves single quote", func(t *testing.T) {
 		sql := "SELECT ';'';' 1"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"SELECT ';'';' 1"}, stats)
+		assert.ElementsMatch(t, []string{sql}, stats)
 	})
 
 	t.Run("literal backslash", func(t *testing.T) {
@@ -127,5 +127,28 @@ func TestSingleQuote(t *testing.T) {
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"SELECT '\\';", " 1'"}, stats)
+	})
+}
+
+func TestDoubleQuote(t *testing.T) {
+	t.Run("escapes separator", func(t *testing.T) {
+		sql := `CREATE POLICY "cats;dogs" on cats_dogs; END`
+		stats, err := Split(strings.NewReader(sql))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{`CREATE POLICY "cats;dogs" on cats_dogs;`, " END"}, stats)
+	})
+
+	t.Run("preserves single quote", func(t *testing.T) {
+		sql := `CREATE POLICY "cat's and dog's" on cats_dogs; END`
+		stats, err := Split(strings.NewReader(sql))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{`CREATE POLICY "cat's and dog's" on cats_dogs;`, " END"}, stats)
+	})
+
+	t.Run("preserves double quote", func(t *testing.T) {
+		sql := `CREATE POLICY "pet""name" on pets; END`
+		stats, err := Split(strings.NewReader(sql))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{`CREATE POLICY "pet""name" on pets;`, " END"}, stats)
 	})
 }
