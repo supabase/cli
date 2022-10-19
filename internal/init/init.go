@@ -32,18 +32,19 @@ func Run(fsys afero.Fs) error {
 		return err
 	}
 
-	// 2. Append to `.gitignore`.
+	// 2. Create `seed.sql`.
+	if _, err := fsys.Create(utils.SeedDataPath); err != nil {
+		return err
+	}
+
+	// 3. Append to `.gitignore`.
 	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot == nil {
 		// User not using git
 		return nil
 	}
 
 	ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
-	if err := updateGitIgnore(ignorePath, fsys); err != nil {
-		return err
-	}
-
-	return nil
+	return updateGitIgnore(ignorePath, fsys)
 }
 
 func updateGitIgnore(ignorePath string, fsys afero.Fs) error {

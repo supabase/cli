@@ -45,6 +45,15 @@ const (
 	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
 )
 
+// Defines values for UpdateCustomHostnameResponseStatus.
+const (
+	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
+	N2Initiated            UpdateCustomHostnameResponseStatus = "2_initiated"
+	N3ChallengeVerified    UpdateCustomHostnameResponseStatus = "3_challenge_verified"
+	N4OriginSetupCompleted UpdateCustomHostnameResponseStatus = "4_origin_setup_completed"
+	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
+)
+
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
 	Body      string `json:"body"`
@@ -137,6 +146,21 @@ type TypescriptResponse struct {
 	Types string `json:"types"`
 }
 
+// UpdateCustomHostnameBody defines model for UpdateCustomHostnameBody.
+type UpdateCustomHostnameBody struct {
+	CustomHostname string `json:"custom_hostname"`
+}
+
+// UpdateCustomHostnameResponse defines model for UpdateCustomHostnameResponse.
+type UpdateCustomHostnameResponse struct {
+	CustomHostname string                             `json:"custom_hostname"`
+	Data           map[string]interface{}             `json:"data"`
+	Status         UpdateCustomHostnameResponseStatus `json:"status"`
+}
+
+// UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
+type UpdateCustomHostnameResponseStatus string
+
 // UpdateFunctionBody defines model for UpdateFunctionBody.
 type UpdateFunctionBody struct {
 	Body      *string `json:"body,omitempty"`
@@ -154,6 +178,9 @@ type CreateOrganizationJSONBody = CreateOrganizationBody
 
 // CreateProjectJSONBody defines parameters for CreateProject.
 type CreateProjectJSONBody = CreateProjectBody
+
+// CreateCustomHostnameConfigJSONBody defines parameters for CreateCustomHostnameConfig.
+type CreateCustomHostnameConfigJSONBody = UpdateCustomHostnameBody
 
 // CreateFunctionJSONBody defines parameters for CreateFunction.
 type CreateFunctionJSONBody = CreateFunctionBody
@@ -185,6 +212,9 @@ type CreateOrganizationJSONRequestBody = CreateOrganizationJSONBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectJSONBody
+
+// CreateCustomHostnameConfigJSONRequestBody defines body for CreateCustomHostnameConfig for application/json ContentType.
+type CreateCustomHostnameConfigJSONRequestBody = CreateCustomHostnameConfigJSONBody
 
 // CreateFunctionJSONRequestBody defines body for CreateFunction for application/json ContentType.
 type CreateFunctionJSONRequestBody = CreateFunctionJSONBody
