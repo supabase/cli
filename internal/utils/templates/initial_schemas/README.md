@@ -45,7 +45,7 @@ services:
 
   realtime:
     container_name: supabase-realtime
-    image: supabase/realtime:v0.25.0
+    image: supabase/realtime:v0.25.1
     depends_on:
       - db
     restart: on-failure
