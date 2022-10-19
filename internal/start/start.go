@@ -376,18 +376,12 @@ EOF
 			)
 
 			if config.RedirectUri != "" {
-				fmt.Fprintln(os.Stderr, "Going to use custom redirect URI ")
-
 				env = append(env,
 					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri),
 				)
 			} else {
-				fmt.Fprintln(os.Stderr, "Going to use default redirect URI ")
-				// env = append(env,
-				// 	fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
-				// )
 				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=https://reviewcorralauth.ngrok.io/auth/v1/callback", strings.ToUpper(name)),
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 				)
 			}
 
