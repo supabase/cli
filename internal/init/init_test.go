@@ -26,6 +26,10 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, ignorePath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
+		// Validate generated seed.sql
+		exists, err = afero.Exists(fsys, utils.SeedDataPath)
+		assert.NoError(t, err)
+		assert.True(t, exists)
 	})
 
 	t.Run("does not generate gitignore if no git", func(t *testing.T) {
@@ -42,6 +46,10 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, ignorePath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
+		// Validate generated seed.sql
+		exists, err = afero.Exists(fsys, utils.SeedDataPath)
+		assert.NoError(t, err)
+		assert.True(t, exists)
 	})
 
 	t.Run("throws error when config file exists", func(t *testing.T) {
