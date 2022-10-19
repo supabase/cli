@@ -132,7 +132,7 @@ type (
 		ClientId    string `toml:"client_id"`
 		Secret      string
 		Url         string
-		RedirectUri string
+		RedirectUri string `toml:"redirect_uri"`
 	}
 
 	// TODO
