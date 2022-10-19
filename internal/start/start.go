@@ -373,8 +373,23 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 			)
+
+			if config.RedirectUri != "" {
+				fmt.Fprintln(os.Stderr, "Going to use custom redirect URI ")
+
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri),
+				)
+			} else {
+				fmt.Fprintln(os.Stderr, "Going to use default redirect URI ")
+				// env = append(env,
+				// 	fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
+				// )
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=https://reviewcorralauth.ngrok.io/auth/v1/callback", strings.ToUpper(name)),
+				)
+			}
 
 			if config.Url != "" {
 				env = append(env,
