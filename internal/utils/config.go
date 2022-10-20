@@ -128,10 +128,11 @@ type (
 	}
 
 	provider struct {
-		Enabled  bool
-		ClientId string `toml:"client_id"`
-		Secret   string
-		Url      string
+		Enabled     bool
+		ClientId    string `toml:"client_id"`
+		Secret      string
+		Url         string
+		RedirectUri string `toml:"redirect_uri"`
 	}
 
 	// TODO
@@ -252,7 +253,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return value, nil
 				}
 
-				var clientId, secret, url string
+				var clientId, secret, redirectUri, url string
 
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
@@ -273,6 +274,14 @@ func LoadConfigFS(fsys afero.Fs) error {
 					secret = v
 				}
 
+				if Config.Auth.External[ext].RedirectUri != "" {
+					v, err := maybeLoadEnv(Config.Auth.External[ext].RedirectUri)
+					if err != nil {
+						return err
+					}
+					redirectUri = v
+				}
+
 				if Config.Auth.External[ext].Url != "" {
 					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
 					if err != nil {
@@ -282,10 +291,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 
 				Config.Auth.External[ext] = provider{
-					Enabled:  true,
-					ClientId: clientId,
-					Secret:   secret,
-					Url:      url,
+					Enabled:     true,
+					ClientId:    clientId,
+					Secret:      secret,
+					RedirectUri: redirectUri,
+					Url:         url,
 				}
 			}
 		}
