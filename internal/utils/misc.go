@@ -36,7 +36,7 @@ const (
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.15.3"
-	RealtimeImage = "supabase/realtime:v0.22.7"
+	RealtimeImage = "supabase/realtime:v0.25.1"
 	StorageImage  = "supabase/storage-api:v0.20.1"
 )
 
