@@ -144,7 +144,11 @@ func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
 	batch := pgconn.Batch{}
 	lines, err := parser.Split(sql)
 	if err != nil {
-		return err
+		var stat string
+		if len(lines) > 0 {
+			stat = lines[len(lines)-1]
+		}
+		return fmt.Errorf("%v\nAfter statement %d: %s", err, len(lines), utils.Aqua(stat))
 	}
 	for _, line := range lines {
 		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
@@ -152,7 +156,14 @@ func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
 			batch.ExecParams(trim, nil, nil, nil, nil)
 		}
 	}
-	return conn.PgConn().ExecBatch(ctx, &batch).Close()
+	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		var stat string
+		if len(result) < len(lines) {
+			stat = lines[len(result)]
+		}
+		return fmt.Errorf("%v\nAt statement %d: %s", err, len(result), utils.Aqua(stat))
+	}
+	return nil
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
