@@ -28,6 +28,7 @@ services:
     volumes:
       - ./globals.sql:/docker-entrypoint-initdb.d/globals.sql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: postgres -c log_min_messages=fatal # prevents Realtime polling queries from appearing in logs
 
   # We don't care about the correct env, we just want each services' migrations to run
 
