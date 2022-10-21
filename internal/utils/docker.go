@@ -206,6 +206,16 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return err
 }
 
+func DockerStop(containerID string) {
+	stopContainer(Docker, containerID)
+}
+
+func stopContainer(docker *client.Client, containerID string) {
+	if err := docker.ContainerStop(context.Background(), containerID, nil); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
+	}
+}
+
 func DockerStart(ctx context.Context, image string, env []string, cmd []string, ports nat.PortMap) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, image); err != nil {
@@ -233,19 +243,8 @@ func DockerStart(ctx context.Context, image string, env []string, cmd []string, 
 	if err != nil {
 		return "", err
 	}
-	// Run container in background and propagate cancellation
-	if err := Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-		return "", err
-	}
-	go func() {
-		<-ctx.Done()
-		if ctx.Err() != nil {
-			if err := NewDocker().ContainerStop(context.Background(), resp.ID, nil); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to stop container:", resp.ID, err)
-			}
-		}
-	}()
-	return resp.ID, nil
+	// Run container in background
+	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 }
 
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
@@ -254,6 +253,13 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 	if err != nil {
 		return "", err
 	}
+	// Propagate cancellation to terminate early
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() != nil {
+			stopContainer(NewDocker(), container)
+		}
+	}()
 	// Stream logs
 	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,

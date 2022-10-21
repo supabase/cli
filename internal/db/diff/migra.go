@@ -45,7 +45,7 @@ func RunMigra(ctx context.Context, schema []string, file string, password string
 	if err != nil {
 		return err
 	}
-	defer utils.Docker.ContainerStop(context.Background(), shadow, nil)
+	defer utils.DockerStop(shadow)
 	if err := migrateShadowDatabase(ctx, fsys, options...); err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func createShadowDatabase(ctx context.Context) (string, error) {
 	return utils.DockerStart(ctx, utils.DbImage, []string{"POSTGRES_PASSWORD=postgres"}, cmd, ports)
 }
 
-func connectShadowPostgres(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
+func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
 	now := time.Now()
 	expiry := now.Add(timeout)
 	ticker := time.NewTicker(time.Second)
@@ -118,7 +118,7 @@ func connectShadowPostgres(ctx context.Context, timeout time.Duration, options .
 }
 
 func migrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := connectShadowPostgres(ctx, 10*time.Second, options...)
+	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
