@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 	"github.com/spf13/viper"
 )
 
@@ -205,8 +206,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return err
 }
 
-// Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
-func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
+func DockerStart(ctx context.Context, image string, env []string, cmd []string, ports nat.PortMap) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, image); err != nil {
 		return "", err
@@ -226,8 +226,9 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 			"com.docker.compose.project": Config.ProjectId,
 		},
 	}, &container.HostConfig{
-		NetworkMode: container.NetworkMode(network.ID),
-		AutoRemove:  true,
+		NetworkMode:  container.NetworkMode(network.ID),
+		PortBindings: ports,
+		AutoRemove:   true,
 	}, nil, nil, "")
 	if err != nil {
 		return "", err
@@ -244,8 +245,17 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 			}
 		}
 	}()
+	return resp.ID, nil
+}
+
+// Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
+func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
+	container, err := DockerStart(ctx, image, env, cmd, nil)
+	if err != nil {
+		return "", err
+	}
 	// Stream logs
-	logs, err := Docker.ContainerLogs(ctx, resp.ID, types.ContainerLogsOptions{
+	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: viper.GetBool("DEBUG"),
 		Follow:     true,
@@ -259,11 +269,11 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 		return "", err
 	}
 	// Check exit code
-	iresp, err := Docker.ContainerInspect(ctx, resp.ID)
+	resp, err := Docker.ContainerInspect(ctx, container)
 	if err != nil {
 		return "", err
 	}
-	if iresp.State.ExitCode > 0 {
+	if resp.State.ExitCode > 0 {
 		return "", errors.New("error running container")
 	}
 	return out.String(), nil

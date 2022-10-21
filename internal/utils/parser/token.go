@@ -12,7 +12,7 @@ const (
 	// Default max capacity is 64 * 1024 which is not enough for certain lines
 	// containing e.g. geographical data.
 	// 256K ought to be enough for anybody...
-	maxScannerCapacity = 256 * 1024
+	MaxScannerCapacity = 256 * 1024
 	// Equal to `startBufSize` from `bufio/scan.go`
 	startBufSize = 4096
 )
@@ -85,7 +85,7 @@ func Split(sql io.Reader) (stats []string, err error) {
 	buf := make([]byte, startBufSize)
 	maxbuf := viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")
 	if maxbuf == 0 {
-		maxbuf = maxScannerCapacity
+		maxbuf = MaxScannerCapacity
 	}
 	scanner.Buffer(buf, int(maxbuf))
 

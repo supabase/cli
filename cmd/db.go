@@ -77,10 +77,17 @@ var (
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var password string
+			if linked {
+				password = viper.GetString("DB_PASSWORD")
+				if password == "" {
+					password = PromptPassword(os.Stdin)
+				}
+			}
 			fsys := afero.NewOsFs()
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-				return diff.RunMigra(ctx, schema, file, fsys)
+				return diff.RunMigra(ctx, schema, file, password, fsys)
 			}
 			return diff.Run(file, fsys)
 		},
@@ -175,6 +182,7 @@ func init() {
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
