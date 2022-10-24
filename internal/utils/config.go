@@ -32,9 +32,9 @@ var (
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
-	initialSchemaPg13Sql string
+	InitialSchemaPg13Sql string
 	//go:embed templates/initial_schemas/14.sql
-	initialSchemaPg14Sql string
+	InitialSchemaPg14Sql string
 
 	authExternalProviders = []string{
 		"apple",
@@ -95,6 +95,7 @@ type (
 
 	db struct {
 		Port         uint
+		ShadowPort   uint `toml:"shadow_port"`
 		MajorVersion uint `toml:"major_version"`
 	}
 
@@ -181,6 +182,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
+		if Config.Db.ShadowPort == 0 {
+			Config.Db.ShadowPort = 54320
+		}
 		switch Config.Db.MajorVersion {
 		case 0:
 			return errors.New("Missing required field in config: db.major_version")
@@ -188,10 +192,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
 			DbImage = Pg13Image
-			InitialSchemaSql = initialSchemaPg13Sql
+			InitialSchemaSql = InitialSchemaPg13Sql
 		case 14:
 			DbImage = Pg14Image
-			InitialSchemaSql = initialSchemaPg14Sql
+			InitialSchemaSql = InitialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
