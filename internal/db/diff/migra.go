@@ -170,6 +170,7 @@ func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
 		for i, migration := range migrations {
 			if i == 0 && shouldSkip(migration.Name()) {
+				fmt.Fprintln(os.Stderr, "Skipping migration "+utils.Bold(migration.Name())+`... (replace "init" with a different file name to apply this migration)`)
 				continue
 			}
 			fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(migration.Name())+"...")
