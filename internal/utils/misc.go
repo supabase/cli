@@ -210,9 +210,9 @@ func GetGitRoot(fsys afero.Fs) (*string, error) {
 func GetProjectRoot(fsys afero.Fs) (string, error) {
 	origWd, err := os.Getwd()
 	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
-		var isSupaProj bool
 		path := filepath.Join(cwd, ConfigPath)
-		if isSupaProj, err = afero.Exists(fsys, path); isSupaProj {
+		// Treat all errors as file not exists
+		if isSupaProj, _ := afero.Exists(fsys, path); isSupaProj {
 			return cwd, nil
 		}
 		if isRootDirectory(cwd) {
