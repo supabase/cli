@@ -16,7 +16,7 @@ require (
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mattn/go-isatty v0.0.16
 	github.com/muesli/reflow v0.3.0
-	github.com/spf13/cobra v1.6.0
+	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.13.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 )
