@@ -164,7 +164,7 @@ var (
 
 	dbTestCmd = &cobra.Command{
 		Use:   "test",
-		Short: "Tests local database with pgTAP.",
+		Short: "Tests local database with pgTAP",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return test.Run(ctx, afero.NewOsFs())

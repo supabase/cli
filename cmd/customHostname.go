@@ -17,7 +17,7 @@ import (
 var (
 	customHostnamesCmd = &cobra.Command{
 		Use:   "custom-hostname",
-		Short: "Manage custom hostnames for Supabase projects.",
+		Short: "Manage custom hostnames for Supabase projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if !experimental {
 				return errors.New("must set the --experimental flag to run this command")
