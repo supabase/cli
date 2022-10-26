@@ -16,19 +16,20 @@ var (
 	// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
 	version      string
 	experimental bool
+	suggestion   string
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "supabase",
-	Short:         "Supabase CLI " + version,
-	Version:       version,
-	SilenceErrors: true,
-	SilenceUsage:  true,
+	Use:     "supabase",
+	Short:   "Supabase CLI " + version,
+	Version: version,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		if viper.GetBool("DEBUG") {
 			cmd.SetContext(utils.WithTraceContext(cmd.Context()))
+		} else {
+			suggestion = "Try rerunning the command with --debug to troubleshoot the error."
 		}
-
 		workdir := viper.GetString("WORKDIR")
 		if workdir == "" {
 			var err error
@@ -42,13 +43,9 @@ var rootCmd = &cobra.Command{
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		if viper.GetBool("DEBUG") {
-			cobra.CheckErr(err)
+		if len(suggestion) > 0 {
+			fmt.Fprintln(os.Stderr, suggestion)
 		}
-
-		fmt.Fprintf(os.Stderr, `Error: %v
-Try rerunning the command with --debug to troubleshoot the error.
-`, err)
 		os.Exit(1)
 	}
 }
