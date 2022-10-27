@@ -10,7 +10,7 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	GroupID: "setup",
+	GroupID: "local-dev",
 	Use:     "init",
 	Short:   "Initialize a local project",
 	RunE: func(cmd *cobra.Command, args []string) error {

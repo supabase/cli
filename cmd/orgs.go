@@ -8,7 +8,7 @@ import (
 
 var (
 	orgsCmd = &cobra.Command{
-		GroupID: "hosted",
+		GroupID: "management-api",
 		Use:     "orgs",
 		Short:   "Manage Supabase organizations",
 	}
