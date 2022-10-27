@@ -13,7 +13,7 @@ var (
 	backup bool
 
 	stopCmd = &cobra.Command{
-		GroupID: "local-dev",
+		GroupID: groupLocalDev,
 		Use:     "stop",
 		Short:   "Stop all local Supabase containers",
 		RunE: func(cmd *cobra.Command, args []string) error {

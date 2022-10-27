@@ -7,7 +7,7 @@ import (
 )
 
 var startCmd = &cobra.Command{
-	GroupID: "local-dev",
+	GroupID: groupLocalDev,
 	Use:     "start",
 	Short:   "Start containers for Supabase local development",
 	RunE: func(cmd *cobra.Command, args []string) error {

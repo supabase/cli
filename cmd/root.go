@@ -12,6 +12,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+const (
+	groupLocalDev      = "local-dev"
+	groupManagementAPI = "management-api"
+)
+
 var (
 	// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
 	version      string
@@ -68,8 +73,8 @@ func init() {
 	flags.BoolVar(&experimental, "experimental", false, "enable experimental features")
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	rootCmd.AddGroup(&cobra.Group{ID: "local-dev", Title: "Local Development:"})
-	rootCmd.AddGroup(&cobra.Group{ID: "management-api", Title: "Management APIs:"})
+	rootCmd.AddGroup(&cobra.Group{ID: groupLocalDev, Title: "Local Development:"})
+	rootCmd.AddGroup(&cobra.Group{ID: groupManagementAPI, Title: "Management APIs:"})
 }
 
 // instantiate new rootCmd is a bit tricky with cobra, but it can be done later with the following
