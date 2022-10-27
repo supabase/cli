@@ -16,7 +16,7 @@ import (
 
 var (
 	customHostnamesCmd = &cobra.Command{
-		GroupID: "management-api",
+		GroupID: groupManagementAPI,
 		Use:     "domains",
 		Short:   "Manage custom domain names for Supabase projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

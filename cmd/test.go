@@ -6,7 +6,7 @@ import (
 
 var (
 	testCmd = &cobra.Command{
-		GroupID: "local-dev",
+		GroupID: groupLocalDev,
 		Use:     "test",
 		Short:   "Run tests on local Supabase containers",
 	}

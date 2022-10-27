@@ -10,7 +10,7 @@ import (
 )
 
 var statusCmd = &cobra.Command{
-	GroupID: "local-dev",
+	GroupID: groupLocalDev,
 	Use:     "status",
 	Short:   "Show status of local Supabase containers",
 	RunE: func(cmd *cobra.Command, args []string) error {

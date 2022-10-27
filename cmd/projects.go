@@ -17,7 +17,7 @@ import (
 
 var (
 	projectsCmd = &cobra.Command{
-		GroupID: "management-api",
+		GroupID: groupManagementAPI,
 		Use:     "projects",
 		Short:   "Manage Supabase projects",
 	}

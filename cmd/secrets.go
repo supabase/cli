@@ -13,7 +13,7 @@ import (
 
 var (
 	secretsCmd = &cobra.Command{
-		GroupID: "management-api",
+		GroupID: groupManagementAPI,
 		Use:     "secrets",
 		Short:   "Manage Supabase secrets",
 	}

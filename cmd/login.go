@@ -12,7 +12,7 @@ import (
 
 var (
 	loginCmd = &cobra.Command{
-		GroupID: "local-dev",
+		GroupID: groupLocalDev,
 		Use:     "login",
 		Short:   "Authenticate using an access token",
 		RunE: func(cmd *cobra.Command, args []string) error {
