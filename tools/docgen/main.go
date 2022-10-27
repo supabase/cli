@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const tagOthers = "other-commands"
+
 func main() {
 	root := cmd.GetRootCmd()
 	root.InitDefaultCompletionCmd()
@@ -17,13 +19,14 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.8.5",
+			Version:     "1.11.3",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
 			Source:      "https://github.com/supabase/cli",
 			Bugs:        "https://github.com/supabase/cli/issues",
 			Spec:        "https://github.com/supabase/supabase.tools/cli_spec/lib.yaml",
+			Tags:        getTags(root),
 		},
 	}
 	// Generate, serialise, and print
@@ -40,16 +43,23 @@ func main() {
 	}
 }
 
-type InfoDoc struct {
+type TagDoc struct {
 	Id          string `yaml:",omitempty"`
-	Version     string `yaml:",omitempty"`
 	Title       string `yaml:",omitempty"`
-	Language    string `yaml:",omitempty"`
-	Source      string `yaml:",omitempty"`
-	Bugs        string `yaml:",omitempty"`
-	Spec        string `yaml:",omitempty"`
 	Description string `yaml:",omitempty"`
-	Options     string `yaml:",omitempty"`
+}
+
+type InfoDoc struct {
+	Id          string   `yaml:",omitempty"`
+	Version     string   `yaml:",omitempty"`
+	Title       string   `yaml:",omitempty"`
+	Language    string   `yaml:",omitempty"`
+	Source      string   `yaml:",omitempty"`
+	Bugs        string   `yaml:",omitempty"`
+	Spec        string   `yaml:",omitempty"`
+	Description string   `yaml:",omitempty"`
+	Options     string   `yaml:",omitempty"`
+	Tags        []TagDoc `yaml:",omitempty"`
 }
 
 type CmdDoc struct {
@@ -79,6 +89,9 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 			continue
 		}
 		sub := GenYamlDoc(c, root)
+		if !cmd.HasParent() && len(sub.Tags) == 0 {
+			sub.Tags = append(sub.Tags, tagOthers)
+		}
 		root.Commands = append(root.Commands, sub)
 		subcommands = append(subcommands, sub.Id)
 	}
@@ -92,6 +105,10 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		Summary:     forceMultiLine(cmd.Short),
 		Description: forceMultiLine(strings.ReplaceAll(cmd.Long, "\t", "    ")),
 		Subcommands: subcommands,
+	}
+
+	if len(cmd.GroupID) > 0 {
+		yamlDoc.Tags = append(yamlDoc.Tags, cmd.GroupID)
 	}
 
 	if cmd.Runnable() {
@@ -124,4 +141,15 @@ func forceMultiLine(s string) string {
 		s = s + "\n"
 	}
 	return s
+}
+
+func getTags(cmd *cobra.Command) (tags []TagDoc) {
+	for _, group := range cmd.Groups() {
+		tags = append(tags, TagDoc{
+			Id:    group.ID,
+			Title: group.Title[:len(group.Title)-1],
+		})
+	}
+	tags = append(tags, TagDoc{Id: tagOthers, Title: "Additional Commands"})
+	return tags
 }
