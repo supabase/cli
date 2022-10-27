@@ -69,7 +69,7 @@ func init() {
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.AddGroup(&cobra.Group{ID: "local-dev", Title: "Local Development:"})
-	rootCmd.AddGroup(&cobra.Group{ID: "management-api", Title: "Management API:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "management-api", Title: "Management APIs:"})
 }
 
 // instantiate new rootCmd is a bit tricky with cobra, but it can be done later with the following
