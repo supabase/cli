@@ -17,8 +17,8 @@ import (
 var (
 	customHostnamesCmd = &cobra.Command{
 		GroupID: "management-api",
-		Use:     "custom-hostname",
-		Short:   "Manage custom hostnames for Supabase projects",
+		Use:     "domains",
+		Short:   "Manage custom domain names for Supabase projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if !experimental {
 				return errors.New("must set the --experimental flag to run this command")
