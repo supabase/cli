@@ -12,7 +12,7 @@ import (
 
 var (
 	migrationCmd = &cobra.Command{
-		GroupID: "admin",
+		GroupID: "local-dev",
 		Use:     "migration",
 		Short:   "Manage database migration scripts",
 	}

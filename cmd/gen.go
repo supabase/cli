@@ -12,8 +12,9 @@ import (
 
 var (
 	genCmd = &cobra.Command{
-		Use:   "gen",
-		Short: "Run code generation tools",
+		GroupID: "local-dev",
+		Use:     "gen",
+		Short:   "Run code generation tools",
 	}
 
 	genTypesCmd = &cobra.Command{

@@ -19,7 +19,7 @@ var (
 	username = "postgres"
 
 	linkCmd = &cobra.Command{
-		GroupID: "admin",
+		GroupID: "local-dev",
 		Use:     "link",
 		Short:   "Link to a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {

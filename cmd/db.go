@@ -23,7 +23,7 @@ import (
 
 var (
 	dbCmd = &cobra.Command{
-		GroupID: "admin",
+		GroupID: "local-dev",
 		Use:     "db",
 		Short:   "Manage local Postgres databases",
 	}
