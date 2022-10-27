@@ -23,8 +23,9 @@ import (
 
 var (
 	dbCmd = &cobra.Command{
-		Use:   "db",
-		Short: "Manage local Postgres databases",
+		GroupID: "admin",
+		Use:     "db",
+		Short:   "Manage local Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{

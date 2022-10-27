@@ -17,8 +17,9 @@ import (
 
 var (
 	projectsCmd = &cobra.Command{
-		Use:   "projects",
-		Short: "Manage Supabase projects",
+		GroupID: "hosted",
+		Use:     "projects",
+		Short:   "Manage Supabase projects",
 	}
 
 	interactive bool

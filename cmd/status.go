@@ -10,8 +10,9 @@ import (
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show status of local Supabase containers",
+	GroupID: "local-dev",
+	Use:     "status",
+	Short:   "Show status of local Supabase containers",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		return status.Run(ctx, afero.NewOsFs())
