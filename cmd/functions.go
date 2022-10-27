@@ -20,8 +20,9 @@ import (
 
 var (
 	functionsCmd = &cobra.Command{
-		Use:   "functions",
-		Short: "Manage Supabase Edge functions",
+		GroupID: "hosted",
+		Use:     "functions",
+		Short:   "Manage Supabase Edge functions",
 	}
 
 	projectRef string

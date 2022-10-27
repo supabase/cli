@@ -7,8 +7,9 @@ import (
 )
 
 var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start containers for Supabase local development",
+	GroupID: "local-dev",
+	Use:     "start",
+	Short:   "Start containers for Supabase local development",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return start.Run(cmd.Context(), afero.NewOsFs())
 	},

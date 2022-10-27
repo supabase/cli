@@ -12,8 +12,9 @@ import (
 
 var (
 	loginCmd = &cobra.Command{
-		Use:   "login",
-		Short: "Authenticate using an access token",
+		GroupID: "setup",
+		Use:     "login",
+		Short:   "Authenticate using an access token",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
 				return err

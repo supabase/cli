@@ -68,6 +68,10 @@ func init() {
 	flags.BoolVar(&experimental, "experimental", false, "enable experimental features")
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	rootCmd.AddGroup(&cobra.Group{ID: "setup", Title: "Configuration:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "local-dev", Title: "Local Development:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "hosted", Title: "Hosted Project:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "admin", Title: "Database Admin:"})
 }
 
 // instantiate new rootCmd is a bit tricky with cobra, but it can be done later with the following
