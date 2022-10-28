@@ -126,6 +126,13 @@ type (
 		EnableSignup         *bool `toml:"enable_signup"`
 		DoubleConfirmChanges *bool `toml:"double_confirm_changes"`
 		EnableConfirmations  *bool `toml:"enable_confirmations"`
+
+		SmtpPort       uint   `toml:"smtp_port"`
+		SmtpAdminEmail string `toml:"smtp_admin_email"`
+		SmtpHost       string `toml:"smtp_host"`
+		SmtpUser       string `toml:"smtp_user"`
+		SmtpPass       string `toml:"smtp_pass"`
+		SmtpSenderName string `toml:"smtp_sender_name"`
 	}
 
 	provider struct {

@@ -354,9 +354,6 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !*utils.Config.Auth.Email.EnableConfirmations),
 
-			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
-			"GOTRUE_SMTP_PORT=2500",
-			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
 			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
 			"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
 			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
@@ -365,6 +362,69 @@ EOF
 
 			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 			"GOTRUE_SMS_AUTOCONFIRM=true",
+		}
+
+		var smtpHost = utils.Config.Auth.Email.SmtpHost
+		if smtpHost != "" {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", smtpHost),
+			)
+		} else {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.InbucketId),
+			)
+		}
+
+		var smtpPort = utils.Config.Auth.Email.SmtpPort
+		if smtpPort != 0 {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_PORT=%v", smtpPort),
+			)
+		} else {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_PORT=%v", 2500),
+			)
+		}
+
+		var smtpAdminEmail = utils.Config.Auth.Email.SmtpAdminEmail
+		if smtpAdminEmail != "" {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", smtpAdminEmail),
+			)
+		} else {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", "admin@email.com"),
+			)
+		}
+
+		var smtpUser = utils.Config.Auth.Email.SmtpUser
+		if smtpUser != "" {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_USER=%s", smtpUser),
+			)
+		}
+
+		var smtpPass = utils.Config.Auth.Email.SmtpPass
+		if smtpPass != "" {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_PASS=%s", smtpPass),
+			)
+		}
+
+		var smtpSenderName = utils.Config.Auth.Email.SmtpSenderName
+		if smtpSenderName != "" {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", smtpSenderName),
+			)
 		}
 
 		for name, config := range utils.Config.Auth.External {

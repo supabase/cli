@@ -57,6 +57,15 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
+# SMTP configurations, uncomment what is needed.
+#smtp_admin_email="admin@email.com"
+# [WARNING] The line below (smtp_host) will override InbucketId
+#smtp_host="mail"
+# smtp_port defaults to 2500 (no need to uncomment if this is the case)
+#smtp_port=2500
+#smtp_user="fake_mail_user"
+#smtp_pass="fake_mail_password"
+#smtp_sender_name="fake_sender"
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `twitch`, `twitter`, `slack`, `spotify`.
