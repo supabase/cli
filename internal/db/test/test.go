@@ -41,8 +41,10 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
+	// Passing in script string means command line args must be set manually, ie. "$@"
+	args := "set -- " + dstPath + "/" + utils.DbTestsDir + ";"
 	// Requires unix path inside container
-	cmd := []string{"/bin/bash", "-c", testScript, dstPath + "/" + utils.DbTestsDir}
+	cmd := []string{"/bin/bash", "-c", args + testScript}
 	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
 	if err != nil {
 		return err

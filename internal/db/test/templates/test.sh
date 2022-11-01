@@ -10,9 +10,7 @@ fi
 enable="create extension if not exists pgtap with schema extensions"
 notice=$(psql -h localhost -U postgres -p 5432 -d postgres -c "$enable" 2>&1 >/dev/null)
 
-# run postgres unit tests
-pg_prove -h localhost -U postgres -r "$@"
-
+files=$1
 cleanup() {
     # save the return code of the script
     status=$?
@@ -21,9 +19,12 @@ cleanup() {
         psql -h localhost -U postgres -p 5432 -d postgres -c "drop extension if exists pgtap"
     fi
     # clean up test files
-    rm -rf "$@"
+    rm -rf "$files"
     # actually quit
     exit $status
 }
 
 trap cleanup EXIT
+
+# run postgres unit tests
+pg_prove -h localhost -U postgres --ext .pg --ext .sql -r "$files"
