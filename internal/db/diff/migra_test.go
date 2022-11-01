@@ -172,7 +172,7 @@ At statement 0: create schema public`)
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "error diffing scheam")
+		assert.ErrorContains(t, err, "error diffing schema")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		// Check diff file
 		exists, err := afero.DirExists(fsys, utils.MigrationsDir)

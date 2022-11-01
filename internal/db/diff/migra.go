@@ -222,7 +222,7 @@ func diffSchema(ctx context.Context, source, target string, schema []string) (st
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
 	out, err := utils.DockerRunOnce(ctx, utils.MigraImage, env, cmd)
 	if err != nil {
-		return "", errors.New("error diffing scheam")
+		return "", errors.New("error diffing schema")
 	}
 	return out, nil
 }
