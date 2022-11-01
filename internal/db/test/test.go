@@ -32,11 +32,15 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		}
 	}
 
+	return pgProve(ctx, "/tmp", fsys)
+}
+
+func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
+	// Copy tests into database container
 	var buf bytes.Buffer
 	if err := compress(utils.DbTestsDir, &buf, fsys); err != nil {
 		return err
 	}
-	dstPath := "/tmp"
 	if err := utils.Docker.CopyToContainer(ctx, utils.DbId, dstPath, &buf, types.CopyToContainerOptions{}); err != nil {
 		return err
 	}
@@ -63,7 +67,6 @@ func compress(src string, buf io.Writer, fsys afero.Fs) error {
 	if err := afero.Walk(fsys, src, func(file string, fi os.FileInfo, err error) error {
 		// return on any error
 		if err != nil {
-			fmt.Println(err)
 			return err
 		}
 
