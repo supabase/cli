@@ -51,6 +51,7 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	cmd := []string{"/bin/bash", "-c", args + testScript}
 	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
 	if err != nil {
+		fmt.Println(out)
 		return err
 	}
 
