@@ -314,7 +314,7 @@ func DockerExecOnce(ctx context.Context, container string, env []string, cmd []s
 		return "", err
 	}
 	if iresp.ExitCode > 0 {
-		return "", errors.New("error executing command")
+		err = errors.New("error executing command")
 	}
-	return out.String(), nil
+	return out.String(), err
 }
