@@ -16,7 +16,7 @@ func GetCustomHostnameConfig(ctx context.Context, projectRef string) (*api.GetCu
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, errors.New("failed to activate custom hostname config: " + string(resp.Body))
+		return nil, errors.New("failed to get custom hostname config; received: " + string(resp.Body))
 	}
 	return resp, nil
 }
@@ -47,6 +47,7 @@ type RawResponse struct {
 				TxtName  string `json:"txt_name"`
 				TxtValue string `json:"txt_value"`
 			} `json:"validation_records"`
+			Status string `json:"status"`
 		}
 	} `json:"result"`
 }
@@ -101,6 +102,9 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 		}
 		owner := res.Result.OwnershipVerification
 		ssl := res.Result.Ssl.ValidationRecords
+		if res.Result.Ssl.Status == "initializing" {
+			return appendRawOutputIfNeeded("Custom hostname setup is being initialized; please request re-verification in a few seconds.\n", response, includeRawOutput), nil
+		}
 		if len(ssl) != 1 {
 			return "", fmt.Errorf("expected a single SSL verification record, received: %+v", ssl)
 		}
