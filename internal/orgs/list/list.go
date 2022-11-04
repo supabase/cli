@@ -1,11 +1,9 @@
 package list
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -18,46 +16,20 @@ type Organization struct {
 	Name string `json:"name"`
 }
 
-func Run(fsys afero.Fs) error {
-	accessToken, err := utils.LoadAccessTokenFS(fsys)
+func Run(ctx context.Context, fsys afero.Fs) error {
+	resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("GET", utils.GetSupabaseAPIHost()+"/v1/organizations", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Add("Authorization", "Bearer "+string(accessToken))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("Unexpected error retrieving organizations: %w", err)
-		}
-
-		return errors.New("Unexpected error retrieving organizations: " + string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	var orgs []Organization
-	if err := json.Unmarshal(body, &orgs); err != nil {
-		return err
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving organizations: " + string(resp.Body))
 	}
 
 	table := `|ID|NAME|
 |-|-|
 `
-	for _, org := range orgs {
+	for _, org := range *resp.JSON200 {
 		table += fmt.Sprintf("|`%s`|`%s`|\n", org.Id, strings.ReplaceAll(org.Name, "|", "\\|"))
 	}
 

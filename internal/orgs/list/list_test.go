@@ -1,6 +1,7 @@
 package list
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -29,13 +30,13 @@ func TestOrganizationListCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		assert.NoError(t, Run(fsys))
+		assert.NoError(t, Run(context.Background(), fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to load token", func(t *testing.T) {
-		assert.Error(t, Run(afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -50,7 +51,7 @@ func TestOrganizationListCommand(t *testing.T) {
 			Get("/v1/organizations").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -68,7 +69,7 @@ func TestOrganizationListCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -86,7 +87,7 @@ func TestOrganizationListCommand(t *testing.T) {
 			Reply(200).
 			JSON(map[string]string{})
 		// Run test
-		assert.Error(t, Run(fsys))
+		assert.Error(t, Run(context.Background(), fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
