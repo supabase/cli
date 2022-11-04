@@ -3,7 +3,8 @@ set -euo pipefail
 
 # TODO: move this dependency to base image
 if ! command -v pg_prove &> /dev/null; then
-    apt-get -qq update && apt-get -qq install postgresql-14-pgtap
+    apt-get -qq update
+    apt-get -qq install postgresql-14-pgtap &> /dev/null
 fi
 
 # temporarily enable pgtap
@@ -16,7 +17,7 @@ cleanup() {
     status=$?
     # disable pgtap if previously not enabled
     if [ -z "$notice" ]; then
-        psql -h localhost -U postgres -p 5432 -d postgres -c "drop extension if exists pgtap"
+        psql -h localhost -U postgres -p 5432 -d postgres -c "drop extension if exists pgtap" 2>&1 >/dev/null
     fi
     # clean up test files
     rm -rf "$files"
