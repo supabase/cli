@@ -35,7 +35,7 @@ const (
 	DenoRelayImage = "supabase/deno-relay:v1.2.4"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.15.3"
+	GotrueImage   = "supabase/gotrue:v2.27.0"
 	RealtimeImage = "supabase/realtime:v0.25.1"
 	StorageImage  = "supabase/storage-api:v0.20.1"
 )
