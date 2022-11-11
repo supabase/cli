@@ -141,6 +141,14 @@ type ClientInterface interface {
 
 	UpdateFunction(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemoveNetworkBan request with any body
+	RemoveNetworkBanWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RemoveNetworkBan(ctx context.Context, ref string, body RemoveNetworkBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetNetworkBans request
+	GetNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConfig request
 	GetConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -384,6 +392,42 @@ func (c *Client) UpdateFunctionWithBody(ctx context.Context, ref string, functio
 
 func (c *Client) UpdateFunction(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateFunctionRequest(c.Server, ref, functionSlug, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveNetworkBanWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveNetworkBanRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveNetworkBan(ctx context.Context, ref string, body RemoveNetworkBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveNetworkBanRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNetworkBansRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1160,6 +1204,87 @@ func NewUpdateFunctionRequestWithBody(server string, ref string, functionSlug st
 	return req, nil
 }
 
+// NewRemoveNetworkBanRequest calls the generic RemoveNetworkBan builder with application/json body
+func NewRemoveNetworkBanRequest(server string, ref string, body RemoveNetworkBanJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRemoveNetworkBanRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewRemoveNetworkBanRequestWithBody generates requests for RemoveNetworkBan with any type of body
+func NewRemoveNetworkBanRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-bans", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetNetworkBansRequest generates requests for GetNetworkBans
+func NewGetNetworkBansRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-bans/retrieve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConfigRequest generates requests for GetConfig
 func NewGetConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -1518,6 +1643,14 @@ type ClientWithResponsesInterface interface {
 
 	UpdateFunctionWithResponse(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateFunctionResponse, error)
 
+	// RemoveNetworkBan request with any body
+	RemoveNetworkBanWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error)
+
+	RemoveNetworkBanWithResponse(ctx context.Context, ref string, body RemoveNetworkBanJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error)
+
+	// GetNetworkBans request
+	GetNetworkBansWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkBansResponse, error)
+
 	// GetConfig request
 	GetConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetConfigResponse, error)
 
@@ -1849,6 +1982,49 @@ func (r UpdateFunctionResponse) StatusCode() int {
 	return 0
 }
 
+type RemoveNetworkBanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveNetworkBanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveNetworkBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetNetworkBansResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *NetworkBanResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNetworkBansResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNetworkBansResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2144,6 +2320,32 @@ func (c *ClientWithResponses) UpdateFunctionWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseUpdateFunctionResponse(rsp)
+}
+
+// RemoveNetworkBanWithBodyWithResponse request with arbitrary body returning *RemoveNetworkBanResponse
+func (c *ClientWithResponses) RemoveNetworkBanWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error) {
+	rsp, err := c.RemoveNetworkBanWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveNetworkBanResponse(rsp)
+}
+
+func (c *ClientWithResponses) RemoveNetworkBanWithResponse(ctx context.Context, ref string, body RemoveNetworkBanJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error) {
+	rsp, err := c.RemoveNetworkBan(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveNetworkBanResponse(rsp)
+}
+
+// GetNetworkBansWithResponse request returning *GetNetworkBansResponse
+func (c *ClientWithResponses) GetNetworkBansWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkBansResponse, error) {
+	rsp, err := c.GetNetworkBans(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNetworkBansResponse(rsp)
 }
 
 // GetConfigWithResponse request returning *GetConfigResponse
@@ -2562,6 +2764,48 @@ func ParseUpdateFunctionResponse(rsp *http.Response) (*UpdateFunctionResponse, e
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveNetworkBanResponse parses an HTTP response from a RemoveNetworkBanWithResponse call
+func ParseRemoveNetworkBanResponse(rsp *http.Response) (*RemoveNetworkBanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveNetworkBanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetNetworkBansResponse parses an HTTP response from a GetNetworkBansWithResponse call
+func ParseGetNetworkBansResponse(rsp *http.Response) (*GetNetworkBansResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNetworkBansResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest NetworkBanResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 

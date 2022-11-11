@@ -120,6 +120,11 @@ type FunctionSlugResponse struct {
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
 type FunctionSlugResponseStatus string
 
+// NetworkBanResponse defines model for NetworkBanResponse.
+type NetworkBanResponse struct {
+	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
+}
+
 // OrganizationResponse defines model for OrganizationResponse.
 type OrganizationResponse struct {
 	Id   string `json:"id"`
@@ -133,6 +138,11 @@ type ProjectResponse struct {
 	Name           string `json:"name"`
 	OrganizationId string `json:"organization_id"`
 	Region         string `json:"region"`
+}
+
+// RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
+type RemoveNetworkBanRequest struct {
+	Ipv4Addresses []string `json:"ipv4_addresses"`
 }
 
 // SecretResponse defines model for SecretResponse.
@@ -217,6 +227,9 @@ type CreateFunctionJSONRequestBody = CreateFunctionBody
 
 // UpdateFunctionJSONRequestBody defines body for UpdateFunction for application/json ContentType.
 type UpdateFunctionJSONRequestBody = UpdateFunctionBody
+
+// RemoveNetworkBanJSONRequestBody defines body for RemoveNetworkBan for application/json ContentType.
+type RemoveNetworkBanJSONRequestBody = RemoveNetworkBanRequest
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePgsodiumConfigBody
