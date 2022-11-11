@@ -239,6 +239,7 @@ func DockerStart(ctx context.Context, image string, env []string, cmd []string, 
 		NetworkMode:  container.NetworkMode(network.ID),
 		PortBindings: ports,
 		AutoRemove:   true,
+		Binds:        []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
 	}, nil, nil, "")
 	if err != nil {
 		return "", err

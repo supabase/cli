@@ -271,6 +271,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				Binds:         []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
 			},
 		); err != nil {
 			return err
