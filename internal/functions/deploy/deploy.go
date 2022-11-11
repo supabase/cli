@@ -81,7 +81,7 @@ func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody strin
 
 		switch resp.StatusCode() {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-			resp, err := utils.GetSupabase().CreateFunctionWithResponse(ctx, projectRef, api.CreateFunctionBody{
+			resp, err := utils.GetSupabase().CreateFunctionWithResponse(ctx, projectRef, &api.CreateFunctionParams{}, api.CreateFunctionBody{
 				Body:      newFunctionBody,
 				Name:      slug,
 				Slug:      slug,
@@ -95,7 +95,7 @@ func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody strin
 			}
 			deployedFuncId = resp.JSON201.Id
 		case http.StatusOK: // Function already exists, so do a PATCH
-			resp, err := utils.GetSupabase().UpdateFunctionWithResponse(ctx, projectRef, slug, api.UpdateFunctionBody{
+			resp, err := utils.GetSupabase().UpdateFunctionWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{}, api.UpdateFunctionBody{
 				Body:      &newFunctionBody,
 				VerifyJwt: &verifyJWT,
 			})
