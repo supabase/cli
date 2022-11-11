@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 14.3 (Debian 14.3-1.pgdg110+1)
--- Dumped by pg_dump version 14.5
+-- Dumped from database version 14.5 (Debian 14.5-2.pgdg110+2)
+-- Dumped by pg_dump version 15.0
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -35,18 +35,13 @@ CREATE SCHEMA IF NOT EXISTS extensions;
 ALTER SCHEMA extensions OWNER TO postgres;
 
 --
--- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
+-- Name: graphql; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA extensions;
+CREATE SCHEMA IF NOT EXISTS graphql;
 
 
---
--- Name: EXTENSION pg_graphql; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION pg_graphql IS 'GraphQL support';
-
+ALTER SCHEMA graphql OWNER TO supabase_admin;
 
 --
 -- Name: graphql_public; Type: SCHEMA; Schema: -; Owner: supabase_admin
@@ -90,6 +85,15 @@ COMMENT ON EXTENSION pgsodium IS 'Pgsodium is a modern cryptography library for 
 
 
 --
+-- Name: public; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+-- *not* creating schema, since initdb creates it
+
+
+ALTER SCHEMA public OWNER TO postgres;
+
+--
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -106,6 +110,20 @@ CREATE SCHEMA IF NOT EXISTS storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
+
+--
+-- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA graphql;
+
+
+--
+-- Name: EXTENSION pg_graphql; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pg_graphql IS 'pg_graphql: GraphQL support';
+
 
 --
 -- Name: pg_stat_statements; Type: EXTENSION; Schema: -; Owner: -
@@ -162,6 +180,43 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
 
+
+--
+-- Name: aal_level; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.aal_level AS ENUM (
+    'aal1',
+    'aal2',
+    'aal3'
+);
+
+
+ALTER TYPE auth.aal_level OWNER TO supabase_auth_admin;
+
+--
+-- Name: factor_status; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.factor_status AS ENUM (
+    'unverified',
+    'verified'
+);
+
+
+ALTER TYPE auth.factor_status OWNER TO supabase_auth_admin;
+
+--
+-- Name: factor_type; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.factor_type AS ENUM (
+    'totp',
+    'webauthn'
+);
+
+
+ALTER TYPE auth.factor_type OWNER TO supabase_auth_admin;
 
 --
 -- Name: action; Type: TYPE; Schema: realtime; Owner: supabase_admin
@@ -358,7 +413,7 @@ BEGIN
     alter default privileges for user supabase_admin in schema cron grant all
         on functions to postgres with grant option;
 
-    grant all privileges on all tables in schema cron to postgres with grant option; 
+    grant all privileges on all tables in schema cron to postgres with grant option;
 
   END IF;
 
@@ -394,9 +449,8 @@ BEGIN
 
     IF func_is_graphql_resolve
     THEN
-        DROP FUNCTION IF EXISTS graphql_public.graphql;
-
         -- Update public wrapper to pass all arguments through to the pg_graphql resolve func
+        DROP FUNCTION IF EXISTS graphql_public.graphql;
         create or replace function graphql_public.graphql(
             "operationName" text default null,
             query text default null,
@@ -414,14 +468,14 @@ BEGIN
             );
         $$;
 
-		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
-		-- function in the extension so we need to grant permissions on existing entities AND
-		-- update default permissions to any others that are created after `graphql.resolve`
+        -- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+        -- function in the extension so we need to grant permissions on existing entities AND
+        -- update default permissions to any others that are created after `graphql.resolve`
         grant usage on schema graphql to postgres, anon, authenticated, service_role;
         grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
         grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
         grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
-		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+        alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
     END IF;
@@ -1183,10 +1237,10 @@ DECLARE
 _parts text[];
 _filename text;
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	select _parts[array_length(_parts,1)] into _filename;
-	-- @todo return the last part instead of 2
-	return split_part(_filename, '.', 2);
+    select string_to_array(name, '/') into _parts;
+    select _parts[array_length(_parts,1)] into _filename;
+    -- @todo return the last part instead of 2
+    return split_part(_filename, '.', 2);
 END
 $$;
 
@@ -1203,8 +1257,8 @@ CREATE OR REPLACE FUNCTION storage.filename(name text) RETURNS text
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[array_length(_parts,1)];
+    select string_to_array(name, '/') into _parts;
+    return _parts[array_length(_parts,1)];
 END
 $$;
 
@@ -1221,8 +1275,8 @@ CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[1:array_length(_parts,1)-1];
+    select string_to_array(name, '/') into _parts;
+    return _parts[1:array_length(_parts,1)-1];
 END
 $$;
 
@@ -1342,7 +1396,7 @@ SET default_table_access_method = heap;
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.audit_log_entries (
+CREATE TABLE IF NOT EXISTS auth.audit_log_entries (
     instance_id uuid,
     id uuid NOT NULL,
     payload json,
@@ -1364,7 +1418,7 @@ COMMENT ON TABLE auth.audit_log_entries IS 'Auth: Audit trail for user actions.'
 -- Name: identities; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.identities (
+CREATE TABLE IF NOT EXISTS auth.identities (
     id text NOT NULL,
     user_id uuid NOT NULL,
     identity_data jsonb NOT NULL,
@@ -1388,7 +1442,7 @@ COMMENT ON TABLE auth.identities IS 'Auth: Stores identities associated to a use
 -- Name: instances; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.instances (
+CREATE TABLE IF NOT EXISTS auth.instances (
     id uuid NOT NULL,
     uuid uuid,
     raw_base_config text,
@@ -1407,10 +1461,79 @@ COMMENT ON TABLE auth.instances IS 'Auth: Manages users across multiple sites.';
 
 
 --
+-- Name: mfa_amr_claims; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_amr_claims (
+    session_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    authentication_method text NOT NULL,
+    id uuid NOT NULL
+);
+
+
+ALTER TABLE auth.mfa_amr_claims OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_amr_claims; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_amr_claims IS 'auth: stores authenticator method reference claims for multi factor authentication';
+
+
+--
+-- Name: mfa_challenges; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_challenges (
+    id uuid NOT NULL,
+    factor_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    verified_at timestamp with time zone,
+    ip_address inet NOT NULL
+);
+
+
+ALTER TABLE auth.mfa_challenges OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_challenges; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_challenges IS 'auth: stores metadata about challenge requests made';
+
+
+--
+-- Name: mfa_factors; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_factors (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    friendly_name text,
+    factor_type auth.factor_type NOT NULL,
+    status auth.factor_status NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    secret text
+);
+
+
+ALTER TABLE auth.mfa_factors OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_factors; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_factors IS 'auth: stores metadata about factors';
+
+
+--
 -- Name: refresh_tokens; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.refresh_tokens (
+CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
     instance_id uuid,
     id bigint NOT NULL,
     token character varying(255),
@@ -1454,10 +1577,64 @@ ALTER SEQUENCE auth.refresh_tokens_id_seq OWNED BY auth.refresh_tokens.id;
 
 
 --
+-- Name: saml_providers; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.saml_providers (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    entity_id text NOT NULL,
+    metadata_xml text NOT NULL,
+    metadata_url text,
+    attribute_mapping jsonb,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "entity_id not empty" CHECK ((char_length(entity_id) > 0)),
+    CONSTRAINT "metadata_url not empty" CHECK (((metadata_url = NULL::text) OR (char_length(metadata_url) > 0))),
+    CONSTRAINT "metadata_xml not empty" CHECK ((char_length(metadata_xml) > 0))
+);
+
+
+ALTER TABLE auth.saml_providers OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE saml_providers; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.saml_providers IS 'Auth: Manages SAML Identity Provider connections.';
+
+
+--
+-- Name: saml_relay_states; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.saml_relay_states (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    request_id text NOT NULL,
+    for_email text,
+    redirect_to text,
+    from_ip_address inet,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "request_id not empty" CHECK ((char_length(request_id) > 0))
+);
+
+
+ALTER TABLE auth.saml_relay_states OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE saml_relay_states; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.saml_relay_states IS 'Auth: Contains SAML Relay State information for each Service Provider initiated login.';
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.schema_migrations (
+CREATE TABLE IF NOT EXISTS auth.schema_migrations (
     version character varying(255) NOT NULL
 );
 
@@ -1475,11 +1652,13 @@ COMMENT ON TABLE auth.schema_migrations IS 'Auth: Manages updates to the auth sy
 -- Name: sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.sessions (
+CREATE TABLE IF NOT EXISTS auth.sessions (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    factor_id uuid,
+    aal auth.aal_level
 );
 
 
@@ -1493,10 +1672,87 @@ COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a use
 
 
 --
+-- Name: sso_domains; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sso_domains (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    domain text NOT NULL,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "domain not empty" CHECK ((char_length(domain) > 0))
+);
+
+
+ALTER TABLE auth.sso_domains OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sso_domains; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sso_domains IS 'Auth: Manages SSO email address domain mapping to an SSO Identity Provider.';
+
+
+--
+-- Name: sso_providers; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sso_providers (
+    id uuid NOT NULL,
+    resource_id text,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "resource_id not empty" CHECK (((resource_id = NULL::text) OR (char_length(resource_id) > 0)))
+);
+
+
+ALTER TABLE auth.sso_providers OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sso_providers; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sso_providers IS 'Auth: Manages SSO identity provider information; see saml_providers for SAML.';
+
+
+--
+-- Name: COLUMN sso_providers.resource_id; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.sso_providers.resource_id IS 'Auth: Uniquely identifies a SSO provider according to a user-chosen resource ID (case insensitive), useful in infrastructure as code.';
+
+
+--
+-- Name: sso_sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sso_sessions (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    sso_provider_id uuid,
+    not_before timestamp with time zone,
+    not_after timestamp with time zone,
+    idp_initiated boolean DEFAULT false,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone
+);
+
+
+ALTER TABLE auth.sso_sessions OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sso_sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sso_sessions IS 'Auth: A session initiated by an SSO Identity Provider';
+
+
+--
 -- Name: users; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.users (
+CREATE TABLE IF NOT EXISTS auth.users (
     instance_id uuid,
     id uuid NOT NULL,
     aud character varying(255),
@@ -1546,7 +1802,7 @@ COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure sch
 -- Name: schema_migrations; Type: TABLE; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE TABLE realtime.schema_migrations (
+CREATE TABLE IF NOT EXISTS realtime.schema_migrations (
     version bigint NOT NULL,
     inserted_at timestamp(0) without time zone
 );
@@ -1558,7 +1814,7 @@ ALTER TABLE realtime.schema_migrations OWNER TO supabase_admin;
 -- Name: subscription; Type: TABLE; Schema: realtime; Owner: supabase_admin
 --
 
-CREATE TABLE realtime.subscription (
+CREATE TABLE IF NOT EXISTS realtime.subscription (
     id bigint NOT NULL,
     subscription_id uuid NOT NULL,
     entity regclass NOT NULL,
@@ -1589,7 +1845,7 @@ ALTER TABLE realtime.subscription ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTI
 -- Name: buckets; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.buckets (
+CREATE TABLE IF NOT EXISTS storage.buckets (
     id text NOT NULL,
     name text NOT NULL,
     owner uuid,
@@ -1605,7 +1861,7 @@ ALTER TABLE storage.buckets OWNER TO supabase_storage_admin;
 -- Name: migrations; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.migrations (
+CREATE TABLE IF NOT EXISTS storage.migrations (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
     hash character varying(40) NOT NULL,
@@ -1619,7 +1875,7 @@ ALTER TABLE storage.migrations OWNER TO supabase_storage_admin;
 -- Name: objects; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.objects (
+CREATE TABLE IF NOT EXISTS storage.objects (
     id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
     bucket_id text,
     name text,
@@ -1660,7 +1916,37 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Data for Name: mfa_amr_claims; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: mfa_challenges; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: mfa_factors; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
 -- Data for Name: refresh_tokens; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: saml_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: saml_relay_states; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
 
@@ -1669,34 +1955,59 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
-INSERT INTO auth.schema_migrations VALUES ('20171026211738');
-INSERT INTO auth.schema_migrations VALUES ('20171026211808');
-INSERT INTO auth.schema_migrations VALUES ('20171026211834');
-INSERT INTO auth.schema_migrations VALUES ('20180103212743');
-INSERT INTO auth.schema_migrations VALUES ('20180108183307');
-INSERT INTO auth.schema_migrations VALUES ('20180119214651');
-INSERT INTO auth.schema_migrations VALUES ('20180125194653');
-INSERT INTO auth.schema_migrations VALUES ('00');
-INSERT INTO auth.schema_migrations VALUES ('20210710035447');
-INSERT INTO auth.schema_migrations VALUES ('20210722035447');
-INSERT INTO auth.schema_migrations VALUES ('20210730183235');
-INSERT INTO auth.schema_migrations VALUES ('20210909172000');
-INSERT INTO auth.schema_migrations VALUES ('20210927181326');
-INSERT INTO auth.schema_migrations VALUES ('20211122151130');
-INSERT INTO auth.schema_migrations VALUES ('20211124214934');
-INSERT INTO auth.schema_migrations VALUES ('20211202183645');
-INSERT INTO auth.schema_migrations VALUES ('20220114185221');
-INSERT INTO auth.schema_migrations VALUES ('20220114185340');
-INSERT INTO auth.schema_migrations VALUES ('20220224000811');
-INSERT INTO auth.schema_migrations VALUES ('20220323170000');
-INSERT INTO auth.schema_migrations VALUES ('20220429102000');
-INSERT INTO auth.schema_migrations VALUES ('20220531120530');
-INSERT INTO auth.schema_migrations VALUES ('20220614074223');
-INSERT INTO auth.schema_migrations VALUES ('20220811173540');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211738');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211808');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211834');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180103212743');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180108183307');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180119214651');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180125194653');
+INSERT INTO auth.schema_migrations (version) VALUES ('00');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210710035447');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210722035447');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210730183235');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210909172000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210927181326');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211122151130');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211124214934');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211202183645');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220114185221');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220114185340');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220224000811');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220323170000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220429102000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220531120530');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220614074223');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220811173540');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221003041349');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221003041400');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221011041400');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221020193600');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221021073300');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221021082433');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
 
 
 --
 -- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: sso_domains; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: sso_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: sso_sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
 
@@ -1708,30 +2019,36 @@ INSERT INTO auth.schema_migrations VALUES ('20220811173540');
 
 
 --
+-- Data for Name: key; Type: TABLE DATA; Schema: pgsodium; Owner: postgres
+--
+
+
+
+--
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: realtime; Owner: supabase_admin
 --
 
-INSERT INTO realtime.schema_migrations VALUES (20211116024918, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116045059, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116050929, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116051442, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116212300, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116213355, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116213934, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211116214523, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211122062447, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211124070109, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211202204204, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211202204605, '2022-04-14 09:42:55');
-INSERT INTO realtime.schema_migrations VALUES (20211210212804, '2022-04-14 09:42:56');
-INSERT INTO realtime.schema_migrations VALUES (20211228014915, '2022-04-14 09:42:56');
-INSERT INTO realtime.schema_migrations VALUES (20220107221237, '2022-04-14 09:42:56');
-INSERT INTO realtime.schema_migrations VALUES (20220228202821, '2022-04-14 09:42:56');
-INSERT INTO realtime.schema_migrations VALUES (20220312004840, '2022-04-14 09:42:56');
-INSERT INTO realtime.schema_migrations VALUES (20220603231003, '2022-08-23 04:55:52');
-INSERT INTO realtime.schema_migrations VALUES (20220603232444, '2022-08-23 04:55:52');
-INSERT INTO realtime.schema_migrations VALUES (20220615214548, '2022-08-23 04:55:52');
-INSERT INTO realtime.schema_migrations VALUES (20220712093339, '2022-08-23 04:55:52');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116024918, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116045059, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116050929, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116051442, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116212300, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116213355, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116213934, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211116214523, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211122062447, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211124070109, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211202204204, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211202204605, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211210212804, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20211228014915, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220107221237, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220228202821, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220312004840, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220603231003, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220603232444, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220615214548, '2022-11-09 15:18:03');
+INSERT INTO realtime.schema_migrations (version, inserted_at) VALUES (20220712093339, '2022-11-09 15:18:03');
 
 
 --
@@ -1750,17 +2067,17 @@ INSERT INTO realtime.schema_migrations VALUES (20220712093339, '2022-08-23 04:55
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-04-14 09:42:54.573289');
-INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-04-14 09:42:54.630614');
-INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-04-14 09:42:54.676128');
-INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-04-14 09:42:55.036044');
-INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-04-14 09:42:55.072341');
-INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-04-14 09:42:55.102122');
-INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-04-14 09:42:55.139121');
-INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-04-14 09:42:55.179168');
-INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:42:55.218331');
-INSERT INTO storage.migrations VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-08-23 04:56:00.165176');
-INSERT INTO storage.migrations VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-08-23 04:56:00.176673');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-11-09 15:18:04.857739');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-11-09 15:18:04.8635');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-11-09 15:18:04.867172');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-11-09 15:18:04.884924');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-11-09 15:18:04.888136');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-11-09 15:18:04.891994');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-11-09 15:18:04.895884');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-11-09 15:18:04.898973');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-11-09 15:18:04.902504');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-11-09 15:18:04.905764');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-11-09 15:18:04.909316');
 
 
 --
@@ -1781,6 +2098,14 @@ SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
 --
 
 SELECT pg_catalog.setval('realtime.subscription_id_seq', 1, false);
+
+
+--
+-- Name: mfa_amr_claims amr_id_pk; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT amr_id_pk PRIMARY KEY (id);
 
 
 --
@@ -1808,6 +2133,30 @@ ALTER TABLE ONLY auth.instances
 
 
 --
+-- Name: mfa_amr_claims mfa_amr_claims_session_id_authentication_method_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT mfa_amr_claims_session_id_authentication_method_pkey UNIQUE (session_id, authentication_method);
+
+
+--
+-- Name: mfa_challenges mfa_challenges_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_challenges
+    ADD CONSTRAINT mfa_challenges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_factors mfa_factors_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_factors
+    ADD CONSTRAINT mfa_factors_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: refresh_tokens refresh_tokens_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1824,6 +2173,30 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
+-- Name: saml_providers saml_providers_entity_id_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_entity_id_key UNIQUE (entity_id);
+
+
+--
+-- Name: saml_providers saml_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: saml_relay_states saml_relay_states_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_relay_states
+    ADD CONSTRAINT saml_relay_states_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1837,6 +2210,30 @@ ALTER TABLE ONLY auth.schema_migrations
 
 ALTER TABLE ONLY auth.sessions
     ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sso_domains sso_domains_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_domains
+    ADD CONSTRAINT sso_domains_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sso_providers sso_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_providers
+    ADD CONSTRAINT sso_providers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sso_sessions sso_sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_sessions
+    ADD CONSTRAINT sso_sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1940,10 +2337,24 @@ CREATE UNIQUE INDEX email_change_token_new_idx ON auth.users USING btree (email_
 
 
 --
+-- Name: factor_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, created_at);
+
+
+--
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX identities_user_id_idx ON auth.identities USING btree (user_id);
+
+
+--
+-- Name: mfa_factors_user_friendly_name_unique; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX mfa_factors_user_friendly_name_unique ON auth.mfa_factors USING btree (friendly_name, user_id) WHERE (TRIM(BOTH FROM friendly_name) <> ''::text);
 
 
 --
@@ -1958,6 +2369,13 @@ CREATE UNIQUE INDEX reauthentication_token_idx ON auth.users USING btree (reauth
 --
 
 CREATE UNIQUE INDEX recovery_token_idx ON auth.users USING btree (recovery_token) WHERE ((recovery_token)::text !~ '^[0-9 ]*$'::text);
+
+
+--
+-- Name: refresh_token_session_id; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX refresh_token_session_id ON auth.refresh_tokens USING btree (session_id);
 
 
 --
@@ -1982,10 +2400,87 @@ CREATE INDEX refresh_tokens_parent_idx ON auth.refresh_tokens USING btree (paren
 
 
 --
+-- Name: refresh_tokens_session_id_revoked_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX refresh_tokens_session_id_revoked_idx ON auth.refresh_tokens USING btree (session_id, revoked);
+
+
+--
 -- Name: refresh_tokens_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX refresh_tokens_token_idx ON auth.refresh_tokens USING btree (token);
+
+
+--
+-- Name: saml_providers_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_providers_sso_provider_id_idx ON auth.saml_providers USING btree (sso_provider_id);
+
+
+--
+-- Name: saml_relay_states_for_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_relay_states_for_email_idx ON auth.saml_relay_states USING btree (for_email);
+
+
+--
+-- Name: saml_relay_states_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_relay_states_sso_provider_id_idx ON auth.saml_relay_states USING btree (sso_provider_id);
+
+
+--
+-- Name: sessions_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sessions_user_id_idx ON auth.sessions USING btree (user_id);
+
+
+--
+-- Name: sso_domains_domain_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX sso_domains_domain_idx ON auth.sso_domains USING btree (lower(domain));
+
+
+--
+-- Name: sso_domains_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sso_domains_sso_provider_id_idx ON auth.sso_domains USING btree (sso_provider_id);
+
+
+--
+-- Name: sso_providers_resource_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX sso_providers_resource_id_idx ON auth.sso_providers USING btree (lower(resource_id));
+
+
+--
+-- Name: sso_sessions_session_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sso_sessions_session_id_idx ON auth.sso_sessions USING btree (session_id);
+
+
+--
+-- Name: sso_sessions_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sso_sessions_sso_provider_id_idx ON auth.sso_sessions USING btree (sso_provider_id);
+
+
+--
+-- Name: user_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, created_at);
 
 
 --
@@ -2060,6 +2555,30 @@ ALTER TABLE ONLY auth.identities
 
 
 --
+-- Name: mfa_amr_claims mfa_amr_claims_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT mfa_amr_claims_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_challenges mfa_challenges_auth_factor_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_challenges
+    ADD CONSTRAINT mfa_challenges_auth_factor_id_fkey FOREIGN KEY (factor_id) REFERENCES auth.mfa_factors(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_factors mfa_factors_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_factors
+    ADD CONSTRAINT mfa_factors_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: refresh_tokens refresh_tokens_parent_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2076,11 +2595,51 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
+-- Name: saml_providers saml_providers_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saml_relay_states saml_relay_states_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_relay_states
+    ADD CONSTRAINT saml_relay_states_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
 ALTER TABLE ONLY auth.sessions
     ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sso_domains sso_domains_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_domains
+    ADD CONSTRAINT sso_domains_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sso_sessions sso_sessions_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_sessions
+    ADD CONSTRAINT sso_sessions_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sso_sessions sso_sessions_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_sessions
+    ADD CONSTRAINT sso_sessions_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
 
 
 --
@@ -2170,6 +2729,8 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
 --
 
+REVOKE USAGE ON SCHEMA public FROM PUBLIC;
+GRANT ALL ON SCHEMA public TO PUBLIC;
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
@@ -2623,53 +3184,53 @@ GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text)
 
 
 --
--- Name: FUNCTION get_built_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
-GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO postgres;
-GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO anon;
-GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO authenticated;
-GRANT ALL ON FUNCTION graphql.get_built_schema_version() TO service_role;
-
-
---
--- Name: FUNCTION rebuild_on_ddl(); Type: ACL; Schema: graphql; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO postgres;
-GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO anon;
-GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO authenticated;
-GRANT ALL ON FUNCTION graphql.rebuild_on_ddl() TO service_role;
+GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO postgres;
+GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO anon;
+GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO authenticated;
+GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO service_role;
 
 
 --
--- Name: FUNCTION rebuild_on_drop(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
-GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO postgres;
-GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO anon;
-GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO authenticated;
-GRANT ALL ON FUNCTION graphql.rebuild_on_drop() TO service_role;
-
-
---
--- Name: FUNCTION rebuild_schema(); Type: ACL; Schema: graphql; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION graphql.rebuild_schema() TO postgres;
-GRANT ALL ON FUNCTION graphql.rebuild_schema() TO anon;
-GRANT ALL ON FUNCTION graphql.rebuild_schema() TO authenticated;
-GRANT ALL ON FUNCTION graphql.rebuild_schema() TO service_role;
+GRANT ALL ON FUNCTION graphql.exception(message text) TO postgres;
+GRANT ALL ON FUNCTION graphql.exception(message text) TO anon;
+GRANT ALL ON FUNCTION graphql.exception(message text) TO authenticated;
+GRANT ALL ON FUNCTION graphql.exception(message text) TO service_role;
 
 
 --
--- Name: FUNCTION variable_definitions_sort(variable_definitions jsonb); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
-GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO postgres;
-GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO anon;
-GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO authenticated;
-GRANT ALL ON FUNCTION graphql.variable_definitions_sort(variable_definitions jsonb) TO service_role;
+GRANT ALL ON FUNCTION graphql.get_schema_version() TO postgres;
+GRANT ALL ON FUNCTION graphql.get_schema_version() TO anon;
+GRANT ALL ON FUNCTION graphql.get_schema_version() TO authenticated;
+GRANT ALL ON FUNCTION graphql.get_schema_version() TO service_role;
+
+
+--
+-- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+--
+
+GRANT ALL ON FUNCTION graphql.increment_schema_version() TO postgres;
+GRANT ALL ON FUNCTION graphql.increment_schema_version() TO anon;
+GRANT ALL ON FUNCTION graphql.increment_schema_version() TO authenticated;
+GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
+
+
+--
+-- Name: FUNCTION sequential_executor(prepared_statement_names text[]); Type: ACL; Schema: graphql; Owner: supabase_admin
+--
+
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO postgres;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO anon;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO authenticated;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO service_role;
 
 
 --
@@ -2819,6 +3380,30 @@ GRANT ALL ON TABLE auth.instances TO postgres;
 
 
 --
+-- Name: TABLE mfa_amr_claims; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_amr_claims TO postgres;
+GRANT ALL ON TABLE auth.mfa_amr_claims TO dashboard_user;
+
+
+--
+-- Name: TABLE mfa_challenges; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_challenges TO postgres;
+GRANT ALL ON TABLE auth.mfa_challenges TO dashboard_user;
+
+
+--
+-- Name: TABLE mfa_factors; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_factors TO postgres;
+GRANT ALL ON TABLE auth.mfa_factors TO dashboard_user;
+
+
+--
 -- Name: TABLE refresh_tokens; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2835,6 +3420,22 @@ GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO postgres;
 
 
 --
+-- Name: TABLE saml_providers; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.saml_providers TO postgres;
+GRANT ALL ON TABLE auth.saml_providers TO dashboard_user;
+
+
+--
+-- Name: TABLE saml_relay_states; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.saml_relay_states TO postgres;
+GRANT ALL ON TABLE auth.saml_relay_states TO dashboard_user;
+
+
+--
 -- Name: TABLE schema_migrations; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2848,6 +3449,30 @@ GRANT ALL ON TABLE auth.schema_migrations TO postgres;
 
 GRANT ALL ON TABLE auth.sessions TO postgres;
 GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+
+
+--
+-- Name: TABLE sso_domains; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sso_domains TO postgres;
+GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
+
+
+--
+-- Name: TABLE sso_providers; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sso_providers TO postgres;
+GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
+
+
+--
+-- Name: TABLE sso_sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sso_sessions TO postgres;
+GRANT ALL ON TABLE auth.sso_sessions TO dashboard_user;
 
 
 --
@@ -2870,16 +3495,6 @@ GRANT ALL ON TABLE extensions.pg_stat_statements TO dashboard_user;
 --
 
 GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
-
-
---
--- Name: TABLE schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE graphql.schema_version TO postgres;
-GRANT ALL ON TABLE graphql.schema_version TO anon;
-GRANT ALL ON TABLE graphql.schema_version TO authenticated;
-GRANT ALL ON TABLE graphql.schema_version TO service_role;
 
 
 --
@@ -3233,5 +3848,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
-drop extension pg_graphql; create extension pg_graphql schema extensions;
+DROP EXTENSION pg_graphql; CREATE EXTENSION pg_graphql WITH SCHEMA graphql;
 RESET ALL;

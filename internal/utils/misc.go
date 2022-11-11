@@ -23,7 +23,7 @@ import (
 
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
-	Pg14Image = "supabase/postgres:14.1.0.71"
+	Pg14Image = "supabase/postgres:14.1.0.89"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage      = "library/kong:2.8.1"
 	InbucketImage  = "inbucket/inbucket:3.0.3"
@@ -35,9 +35,9 @@ const (
 	DenoRelayImage = "supabase/deno-relay:v1.2.4"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.15.3"
+	GotrueImage   = "supabase/gotrue:v2.25.1"
 	RealtimeImage = "supabase/realtime:v0.25.1"
-	StorageImage  = "supabase/storage-api:v0.20.1"
+	StorageImage  = "supabase/storage-api:v0.21.4"
 )
 
 var ServiceImages = []string{
