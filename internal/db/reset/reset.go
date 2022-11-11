@@ -163,9 +163,7 @@ func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
 	defer ticker.Stop()
 	for t := now; t.Before(expiry); t = <-ticker.C {
 		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil &&
-			resp.State != nil &&
-			resp.State.Health != nil &&
-			resp.State.Health.Status == "healthy" {
+			resp.State.Health != nil && resp.State.Health.Status == "healthy" {
 			return true
 		}
 	}
