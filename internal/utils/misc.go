@@ -38,7 +38,7 @@ const (
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.25.1"
-	RealtimeImage = "supabase/realtime:v0.25.1"
+	RealtimeImage = "supabase/realtime:v1.0.0-rc.11"
 	StorageImage  = "supabase/storage-api:v0.21.4"
 )
 
@@ -67,8 +67,8 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24ifQ.625_WdcF3KHqz5amU0x2X5WWHP-OEs_4qj0ssLNHzTs"
-	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.vI9obAHOGyVVKa3pD--kJlyxp-Z2zV9UUMAhKpNLAcU"
+	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 
 	ConfigPath     = "supabase/config.toml"
@@ -108,6 +108,7 @@ var (
 		"pgbouncer",
 		"pgsodium",
 		"pgsodium_masks",
+		"_realtime",
 		"realtime",
 		"storage",
 		"supabase_functions",
