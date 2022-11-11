@@ -4,10 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	_ "embed"
+	"crypto/md5"
+	"embed"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,7 +34,7 @@ const (
 	MigraImage     = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage    = "supabase/postgres-meta:v0.50.2"
 	StudioImage    = "supabase/studio:0.22.08"
-	DenoRelayImage = "supabase/deno-relay:v1.2.4"
+	DenoRelayImage = "supabase/deno-relay:v1.4.0"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.25.1"
@@ -117,6 +119,9 @@ var (
 var (
 	DenoPathOverride string
 )
+
+//go:embed eszip/*
+var eszipEmbedDir embed.FS
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
@@ -299,7 +304,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.20.3")
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.27.1")
 		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -374,6 +379,81 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	return nil
+}
+
+func isBuildScriptModified(fsys afero.Fs, buildScriptPath string) (bool, error) {
+	bs, err := afero.ReadFile(fsys, buildScriptPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	es, err := fs.ReadFile(eszipEmbedDir, "eszip/build.ts")
+	if err != nil {
+		return false, err
+	}
+
+	// compare the md5 checksum of current build script with user's copy.
+	// if the checksums doesn't match, build script is modified.
+	return md5.Sum(bs) != md5.Sum(es), nil
+}
+
+// Copy ESZIP scripts needed for function deploy, returning the build script path or an error.
+func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	supabasePath := filepath.Join(home, ".supabase")
+	scriptDirPath := filepath.Join(supabasePath, "eszip")
+	buildScriptPath := filepath.Join(scriptDirPath, "build.ts")
+
+	// make the script directory if not exist
+	if err := MkdirIfNotExistFS(fsys, scriptDirPath); err != nil {
+		return "", err
+	}
+
+	// check if the build script should be copied
+	modified, err := isBuildScriptModified(fsys, buildScriptPath)
+	if err != nil {
+		return "", err
+	}
+	if !modified {
+		return buildScriptPath, nil
+	}
+
+	fmt.Println("copying embedded files")
+	// copy embed files to script directory
+	err = fs.WalkDir(eszipEmbedDir, "eszip", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// skip copying the directory
+		if d.IsDir() {
+			return nil
+		}
+
+		contents, err := fs.ReadFile(eszipEmbedDir, path)
+		if err != nil {
+			return err
+		}
+
+		if err := afero.WriteFile(fsys, filepath.Join(supabasePath, path), contents, 0666); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(buildScriptPath), nil
 }
 
 func LoadAccessToken() (string, error) {

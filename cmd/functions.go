@@ -42,7 +42,8 @@ var (
 		},
 	}
 
-	noVerifyJWT bool
+	noVerifyJWT     bool
+	useLegacyBundle bool
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy <Function name>",
@@ -58,7 +59,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, fsys)
+			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, useLegacyBundle, fsys)
 		},
 	}
 
@@ -89,6 +90,7 @@ func init() {
 	functionsDeleteCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsDeployCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsServeCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsCmd.AddCommand(functionsDeleteCmd)

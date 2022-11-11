@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -62,7 +63,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, false, fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, false, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -91,7 +92,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, "", true, fsys))
+		assert.NoError(t, Run(context.Background(), slug, "", true, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -102,7 +103,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup invalid project ref
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte("test-project"), 0644))
 		// Run test
-		err := Run(context.Background(), "test-func", "", false, fsys)
+		err := Run(context.Background(), "test-func", "", false, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
@@ -111,7 +112,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "test-func", "test-project", false, fsys)
+		err := Run(context.Background(), "test-func", "test-project", false, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
@@ -122,7 +123,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "@", project, false, fsys)
+		err := Run(context.Background(), "@", project, false, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -133,7 +134,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "test-func", project, false, fsys)
+		err := Run(context.Background(), "test-func", project, false, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -159,7 +160,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 		// Run test
-		err = Run(context.Background(), "test-func", project, false, fsys)
+		err = Run(context.Background(), "test-func", project, false, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -181,7 +182,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -193,7 +194,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error deploying Function:")
 	})
@@ -208,7 +209,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -223,7 +224,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "Failed to create a new Function on the Supabase project:")
 	})
@@ -239,7 +240,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -255,7 +256,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, "body", true)
+		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
 		// Check error
 		assert.ErrorContains(t, err, "Failed to update an existing Function's body on the Supabase project:")
 	})
