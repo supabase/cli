@@ -3848,4 +3848,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
+DROP EXTENSION pg_graphql; CREATE EXTENSION pg_graphql WITH SCHEMA graphql;
 RESET ALL;
