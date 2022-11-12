@@ -50,10 +50,10 @@ func (p *fakeProgram) Start() error {
 func (p *fakeProgram) Send(msg tea.Msg) {
 	switch msg := msg.(type) {
 	case StatusMsg:
-		fmt.Println(msg)
+		fmt.Fprintln(os.Stderr,msg)
 	case PsqlMsg:
 		if msg != nil {
-			fmt.Println(*msg)
+			fmt.Fprintln(os.Stderr,*msg)
 		}
 	}
 

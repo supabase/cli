@@ -71,7 +71,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
+	fmt.Fprintln(os.Stderr, "Started " + utils.Aqua("supabase") + " local development setup.")
 	utils.ShowStatus()
 
 	return nil
