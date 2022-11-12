@@ -18,7 +18,7 @@
   "bin": "bin/supabase",
   "dependencies": {
     "node-fetch": "^3.2.10",
-    "tar": "6.1.11"
+    "tar": "6.1.12"
   },
   "release": {
     "branches": [

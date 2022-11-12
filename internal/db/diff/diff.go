@@ -3,6 +3,7 @@ package diff
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -72,8 +73,9 @@ func Run(file string, fsys afero.Fs) error {
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
-
-	diff string
+	//go:embed templates/reset.sh
+	resetShadowScript string
+	diff              string
 )
 
 func run(p utils.Program) error {
@@ -156,6 +158,17 @@ EOSQL
 		diff = string(diffBytes)
 	}
 
+	return nil
+}
+
+// Creates a fresh database inside a Postgres container.
+func ResetDatabase(ctx context.Context, container, shadow string) error {
+	// Our initial schema should not exceed the maximum size of an env var, ~32KB
+	env := []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql}
+	cmd := []string{"/bin/bash", "-c", resetShadowScript}
+	if _, err := utils.DockerExecOnce(ctx, container, env, cmd); err != nil {
+		return errors.New("error creating shadow database")
+	}
 	return nil
 }
 

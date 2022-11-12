@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,8 +18,9 @@ import (
 
 var (
 	projectsCmd = &cobra.Command{
-		Use:   "projects",
-		Short: "Manage Supabase projects",
+		GroupID: groupManagementAPI,
+		Use:     "projects",
+		Short:   "Manage Supabase projects",
 	}
 
 	interactive bool
@@ -101,6 +103,9 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 		resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
 		if err != nil {
 			return err
+		}
+		if resp.JSON200 == nil {
+			return errors.New("Unexpected error retrieving organizations: " + string(resp.Body))
 		}
 		items := make([]utils.PromptItem, len(*resp.JSON200))
 		for i, org := range *resp.JSON200 {

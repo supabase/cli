@@ -2,7 +2,6 @@ package integration
 
 // Basic imports
 import (
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,7 +37,7 @@ func (suite *LoginTestSuite) TestLink() {
 
 	// change stdin to read from a file
 	content := []byte(key)
-	tmpfile, err := ioutil.TempFile(suite.tempDir, "key")
+	tmpfile, err := os.CreateTemp(suite.tempDir, "key")
 	require.NoError(suite.T(), err)
 	defer os.Remove(tmpfile.Name()) // clean up
 
@@ -58,7 +57,7 @@ func (suite *LoginTestSuite) TestLink() {
 	require.NoError(suite.T(), err)
 	_, err = os.Stat(filepath.Join(home, ".supabase/access-token"))
 	require.NoError(suite.T(), err)
-	token, err := ioutil.ReadFile(filepath.Join(home, ".supabase/access-token"))
+	token, err := os.ReadFile(filepath.Join(home, ".supabase/access-token"))
 	require.NoError(suite.T(), err)
 	require.Equal(suite.T(), key, string(token))
 }

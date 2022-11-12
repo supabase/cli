@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/spf13/afero"
 )
 
@@ -31,9 +32,9 @@ var (
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
-	initialSchemaPg13Sql string
+	InitialSchemaPg13Sql string
 	//go:embed templates/initial_schemas/14.sql
-	initialSchemaPg14Sql string
+	InitialSchemaPg14Sql string
 
 	authExternalProviders = []string{
 		"apple",
@@ -59,6 +60,17 @@ var (
 	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
 )
 
+// Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
+type sizeInBytes int64
+
+func (s *sizeInBytes) UnmarshalText(text []byte) error {
+	size, err := units.RAMInBytes(string(text))
+	if err == nil {
+		*s = sizeInBytes(size)
+	}
+	return err
+}
+
 var Config config
 
 type (
@@ -68,6 +80,7 @@ type (
 		Db        db
 		Studio    studio
 		Inbucket  inbucket
+		Storage   storage
 		Auth      auth
 		// TODO
 		// Scripts   scripts
@@ -83,7 +96,8 @@ type (
 
 	db struct {
 		Port         uint
-		MajorVersion uint   `toml:"major_version"`
+		ShadowPort   uint `toml:"shadow_port"`
+		MajorVersion uint `toml:"major_version"`
 		DbURL        string `toml:"db_url_env_var"`
 	}
 
@@ -97,6 +111,10 @@ type (
 		SmtpPort    uint   `toml:"smtp_port"`
 		Pop3Port    uint   `toml:"pop3_port"`
 		InbucketURL string `toml:"inbucket_url_env_var"`
+	}
+
+	storage struct {
+		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
 	}
 
 	auth struct {
@@ -117,10 +135,11 @@ type (
 	}
 
 	provider struct {
-		Enabled  bool
-		ClientId string `toml:"client_id"`
-		Secret   string
-		Url      string
+		Enabled     bool
+		ClientId    string `toml:"client_id"`
+		Secret      string
+		Url         string
+		RedirectUri string `toml:"redirect_uri"`
 	}
 
 	// TODO
@@ -172,6 +191,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
+		if Config.Db.ShadowPort == 0 {
+			Config.Db.ShadowPort = 54320
+		}
 		switch Config.Db.MajorVersion {
 		case 0:
 			return errors.New("Missing required field in config: db.major_version")
@@ -179,10 +201,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
 			DbImage = Pg13Image
-			InitialSchemaSql = initialSchemaPg13Sql
+			InitialSchemaSql = InitialSchemaPg13Sql
 		case 14:
 			DbImage = Pg14Image
-			InitialSchemaSql = initialSchemaPg14Sql
+			InitialSchemaSql = InitialSchemaPg14Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
@@ -200,6 +222,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Inbucket.InbucketURL == "" {
 			Config.Inbucket.InbucketURL = "INBUCKET_URL"
+		}
+		if Config.Storage.FileSizeLimit == 0 {
+			Config.Storage.FileSizeLimit = 50 * units.MiB
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
@@ -256,7 +281,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return value, nil
 				}
 
-				var clientId, secret, url string
+				var clientId, secret, redirectUri, url string
 
 				if Config.Auth.External[ext].ClientId == "" {
 					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
@@ -277,6 +302,14 @@ func LoadConfigFS(fsys afero.Fs) error {
 					secret = v
 				}
 
+				if Config.Auth.External[ext].RedirectUri != "" {
+					v, err := maybeLoadEnv(Config.Auth.External[ext].RedirectUri)
+					if err != nil {
+						return err
+					}
+					redirectUri = v
+				}
+
 				if Config.Auth.External[ext].Url != "" {
 					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
 					if err != nil {
@@ -286,10 +319,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 
 				Config.Auth.External[ext] = provider{
-					Enabled:  true,
-					ClientId: clientId,
-					Secret:   secret,
-					Url:      url,
+					Enabled:     true,
+					ClientId:    clientId,
+					Secret:      secret,
+					RedirectUri: redirectUri,
+					Url:         url,
 				}
 			}
 		}

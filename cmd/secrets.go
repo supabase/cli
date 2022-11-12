@@ -13,8 +13,9 @@ import (
 
 var (
 	secretsCmd = &cobra.Command{
-		Use:   "secrets",
-		Short: "Manage Supabase secrets",
+		GroupID: groupManagementAPI,
+		Use:     "secrets",
+		Short:   "Manage Supabase secrets",
 	}
 
 	secretsListCmd = &cobra.Command{

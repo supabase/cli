@@ -17,13 +17,15 @@ import (
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 )
 
 var (
 	dbCmd = &cobra.Command{
-		Use:   "db",
-		Short: "Manage local Postgres databases",
+		GroupID: groupLocalDev,
+		Use:     "db",
+		Short:   "Manage local Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{
@@ -76,10 +78,17 @@ var (
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var password string
+			if linked {
+				password = viper.GetString("DB_PASSWORD")
+				if password == "" {
+					password = PromptPassword(os.Stdin)
+				}
+			}
 			fsys := afero.NewOsFs()
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-				return diff.RunMigra(ctx, schema, file, fsys)
+				return diff.RunMigra(ctx, schema, file, password, fsys)
 			}
 			return diff.Run(file, fsys)
 		},
@@ -149,7 +158,18 @@ var (
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, afero.NewOsFs())
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return lint.Run(ctx, schema, level.Value, afero.NewOsFs())
+		},
+	}
+
+	dbTestCmd = &cobra.Command{
+		Hidden: true,
+		Use:    "test",
+		Short:  "Tests local database with pgTAP",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return test.Run(ctx, afero.NewOsFs())
 		},
 	}
 )
@@ -164,6 +184,7 @@ func init() {
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
@@ -187,5 +208,7 @@ func init() {
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
+	// Build test command
+	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
 }

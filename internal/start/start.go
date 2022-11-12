@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -20,26 +20,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
+	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, useValueFile bool) error {
+func Run(ctx context.Context, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUp(); err != nil {
+		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
 		if err := utils.AssertDockerIsRunning(); err != nil {
 			return err
 		}
-		if err := utils.LoadConfig(); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseStartIsRunning(); err == nil {
+		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
 		}
 	}
@@ -52,7 +56,7 @@ func Run(ctx context.Context, useValueFile bool) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, ctx)
+		errCh <- run(p, ctx, fsys)
 		p.Send(tea.Quit())
 	}()
 
@@ -80,8 +84,121 @@ var (
 	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
 )
 
-func run(p utils.Program, ctx context.Context) error {
-	_, _ = utils.Docker.NetworkCreate(
+func pullImage(p utils.Program, ctx context.Context, image string) error {
+	imageUrl := utils.GetRegistryImageUrl(image)
+	_, _, err := utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
+	for i := 0; i < 3; i++ {
+		if err == nil {
+			break
+		}
+		var out io.ReadCloser
+		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, 2)
+		if err != nil {
+			break
+		}
+		defer out.Close()
+		if err := utils.ProcessPullOutput(out, p); err != nil {
+			p.Send(utils.ProgressMsg(nil))
+		}
+		_, _, err = utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
+	}
+	return err
+}
+
+func initDatabase(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
+		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+	}
+	// Initialise globals
+	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+		return err
+	}
+
+	p.Send(utils.StatusMsg("Restoring branches..."))
+
+	// Create branch dir if missing
+	branchDir := filepath.Dir(utils.CurrBranchPath)
+	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
+		return err
+	}
+	branches, err := afero.ReadDir(fsys, branchDir)
+	if err != nil {
+		return err
+	}
+	// Ensure `_current_branch` file exists.
+	currBranch, err := utils.GetCurrentBranchFS(fsys)
+	if errors.Is(err, os.ErrNotExist) {
+		currBranch = "main"
+		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	// Restore every branch dump
+	for _, branch := range branches {
+		if !branch.IsDir() {
+			continue
+		}
+		dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
+		content, err := fsys.Open(dumpPath)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(os.Stderr, "Error restoring "+utils.Aqua(branch.Name())+": branch was not dumped.")
+			if err := fsys.RemoveAll(filepath.Dir(dumpPath)); err != nil {
+				return err
+			}
+			continue
+		} else if err != nil {
+			return err
+		}
+		defer content.Close()
+		// Restore current branch to postgres directly
+		if branch.Name() == currBranch {
+			if err := diff.BatchExecDDL(ctx, conn, content); err != nil {
+				return err
+			}
+			continue
+		}
+		// TODO: restoring non-main branch may break extensions that require postgres
+		createDb := `CREATE DATABASE "` + branch.Name() + `";`
+		if _, err := conn.Exec(ctx, createDb); err != nil {
+			return err
+		}
+		// Connect to branch database
+		branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
+		if err != nil {
+			return err
+		}
+		defer branchConn.Close(context.Background())
+		// Restore dump, reporting any error
+		if err := diff.BatchExecDDL(ctx, branchConn, content); err != nil {
+			return err
+		}
+	}
+	// Branch is already initialised
+	if _, err = fsys.Stat(filepath.Join(branchDir, currBranch)); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	p.Send(utils.StatusMsg("Setting up initial schema..."))
+	if err := reset.InitialiseDatabase(ctx, conn, fsys); err != nil {
+		return err
+	}
+
+	// Ensure `main` branch exists.
+	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+		return err
+	}
+	return fsys.Mkdir(filepath.Join(branchDir, currBranch), 0755)
+}
+
+func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
+	if _, err := utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
 		types.NetworkCreate{
@@ -91,23 +208,8 @@ func run(p utils.Program, ctx context.Context) error {
 				"com.docker.compose.project": utils.Config.ProjectId,
 			},
 		},
-	)
-
-	// Ensure `_current_branch` file exists.
-	if _, err := os.ReadFile(utils.CurrBranchPath); err == nil {
-		// skip
-	} else if errors.Is(err, os.ErrNotExist) {
-		if err := utils.MkdirIfNotExist("supabase/.branches"); err != nil {
-			return err
-		}
-		if err := os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644); err != nil {
-			return err
-		}
-	} else {
-		return err
-	}
-	currBranch, err := utils.GetCurrentBranch()
-	if err != nil {
+	); err != nil && !errdefs.IsConflict(err) {
+		// if error is network already exists, no need to propagate to user
 		return err
 	}
 
@@ -115,113 +217,11 @@ func run(p utils.Program, ctx context.Context) error {
 
 	// Pull images.
 	{
-		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
+		if err := pullImage(p, ctx, utils.DbImage); err != nil {
+			return err
 		}
-		kongImage := utils.GetRegistryImageUrl(utils.KongImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, kongImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, kongImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		gotrueImage := utils.GetRegistryImageUrl(utils.GotrueImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, gotrueImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, gotrueImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		inbucketImage := utils.GetRegistryImageUrl(utils.InbucketImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, inbucketImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, inbucketImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		realtimeImage := utils.GetRegistryImageUrl(utils.RealtimeImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, realtimeImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, realtimeImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		restImage := utils.GetRegistryImageUrl(utils.PostgrestImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, restImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, restImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		storageImage := utils.GetRegistryImageUrl(utils.StorageImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, storageImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, storageImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		metaImage := utils.GetRegistryImageUrl(utils.PgmetaImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, metaImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, metaImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		studioImage := utils.GetRegistryImageUrl(utils.StudioImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, studioImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, studioImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		denoImage := utils.GetRegistryImageUrl(utils.DenoRelayImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, denoImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, denoImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
+		for _, image := range utils.ServiceImages {
+			if err := pullImage(p, ctx, image); err != nil {
 				return err
 			}
 		}
@@ -271,230 +271,14 @@ func run(p utils.Program, ctx context.Context) error {
 				NetworkMode:   container.NetworkMode(utils.NetId),
 				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				Binds:         []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
 			},
 		); err != nil {
 			return err
 		}
 
-		if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
-			fmt.Fprintln(os.Stderr, "Database is not healthy.")
-		}
-		env := []string{"SCHEMA=" + utils.GlobalsSql}
-		global := []string{"/bin/bash", "-c", `psql --username postgres --host 127.0.0.1 -c "$SCHEMA"`}
-		if _, err := utils.DockerExecOnce(ctx, utils.DbId, env, global); err != nil {
+		if err := initDatabase(p, ctx, fsys); err != nil {
 			return err
-		}
-	}
-
-	p.Send(utils.StatusMsg("Restoring branches..."))
-
-	// Restore branches.
-	{
-		if branches, err := os.ReadDir("supabase/.branches"); err == nil {
-			for _, branch := range branches {
-				if branch.Name() == "_current_branch" {
-					continue
-				}
-
-				if err := func() error {
-					content, err := os.ReadFile("supabase/.branches/" + branch.Name() + "/dump.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						return errors.New("Branch was not dumped.")
-					} else if err != nil {
-						return err
-					}
-
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `psql --set ON_ERROR_STOP=on --host 127.0.0.1 postgresql://postgres:postgres@localhost/postgres <<'EOSQL'
-CREATE DATABASE "` + branch.Name() + `";
-\connect ` + branch.Name() + `
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						return err
-					}
-					if err := utils.ProcessPsqlOutput(out, p); err != nil {
-						return fmt.Errorf("Error starting database: %w", err)
-					}
-
-					return nil
-				}(); err != nil {
-					_ = os.RemoveAll("supabase/.branches/" + branch.Name())
-					_ = os.WriteFile(utils.CurrBranchPath, []byte("main"), 0644)
-					fmt.Fprintln(os.Stderr, "Error restoring branch "+utils.Aqua(branch.Name())+":", err)
-				}
-			}
-		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches", 0755); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-
-		// Ensure `main` branch exists.
-		if _, err := os.ReadDir("supabase/.branches/main"); err == nil {
-			// skip
-		} else if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir("supabase/.branches/main", 0755); err != nil {
-				return err
-			}
-
-			if err := func() error {
-				{
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"createdb", "--username", "postgres", "--host", "127.0.0.1", "main",
-					})
-					if err != nil {
-						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error creating database: " + errBuf.String())
-					}
-				}
-
-				p.Send(utils.StatusMsg("Setting up initial schema..."))
-				{
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --host 127.0.0.1 postgresql://postgres:postgres@localhost/main <<'EOSQL'
-BEGIN;
-` + utils.InitialSchemaSql + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error starting database: " + errBuf.String())
-					}
-				}
-
-				if err := utils.MkdirIfNotExist("supabase/migrations"); err != nil {
-					return err
-				}
-				migrations, err := os.ReadDir("supabase/migrations")
-				if err != nil {
-					return err
-				}
-
-				for i, migration := range migrations {
-					// NOTE: To handle backward-compatibility.
-					// `<timestamp>_init.sql` as the first migration (prev
-					// versions of the CLI) is deprecated.
-					if i == 0 {
-						matches := regexp.MustCompile(`([0-9]{14})_init\.sql`).FindStringSubmatch(migration.Name())
-						if len(matches) == 2 {
-							if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err != nil {
-								return err
-							} else if timestamp < 20211209000000 {
-								continue
-							}
-						}
-					}
-
-					p.Send(utils.StatusMsg("Applying migration " + utils.Bold(migration.Name()) + "..."))
-
-					content, err := os.ReadFile("supabase/migrations/" + migration.Name())
-					if err != nil {
-						return err
-					}
-
-					out, err := utils.DockerExec(ctx, utils.DbId, []string{
-						"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql postgresql://postgres:postgres@localhost/main <<'EOSQL'
-BEGIN;
-` + string(content) + `
-COMMIT;
-EOSQL
-`,
-					})
-					if err != nil {
-						return err
-					}
-					var errBuf bytes.Buffer
-					if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-						return err
-					}
-					if errBuf.Len() > 0 {
-						return errors.New("Error starting database: " + errBuf.String())
-					}
-				}
-
-				p.Send(utils.StatusMsg("Applying " + utils.Bold("supabase/seed.sql") + "..."))
-				{
-					content, err := os.ReadFile("supabase/seed.sql")
-					if errors.Is(err, os.ErrNotExist) {
-						// skip
-					} else if err != nil {
-						return err
-					}
-
-					err = utils.DockerAddFile(ctx, utils.DbId, "seed.sql", content)
-
-					if err != nil {
-						return err
-					} else {
-						out, err := utils.DockerExec(ctx, utils.DbId, []string{
-							"psql", "postgresql://postgres:postgres@localhost/main", "-f", "/tmp/seed.sql",
-						})
-						if err != nil {
-							return err
-						}
-						var errBuf bytes.Buffer
-						if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-							return err
-						}
-						if errBuf.Len() > 0 {
-							return errors.New("Error starting database: " + errBuf.String())
-						}
-					}
-				}
-
-				return nil
-			}(); err != nil {
-				_ = os.RemoveAll("supabase/.branches/main")
-				return err
-			}
-		} else {
-			return err
-		}
-
-		// Set up current branch.
-		{
-			out, err := utils.DockerExec(ctx, utils.DbId, []string{
-				"sh", "-c", `PGOPTIONS='--client-min-messages=error' psql --set ON_ERROR_STOP=on postgresql://postgres:postgres@localhost/template1 <<'EOSQL'
-BEGIN;
-` + fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres") + `
-COMMIT;
-DROP DATABASE postgres;
-ALTER DATABASE "` + currBranch + `" RENAME TO postgres;
-EOSQL
-`,
-			})
-			if err != nil {
-				return err
-			}
-			defer reset.RestartDatabase(context.Background())
-			var errBuf bytes.Buffer
-			if _, err := stdcopy.StdCopy(io.Discard, &errBuf, out); err != nil {
-				return err
-			}
-			if errBuf.Len() > 0 {
-				return errors.New("Error starting database: " + errBuf.String())
-			}
 		}
 	}
 
@@ -590,8 +374,17 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 			)
+
+			if config.RedirectUri != "" {
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri),
+				)
+			} else {
+				env = append(env,
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
+				)
+			}
 
 			if config.Url != "" {
 				env = append(env,
@@ -719,7 +512,7 @@ EOF
 				"POSTGREST_URL=http://" + utils.RestId + ":3000",
 				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
-				"FILE_SIZE_LIMIT=52428800",
+				fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 				"STORAGE_BACKEND=file",
 				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
 				"TENANT_ID=stub",

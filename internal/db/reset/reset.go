@@ -12,9 +12,8 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -23,7 +22,7 @@ var (
 	healthTimeout = 5 * time.Second
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -34,35 +33,16 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		}
 	}
 
-	branch, err := utils.GetCurrentBranchFS(fsys)
-	if err != nil {
-		// Assume we are on main branch
-		branch = "main"
-	}
-
-	var opts []func(*pgx.ConnConfig)
-	if viper.GetBool("DEBUG") {
-		opts = append(opts, debug.SetupPGX)
-	}
-
-	fmt.Fprintln(os.Stderr, "Resetting database...")
-	if err := diff.ResetDatabase(ctx, utils.DbId, branch); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(os.Stderr, "Initialising schema...")
-	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/%s", utils.Config.Db.Port, branch)
-	if err := diff.ApplyMigrations(ctx, url, fsys, opts...); err != nil {
-		return err
-	}
-
-	if err := SeedDatabase(ctx, url, fsys, opts...); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	fmt.Fprintln(os.Stderr, "Activating branch...")
-	if err := ActivateDatabase(ctx, branch, opts...); err != nil {
-		return err
+	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
+	{
+		fmt.Fprintln(os.Stderr, "Resetting database...")
+		if err := RecreateDatabase(ctx, options...); err != nil {
+			return err
+		}
+		defer RestartDatabase(context.Background())
+		if err := resetDatabase(ctx, fsys, options...); err != nil {
+			return err
+		}
 	}
 
 	// Reload PostgREST schema cache.
@@ -70,32 +50,63 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
 	}
 
+	branch, err := utils.GetCurrentBranchFS(fsys)
+	if err != nil {
+		// Assume we are on main branch
+		branch = "main"
+	}
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
+
 	return nil
 }
 
-func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	sql, err := fsys.Open(utils.SeedDataPath)
+func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	return InitialiseDatabase(ctx, conn, fsys)
+}
+
+func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+		return err
+	}
+	if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
+		return err
+	}
+	return SeedDatabase(ctx, conn, fsys)
+}
+
+// Recreate postgres database by connecting to template1
+func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := DisconnectClients(ctx, conn); err != nil {
+		return err
+	}
+	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
+	if _, err := conn.Exec(ctx, drop); err != nil {
+		return err
+	}
+	_, err = conn.Exec(ctx, "CREATE DATABASE postgres;")
+	return err
+}
+
+func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	sql, err := fsys.Open(utils.SeedDataPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return err
 	}
 	defer sql.Close()
-	fmt.Fprintln(os.Stderr, "Seeding data...")
-	// Parse connection url
-	config, err := pgx.ParseConfig(url)
-	if err != nil {
-		return err
-	}
-	// Apply config overrides
-	for _, op := range options {
-		op(config)
-	}
-	// Connect to database
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
+	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
 	// Batch seed commands, safe to use statement cache
 	batch := pgx.Batch{}
 	lines, err := parser.Split(sql)
@@ -108,42 +119,7 @@ func SeedDatabase(ctx context.Context, url string, fsys afero.Fs, options ...fun
 			batch.Queue(trim)
 		}
 	}
-	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ActivateDatabase(ctx context.Context, branch string, options ...func(*pgx.ConnConfig)) error {
-	// Parse connection url
-	url := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/template1", utils.Config.Db.Port)
-	config, err := pgx.ParseConfig(url)
-	if err != nil {
-		return err
-	}
-	// Apply config overrides
-	for _, op := range options {
-		op(config)
-	}
-	// Connect to database
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(ctx)
-	if err := DisconnectClients(ctx, conn); err != nil {
-		return err
-	}
-	defer RestartDatabase(context.Background())
-	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
-	if _, err := conn.Exec(ctx, drop); err != nil {
-		return err
-	}
-	swap := "ALTER DATABASE " + branch + " RENAME TO postgres;"
-	if _, err := conn.Exec(ctx, swap); err != nil {
-		return err
-	}
-	return nil
+	return conn.SendBatch(ctx, &batch).Close()
 }
 
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
@@ -186,7 +162,8 @@ func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for t := now; t.Before(expiry); t = <-ticker.C {
-		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil && resp.State.Health.Status == "healthy" {
+		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil &&
+			resp.State.Health != nil && resp.State.Health.Status == "healthy" {
 			return true
 		}
 	}

@@ -21,24 +21,38 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Update tools/listdep/main.go when adding new docker images
 const (
-	Pg13Image      = "supabase/postgres:13.3.0"
-	Pg14Image      = "supabase/postgres:14.1.0.71"
+	Pg13Image = "supabase/postgres:13.3.0"
+	Pg14Image = "supabase/postgres:14.1.0.89"
+	// Append to ServiceImages when adding new dependencies below
 	KongImage      = "library/kong:2.8.1"
 	InbucketImage  = "inbucket/inbucket:3.0.3"
 	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
 	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage     = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage    = "supabase/postgres-meta:v0.45.0"
-	StudioImage    = "supabase/studio:v0.1.0"
-	DenoRelayImage = "supabase/deno-relay:v1.2.1"
+	PgmetaImage    = "supabase/postgres-meta:v0.50.2"
+	StudioImage    = "supabase/studio:0.22.08"
+	DenoRelayImage = "supabase/deno-relay:v1.2.4"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.15.3"
-	RealtimeImage = "supabase/realtime:v0.22.7"
-	StorageImage  = "supabase/storage-api:v0.20.1"
+	GotrueImage   = "supabase/gotrue:v2.25.1"
+	RealtimeImage = "supabase/realtime:v0.25.1"
+	StorageImage  = "supabase/storage-api:v0.21.4"
 )
+
+var ServiceImages = []string{
+	GotrueImage,
+	RealtimeImage,
+	StorageImage,
+	KongImage,
+	InbucketImage,
+	PostgrestImage,
+	DifferImage,
+	MigraImage,
+	PgmetaImage,
+	StudioImage,
+	DenoRelayImage,
+}
 
 const (
 	ShadowDbName = "supabase_shadow"
@@ -61,6 +75,7 @@ DO 'BEGIN WHILE (
 	CurrBranchPath = "supabase/.branches/_current_branch"
 	MigrationsDir  = "supabase/migrations"
 	FunctionsDir   = "supabase/functions"
+	DbTestsDir     = "supabase/tests"
 	SeedDataPath   = "supabase/seed.sql"
 )
 
@@ -80,7 +95,22 @@ var (
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{"auth", "extensions", "graphql", "graphql_public", "pgbouncer", "pgsodium", "pgsodium_masks", "realtime", "storage", "supabase_functions", "supabase_migrations", "pg_catalog", "pg_toast", "information_schema"}
+	InternalSchemas = []string{
+		"auth",
+		"extensions",
+		"graphql",
+		"graphql_public",
+		"pgbouncer",
+		"pgsodium",
+		"pgsodium_masks",
+		"realtime",
+		"storage",
+		"supabase_functions",
+		"supabase_migrations",
+		"pg_catalog",
+		"pg_toast",
+		"information_schema",
+	}
 )
 
 // Used by unit tests
@@ -91,10 +121,6 @@ var (
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
 	return time.Now().UTC().Format("20060102150405")
-}
-
-func GetCurrentBranch() (string, error) {
-	return GetCurrentBranchFS(afero.NewOsFs())
 }
 
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
@@ -134,14 +160,6 @@ func NewError(s string) error {
 	}
 
 	return errors.New(s)
-}
-
-func AssertSupabaseStartIsRunning() error {
-	if err := LoadConfig(); err != nil {
-		return err
-	}
-
-	return AssertSupabaseDbIsRunning()
 }
 
 func AssertSupabaseDbIsRunning() error {
@@ -186,6 +204,24 @@ func GetGitRoot(fsys afero.Fs) (*string, error) {
 	}
 }
 
+// If the `os.Getwd()` is within a supabase project, this will return
+// the root of the given project as the current working directory.
+// Otherwise, the `os.Getwd()` is kept as is.
+func GetProjectRoot(fsys afero.Fs) (string, error) {
+	origWd, err := os.Getwd()
+	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
+		path := filepath.Join(cwd, ConfigPath)
+		// Treat all errors as file not exists
+		if isSupaProj, _ := afero.Exists(fsys, path); isSupaProj {
+			return cwd, nil
+		}
+		if isRootDirectory(cwd) {
+			break
+		}
+	}
+	return origWd, err
+}
+
 func IsBranchNameReserved(branch string) bool {
 	switch branch {
 	case "_current_branch", "main", "supabase_shadow", "postgres", "template0", "template1":
@@ -207,10 +243,6 @@ func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
 	return nil
 }
 
-func AssertSupabaseCliIsSetUp() error {
-	return AssertSupabaseCliIsSetUpFS(afero.NewOsFs())
-}
-
 func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
@@ -219,10 +251,6 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	}
 
 	return nil
-}
-
-func AssertIsLinked() error {
-	return AssertIsLinkedFS(afero.NewOsFs())
 }
 
 func AssertIsLinkedFS(fsys afero.Fs) error {

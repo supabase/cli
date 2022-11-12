@@ -19,8 +19,9 @@ var (
 	username = "postgres"
 
 	linkCmd = &cobra.Command{
-		Use:   "link",
-		Short: "Link to a Supabase project",
+		GroupID: groupLocalDev,
+		Use:     "link",
+		Short:   "Link to a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectRef, err := cmd.Flags().GetString("project-ref")
 			if err != nil {

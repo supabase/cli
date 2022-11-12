@@ -51,7 +51,7 @@ func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer conn.Close(context.Background())
 	result, err := LintDatabase(ctx, conn, schema)
 	if err != nil {
 		return err
@@ -87,7 +87,7 @@ func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) erro
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectLocalPostgres(ctx context.Context, host string, port uint, database string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	url := fmt.Sprintf("postgresql://postgres:postgres@%s:%d/%s", host, port, database)
+	url := fmt.Sprintf("postgresql://postgres:postgres@%s:%d/%s?connect_timeout=2", host, port, database)
 	// Parse connection url
 	config, err := pgx.ParseConfig(url)
 	if err != nil {
