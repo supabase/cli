@@ -13,7 +13,6 @@ extra_search_path = ["extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
-api_url_env_var="NEXT_PUBLIC_SUPABASE_URL"
 
 [db]
 # Port to use for the local database URL.
@@ -49,8 +48,6 @@ additional_redirect_urls = ["https://localhost:3000"]
 jwt_expiry = 3600
 # Allow/disallow new user signups to your project.
 enable_signup = true
-service_role_key_env_var = "SUPABASE_SERVICE_ROLE_KEY"
-anon_key_env_var = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.

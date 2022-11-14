@@ -414,12 +414,12 @@ func ValidateFunctionSlug(slug string) error {
 }
 
 func ShowStatus() {
-	fmt.Fprint(os.Stdout,
-		Config.Api.ApiURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Api.Port), 10)+"\n"+
-			Config.Db.DbURL+`=postgresql://postgres:postgres@localhost:`+strconv.FormatUint(uint64(Config.Db.Port), 10)+"/postgres\n"+
-			Config.Studio.StudioURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Studio.Port), 10)+"\n"+
-			Config.Inbucket.InbucketURL+`=http://localhost:`+strconv.FormatUint(uint64(Config.Inbucket.Port), 10)+"\n"+
-			Config.Auth.AnonKey+`=`+AnonKey+"\n"+
-			Config.Auth.ServiceRoleKey+`=`+ServiceRoleKey)
-
+	fmt.Println(`
+         ` + Aqua("API URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Api.Port), 10) + `
+          ` + Aqua("DB URL") + `: postgresql://postgres:postgres@localhost:` + strconv.FormatUint(uint64(Config.Db.Port), 10) + `/postgres
+      ` + Aqua("Studio URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Studio.Port), 10) + `
+    ` + Aqua("Inbucket URL") + `: http://localhost:` + strconv.FormatUint(uint64(Config.Inbucket.Port), 10) + `
+      ` + Aqua("JWT secret") + `: ` + JWTSecret + `
+        ` + Aqua("anon key") + `: ` + AnonKey + `
+` + Aqua("service_role key") + `: ` + ServiceRoleKey)
 }

@@ -91,26 +91,22 @@ type (
 		Schemas         []string
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
-		ApiURL          string   `toml:"api_url_env_var"`
 	}
 
 	db struct {
 		Port         uint
 		ShadowPort   uint `toml:"shadow_port"`
 		MajorVersion uint `toml:"major_version"`
-		DbURL        string `toml:"db_url_env_var"`
 	}
 
 	studio struct {
-		Port      uint
-		StudioURL string `toml:"studio_url_env_var"`
+		Port uint
 	}
 
 	inbucket struct {
-		Port        uint
-		SmtpPort    uint   `toml:"smtp_port"`
-		Pop3Port    uint   `toml:"pop3_port"`
-		InbucketURL string `toml:"inbucket_url_env_var"`
+		Port     uint
+		SmtpPort uint `toml:"smtp_port"`
+		Pop3Port uint `toml:"pop3_port"`
 	}
 
 	storage struct {
@@ -124,8 +120,6 @@ type (
 		EnableSignup           *bool    `toml:"enable_signup"`
 		Email                  email
 		External               map[string]provider
-		AnonKey                string `toml:"anon_key_env_var"`
-		ServiceRoleKey         string `toml:"service_role_key_env_var"`
 	}
 
 	email struct {
@@ -185,9 +179,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Api.MaxRows == 0 {
 			Config.Api.MaxRows = 1000
 		}
-		if Config.Api.ApiURL == "" {
-			Config.Api.ApiURL = "API_URL"
-		}
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
@@ -208,32 +199,17 @@ func LoadConfigFS(fsys afero.Fs) error {
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
-		if Config.Db.DbURL == "" {
-			Config.Db.DbURL = "DB_URL"
-		}
 		if Config.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
 		}
-		if Config.Studio.StudioURL == "" {
-			Config.Studio.StudioURL = "STUDIO_URL"
-		}
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
-		}
-		if Config.Inbucket.InbucketURL == "" {
-			Config.Inbucket.InbucketURL = "INBUCKET_URL"
 		}
 		if Config.Storage.FileSizeLimit == 0 {
 			Config.Storage.FileSizeLimit = 50 * units.MiB
 		}
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
-		}
-		if Config.Auth.AnonKey == "" {
-			Config.Auth.AnonKey = "ANON_KEY"
-		}
-		if Config.Auth.ServiceRoleKey == "" {
-			Config.Auth.ServiceRoleKey = "SERVICE_ROLE_KEY"
 		}
 		if Config.Auth.JwtExpiry == 0 {
 			Config.Auth.JwtExpiry = 3600
