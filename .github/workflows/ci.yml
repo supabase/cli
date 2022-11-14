@@ -52,3 +52,21 @@ jobs:
       - run: go build main.go
       - run: ./main init
       - run: ./main start
+
+  codegen:
+    name: Codegen
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+
+      - run: go generate tools/codegen/main.go
+      - run: |
+          if ! git diff --ignore-space-at-eol --exit-code --quiet pkg; then
+            echo "Detected uncommitted changes after codegen. See status below:"
+            git diff
+            exit 1
+          fi
