@@ -6,7 +6,7 @@ It is used to automatically generate the Go [client](pkg/api/client.gen.go) and 
 
 ## Updating the specification
 
-The specification yaml is generated from our NestJS middleware. It is viewable as Swagger UI in both [staging](https://api.supabase.green/api/v1) and [production](https://api.supabase.com/api/v1) environments.
+The specification yaml is generated from our NestJS middleware. The latest release is viewable as [Swagger UI](https://api.supabase.com/api/v1).
 
 To make a new release:
 
