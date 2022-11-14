@@ -425,7 +425,6 @@ func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 		return buildScriptPath, nil
 	}
 
-	fmt.Println("copying embedded files")
 	// copy embed files to script directory
 	err = fs.WalkDir(eszipEmbedDir, "eszip", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
