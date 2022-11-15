@@ -26,7 +26,7 @@ func Run(ctx context.Context, projectRefArg string, fsys afero.Fs) error {
 
 	// 2. delete config
 	{
-		resp, err := utils.GetSupabase().RemoveWithResponse(ctx, projectRef)
+		resp, err := utils.GetSupabase().RemoveCustomHostnameConfigWithResponse(ctx, projectRef)
 		if err != nil {
 			return err
 		}
