@@ -1,13 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/supabase/cli/cmd"
-	"gopkg.in/yaml.v2"
+	"github.com/supabase/cli/internal/utils"
+	"gopkg.in/yaml.v3"
 )
 
 const tagOthers = "other-commands"
@@ -15,6 +18,7 @@ const tagOthers = "other-commands"
 func main() {
 	root := cmd.GetRootCmd()
 	root.InitDefaultCompletionCmd()
+	root.InitDefaultHelpFlag()
 	spec := SpecDoc{
 		Clispec: "001",
 		Info: InfoDoc{
@@ -29,6 +33,11 @@ func main() {
 			Tags:        getTags(root),
 		},
 	}
+	root.Flags().VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			spec.Flags = append(spec.Flags, getFlags(flag))
+		}
+	})
 	// Generate, serialise, and print
 	yamlDoc := GenYamlDoc(root, &spec)
 	spec.Info.Options = yamlDoc.Options
@@ -38,6 +47,7 @@ func main() {
 	}
 	// Write to stdout
 	encoder := yaml.NewEncoder(os.Stdout)
+	encoder.SetIndent(2)
 	if err := encoder.Encode(spec); err != nil {
 		log.Fatalln(err)
 	}
@@ -62,23 +72,39 @@ type InfoDoc struct {
 	Tags        []TagDoc `yaml:",omitempty"`
 }
 
+type ValueDoc struct {
+	Id          string `yaml:",omitempty"`
+	Name        string `yaml:",omitempty"`
+	Description string `yaml:",omitempty"`
+}
+
+type FlagDoc struct {
+	Id             string     `yaml:",omitempty"`
+	Name           string     `yaml:",omitempty"`
+	Description    string     `yaml:",omitempty"`
+	Required       bool       `yaml:",omitempty"`
+	AcceptedValues []ValueDoc `yaml:"accepted_values,omitempty"`
+}
+
 type CmdDoc struct {
-	Id          string   `yaml:",omitempty"`
-	Title       string   `yaml:",omitempty"`
-	Summary     string   `yaml:",omitempty"`
-	Source      string   `yaml:",omitempty"`
-	Description string   `yaml:",omitempty"`
-	Tags        []string `yaml:""`
-	Links       []string `yaml:""`
-	Usage       string   `yaml:",omitempty"`
-	Subcommands []string `yaml:""`
-	Options     string   `yaml:",omitempty"`
+	Id          string    `yaml:",omitempty"`
+	Title       string    `yaml:",omitempty"`
+	Summary     string    `yaml:",omitempty"`
+	Source      string    `yaml:",omitempty"`
+	Description string    `yaml:",omitempty"`
+	Tags        []string  `yaml:""`
+	Links       []string  `yaml:""`
+	Usage       string    `yaml:",omitempty"`
+	Subcommands []string  `yaml:""`
+	Options     string    `yaml:",omitempty"`
+	Flags       []FlagDoc `yaml:""`
 }
 
 type SpecDoc struct {
-	Clispec  string   `yaml:",omitempty"`
-	Info     InfoDoc  `yaml:",omitempty"`
-	Commands []CmdDoc `yaml:""`
+	Clispec  string    `yaml:",omitempty"`
+	Info     InfoDoc   `yaml:",omitempty"`
+	Flags    []FlagDoc `yaml:",omitempty"`
+	Commands []CmdDoc  `yaml:""`
 }
 
 // DFS on command tree to generate documentation specs.
@@ -95,9 +121,6 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		root.Commands = append(root.Commands, sub)
 		subcommands = append(subcommands, sub.Id)
 	}
-
-	cmd.InitDefaultHelpCmd()
-	cmd.InitDefaultHelpFlag()
 
 	yamlDoc := CmdDoc{
 		Id:          strings.ReplaceAll(cmd.CommandPath(), " ", "-"),
@@ -116,11 +139,81 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 	}
 
 	flags := cmd.NonInheritedFlags()
-	if flags.HasFlags() {
-		yamlDoc.Options = mdCodeBlock(flags.FlagUsages(), root.Info.Language)
-	}
+	flags.VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
+		}
+	})
 
 	return yamlDoc
+}
+
+func getFlags(flag *pflag.Flag) FlagDoc {
+	doc := FlagDoc{
+		Id:          flag.Name,
+		Name:        getName(flag),
+		Description: forceMultiLine(getUsage(flag)),
+		Required:    flag.Annotations[cobra.BashCompOneRequiredFlag] != nil,
+	}
+	if f, ok := flag.Value.(*utils.EnumFlag); ok {
+		for _, v := range f.Allowed {
+			doc.AcceptedValues = append(doc.AcceptedValues, ValueDoc{
+				Id:   v,
+				Name: v + " `string`",
+			})
+		}
+	}
+	return doc
+}
+
+// Prints a human readable flag name.
+//
+//	-f, --flag `string`
+func getName(flag *pflag.Flag) (line string) {
+	// Prefix: shorthand
+	if flag.Shorthand != "" && flag.ShorthandDeprecated == "" {
+		line += fmt.Sprintf("-%s, ", flag.Shorthand)
+	}
+	line += fmt.Sprintf("--%s", flag.Name)
+	// Suffix: type
+	if varname, _ := pflag.UnquoteUsage(flag); varname != "" {
+		line += fmt.Sprintf(" `%s`", varname)
+	}
+	// Not used by our cmd but kept here for consistency
+	if flag.NoOptDefVal != "" {
+		switch flag.Value.Type() {
+		case "string":
+			line += fmt.Sprintf("[=\"%s\"]", flag.NoOptDefVal)
+		case "bool":
+			if flag.NoOptDefVal != "true" {
+				line += fmt.Sprintf("[=%s]", flag.NoOptDefVal)
+			}
+		case "count":
+			if flag.NoOptDefVal != "+1" {
+				line += fmt.Sprintf("[=%s]", flag.NoOptDefVal)
+			}
+		default:
+			line += fmt.Sprintf("[=%s]", flag.NoOptDefVal)
+		}
+	}
+	return line
+}
+
+// Prints flag usage and default value.
+//
+//	Select a plan. (default "free")
+func getUsage(flag *pflag.Flag) (line string) {
+	_, usage := pflag.UnquoteUsage(flag)
+	line += usage
+	if flag.Value.Type() == "string" {
+		line += fmt.Sprintf(" (default %q)", flag.DefValue)
+	} else {
+		line += fmt.Sprintf(" (default %s)", flag.DefValue)
+	}
+	if len(flag.Deprecated) != 0 {
+		line += fmt.Sprintf(" (DEPRECATED: %s)", flag.Deprecated)
+	}
+	return line
 }
 
 // Wraps a command string in markdown style code block, ie.
