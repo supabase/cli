@@ -128,7 +128,7 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 			records = fmt.Sprintf("\n\t%s TXT -> %s", owner.Name, owner.Value)
 		}
 		if ssl[0].TxtName != "" {
-			records = fmt.Sprintf("%s\n\t%s TXT -> %s", records, ssl[0].TxtName, ssl[0].TxtValue)
+			records = fmt.Sprintf("%s\n\t%s TXT -> %s (replace any existing CNAME records)", records, ssl[0].TxtName, ssl[0].TxtValue)
 		}
 		status := fmt.Sprintf("Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n"+
 			"Required outstanding validation records: %s\n",
