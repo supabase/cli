@@ -109,7 +109,7 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 		if res.Result.Ssl.Status == "initializing" {
 			return appendRawOutputIfNeeded("Custom hostname setup is being initialized; please request re-verification in a few seconds.\n", response, includeRawOutput), nil
 		}
-		if res.Result.Ssl.ValidationErrors != nil && len(res.Result.Ssl.ValidationErrors) > 0 {
+		if len(res.Result.Ssl.ValidationErrors) > 0 {
 			var errorMessages []string
 			for _, valError := range res.Result.Ssl.ValidationErrors {
 				if strings.Contains(valError.Message, "caa_error") {
