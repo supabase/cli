@@ -89,6 +89,12 @@ type CreateSecretBody struct {
 	Value string `json:"value"`
 }
 
+// DatabaseResponse defines model for DatabaseResponse.
+type DatabaseResponse struct {
+	Host    string `json:"host"`
+	Version string `json:"version"`
+}
+
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
 	CreatedAt float32                `json:"created_at"`
@@ -133,11 +139,12 @@ type OrganizationResponse struct {
 
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
-	CreatedAt      string `json:"created_at"`
-	Id             string `json:"id"`
-	Name           string `json:"name"`
-	OrganizationId string `json:"organization_id"`
-	Region         string `json:"region"`
+	CreatedAt      string            `json:"created_at"`
+	Database       *DatabaseResponse `json:"database,omitempty"`
+	Id             string            `json:"id"`
+	Name           string            `json:"name"`
+	OrganizationId string            `json:"organization_id"`
+	Region         string            `json:"region"`
 }
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.

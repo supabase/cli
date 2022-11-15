@@ -703,6 +703,16 @@ components:
       bearerFormat: JWT
       type: http
   schemas:
+    DatabaseResponse:
+      type: object
+      properties:
+        host:
+          type: string
+        version:
+          type: string
+      required:
+        - host
+        - version
     ProjectResponse:
       type: object
       properties:
@@ -716,6 +726,8 @@ components:
           type: string
         created_at:
           type: string
+        database:
+          $ref: '#/components/schemas/DatabaseResponse'
       required:
         - id
         - organization_id
