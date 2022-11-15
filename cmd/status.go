@@ -40,6 +40,8 @@ var (
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return status.Run(ctx, names, output.Value, afero.NewOsFs())
 		},
+		Example: `  supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL
+  supabase status -o json`,
 	}
 )
 

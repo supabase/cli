@@ -17,43 +17,6 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestRun(t *testing.T) {
-	services := []string{
-		"supabase_db_",
-		"supabase_kong_",
-		"supabase_auth_",
-		"supabase_inbucket_",
-		"supabase_realtime_",
-		"supabase_rest_",
-		"supabase_storage_",
-		"supabase_pg_meta_",
-		"supabase_studio_",
-	}
-	// Setup in-memory fs
-	fsys := afero.NewMemMapFs()
-	require.NoError(t, utils.WriteConfig(fsys, false))
-	// Setup mock docker
-	require.NoError(t, apitest.MockDocker(utils.Docker))
-	defer gock.OffAll()
-	gock.New(utils.Docker.DaemonHost()).
-		Head("/_ping").
-		Reply(http.StatusOK).
-		SetHeader("API-Version", utils.Docker.ClientVersion()).
-		SetHeader("OSType", "linux")
-	for _, container := range services {
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container).
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true},
-			}})
-	}
-	// Run test
-	assert.NoError(t, Run(context.Background(), CustomName{}, OutputPretty, fsys))
-	// Check error
-	assert.Empty(t, apitest.ListUnmatchedRequests())
-}
-
 func TestStatusCommand(t *testing.T) {
 	t.Run("shows service status", func(t *testing.T) {
 		services := []string{
@@ -174,7 +137,6 @@ func TestServiceHealth(t *testing.T) {
 		assert.NoError(t, checkServiceHealth(context.Background(), services, &stderr))
 		// Check error
 		assert.Equal(t, "supabase_auth container is not running: exited\n", stderr.String())
-		// assert.Contains(t, stderr.String(), "supabase local development setup is running.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
