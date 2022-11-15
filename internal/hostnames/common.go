@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -47,6 +48,9 @@ type RawResponse struct {
 				TxtName  string `json:"txt_name"`
 				TxtValue string `json:"txt_value"`
 			} `json:"validation_records"`
+			ValidationErrors []struct {
+				Message string `json:"message"`
+			} `json:"validation_errors"`
 			Status string `json:"status"`
 		}
 	} `json:"result"`
@@ -105,6 +109,17 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 		if res.Result.Ssl.Status == "initializing" {
 			return appendRawOutputIfNeeded("Custom hostname setup is being initialized; please request re-verification in a few seconds.\n", response, includeRawOutput), nil
 		}
+		if len(res.Result.Ssl.ValidationErrors) > 0 {
+			var errorMessages []string
+			for _, valError := range res.Result.Ssl.ValidationErrors {
+				if strings.Contains(valError.Message, "caa_error") {
+					return appendRawOutputIfNeeded("CAA mismatch; please remove any existing CAA records on your domain, or add one for \"digicert.com\"\n", response, includeRawOutput), nil
+				}
+				errorMessages = append(errorMessages, valError.Message)
+			}
+			valErrors := strings.Join(errorMessages, "\n\t- ")
+			return appendRawOutputIfNeeded(fmt.Sprintf("SSL validation errors: \n\t- %s\n", valErrors), response, includeRawOutput), nil
+		}
 		if len(ssl) != 1 {
 			return "", fmt.Errorf("expected a single SSL verification record, received: %+v", ssl)
 		}
@@ -113,7 +128,7 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 			records = fmt.Sprintf("\n\t%s TXT -> %s", owner.Name, owner.Value)
 		}
 		if ssl[0].TxtName != "" {
-			records = fmt.Sprintf("%s\n\t%s TXT -> %s", records, ssl[0].TxtName, ssl[0].TxtValue)
+			records = fmt.Sprintf("%s\n\t%s TXT -> %s (replace any existing CNAME records)", records, ssl[0].TxtName, ssl[0].TxtValue)
 		}
 		status := fmt.Sprintf("Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n"+
 			"Required outstanding validation records: %s\n",
