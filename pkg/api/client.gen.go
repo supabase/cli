@@ -157,6 +157,14 @@ type ClientInterface interface {
 
 	UpdateConfig(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetPostgRESTConfig request
+	GetPostgRESTConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePostgRESTConfig request with any body
+	UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -464,6 +472,42 @@ func (c *Client) UpdateConfigWithBody(ctx context.Context, ref string, contentTy
 
 func (c *Client) UpdateConfig(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetPostgRESTConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPostgRESTConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePostgRESTConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePostgRESTConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1366,6 +1410,87 @@ func NewUpdateConfigRequestWithBody(server string, ref string, contentType strin
 	return req, nil
 }
 
+// NewGetPostgRESTConfigRequest generates requests for GetPostgRESTConfig
+func NewGetPostgRESTConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/postgrest", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdatePostgRESTConfigRequest calls the generic UpdatePostgRESTConfig builder with application/json body
+func NewUpdatePostgRESTConfigRequest(server string, ref string, body UpdatePostgRESTConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePostgRESTConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewUpdatePostgRESTConfigRequestWithBody generates requests for UpdatePostgRESTConfig with any type of body
+func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/postgrest", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteSecretsRequest calls the generic DeleteSecrets builder with application/json body
 func NewDeleteSecretsRequest(server string, ref string, body DeleteSecretsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1658,6 +1783,14 @@ type ClientWithResponsesInterface interface {
 	UpdateConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
 
 	UpdateConfigWithResponse(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
+
+	// GetPostgRESTConfig request
+	GetPostgRESTConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgRESTConfigResponse, error)
+
+	// UpdatePostgRESTConfig request with any body
+	UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
+
+	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteSecretsResponse, error)
@@ -2028,7 +2161,7 @@ func (r GetNetworkBansResponse) StatusCode() int {
 type GetConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2050,7 +2183,7 @@ func (r GetConfigResponse) StatusCode() int {
 type UpdateConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2063,6 +2196,50 @@ func (r UpdateConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetPostgRESTConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgrestConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPostgRESTConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPostgRESTConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdatePostgRESTConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgrestConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePostgRESTConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePostgRESTConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2372,6 +2549,32 @@ func (c *ClientWithResponses) UpdateConfigWithResponse(ctx context.Context, ref 
 		return nil, err
 	}
 	return ParseUpdateConfigResponse(rsp)
+}
+
+// GetPostgRESTConfigWithResponse request returning *GetPostgRESTConfigResponse
+func (c *ClientWithResponses) GetPostgRESTConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgRESTConfigResponse, error) {
+	rsp, err := c.GetPostgRESTConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPostgRESTConfigResponse(rsp)
+}
+
+// UpdatePostgRESTConfigWithBodyWithResponse request with arbitrary body returning *UpdatePostgRESTConfigResponse
+func (c *ClientWithResponses) UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error) {
+	rsp, err := c.UpdatePostgRESTConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePostgRESTConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error) {
+	rsp, err := c.UpdatePostgRESTConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePostgRESTConfigResponse(rsp)
 }
 
 // DeleteSecretsWithBodyWithResponse request with arbitrary body returning *DeleteSecretsResponse
@@ -2827,7 +3030,7 @@ func ParseGetConfigResponse(rsp *http.Response) (*GetConfigResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest PgsodiumConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2853,7 +3056,59 @@ func ParseUpdateConfigResponse(rsp *http.Response) (*UpdateConfigResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest PgsodiumConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPostgRESTConfigResponse parses an HTTP response from a GetPostgRESTConfigWithResponse call
+func ParseGetPostgRESTConfigResponse(rsp *http.Response) (*GetPostgRESTConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPostgRESTConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PostgrestConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePostgRESTConfigResponse parses an HTTP response from a UpdatePostgRESTConfigWithResponse call
+func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePostgRESTConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PostgrestConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
