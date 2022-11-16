@@ -34,7 +34,7 @@ const (
 	MigraImage     = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage    = "supabase/postgres-meta:v0.50.2"
 	StudioImage    = "supabase/studio:0.22.08"
-	DenoRelayImage = "supabase/deno-relay:v1.4.0"
+	DenoRelayImage = "supabase/deno-relay:v1.5.0"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.25.1"
@@ -304,7 +304,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.27.1")
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.28.0")
 		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
