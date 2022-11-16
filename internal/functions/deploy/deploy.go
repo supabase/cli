@@ -17,6 +17,8 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
+const EszipContentType = "application/vnd.denoland.eszip"
+
 func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
@@ -125,7 +127,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 					Slug:      &slug,
 					Name:      &slug,
 					VerifyJwt: &verifyJWT,
-				}, "application/vnd.denoland.eszip", functionBody)
+				}, EszipContentType, functionBody)
 			}
 			if err != nil {
 				return err
@@ -145,7 +147,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 			} else {
 				resp, err = utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
 					VerifyJwt: &verifyJWT,
-				}, "application/vnd.denoland.eszip", functionBody)
+				}, EszipContentType, functionBody)
 			}
 			if err != nil {
 				return err

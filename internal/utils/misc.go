@@ -89,6 +89,9 @@ var (
 	//go:embed templates/globals.sql
 	GlobalsSql string
 
+	//go:embed eszip/*
+	eszipEmbedDir embed.FS
+
 	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	PostgresUrlPattern = regexp.MustCompile(`^postgres(?:ql)?:\/\/postgres:(.*)@(.+)\/postgres$`)
@@ -119,9 +122,6 @@ var (
 var (
 	DenoPathOverride string
 )
-
-//go:embed eszip/*
-var eszipEmbedDir embed.FS
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
@@ -402,13 +402,13 @@ func isBuildScriptModified(fsys afero.Fs, buildScriptPath string) (bool, error) 
 
 // Copy ESZIP scripts needed for function deploy, returning the build script path or an error.
 func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
-	home, err := os.UserHomeDir()
+	denoPath, err := GetDenoPath()
 	if err != nil {
 		return "", err
 	}
 
-	supabasePath := filepath.Join(home, ".supabase")
-	scriptDirPath := filepath.Join(supabasePath, "eszip")
+	denoDirPath := filepath.Dir(denoPath)
+	scriptDirPath := filepath.Join(denoDirPath, "eszip")
 	buildScriptPath := filepath.Join(scriptDirPath, "build.ts")
 
 	// make the script directory if not exist
@@ -441,7 +441,7 @@ func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 			return err
 		}
 
-		if err := afero.WriteFile(fsys, filepath.Join(supabasePath, path), contents, 0666); err != nil {
+		if err := afero.WriteFile(fsys, filepath.Join(denoDirPath, path), contents, 0666); err != nil {
 			return err
 		}
 
