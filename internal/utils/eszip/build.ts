@@ -1,8 +1,9 @@
 import * as path from "https://deno.land/std@0.127.0/path/mod.ts";
 import { writeAll } from "https://deno.land/std@0.162.0/streams/conversion.ts";
-import { build } from "./mod.ts";
-import { load } from "./loader.ts";
-import { compress } from "https://deno.land/x/brotli/mod.ts";
+import { compress } from "https://deno.land/x/brotli@0.1.7/mod.ts";
+
+import { build } from "https://deno.land/x/eszip@v0.30.0/mod.ts";
+import { load } from "https://deno.land/x/eszip@v0.30.0/loader.ts";
 
 const virtualBasePath = "file:///src/";
 
