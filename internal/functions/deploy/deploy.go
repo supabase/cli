@@ -5,19 +5,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, fsys afero.Fs) error {
+const EszipContentType = "application/vnd.denoland.eszip"
+
+func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
+	var buildScriptPath string
 	{
 		if len(projectRefArg) == 0 {
 			ref, err := utils.LoadProjectRef(fsys)
@@ -34,10 +39,16 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
 			return err
 		}
+
+		var err error
+		buildScriptPath, err = utils.CopyEszipScripts(ctx, fsys)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 2. Bundle Function.
-	var newFunctionBody string
+	var functionBody io.Reader
 	{
 		fmt.Println("Bundling " + utils.Bold(slug))
 		denoPath, err := utils.GetDenoPath()
@@ -55,7 +66,10 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 			}
 		}
 
-		args := []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
+		args := []string{"run", "-A", buildScriptPath, filepath.Join(functionPath, "index.ts")}
+		if useLegacyBundle {
+			args = []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
+		}
 		cmd := exec.CommandContext(ctx, denoPath, args...)
 		var outBuf, errBuf bytes.Buffer
 		cmd.Stdout = &outBuf
@@ -64,14 +78,24 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 			return fmt.Errorf("Error bundling function: %w\n%v", err, errBuf.String())
 		}
 
-		newFunctionBody = outBuf.String()
+		functionBody = &outBuf
 	}
 
 	// 3. Deploy new Function.
-	return deployFunction(ctx, projectRef, slug, newFunctionBody, verifyJWT)
+	return deployFunction(ctx, projectRef, slug, functionBody, verifyJWT, useLegacyBundle)
 }
 
-func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody string, verifyJWT bool) error {
+func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
+	buf := new(strings.Builder)
+	_, err := io.Copy(buf, functionBody)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool) error {
 	var deployedFuncId string
 	{
 		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug, &api.GetFunctionParams{})
@@ -79,14 +103,32 @@ func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody strin
 			return err
 		}
 
+		var functionBodyStr string
+		if useLegacyBundle {
+			functionBodyStr, err = makeLegacyFunctionBody(functionBody)
+			if err != nil {
+				return err
+			}
+		}
+
 		switch resp.StatusCode() {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-			resp, err := utils.GetSupabase().CreateFunctionWithResponse(ctx, projectRef, &api.CreateFunctionParams{}, api.CreateFunctionBody{
-				Body:      newFunctionBody,
-				Name:      slug,
-				Slug:      slug,
-				VerifyJwt: &verifyJWT,
-			})
+			var resp *api.CreateFunctionResponse
+			var err error
+			if useLegacyBundle {
+				resp, err = utils.GetSupabase().CreateFunctionWithResponse(ctx, projectRef, &api.CreateFunctionParams{}, api.CreateFunctionJSONRequestBody{
+					Body:      functionBodyStr,
+					Name:      slug,
+					Slug:      slug,
+					VerifyJwt: &verifyJWT,
+				})
+			} else {
+				resp, err = utils.GetSupabase().CreateFunctionWithBodyWithResponse(ctx, projectRef, &api.CreateFunctionParams{
+					Slug:      &slug,
+					Name:      &slug,
+					VerifyJwt: &verifyJWT,
+				}, EszipContentType, functionBody)
+			}
 			if err != nil {
 				return err
 			}
@@ -95,10 +137,18 @@ func deployFunction(ctx context.Context, projectRef, slug, newFunctionBody strin
 			}
 			deployedFuncId = resp.JSON201.Id
 		case http.StatusOK: // Function already exists, so do a PATCH
-			resp, err := utils.GetSupabase().UpdateFunctionWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{}, api.UpdateFunctionBody{
-				Body:      &newFunctionBody,
-				VerifyJwt: &verifyJWT,
-			})
+			var resp *api.UpdateFunctionResponse
+			var err error
+			if useLegacyBundle {
+				resp, err = utils.GetSupabase().UpdateFunctionWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{}, api.UpdateFunctionJSONRequestBody{
+					Body:      &functionBodyStr,
+					VerifyJwt: &verifyJWT,
+				})
+			} else {
+				resp, err = utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
+					VerifyJwt: &verifyJWT,
+				}, EszipContentType, functionBody)
+			}
 			if err != nil {
 				return err
 			}
