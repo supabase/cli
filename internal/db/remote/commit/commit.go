@@ -434,7 +434,7 @@ func AssertPostgresVersionMatch(conn *pgx.Conn) error {
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	// Build connection string
 	// Use port 6543 for connection pooling
-	pgUrl := "postgresql://:@:6543/?connect_timeout=3"
+	pgUrl := "postgresql://:@:6543/?connect_timeout=10"
 	// Parse connection url
 	config, err := pgx.ParseConfig(pgUrl)
 	if err != nil {
