@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -43,14 +44,16 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 	}
 
 	if dbUrl != "" {
-		matches := utils.PostgresUrlPattern.FindStringSubmatch(dbUrl)
-		if len(matches) != 3 {
-			return errors.New("URL is not a valid Supabase connection string.")
+		config, err := pgconn.ParseConfig(dbUrl)
+		if err != nil {
+			return errors.New("URL is not a valid Supabase connection string: " + err.Error())
 		}
 		escaped := fmt.Sprintf(
-			"postgresql://%s@%s/postgres",
-			url.UserPassword("postgres", matches[1]),
-			matches[2],
+			"postgresql://%s@%s:%d/%s",
+			url.UserPassword(config.User, config.Password),
+			config.Host,
+			config.Port,
+			url.PathEscape(config.Database),
 		)
 
 		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
