@@ -29,9 +29,10 @@ var (
 	}
 
 	dbBranchCmd = &cobra.Command{
-		Use:   "branch",
-		Short: "Manage local database branches",
-		Long:  "Manage local database branches. Each branch is associated with a separate local database. Forking remote databases is NOT supported.",
+		Hidden: true,
+		Use:    "branch",
+		Short:  "Manage local database branches",
+		Long:   "Manage local database branches. Each branch is associated with a separate local database. Forking remote databases is NOT supported.",
 	}
 
 	dbBranchCreateCmd = &cobra.Command{
