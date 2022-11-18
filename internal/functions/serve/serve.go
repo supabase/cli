@@ -136,7 +136,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", dockerFuncPath,
+					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm", dockerFuncPath,
 				},
 				AttachStderr: true,
 				AttachStdout: true,
