@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/jackc/pgconn"
@@ -55,6 +56,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			config.Port,
 			url.PathEscape(config.Database),
 		)
+		fmt.Fprintln(os.Stderr, "Connecting to", escaped)
 
 		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
 			"PG_META_DB_URL=" + escaped,
