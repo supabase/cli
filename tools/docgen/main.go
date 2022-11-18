@@ -23,7 +23,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.11.3",
+			Version:     "1.14.3",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -75,6 +75,7 @@ type InfoDoc struct {
 type ValueDoc struct {
 	Id          string `yaml:",omitempty"`
 	Name        string `yaml:",omitempty"`
+	Type        string `yaml:",omitempty"`
 	Description string `yaml:",omitempty"`
 }
 
@@ -83,6 +84,7 @@ type FlagDoc struct {
 	Name           string     `yaml:",omitempty"`
 	Description    string     `yaml:",omitempty"`
 	Required       bool       `yaml:",omitempty"`
+	DefaultValue   string     `yaml:"default_value"`
 	AcceptedValues []ValueDoc `yaml:"accepted_values,omitempty"`
 }
 
@@ -135,7 +137,7 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 	}
 
 	if cmd.Runnable() {
-		yamlDoc.Usage = mdCodeBlock(cmd.UseLine(), root.Info.Language)
+		yamlDoc.Usage = forceMultiLine(cmd.UseLine())
 	}
 
 	flags := cmd.NonInheritedFlags()
@@ -150,16 +152,18 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 
 func getFlags(flag *pflag.Flag) FlagDoc {
 	doc := FlagDoc{
-		Id:          flag.Name,
-		Name:        getName(flag),
-		Description: forceMultiLine(getUsage(flag)),
-		Required:    flag.Annotations[cobra.BashCompOneRequiredFlag] != nil,
+		Id:           flag.Name,
+		Name:         getName(flag),
+		Description:  forceMultiLine(getUsage(flag)),
+		DefaultValue: flag.DefValue,
+		Required:     flag.Annotations[cobra.BashCompOneRequiredFlag] != nil,
 	}
 	if f, ok := flag.Value.(*utils.EnumFlag); ok {
 		for _, v := range f.Allowed {
 			doc.AcceptedValues = append(doc.AcceptedValues, ValueDoc{
 				Id:   v,
-				Name: v + " `string`",
+				Name: v,
+				Type: flag.Value.Type(),
 			})
 		}
 	}
@@ -177,7 +181,7 @@ func getName(flag *pflag.Flag) (line string) {
 	line += fmt.Sprintf("--%s", flag.Name)
 	// Suffix: type
 	if varname, _ := pflag.UnquoteUsage(flag); varname != "" {
-		line += fmt.Sprintf(" `%s`", varname)
+		line += fmt.Sprintf(" <%s>", varname)
 	}
 	// Not used by our cmd but kept here for consistency
 	if flag.NoOptDefVal != "" {
@@ -202,18 +206,9 @@ func getName(flag *pflag.Flag) (line string) {
 // Prints flag usage and default value.
 //
 //	Select a plan. (default "free")
-func getUsage(flag *pflag.Flag) (line string) {
+func getUsage(flag *pflag.Flag) string {
 	_, usage := pflag.UnquoteUsage(flag)
-	line += usage
-	if flag.Value.Type() == "string" {
-		line += fmt.Sprintf(" (default %q)", flag.DefValue)
-	} else {
-		line += fmt.Sprintf(" (default %s)", flag.DefValue)
-	}
-	if len(flag.Deprecated) != 0 {
-		line += fmt.Sprintf(" (DEPRECATED: %s)", flag.Deprecated)
-	}
-	return line
+	return usage
 }
 
 // Wraps a command string in markdown style code block, ie.
