@@ -1,6 +1,6 @@
 {
   "name": "supabase",
-  "version": "999.9.9",
+  "version": "0.0.0-automated",
   "description": "Supabase CLI",
   "repository": "supabase/cli",
   "homepage": "https://supabase.com/docs/reference/cli",
@@ -24,8 +24,5 @@
     "branches": [
       "main"
     ]
-  },
-  "devDependencies": {
-    "supabase": "^1.15.0"
   }
 }
