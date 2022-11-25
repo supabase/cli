@@ -116,9 +116,10 @@ var (
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
-		Use:   "changes",
-		Short: "Show changes on the remote database",
-		Long:  "Show changes on the remote database since last migration.",
+		Deprecated: `use "supabase db diff --use-migra --linked" instead.`,
+		Use:        "changes",
+		Short:      "Show changes on the remote database",
+		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
