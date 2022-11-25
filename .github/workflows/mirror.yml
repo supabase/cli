@@ -34,7 +34,7 @@ jobs:
           registry: public.ecr.aws
           username: ${{ secrets.PROD_ACCESS_KEY_ID }}
           password: ${{ secrets.PROD_SECRET_ACCESS_KEY }}
-      - uses: akhilerm/tag-push-action@v2.0.0
+      - uses: akhilerm/tag-push-action@v2.1.0
         with:
           src: docker.io/${{ matrix.src }}
           dst: public.ecr.aws/t3w2s2c9/${{ steps.strip.outputs.dst }}
