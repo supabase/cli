@@ -1072,7 +1072,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at)
 --
 
 INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
-    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime', 'realtime', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
@@ -1080,7 +1080,7 @@ INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent
 --
 
 INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
-    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"e96tXstkn+jtFWJi0eBr+m3INdFm15wSEW0bMvP2ryY=","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"e96tXstkn+jtFWJi0eBr+m3INdFm15wSEW0bMvP2ryY=","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
