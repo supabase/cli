@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -90,16 +91,24 @@ func buildTargetUrl(password string, fsys afero.Fs) (target string, err error) {
 }
 
 func createShadowDatabase(ctx context.Context) (string, error) {
-	var cmd []string
+	config := container.Config{
+		Image: utils.DbImage,
+		Env:   []string{"POSTGRES_PASSWORD=postgres"},
+	}
 	if utils.Config.Db.MajorVersion >= 14 {
-		cmd = []string{"postgres",
+		config.Cmd = []string{"postgres",
 			"-c", "config_file=/etc/postgresql/postgresql.conf",
 			// Ref: https://postgrespro.com/list/thread-id/2448092
 			"-c", `search_path="$user",public,extensions`,
 		}
 	}
-	ports := nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)}}}
-	return utils.DockerStart(ctx, utils.DbImage, []string{"POSTGRES_PASSWORD=postgres"}, cmd, ports)
+	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
+	hostConfig := container.HostConfig{
+		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
+		Binds:        []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
+		AutoRemove:   true,
+	}
+	return utils.DockerStart(ctx, config, hostConfig, utils.DbId)
 }
 
 func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
