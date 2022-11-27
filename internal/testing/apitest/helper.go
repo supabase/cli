@@ -36,9 +36,9 @@ func MockDockerStart(docker *client.Client, image, containerID string) {
 		Reply(http.StatusOK).
 		JSON(types.ImageInspect{})
 	gock.New(docker.DaemonHost()).
-		Get("/v" + docker.ClientVersion() + "/networks").
-		Reply(http.StatusOK).
-		JSON(types.NetworkResource{})
+		Post("/v" + docker.ClientVersion() + "/networks/create").
+		Reply(http.StatusCreated).
+		JSON(types.NetworkCreateResponse{})
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/create").
 		Reply(http.StatusOK).

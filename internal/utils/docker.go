@@ -15,9 +15,9 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
 	"github.com/spf13/viper"
 )
 
@@ -231,9 +231,19 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
-	// Use network if exists
-	_, err := Docker.NetworkInspect(ctx, string(hostConfig.NetworkMode), types.NetworkInspectOptions{})
-	if err != nil && !client.IsErrNotFound(err) {
+	// Create network if not exists
+	if _, err := Docker.NetworkCreate(
+		ctx,
+		string(hostConfig.NetworkMode),
+		types.NetworkCreate{
+			CheckDuplicate: true,
+			Labels: map[string]string{
+				"com.supabase.cli.project":   Config.ProjectId,
+				"com.docker.compose.project": Config.ProjectId,
+			},
+		},
+	); err != nil && !errdefs.IsConflict(err) {
+		// if error is network already exists, no need to propagate to user
 		return "", err
 	}
 	// Create container from image
