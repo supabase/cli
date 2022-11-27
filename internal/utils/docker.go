@@ -216,31 +216,28 @@ func stopContainer(docker *client.Client, containerID string) {
 	}
 }
 
-func DockerStart(ctx context.Context, image string, env []string, cmd []string, ports nat.PortMap) (string, error) {
+func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string) (string, error) {
 	// Pull container image
-	if err := DockerPullImageIfNotCached(ctx, image); err != nil {
+	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
 		return "", err
 	}
+	// Setup default config
+	config.Image = GetRegistryImageUrl(config.Image)
+	if config.Labels == nil {
+		config.Labels = map[string]string{}
+	}
+	config.Labels["com.supabase.cli.project"] = Config.ProjectId
+	config.Labels["com.docker.compose.project"] = Config.ProjectId
+	if len(hostConfig.NetworkMode) == 0 {
+		hostConfig.NetworkMode = container.NetworkMode(NetId)
+	}
 	// Use network if exists
-	network, err := Docker.NetworkInspect(ctx, NetId, types.NetworkInspectOptions{})
+	_, err := Docker.NetworkInspect(ctx, string(hostConfig.NetworkMode), types.NetworkInspectOptions{})
 	if err != nil && !client.IsErrNotFound(err) {
 		return "", err
 	}
 	// Create container from image
-	resp, err := Docker.ContainerCreate(ctx, &container.Config{
-		Image: GetRegistryImageUrl(image),
-		Env:   env,
-		Cmd:   cmd,
-		Labels: map[string]string{
-			"com.supabase.cli.project":   Config.ProjectId,
-			"com.docker.compose.project": Config.ProjectId,
-		},
-	}, &container.HostConfig{
-		NetworkMode:  container.NetworkMode(network.ID),
-		PortBindings: ports,
-		AutoRemove:   true,
-		Binds:        []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
-	}, nil, nil, "")
+	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, nil, nil, containerName)
 	if err != nil {
 		return "", err
 	}
@@ -250,7 +247,11 @@ func DockerStart(ctx context.Context, image string, env []string, cmd []string, 
 
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
 func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
-	container, err := DockerStart(ctx, image, env, cmd, nil)
+	container, err := DockerStart(ctx, container.Config{
+		Image: image,
+		Env:   env,
+		Cmd:   cmd,
+	}, container.HostConfig{AutoRemove: true}, "")
 	if err != nil {
 		return "", err
 	}

@@ -7,12 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -25,11 +22,19 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/db/lint"
-	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 )
+
+type StatusWriter struct {
+	utils.Program
+}
+
+func (t StatusWriter) Write(p []byte) (int, error) {
+	trimmed := bytes.TrimRight(p, "\n")
+	t.Send(utils.StatusMsg(trimmed))
+	return len(p), nil
+}
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	// Sanity checks.
@@ -105,99 +110,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 	return err
 }
 
-func initDatabase(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
-		fmt.Fprintln(os.Stderr, "Database is not healthy.")
-	}
-	// Initialise globals
-	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
-		return err
-	}
-
-	p.Send(utils.StatusMsg("Restoring branches..."))
-
-	// Create branch dir if missing
-	branchDir := filepath.Dir(utils.CurrBranchPath)
-	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
-		return err
-	}
-	branches, err := afero.ReadDir(fsys, branchDir)
-	if err != nil {
-		return err
-	}
-	// Ensure `_current_branch` file exists.
-	currBranch, err := utils.GetCurrentBranchFS(fsys)
-	if errors.Is(err, os.ErrNotExist) {
-		currBranch = "main"
-		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	// Restore every branch dump
-	for _, branch := range branches {
-		if !branch.IsDir() {
-			continue
-		}
-		dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
-		content, err := fsys.Open(dumpPath)
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, "Error restoring "+utils.Aqua(branch.Name())+": branch was not dumped.")
-			if err := fsys.RemoveAll(filepath.Dir(dumpPath)); err != nil {
-				return err
-			}
-			continue
-		} else if err != nil {
-			return err
-		}
-		defer content.Close()
-		// Restore current branch to postgres directly
-		if branch.Name() == currBranch {
-			if err := diff.BatchExecDDL(ctx, conn, content); err != nil {
-				return err
-			}
-			continue
-		}
-		// TODO: restoring non-main branch may break extensions that require postgres
-		createDb := `CREATE DATABASE "` + branch.Name() + `";`
-		if _, err := conn.Exec(ctx, createDb); err != nil {
-			return err
-		}
-		// Connect to branch database
-		branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
-		if err != nil {
-			return err
-		}
-		defer branchConn.Close(context.Background())
-		// Restore dump, reporting any error
-		if err := diff.BatchExecDDL(ctx, branchConn, content); err != nil {
-			return err
-		}
-	}
-	// Branch is already initialised
-	if _, err = fsys.Stat(filepath.Join(branchDir, currBranch)); !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	p.Send(utils.StatusMsg("Setting up initial schema..."))
-	if err := reset.InitialiseDatabase(ctx, conn, fsys); err != nil {
-		return err
-	}
-
-	// Ensure `main` branch exists.
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return err
-	}
-	return fsys.Mkdir(filepath.Join(branchDir, currBranch), 0755)
-}
-
-func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
+func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := utils.Docker.NetworkCreate(
 		ctx,
 		utils.NetId,
@@ -227,59 +140,10 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs) error {
 		}
 	}
 
-	p.Send(utils.StatusMsg("Starting database..."))
-
 	// Start Postgres.
-	{
-		cmd := []string{}
-		if utils.Config.Db.MajorVersion >= 14 {
-			cmd = []string{"postgres",
-				"-c", "config_file=/etc/postgresql/postgresql.conf",
-				// One log file per hour, 24 hours retention
-				"-c", "log_destination=csvlog",
-				"-c", "logging_collector=on",
-				"-c", "log_directory=/var/log/postgresql",
-				"-c", "log_filename=server_%H00_UTC.log",
-				"-c", "log_file_mode=0640",
-				"-c", "log_rotation_age=60",
-				"-c", "log_rotation_size=0",
-				"-c", "log_truncate_on_rotation=on",
-				// Ref: https://postgrespro.com/list/thread-id/2448092
-				"-c", `search_path="$user",public,extensions`,
-			}
-		}
-
-		if _, err := utils.DockerRun(
-			ctx,
-			utils.DbId,
-			&container.Config{
-				Image: utils.GetRegistryImageUrl(utils.DbImage),
-				Env:   []string{"POSTGRES_PASSWORD=postgres"},
-				Cmd:   cmd,
-				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
-					Interval: 2 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  10,
-				},
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.Config.ProjectId,
-					"com.docker.compose.project": utils.Config.ProjectId,
-				},
-			},
-			&container.HostConfig{
-				NetworkMode:   container.NetworkMode(utils.NetId),
-				PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-				Binds:         []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
-			},
-		); err != nil {
-			return err
-		}
-
-		if err := initDatabase(p, ctx, fsys); err != nil {
-			return err
-		}
+	w := StatusWriter{p}
+	if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
+		return err
 	}
 
 	p.Send(utils.StatusMsg("Starting containers..."))

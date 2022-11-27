@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -165,6 +166,15 @@ var (
 		},
 	}
 
+	dbStartCmd = &cobra.Command{
+		Use:   "start",
+		Short: "Starts local Postgres database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return start.Run(ctx, afero.NewOsFs())
+		},
+	}
+
 	dbTestCmd = &cobra.Command{
 		Hidden: true,
 		Use:    "test",
@@ -210,6 +220,8 @@ func init() {
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
+	// Build start command
+	dbCmd.AddCommand(dbStartCmd)
 	// Build test command
 	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
