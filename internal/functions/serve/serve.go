@@ -65,21 +65,16 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			return err
 		}
 
-		if _, err := utils.DockerRun(
+		if _, err := utils.DockerStart(
 			ctx,
-			utils.DenoRelayId,
-			&container.Config{
-				Image: utils.GetRegistryImageUrl(utils.DenoRelayImage),
+			container.Config{
+				Image: utils.DenoRelayImage,
 				Env:   env,
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.Config.ProjectId,
-					"com.docker.compose.project": utils.Config.ProjectId,
-				},
 			},
-			&container.HostConfig{
-				Binds:       []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"},
-				NetworkMode: container.NetworkMode(utils.NetId),
+			container.HostConfig{
+				Binds: []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"},
 			},
+			utils.DenoRelayId,
 		); err != nil {
 			return err
 		}
