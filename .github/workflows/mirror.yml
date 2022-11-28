@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.18
+          cache: true
       - id: list
         run: |
           echo "::set-output name=tags::$(go run tools/listdep/main.go)"
@@ -37,4 +38,4 @@ jobs:
       - uses: akhilerm/tag-push-action@v2.1.0
         with:
           src: docker.io/${{ matrix.src }}
-          dst: public.ecr.aws/t3w2s2c9/${{ steps.strip.outputs.dst }}
+          dst: public.ecr.aws/supabase/${{ steps.strip.outputs.dst }}
