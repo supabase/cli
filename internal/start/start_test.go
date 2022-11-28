@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -190,6 +189,7 @@ func TestDatabaseStart(t *testing.T) {
 				Reply(http.StatusOK).
 				JSON(types.ImageInspect{})
 		}
+		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
@@ -199,11 +199,30 @@ func TestDatabaseStart(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
 			}})
-		// Start kong
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
-			Reply(http.StatusCreated).
-			JSON(container.ContainerCreateCreatedBody{})
+		// Start services
+		utils.KongId = "test-kong"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)
+		utils.GotrueId = "test-gotrue"
+		flag := true
+		utils.Config.Auth.EnableSignup = &flag
+		utils.Config.Auth.Email.EnableSignup = &flag
+		utils.Config.Auth.Email.DoubleConfirmChanges = &flag
+		utils.Config.Auth.Email.EnableConfirmations = &flag
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), utils.GotrueId)
+		utils.InbucketId = "test-inbucket"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.InbucketImage), utils.InbucketId)
+		utils.RealtimeId = "test-realtime"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), utils.RealtimeId)
+		utils.RestId = "test-rest"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PostgrestImage), utils.RestId)
+		utils.StorageId = "test-storage"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), utils.StorageId)
+		utils.DifferId = "test-differ"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
+		utils.PgmetaId = "test-pgmeta"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgmetaImage), utils.PgmetaId)
+		utils.StudioId = "test-studio"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StudioImage), utils.StudioId)
 		// Setup mock postgres
 		utils.GlobalsSql = "create schema public"
 		utils.InitialSchemaSql = "create schema private"
@@ -216,7 +235,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		err := run(p, context.Background(), fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "dial http: unknown network http")
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
