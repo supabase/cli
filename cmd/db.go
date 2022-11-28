@@ -117,7 +117,7 @@ var (
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
-		Deprecated: `use "supabase db diff --use-migra --linked" instead.`,
+		Deprecated: "use \"db diff --use-migra --linked\" instead.\n",
 		Use:        "changes",
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
