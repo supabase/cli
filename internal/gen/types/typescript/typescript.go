@@ -87,7 +87,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
-		out, err := utils.DockerExecOnce(ctx, utils.PgmetaId, []string{
+		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
 			"PG_META_DB_HOST=" + utils.DbId,
 		}, []string{
 			"node",
