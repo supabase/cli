@@ -146,11 +146,10 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*p
 			return err
 		}
 
-		if _, err := utils.DockerRun(
+		if _, err := utils.DockerStart(
 			ctx,
-			utils.KongId,
-			&container.Config{
-				Image: utils.GetRegistryImageUrl(utils.KongImage),
+			container.Config{
+				Image: utils.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
@@ -166,16 +165,12 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*p
 ` + kongConfigBuf.String() + `
 EOF
 `},
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.Config.ProjectId,
-					"com.docker.compose.project": utils.Config.ProjectId,
-				},
 			},
-			&container.HostConfig{
-				NetworkMode:   container.NetworkMode(utils.NetId),
+			container.HostConfig{
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
+			utils.KongId,
 		); err != nil {
 			return err
 		}
@@ -245,28 +240,22 @@ EOF
 			}
 		}
 
-		if _, err := utils.DockerRun(
+		if _, err := utils.DockerStart(
 			ctx,
-			utils.GotrueId,
-			&container.Config{
-				Image: utils.GetRegistryImageUrl(utils.GotrueImage),
+			container.Config{
+				Image: utils.GotrueImage,
 				Env:   env,
-				Labels: map[string]string{
-					"com.supabase.cli.project":   utils.Config.ProjectId,
-					"com.docker.compose.project": utils.Config.ProjectId,
-				},
 			},
-			&container.HostConfig{
-				NetworkMode:   container.NetworkMode(utils.NetId),
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
+			utils.GotrueId,
 		); err != nil {
 			return err
 		}
 	}
 
-	var inbucketPortBindings = nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
-
+	inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 	if utils.Config.Inbucket.SmtpPort != 0 {
 		inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
 	}
@@ -274,31 +263,25 @@ EOF
 		inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
 	}
 	// Start Inbucket.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.InbucketId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.InbucketImage),
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
+		container.Config{
+			Image: utils.InbucketImage,
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			PortBindings:  inbucketPortBindings,
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.InbucketId,
 	); err != nil {
 		return err
 	}
 
 	// Start Realtime.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.RealtimeId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.RealtimeImage),
+		container.Config{
+			Image: utils.RealtimeImage,
 			Env: []string{
 				"PORT=4000",
 				"DB_HOST=" + utils.DbId,
@@ -315,24 +298,20 @@ EOF
 				"ENABLE_TAILSCALE=false",
 				"DNS_NODES=''",
 			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
-		}); err != nil {
+		},
+		utils.RealtimeId,
+	); err != nil {
 		return err
 	}
 
 	// Start PostgREST.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.RestId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.PostgrestImage),
+		container.Config{
+			Image: utils.PostgrestImage,
 			Env: []string{
 				"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
@@ -340,25 +319,20 @@ EOF
 				"PGRST_DB_ANON_ROLE=anon",
 				"PGRST_JWT_SECRET=" + utils.JWTSecret,
 			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.RestId,
 	); err != nil {
 		return err
 	}
 
 	// Start Storage.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.StorageId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.StorageImage),
+		container.Config{
+			Image: utils.StorageImage,
 			Env: []string{
 				"ANON_KEY=" + utils.AnonKey,
 				"SERVICE_KEY=" + utils.ServiceRoleKey,
@@ -373,68 +347,53 @@ EOF
 				"REGION=stub",
 				"GLOBAL_S3_BUCKET=stub",
 			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.StorageId,
 	); err != nil {
 		return err
 	}
 
 	// Start diff tool.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.DifferId,
-		&container.Config{
-			Image:      utils.GetRegistryImageUrl(utils.DifferImage),
+		container.Config{
+			Image:      utils.DifferImage,
 			Entrypoint: []string{"sleep", "infinity"},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.DifferId,
 	); err != nil {
 		return err
 	}
 
 	// Start pg-meta.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.PgmetaId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.PgmetaImage),
+		container.Config{
+			Image: utils.PgmetaImage,
 			Env: []string{
 				"PG_META_PORT=8080",
 				"PG_META_DB_HOST=" + utils.DbId,
 			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.PgmetaId,
 	); err != nil {
 		return err
 	}
 
 	// Start Studio.
-	if _, err := utils.DockerRun(
+	if _, err := utils.DockerStart(
 		ctx,
-		utils.StudioId,
-		&container.Config{
-			Image: utils.GetRegistryImageUrl(utils.StudioImage),
+		container.Config{
+			Image: utils.StudioImage,
 			Env: []string{
 				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 				"POSTGRES_PASSWORD=postgres",
@@ -444,16 +403,12 @@ EOF
 				"SUPABASE_ANON_KEY=" + utils.AnonKey,
 				"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
 			},
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
 		},
-		&container.HostConfig{
-			NetworkMode:   container.NetworkMode(utils.NetId),
+		container.HostConfig{
 			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
+		utils.StudioId,
 	); err != nil {
 		return err
 	}
