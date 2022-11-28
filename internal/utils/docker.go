@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	dockerConfig "github.com/docker/cli/cli/config"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -21,6 +24,7 @@ import (
 	"github.com/spf13/viper"
 )
 
+// TODO: refactor to initialise lazily
 var Docker = NewDocker()
 
 func NewDocker() *client.Client {
@@ -171,27 +175,58 @@ func DockerAddFile(ctx context.Context, container string, fileName string, conte
 	return nil
 }
 
-func GetRegistryImageUrl(imageName string) string {
-	const hub = "docker.io"
-	const ecr = "public.ecr.aws/t3w2s2c9"
+var (
+	// Only supports one registry per command invocation
+	registryAuth string
+	registryOnce sync.Once
+)
+
+func GetRegistryAuth() string {
+	registryOnce.Do(func() {
+		config := dockerConfig.LoadDefaultConfigFile(os.Stderr)
+		// Ref: https://docs.docker.com/engine/api/sdk/examples/#pull-an-image-with-authentication
+		auth, err := config.GetAuthConfig(getRegistry())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to load registry credentials:", err)
+			return
+		}
+		encoded, err := json.Marshal(auth)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to serialise auth config:", err)
+			return
+		}
+		registryAuth = base64.URLEncoding.EncodeToString(encoded)
+	})
+	return registryAuth
+}
+
+// Defaults to Supabase public ECR for faster image pull
+const defaultRegistry = "public.ecr.aws/supabase"
+
+func getRegistry() string {
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
-	registry = strings.ToLower(registry)
-	if registry == "" {
-		// Defaults to Supabase public ECR for faster image pull
-		registry = ecr
+	if len(registry) == 0 {
+		return defaultRegistry
 	}
-	if registry == ecr {
+	return strings.ToLower(registry)
+}
+
+func GetRegistryImageUrl(imageName string) string {
+	registry := getRegistry()
+	if registry == "docker.io" {
+		return imageName
+	}
+	if registry == defaultRegistry {
 		parts := strings.Split(imageName, "/")
 		imageName = parts[len(parts)-1]
-	}
-	if registry == hub {
-		return imageName
 	}
 	return registry + "/" + imageName
 }
 
 func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {
-	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{
+		RegistryAuth: GetRegistryAuth(),
+	})
 	for i := time.Duration(1); retries > 0; retries-- {
 		if err == nil {
 			break
@@ -199,7 +234,9 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (i
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintf(os.Stderr, "Retrying after %d seconds...\n", i)
 		time.Sleep(i * time.Second)
-		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{})
+		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{
+			RegistryAuth: GetRegistryAuth(),
+		})
 		i *= 2
 	}
 	return out, err
