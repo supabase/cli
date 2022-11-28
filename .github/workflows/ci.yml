@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.18
+          cache: true
 
       - run: |
           if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
@@ -35,6 +36,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.18
+          cache: true
 
       - uses: golangci/golangci-lint-action@v3
         with:
@@ -49,6 +51,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.18
+          cache: true
       - run: go build main.go
       - run: ./main init
       - run: ./main start
@@ -62,6 +65,7 @@ jobs:
       - uses: actions/setup-go@v3
         with:
           go-version: 1.18
+          cache: true
 
       - run: go generate tools/codegen/main.go
       - run: |

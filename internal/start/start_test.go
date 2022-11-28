@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -118,6 +117,7 @@ func TestStartCommand(t *testing.T) {
 
 func TestPullImage(t *testing.T) {
 	const image = "postgres"
+	imageUrl := utils.GetRegistryImageUrl(image)
 	p := utils.NewProgram(model{})
 
 	t.Run("inspects image before pull", func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestPullImage(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/public.ecr.aws/t3w2s2c9/" + image + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		// Run test
@@ -140,7 +140,7 @@ func TestPullImage(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/public.ecr.aws/t3w2s2c9/" + image + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
@@ -149,7 +149,7 @@ func TestPullImage(t *testing.T) {
 			Reply(http.StatusAccepted).
 			BodyString("progress")
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/public.ecr.aws/t3w2s2c9/" + image + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		// Run test
@@ -183,9 +183,9 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
 		for _, image := range utils.ServiceImages {
-			service := filepath.Base(image)
+			service := utils.GetRegistryImageUrl(image)
 			gock.New(utils.Docker.DaemonHost()).
-				Get("/v" + utils.Docker.ClientVersion() + "/images/public.ecr.aws/t3w2s2c9/" + service + "/json").
+				Get("/v" + utils.Docker.ClientVersion() + "/images/" + service + "/json").
 				Reply(http.StatusOK).
 				JSON(types.ImageInspect{})
 		}

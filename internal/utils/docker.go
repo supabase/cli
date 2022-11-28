@@ -254,7 +254,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 		return err
 	}
 	defer out.Close()
-	fmt.Fprintln(os.Stderr, "Pulling docker image...")
+	fmt.Fprintln(os.Stderr, "Pulling docker image:", imageUrl)
 	if viper.GetBool("DEBUG") {
 		return jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, os.Stderr.Fd(), true, nil)
 	}
