@@ -76,7 +76,7 @@ services:
               - "Content-Profile: graphql_public"
   - name: realtime-v1
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
-    url: http://realtime.supabase_realtime_{{ .ProjectId }}:4000/socket
+    url: http://realtime-demo.supabase_realtime_{{ .ProjectId }}:4000/socket
     routes:
       - name: realtime-v1-all
         strip_path: true
