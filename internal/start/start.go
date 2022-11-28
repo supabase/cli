@@ -15,9 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
@@ -111,18 +109,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 }
 
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if _, err := utils.Docker.NetworkCreate(
-		ctx,
-		utils.NetId,
-		types.NetworkCreate{
-			CheckDuplicate: true,
-			Labels: map[string]string{
-				"com.supabase.cli.project":   utils.Config.ProjectId,
-				"com.docker.compose.project": utils.Config.ProjectId,
-			},
-		},
-	); err != nil && !errdefs.IsConflict(err) {
-		// if error is network already exists, no need to propagate to user
+	if err := utils.DockerNetworkCreateIfNotExists(ctx, utils.NetId); err != nil {
 		return err
 	}
 
