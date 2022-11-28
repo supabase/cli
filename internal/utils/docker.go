@@ -44,6 +44,25 @@ func AssertDockerIsRunning() error {
 	return nil
 }
 
+func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
+	_, err := Docker.NetworkCreate(
+		ctx,
+		networkId,
+		types.NetworkCreate{
+			CheckDuplicate: true,
+			Labels: map[string]string{
+				"com.supabase.cli.project":   Config.ProjectId,
+				"com.docker.compose.project": Config.ProjectId,
+			},
+		},
+	)
+	// if error is network already exists, no need to propagate to user
+	if errdefs.IsConflict(err) {
+		return nil
+	}
+	return err
+}
+
 func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
 	exec, err := Docker.ContainerExecCreate(
 		ctx,
@@ -231,19 +250,8 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
-	// Create network if not exists
-	if _, err := Docker.NetworkCreate(
-		ctx,
-		string(hostConfig.NetworkMode),
-		types.NetworkCreate{
-			CheckDuplicate: true,
-			Labels: map[string]string{
-				"com.supabase.cli.project":   Config.ProjectId,
-				"com.docker.compose.project": Config.ProjectId,
-			},
-		},
-	); err != nil && !errdefs.IsConflict(err) {
-		// if error is network already exists, no need to propagate to user
+	// Create network with name
+	if err := DockerNetworkCreateIfNotExists(ctx, string(hostConfig.NetworkMode)); err != nil {
 		return "", err
 	}
 	// Create container from image
@@ -251,6 +259,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if err != nil {
 		return "", err
 	}
+	containers = append(containers, resp.ID)
 	// Run container in background
 	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 }
