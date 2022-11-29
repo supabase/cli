@@ -108,7 +108,7 @@ func createShadowDatabase(ctx context.Context) (string, error) {
 		Binds:        []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
 		AutoRemove:   true,
 	}
-	return utils.DockerStart(ctx, config, hostConfig, utils.DbId)
+	return utils.DockerStart(ctx, config, hostConfig, "")
 }
 
 func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
