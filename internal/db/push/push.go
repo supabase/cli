@@ -11,19 +11,14 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, dryRun bool, username, password, database string, fsys afero.Fs) error {
+func Run(ctx context.Context, dryRun bool, username, password, database, host string, fsys afero.Fs) error {
 	if dryRun {
 		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
 	}
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-
-	projectRef, err := utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host)
 	if err != nil {
 		return err
 	}

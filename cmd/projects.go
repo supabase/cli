@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
@@ -146,7 +147,7 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 	}
 	fmt.Fprintln(os.Stderr, printKeyValue("Selected plan", plan.Value))
 	if dbPassword == "" {
-		dbPassword = PromptPassword(os.Stdin)
+		dbPassword = link.PromptPassword(os.Stdin)
 	}
 	return nil
 }

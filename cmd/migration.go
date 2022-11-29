@@ -6,8 +6,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 var (
@@ -21,11 +24,14 @@ var (
 		Use:   "list",
 		Short: "List local and remote migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			password := viper.GetString("DB_PASSWORD")
-			if password == "" {
-				password = PromptPassword(os.Stdin)
+			fsys := afero.NewOsFs()
+			projectRef, err := utils.LoadProjectRef(fsys)
+			if err != nil {
+				return err
 			}
-			return list.Run(cmd.Context(), username, password, database, afero.NewOsFs())
+			password := getPassword(projectRef)
+			host := utils.GetSupabaseDbHost(projectRef)
+			return list.Run(cmd.Context(), username, password, database, host, fsys)
 		},
 	}
 
@@ -46,4 +52,14 @@ func init() {
 	migrationCmd.AddCommand(migrationListCmd)
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
+}
+
+func getPassword(projectRef string) string {
+	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
+		return password
+	}
+	if password, err := credentials.Get(projectRef); err == nil {
+		return password
+	}
+	return link.PromptPassword(os.Stdin)
 }
