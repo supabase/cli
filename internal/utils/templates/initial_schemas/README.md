@@ -1,6 +1,6 @@
 # About Initial Schemas
 
-These SQL files represent initial schemas needed to set up the database with Supabase stuff. These need to be manually generated for each Postgres major version. Which initial schema used depends on the Docker image tag used to run the local db, which in turn depends on the CLI's `db.major_version` config. 
+These SQL files represent initial schemas needed to set up the database with Supabase stuff. These need to be manually generated for each Postgres major version. Which initial schema used depends on the Docker image tag used to run the local db, which in turn depends on the CLI's `db.major_version` config.
 
 The initial schema for PG12 is not available because the latest image (`supabase/postgres:12.5.0`) doesn't contain `wal2json`, which is required for Realtime to work.
 
@@ -56,13 +56,13 @@ services:
       DB_NAME: postgres
       DB_USER: supabase_admin
       DB_PASSWORD: postgres
-      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
       DB_ENC_KEY: aaaaaaaaaaaaaaaa
       FLY_ALLOC_ID: a
       FLY_APP_NAME: a
       SECRET_KEY_BASE: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      ERL_AFLAGS: '-proto_dist inet_tcp'
-      ENABLE_TAILSCALE: 'false'
+      ERL_AFLAGS: "-proto_dist inet_tcp"
+      ENABLE_TAILSCALE: "false"
       DNS_NODES: a
     command: /app/bin/realtime eval Realtime.Release.migrate
 
@@ -151,28 +151,28 @@ CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_admin;
 -- auth.users definition
 
 CREATE TABLE auth.users (
-	instance_id uuid NULL,
-	id uuid NOT NULL UNIQUE,
-	aud varchar(255) NULL,
-	"role" varchar(255) NULL,
-	email varchar(255) NULL UNIQUE,
-	encrypted_password varchar(255) NULL,
-	confirmed_at timestamptz NULL,
-	invited_at timestamptz NULL,
-	confirmation_token varchar(255) NULL,
-	confirmation_sent_at timestamptz NULL,
-	recovery_token varchar(255) NULL,
-	recovery_sent_at timestamptz NULL,
-	email_change_token varchar(255) NULL,
-	email_change varchar(255) NULL,
-	email_change_sent_at timestamptz NULL,
-	last_sign_in_at timestamptz NULL,
-	raw_app_meta_data jsonb NULL,
-	raw_user_meta_data jsonb NULL,
-	is_super_admin bool NULL,
-	created_at timestamptz NULL,
-	updated_at timestamptz NULL,
-	CONSTRAINT users_pkey PRIMARY KEY (id)
+  instance_id uuid NULL,
+  id uuid NOT NULL UNIQUE,
+  aud varchar(255) NULL,
+  "role" varchar(255) NULL,
+  email varchar(255) NULL UNIQUE,
+  encrypted_password varchar(255) NULL,
+  confirmed_at timestamptz NULL,
+  invited_at timestamptz NULL,
+  confirmation_token varchar(255) NULL,
+  confirmation_sent_at timestamptz NULL,
+  recovery_token varchar(255) NULL,
+  recovery_sent_at timestamptz NULL,
+  email_change_token varchar(255) NULL,
+  email_change varchar(255) NULL,
+  email_change_sent_at timestamptz NULL,
+  last_sign_in_at timestamptz NULL,
+  raw_app_meta_data jsonb NULL,
+  raw_user_meta_data jsonb NULL,
+  is_super_admin bool NULL,
+  created_at timestamptz NULL,
+  updated_at timestamptz NULL,
+  CONSTRAINT users_pkey PRIMARY KEY (id)
 );
 CREATE INDEX users_instance_id_email_idx ON auth.users USING btree (instance_id, email);
 CREATE INDEX users_instance_id_idx ON auth.users USING btree (instance_id);
@@ -181,14 +181,14 @@ comment on table auth.users is 'Auth: Stores user login data within a secure sch
 -- auth.refresh_tokens definition
 
 CREATE TABLE auth.refresh_tokens (
-	instance_id uuid NULL,
-	id bigserial NOT NULL,
-	"token" varchar(255) NULL,
-	user_id varchar(255) NULL,
-	revoked bool NULL,
-	created_at timestamptz NULL,
-	updated_at timestamptz NULL,
-	CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id)
+  instance_id uuid NULL,
+  id bigserial NOT NULL,
+  "token" varchar(255) NULL,
+  user_id varchar(255) NULL,
+  revoked bool NULL,
+  created_at timestamptz NULL,
+  updated_at timestamptz NULL,
+  CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id)
 );
 CREATE INDEX refresh_tokens_instance_id_idx ON auth.refresh_tokens USING btree (instance_id);
 CREATE INDEX refresh_tokens_instance_id_user_id_idx ON auth.refresh_tokens USING btree (instance_id, user_id);
@@ -198,23 +198,23 @@ comment on table auth.refresh_tokens is 'Auth: Store of tokens used to refresh J
 -- auth.instances definition
 
 CREATE TABLE auth.instances (
-	id uuid NOT NULL,
-	uuid uuid NULL,
-	raw_base_config text NULL,
-	created_at timestamptz NULL,
-	updated_at timestamptz NULL,
-	CONSTRAINT instances_pkey PRIMARY KEY (id)
+  id uuid NOT NULL,
+  uuid uuid NULL,
+  raw_base_config text NULL,
+  created_at timestamptz NULL,
+  updated_at timestamptz NULL,
+  CONSTRAINT instances_pkey PRIMARY KEY (id)
 );
 comment on table auth.instances is 'Auth: Manages users across multiple sites.';
 
 -- auth.audit_log_entries definition
 
 CREATE TABLE auth.audit_log_entries (
-	instance_id uuid NULL,
-	id uuid NOT NULL,
-	payload json NULL,
-	created_at timestamptz NULL,
-	CONSTRAINT audit_log_entries_pkey PRIMARY KEY (id)
+  instance_id uuid NULL,
+  id uuid NOT NULL,
+  payload json NULL,
+  created_at timestamptz NULL,
+  CONSTRAINT audit_log_entries_pkey PRIMARY KEY (id)
 );
 CREATE INDEX audit_logs_instance_id_idx ON auth.audit_log_entries USING btree (instance_id);
 comment on table auth.audit_log_entries is 'Auth: Audit trail for user actions.';
@@ -222,8 +222,8 @@ comment on table auth.audit_log_entries is 'Auth: Audit trail for user actions.'
 -- auth.schema_migrations definition
 
 CREATE TABLE auth.schema_migrations (
-	"version" varchar(255) NOT NULL,
-	CONSTRAINT schema_migrations_pkey PRIMARY KEY ("version")
+  "version" varchar(255) NOT NULL,
+  CONSTRAINT schema_migrations_pkey PRIMARY KEY ("version")
 );
 comment on table auth.schema_migrations is 'Auth: Manages updates to the auth system.';
 
@@ -235,7 +235,7 @@ VALUES  ('20171026211738'),
         ('20180108183307'),
         ('20180119214651'),
         ('20180125194653');
-		
+
 -- Gets the User ID from the request cookie
 create or replace function auth.uid() returns uuid as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
@@ -313,8 +313,8 @@ AS $function$
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[1:array_length(_parts,1)-1];
+  select string_to_array(name, '/') into _parts;
+  return _parts[1:array_length(_parts,1)-1];
 END
 $function$;
 
@@ -325,8 +325,8 @@ AS $function$
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[array_length(_parts,1)];
+  select string_to_array(name, '/') into _parts;
+  return _parts[array_length(_parts,1)];
 END
 $function$;
 
@@ -338,10 +338,10 @@ DECLARE
 _parts text[];
 _filename text;
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	select _parts[array_length(_parts,1)] into _filename;
-	-- @todo return the last part instead of 2
-	return split_part(_filename, '.', 2);
+  select string_to_array(name, '/') into _parts;
+  select _parts[array_length(_parts,1)] into _filename;
+  -- @todo return the last part instead of 2
+  return split_part(_filename, '.', 2);
 END
 $function$;
 
@@ -423,7 +423,7 @@ BEGIN
     alter default privileges for user supabase_admin in schema cron grant all
         on functions to postgres with grant option;
 
-    grant all privileges on all tables in schema cron to postgres with grant option; 
+    grant all privileges on all tables in schema cron to postgres with grant option;
 
   END IF;
 
@@ -678,10 +678,10 @@ create schema if not exists graphql_public;
 
 -- GraphQL Placeholder Entrypoint
 create or replace function graphql_public.graphql(
-	"operationName" text default null,
-	query text default null,
-	variables jsonb default null,
-	extensions jsonb default null
+  "operationName" text default null,
+  query text default null,
+  variables jsonb default null,
+  extensions jsonb default null
 )
     returns jsonb
     language plpgsql
@@ -697,7 +697,7 @@ as $$
                 'errors', array['pg_graphql extension is not enabled.']
             );
         ELSE
-   	        RETURN jsonb_build_object(
+             RETURN jsonb_build_object(
                 'data', null::jsonb,
                 'errors', array['pg_graphql is only available on projects running Postgres 14 onwards.']
             );
@@ -745,7 +745,7 @@ AS $func$
             "operationName" text default null,
             query text default null,
             variables jsonb default null,
-            extensions jsonb default null 
+            extensions jsonb default null
         )
             returns jsonb
             language sql
@@ -999,10 +999,10 @@ $func$;
 
 -- GraphQL Placeholder Entrypoint
 create or replace function graphql_public.graphql(
-	"operationName" text default null,
-	query text default null,
-	variables jsonb default null,
-	extensions jsonb default null
+  "operationName" text default null,
+  query text default null,
+  variables jsonb default null,
+  extensions jsonb default null
 )
     returns jsonb
     language plpgsql
@@ -1021,7 +1021,7 @@ as $$
                 )
             );
         ELSE
-   	        RETURN jsonb_build_object(
+             RETURN jsonb_build_object(
                 'errors', jsonb_build_array(
                     jsonb_build_object(
                         'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
@@ -1041,12 +1041,12 @@ DECLARE
   graphql_exists boolean;
 BEGIN
   graphql_exists = (
-      select count(*) = 1 
-      from pg_available_extensions 
-      where name = 'pg_graphql'
+    select count(*) = 1
+    from pg_available_extensions
+    where name = 'pg_graphql'
   );
 
-  IF graphql_exists 
+  IF graphql_exists
   THEN
   create extension if not exists pg_graphql;
   END IF;
@@ -1097,14 +1097,14 @@ BEGIN
             );
         $$;
 
-		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
-		-- function in the extension so we need to grant permissions on existing entities AND
-		-- update default permissions to any others that are created after `graphql.resolve`
+    -- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+    -- function in the extension so we need to grant permissions on existing entities AND
+    -- update default permissions to any others that are created after `graphql.resolve`
         grant usage on schema graphql to postgres, anon, authenticated, service_role;
         grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
         grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
         grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
-		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+    alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
     END IF;
@@ -1122,12 +1122,12 @@ DECLARE
   graphql_exists boolean;
 BEGIN
   graphql_exists = (
-      select count(*) = 1 
-      from pg_available_extensions 
-      where name = 'pg_graphql'
+    select count(*) = 1
+    from pg_available_extensions
+    where name = 'pg_graphql'
   );
 
-  IF graphql_exists 
+  IF graphql_exists
   THEN
   create extension if not exists pg_graphql schema extensions;
   END IF;
@@ -1141,10 +1141,10 @@ DO $$
 DECLARE
   pg_cron_installed boolean;
 BEGIN
-  -- checks if pg_cron is enabled   
+  -- checks if pg_cron is enabled
   pg_cron_installed = (
-    select count(*) = 1 
-    from pg_available_extensions 
+    select count(*) = 1
+    from pg_available_extensions
     where name = 'pg_cron'
     and installed_version is not null
   );
@@ -1164,7 +1164,7 @@ BEGIN
     alter default privileges for user supabase_admin in schema cron grant all
         on functions to postgres with grant option;
 
-    grant all privileges on all tables in schema cron to postgres with grant option; 
+    grant all privileges on all tables in schema cron to postgres with grant option;
   END IF;
 END $$;
 
@@ -1174,14 +1174,13 @@ DECLARE
 BEGIN
   -- checks if pg_net is enabled
   pg_net_installed = (
-    select count(*) = 1 
-    from pg_available_extensions 
+    select count(*) = 1
+    from pg_available_extensions
     where name = 'pg_net'
     and installed_version is not null
-      
   );
 
-  IF pg_net_installed 
+  IF pg_net_installed
   THEN
     IF NOT EXISTS (
       SELECT 1

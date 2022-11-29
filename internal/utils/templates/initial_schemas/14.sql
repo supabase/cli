@@ -78,7 +78,7 @@ CREATE EXTENSION IF NOT EXISTS pgsodium WITH SCHEMA pgsodium;
 
 
 --
--- Name: EXTENSION pgsodium; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgsodium; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgsodium IS 'Pgsodium is a modern cryptography library for Postgres.';
@@ -128,7 +128,7 @@ CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA graphql;
 
 
 --
--- Name: EXTENSION pg_graphql; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pg_graphql; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pg_graphql IS 'pg_graphql: GraphQL support';
@@ -142,7 +142,7 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pg_stat_statements; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pg_stat_statements; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pg_stat_statements IS 'track planning and execution statistics of all SQL statements executed';
@@ -156,7 +156,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
@@ -170,7 +170,7 @@ CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pgjwt; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgjwt; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
@@ -184,7 +184,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
@@ -235,11 +235,11 @@ ALTER TYPE auth.factor_type OWNER TO supabase_auth_admin;
 CREATE OR REPLACE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.email', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
-	)::text
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.email', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
+  )::text
 $$;
 
 
@@ -259,7 +259,7 @@ COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' ins
 CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
-  select 
+  select
     coalesce(
         nullif(current_setting('request.jwt.claim', true), ''),
         nullif(current_setting('request.jwt.claims', true), '')
@@ -276,11 +276,11 @@ ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.role', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
-	)::text
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+  )::text
 $$;
 
 
@@ -300,11 +300,11 @@ COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' inste
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.sub', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
-	)::uuid
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  )::uuid
 $$;
 
 
@@ -795,7 +795,7 @@ CREATE OR REPLACE FUNCTION storage.update_updated_at_column() RETURNS trigger
     AS $$
 BEGIN
     NEW.updated_at = now();
-    RETURN NEW; 
+    RETURN NEW;
 END;
 $$;
 

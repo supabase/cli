@@ -80,7 +80,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
@@ -94,7 +94,7 @@ CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pgjwt; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgjwt; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
@@ -108,7 +108,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
@@ -121,11 +121,11 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 CREATE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.email', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
-	)::text
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.email', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
+  )::text
 $$;
 
 
@@ -145,7 +145,7 @@ COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' ins
 CREATE FUNCTION auth.jwt() RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
-  select 
+  select
     coalesce(
         nullif(current_setting('request.jwt.claim', true), ''),
         nullif(current_setting('request.jwt.claims', true), '')
@@ -162,11 +162,11 @@ ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
 CREATE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.role', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
-	)::text
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+  )::text
 $$;
 
 
@@ -186,11 +186,11 @@ COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' inste
 CREATE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
-  select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.sub', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
-	)::uuid
+  select
+    coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  )::uuid
 $$;
 
 
@@ -235,7 +235,7 @@ BEGIN
     alter default privileges for user supabase_admin in schema cron grant all
         on functions to postgres with grant option;
 
-    grant all privileges on all tables in schema cron to postgres with grant option; 
+    grant all privileges on all tables in schema cron to postgres with grant option;
 
   END IF;
 
@@ -290,14 +290,14 @@ BEGIN
             );
         $$;
 
-		-- This hook executes when `graphql.resolve` is created. That is not necessarily the last
-		-- function in the extension so we need to grant permissions on existing entities AND
-		-- update default permissions to any others that are created after `graphql.resolve`
+    -- This hook executes when `graphql.resolve` is created. That is not necessarily the last
+    -- function in the extension so we need to grant permissions on existing entities AND
+    -- update default permissions to any others that are created after `graphql.resolve`
         grant usage on schema graphql to postgres, anon, authenticated, service_role;
         grant select on all tables in schema graphql to postgres, anon, authenticated, service_role;
         grant execute on all functions in schema graphql to postgres, anon, authenticated, service_role;
         grant all on all sequences in schema graphql to postgres, anon, authenticated, service_role;
-		alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
+    alter default privileges in schema graphql grant all on tables to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on functions to postgres, anon, authenticated, service_role;
         alter default privileges in schema graphql grant all on sequences to postgres, anon, authenticated, service_role;
     END IF;
@@ -526,7 +526,7 @@ CREATE FUNCTION graphql_public.graphql("operationName" text DEFAULT NULL::text, 
                 )
             );
         ELSE
-   	        RETURN jsonb_build_object(
+             RETURN jsonb_build_object(
                 'errors', jsonb_build_array(
                     jsonb_build_object(
                         'message', 'pg_graphql is only available on projects running Postgres 14 onwards.'
@@ -552,10 +552,10 @@ DECLARE
 _parts text[];
 _filename text;
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	select _parts[array_length(_parts,1)] into _filename;
-	-- @todo return the last part instead of 2
-	return split_part(_filename, '.', 2);
+  select string_to_array(name, '/') into _parts;
+  select _parts[array_length(_parts,1)] into _filename;
+  -- @todo return the last part instead of 2
+  return split_part(_filename, '.', 2);
 END
 $$;
 
@@ -572,8 +572,8 @@ CREATE FUNCTION storage.filename(name text) RETURNS text
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[array_length(_parts,1)];
+  select string_to_array(name, '/') into _parts;
+  return _parts[array_length(_parts,1)];
 END
 $$;
 
@@ -590,8 +590,8 @@ CREATE FUNCTION storage.foldername(name text) RETURNS text[]
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[1:array_length(_parts,1)-1];
+  select string_to_array(name, '/') into _parts;
+  return _parts[1:array_length(_parts,1)-1];
 END
 $$;
 
@@ -696,7 +696,7 @@ CREATE FUNCTION storage.update_updated_at_column() RETURNS trigger
     AS $$
 BEGIN
     NEW.updated_at = now();
-    RETURN NEW; 
+    RETURN NEW;
 END;
 $$;
 
