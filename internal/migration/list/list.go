@@ -8,46 +8,68 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
-	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
-	// Connect to remote db
-	projectRef, err := utils.LoadProjectRef(fsys)
+func Run(ctx context.Context, username, password, database, host string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	versions, err := loadRemoteMigrations(ctx, username, password, database, host, options...)
 	if err != nil {
 		return err
 	}
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
+	// Render table
+	table, err := makeTable(versions, fsys)
 	if err != nil {
 		return err
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(-1),
+	)
+	if err != nil {
+		return err
+	}
+	out, err := r.Render(table)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+
+	return nil
+}
+
+func loadRemoteMigrations(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) ([]string, error) {
+	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+	if err != nil {
+		return nil, err
 	}
 	defer conn.Close(context.Background())
 	// Load remote migrations
 	rows, err := conn.Query(ctx, commit.LIST_MIGRATION_VERSION)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	remoteMigrations := []string{}
+	versions := []string{}
 	for rows.Next() {
 		var version string
 		if err := rows.Scan(&version); err != nil {
-			return err
+			return nil, err
 		}
-		remoteMigrations = append(remoteMigrations, version)
+		versions = append(versions, version)
 	}
+	return versions, nil
+}
+
+func makeTable(remoteMigrations []string, fsys afero.Fs) (string, error) {
 	// Load local migrations
 	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return err
+		return "", err
 	}
 	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Render table
 	layoutVersion := "20060102150405"
@@ -85,19 +107,5 @@ func Run(ctx context.Context, username, password, database string, fsys afero.Fs
 			j++
 		}
 	}
-
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-	out, err := r.Render(table)
-	if err != nil {
-		return err
-	}
-	fmt.Print(out)
-
-	return nil
+	return table, nil
 }

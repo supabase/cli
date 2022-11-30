@@ -80,17 +80,17 @@ var (
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var password string
-			if linked {
-				password = viper.GetString("DB_PASSWORD")
-				if password == "" {
-					password = PromptPassword(os.Stdin)
-				}
-			}
 			fsys := afero.NewOsFs()
+			if linked {
+				projectRef, err := utils.LoadProjectRef(fsys)
+				if err != nil {
+					return err
+				}
+				dbPassword = getPassword(projectRef)
+			}
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-				return diff.RunMigra(ctx, schema, file, password, fsys)
+				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
 			}
 			return diff.Run(file, fsys)
 		},
@@ -102,12 +102,15 @@ var (
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			password := viper.GetString("DB_PASSWORD")
-			if password == "" {
-				password = PromptPassword(os.Stdin)
+			fsys := afero.NewOsFs()
+			projectRef, err := utils.LoadProjectRef(fsys)
+			if err != nil {
+				return err
 			}
+			password := getPassword(projectRef)
+			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, username, password, database, afero.NewOsFs())
+			return push.Run(ctx, dryRun, username, password, database, host, fsys)
 		},
 	}
 
@@ -122,11 +125,13 @@ var (
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			password := viper.GetString("DB_PASSWORD")
-			if password == "" {
-				password = PromptPassword(os.Stdin)
+			fsys := afero.NewOsFs()
+			projectRef, err := utils.LoadProjectRef(fsys)
+			if err != nil {
+				return err
 			}
-			return changes.Run(cmd.Context(), username, password, database, afero.NewOsFs())
+			password := getPassword(projectRef)
+			return changes.Run(cmd.Context(), username, password, database, fsys)
 		},
 	}
 
@@ -134,12 +139,14 @@ var (
 		Use:   "commit",
 		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			password := viper.GetString("DB_PASSWORD")
-			if password == "" {
-				password = PromptPassword(os.Stdin)
+			fsys := afero.NewOsFs()
+			projectRef, err := utils.LoadProjectRef(fsys)
+			if err != nil {
+				return err
 			}
+			password := getPassword(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, username, password, database, afero.NewOsFs())
+			return commit.Run(ctx, username, password, database, fsys)
 		},
 	}
 

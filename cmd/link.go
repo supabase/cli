@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
-	"golang.org/x/term"
 )
 
 var (
@@ -23,14 +22,9 @@ var (
 		Use:     "link",
 		Short:   "Link to a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectRef, err := cmd.Flags().GetString("project-ref")
-			if err != nil {
-				return err
-			}
-
 			password := viper.GetString("DB_PASSWORD")
 			if password == "" {
-				password = PromptPassword(os.Stdin)
+				password = link.PromptPassword(os.Stdin)
 			}
 
 			fsys := afero.NewOsFs()
@@ -47,19 +41,9 @@ var (
 
 func init() {
 	flags := linkCmd.Flags()
-	flags.String("project-ref", "", "Project ref of the Supabase project.")
+	flags.StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	flags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", flags.Lookup("password")))
 	cobra.CheckErr(linkCmd.MarkFlagRequired("project-ref"))
 	rootCmd.AddCommand(linkCmd)
-}
-
-func PromptPassword(stdin *os.File) string {
-	fmt.Print("Enter your database password: ")
-	bytepw, err := term.ReadPassword(int(stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return ""
-	}
-	return string(bytepw)
 }
