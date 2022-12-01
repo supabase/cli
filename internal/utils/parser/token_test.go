@@ -39,3 +39,11 @@ func TestSplit(t *testing.T) {
 
 	assert.ElementsMatch(t, fixture, stats[:len(fixture)])
 }
+
+func TestSplitAndTrim(t *testing.T) {
+	sql := "\tBEGIN; " + strings.Repeat("a", MaxScannerCapacity)
+	stats, err := SplitAndTrim(strings.NewReader(sql))
+	// Check error
+	assert.ErrorContains(t, err, "bufio.Scanner: token too long\nAfter statement 1: \tBEGIN;")
+	assert.ElementsMatch(t, []string{"BEGIN"}, stats)
+}

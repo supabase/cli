@@ -182,28 +182,22 @@ func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 }
 
 func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
+	lines, err := parser.SplitAndTrim(sql)
+	if err != nil {
+		return err
+	}
 	// Batch migration commands, without using statement cache
 	batch := pgconn.Batch{}
-	lines, err := parser.Split(sql)
-	if err != nil {
-		var stat string
-		if len(lines) > 0 {
-			stat = lines[len(lines)-1]
-		}
-		return fmt.Errorf("%v\nAfter statement %d: %s", err, len(lines), utils.Aqua(stat))
-	}
 	for _, line := range lines {
-		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-		if len(trim) > 0 {
-			batch.ExecParams(trim, nil, nil, nil, nil)
-		}
+		batch.ExecParams(line, nil, nil, nil, nil)
 	}
 	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		i := len(result)
 		var stat string
-		if len(result) < len(lines) {
-			stat = lines[len(result)]
+		if i < len(lines) {
+			stat = lines[i]
 		}
-		return fmt.Errorf("%v\nAt statement %d: %s", err, len(result), utils.Aqua(stat))
+		return fmt.Errorf("%v\nAt statement %d: %s", err, i, utils.Aqua(stat))
 	}
 	return nil
 }
