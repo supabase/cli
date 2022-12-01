@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -23,7 +22,7 @@ func TestMigrationList(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.LIST_MIGRATION_VERSION).
+		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), "admin", "password", "postgres", "localhost", fsys, conn.Intercept)
@@ -46,7 +45,7 @@ func TestMigrationList(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.LIST_MIGRATION_VERSION).
+		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), "admin", "password", "postgres", "localhost", afero.NewReadOnlyFs(fsys), conn.Intercept)
@@ -65,7 +64,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.LIST_MIGRATION_VERSION).
+		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
 		versions, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)
@@ -85,7 +84,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.LIST_MIGRATION_VERSION).
+		conn.Query(LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
 		_, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)
@@ -97,7 +96,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.LIST_MIGRATION_VERSION).
+		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", nil)
 		// Run test
 		_, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)

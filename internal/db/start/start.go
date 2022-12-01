@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -83,7 +82,7 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
 	// Initialise globals
-	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
 		return err
 	}
@@ -143,7 +142,7 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 			return err
 		}
 		// Connect to branch database
-		branchConn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
+		branchConn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
 		if err != nil {
 			return err
 		}

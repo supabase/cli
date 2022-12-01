@@ -77,7 +77,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		return err
 	}
 	host := utils.GetSupabaseDbHost(projectRef)
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host)
+	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host)
 	if err != nil {
 		return err
 	}

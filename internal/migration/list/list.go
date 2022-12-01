@@ -12,9 +12,10 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
 )
+
+const LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
 
 var initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
 
@@ -45,7 +46,7 @@ func Run(ctx context.Context, username, password, database, host string, fsys af
 }
 
 func loadRemoteMigrations(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) ([]string, error) {
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func loadRemoteMigrations(ctx context.Context, username, password, database, hos
 }
 
 func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, commit.LIST_MIGRATION_VERSION)
+	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +124,9 @@ func loadLocalMigrations(fsys afero.Fs) ([]string, error) {
 	}
 	var versions []string
 	for _, filename := range names {
-		matches := utils.MigrateFilePattern.FindStringSubmatch(filename)
-		// Else branch is not reachable
-		if len(matches) > 1 {
-			versions = append(versions, matches[1])
-		}
+		// LoadLocalMigrations guarantees we always have a match
+		verion := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		versions = append(versions, verion)
 	}
 	return versions, nil
 }
