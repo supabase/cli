@@ -21,7 +21,7 @@ const (
 	relayFuncDir = "/home/deno/functions"
 )
 
-func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMap bool, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -95,9 +95,17 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 	// 4. Start Function.
 	localFuncDir := filepath.Join(utils.FunctionsDir, slug)
 	dockerFuncPath := relayFuncDir + "/" + slug + "/index.ts"
+
+	// set import map
+	importMapFlag := "--"
+	if importMap {
+		importMapFullPath := filepath.Join(relayFuncDir, slug, "import_map.json")
+		importMapFlag = "--import-map=" + importMapFullPath
+	}
+
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
 	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, []string{
-		"deno", "cache", dockerFuncPath,
+		"deno", "cache", importMapFlag, dockerFuncPath,
 	}); err != nil {
 		return err
 	}
@@ -131,7 +139,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			types.ExecConfig{
 				Env: env,
 				Cmd: []string{
-					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm", dockerFuncPath,
+					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm", importMapFlag, dockerFuncPath,
 				},
 				AttachStderr: true,
 				AttachStdout: true,
