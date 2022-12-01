@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -73,9 +74,7 @@ func Run(file string, fsys afero.Fs) error {
 
 var (
 	ctx, cancelCtx = context.WithCancel(context.Background())
-	//go:embed templates/reset.sh
-	resetShadowScript string
-	diff              string
+	diff           string
 )
 
 func run(p utils.Program) error {
@@ -83,7 +82,7 @@ func run(p utils.Program) error {
 
 	// 1. Create shadow db and run migrations
 	{
-		if err := ResetDatabase(ctx, utils.DbId, utils.ShadowDbName); err != nil {
+		if err := commit.ResetDatabase(ctx, utils.DbId, utils.ShadowDbName); err != nil {
 			return err
 		}
 
@@ -158,17 +157,6 @@ EOSQL
 		diff = string(diffBytes)
 	}
 
-	return nil
-}
-
-// Creates a fresh database inside a Postgres container.
-func ResetDatabase(ctx context.Context, container, shadow string) error {
-	// Our initial schema should not exceed the maximum size of an env var, ~32KB
-	env := []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql}
-	cmd := []string{"/bin/bash", "-c", resetShadowScript}
-	if _, err := utils.DockerExecOnce(ctx, container, env, cmd); err != nil {
-		return errors.New("error creating shadow database")
-	}
 	return nil
 }
 

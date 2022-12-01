@@ -25,7 +25,6 @@ import (
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	differ "github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -42,6 +41,8 @@ CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMAR
 var (
 	//go:embed templates/dump_initial_migration.sh
 	dumpInitialMigrationScript string
+	//go:embed templates/reset.sh
+	resetShadowScript string
 )
 
 func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
@@ -219,7 +220,7 @@ EOSQL
 		}
 
 		p.Send(utils.StatusMsg("Resetting database..."))
-		if err := differ.ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
+		if err := ResetDatabase(ctx, dbId, utils.ShadowDbName); err != nil {
 			return err
 		}
 
@@ -510,5 +511,16 @@ func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 		return conflictErr
 	}
 
+	return nil
+}
+
+// Creates a fresh database inside a Postgres container.
+func ResetDatabase(ctx context.Context, container, shadow string) error {
+	// Our initial schema should not exceed the maximum size of an env var, ~32KB
+	env := []string{"DB_NAME=" + shadow, "SCHEMA=" + utils.InitialSchemaSql}
+	cmd := []string{"/bin/bash", "-c", resetShadowScript}
+	if _, err := utils.DockerExecOnce(ctx, container, env, cmd); err != nil {
+		return errors.New("error creating shadow database")
+	}
 	return nil
 }
