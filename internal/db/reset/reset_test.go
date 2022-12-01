@@ -126,7 +126,7 @@ func TestResetDatabase(t *testing.T) {
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "table.sql")
+		path := filepath.Join(utils.MigrationsDir, "0_table.sql")
 		sql := "CREATE TABLE example()"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock postgres

@@ -177,7 +177,7 @@ At statement 0: create schema public`)
 		// Check diff file
 		exists, err := afero.DirExists(fsys, utils.MigrationsDir)
 		assert.NoError(t, err)
-		assert.False(t, exists)
+		assert.True(t, exists)
 	})
 }
 

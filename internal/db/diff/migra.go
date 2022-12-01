@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,12 +19,12 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/lint"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
 var (
-	initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
 	//go:embed templates/migra.sh
 	diffSchemaScript string
 )
@@ -162,35 +161,21 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 	return MigrateDatabase(ctx, conn, fsys)
 }
 
-func shouldSkip(name string) bool {
-	// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
-	// the first migration (prev versions of the CLI) is deprecated.
-	matches := initSchemaPattern.FindStringSubmatch(name)
-	if len(matches) == 2 {
-		if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err == nil && timestamp < 20211209000000 {
-			return true
-		}
-	}
-	return false
-}
-
 func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	migrations, err := list.LoadLocalMigrations(fsys)
+	if err != nil {
+		return err
+	}
 	// Apply migrations
-	if migrations, err := afero.ReadDir(fsys, utils.MigrationsDir); err == nil {
-		for i, migration := range migrations {
-			if i == 0 && shouldSkip(migration.Name()) {
-				fmt.Fprintln(os.Stderr, "Skipping migration "+utils.Bold(migration.Name())+`... (replace "init" with a different file name to apply this migration)`)
-				continue
-			}
-			fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(migration.Name())+"...")
-			sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, migration.Name()))
-			if err != nil {
-				return err
-			}
-			defer sql.Close()
-			if err := BatchExecDDL(ctx, conn, sql); err != nil {
-				return err
-			}
+	for _, filename := range migrations {
+		fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(filename)+"...")
+		sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
+		if err != nil {
+			return err
+		}
+		defer sql.Close()
+		if err := BatchExecDDL(ctx, conn, sql); err != nil {
+			return err
 		}
 	}
 	return nil
