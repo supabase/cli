@@ -8,13 +8,10 @@ require (
 	github.com/charmbracelet/bubbletea v0.22.1
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/charmbracelet/lipgloss v0.6.0
-	github.com/danieljoos/wincred v1.1.2
 	github.com/deepmap/oapi-codegen v1.12.3
 	github.com/docker/cli v20.10.21+incompatible
 	github.com/docker/docker v20.10.21+incompatible
-	github.com/docker/docker-credential-helpers v0.7.0
 	github.com/docker/go-connections v0.4.0
-	github.com/godbus/dbus/v5 v5.0.6
 	github.com/jackc/pgx/v4 v4.17.2
 	github.com/joho/godotenv v1.4.0
 	github.com/matoous/go-nanoid/v2 v2.0.0
@@ -32,7 +29,9 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52 v1.0.3 // indirect
+	github.com/danieljoos/wincred v1.1.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/getkin/kin-openapi v0.107.0 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
@@ -41,6 +40,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.0 // indirect
 	github.com/go-playground/validator/v10 v10.11.1 // indirect
 	github.com/goccy/go-json v0.9.11 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/h2non/parth v0.0.0-20190131123155-b4df798d6542 // indirect
 	github.com/invopop/yaml v0.1.0 // indirect
