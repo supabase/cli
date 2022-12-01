@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -117,7 +116,7 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	defer ticker.Stop()
 	// Retry until connected, cancelled, or timeout
 	for t := now; t.Before(expiry); t = <-ticker.C {
-		conn, err = lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.ShadowPort, "postgres", options...)
+		conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.ShadowPort, "postgres", options...)
 		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
 			break
 		}

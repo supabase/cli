@@ -11,8 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -47,7 +45,7 @@ func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts
 		return err
 	}
 	// Run lint script
-	conn, err := ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", opts...)
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", opts...)
 	if err != nil {
 		return err
 	}
@@ -83,25 +81,6 @@ func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) erro
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(filtered)
-}
-
-// Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectLocalPostgres(ctx context.Context, host string, port uint, database string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	url := fmt.Sprintf("postgresql://postgres:postgres@%s:%d/%s?connect_timeout=2", host, port, database)
-	// Parse connection url
-	config, err := pgx.ParseConfig(url)
-	if err != nil {
-		return nil, err
-	}
-	// Apply config overrides
-	for _, op := range options {
-		op(config)
-	}
-	if viper.GetBool("DEBUG") {
-		debug.SetupPGX(config)
-	}
-	// Connect to database
-	return pgx.ConnectConfig(ctx, config)
 }
 
 func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Result, error) {
