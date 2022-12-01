@@ -107,17 +107,14 @@ func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	}
 	defer sql.Close()
 	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	// Batch seed commands, safe to use statement cache
-	batch := pgx.Batch{}
-	lines, err := parser.Split(sql)
+	lines, err := parser.SplitAndTrim(sql)
 	if err != nil {
 		return err
 	}
+	// Batch seed commands, safe to use statement cache
+	batch := pgx.Batch{}
 	for _, line := range lines {
-		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-		if len(trim) > 0 {
-			batch.Queue(trim)
-		}
+		batch.Queue(line)
 	}
 	return conn.SendBatch(ctx, &batch).Close()
 }
