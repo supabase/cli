@@ -117,8 +117,9 @@ func (m *MockFs) Open(name string) (afero.File, error) {
 	}
 	return m.MemMapFs.Open(name)
 }
-func TestMakeTable(t *testing.T) {
-	t.Run("lists local and remote", func(t *testing.T) {
+
+func TestLocalMigrations(t *testing.T) {
+	t.Run("loads migration versions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "20220727064246_test.sql")
@@ -126,16 +127,31 @@ func TestMakeTable(t *testing.T) {
 		path = filepath.Join(utils.MigrationsDir, "20220727064248_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Run test
-		_, err := makeTable([]string{"20220727064246", "20220727064247"}, fsys)
+		versions, err := loadLocalMigrations(fsys)
 		// Check error
 		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"20220727064246", "20220727064248"}, versions)
+	})
+
+	t.Run("ignores outdated and invalid files", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "20211208000000_init.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		path = filepath.Join(utils.MigrationsDir, "20211208000001_invalid.ts")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		// Run test
+		versions, err := loadLocalMigrations(fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, versions)
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		_, err := makeTable(nil, afero.NewReadOnlyFs(fsys))
+		_, err := loadLocalMigrations(afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -144,8 +160,49 @@ func TestMakeTable(t *testing.T) {
 		// Setup in-memory fs
 		fsys := MockFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		_, err := makeTable(nil, &fsys)
+		_, err := loadLocalMigrations(&fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
+	})
+}
+
+func TestMakeTable(t *testing.T) {
+	t.Run("tabulate version", func(t *testing.T) {
+		// Run test
+		table := makeTable([]string{"0", "2"}, []string{"0", "1"})
+		// Check error
+		lines := strings.Split(strings.TrimSpace(table), "\n")
+		assert.ElementsMatch(t, []string{
+			"|Local|Remote|Time (UTC)|",
+			"|-|-|-|",
+			"|`0`|`0`|`0`|",
+			"|`1`|` `|`1`|",
+			"|` `|`2`|`2`|",
+		}, lines)
+	})
+
+	t.Run("tabulate timestamp", func(t *testing.T) {
+		// Run test
+		table := makeTable([]string{"20220727064246", "20220727064248"}, []string{"20220727064246", "20220727064247"})
+		// Check error
+		lines := strings.Split(strings.TrimSpace(table), "\n")
+		assert.ElementsMatch(t, []string{
+			"|Local|Remote|Time (UTC)|",
+			"|-|-|-|",
+			"|`20220727064246`|`20220727064246`|`2022-07-27 06:42:46`|",
+			"|`20220727064247`|` `|`2022-07-27 06:42:47`|",
+			"|` `|`20220727064248`|`2022-07-27 06:42:48`|",
+		}, lines)
+	})
+
+	t.Run("ignores string values", func(t *testing.T) {
+		// Run test
+		table := makeTable([]string{"a", "c"}, []string{"a", "b"})
+		// Check error
+		lines := strings.Split(strings.TrimSpace(table), "\n")
+		assert.ElementsMatch(t, []string{
+			"|Local|Remote|Time (UTC)|",
+			"|-|-|-|",
+		}, lines)
 	})
 }
