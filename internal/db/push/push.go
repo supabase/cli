@@ -4,111 +4,110 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgtype"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/remote/commit"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/parser"
 )
 
-func Run(ctx context.Context, dryRun bool, username, password, database, host string, fsys afero.Fs) error {
+var (
+	errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
+)
+
+func Run(ctx context.Context, dryRun bool, username, password, database, host string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
-		fmt.Println("DRY RUN: migrations will *not* be pushed to the database.")
+		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
-	conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, host)
+	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-
-	// Assert db.major_version is compatible.
-	if err := commit.AssertPostgresVersionMatch(conn); err != nil {
+	pending, err := getPendingMigrations(ctx, conn, fsys)
+	if err != nil {
 		return err
 	}
-
-	// If `schema_migrations` is not a "prefix" of list of migrations in repo, fail & warn user.
-	rows, err := conn.Query(ctx, commit.LIST_MIGRATION_VERSION)
-	if err != nil {
-		return fmt.Errorf(`Error querying remote database: %w.
-Try running `+utils.Aqua("supabase link")+" to reinitialise the project.", err)
+	if len(pending) == 0 {
+		fmt.Println("Linked project is up to date.")
+		return nil
 	}
-
-	versions := []string{}
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return err
-		}
-		versions = append(versions, version)
-	}
-
-	migrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-	if err != nil {
-		return fmt.Errorf(`No migrations found: %w.
-Try running `+utils.Aqua("supabase migration new")+".", err)
-	}
-
-	conflictErr := errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
-	if len(versions) > len(migrations) {
-		return fmt.Errorf("%w; Found %d versions and %d migrations.", conflictErr, len(versions), len(migrations))
-	}
-
-	if !dryRun {
-		fmt.Println("Applying unapplied migrations...")
-	}
-
-	for i, migration := range migrations {
-		matches := utils.MigrateFilePattern.FindStringSubmatch(migration.Name())
-		if len(matches) == 0 {
-			return errors.New("Can't process file in " + utils.MigrationsDir + ": " + migration.Name())
-		}
-
-		migrationTimestamp := matches[1]
-
-		if i >= len(versions) {
-			// skip
-		} else if versions[i] == migrationTimestamp {
+	// Push pending migrations
+	for _, filename := range pending {
+		if dryRun {
+			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
 			continue
-		} else {
-			return fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", conflictErr, versions[i], migrationTimestamp, i)
 		}
-
-		f, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, migration.Name()))
-		if err != nil {
-			return err
-		}
-
-		if err := func() error {
-			tx, err := conn.Begin(ctx)
-			if err != nil {
-				return fmt.Errorf("%w; while beginning migration %s", err, migrationTimestamp)
-			}
-			defer tx.Rollback(context.Background()) //nolint:errcheck
-
-			if dryRun {
-				fmt.Printf("Would apply migration %s:\n%s\n\n---\n\n", migration.Name(), f)
-			} else {
-				if _, err := tx.Exec(ctx, string(f)); err != nil {
-					return fmt.Errorf("%w; while executing migration %s", err, migrationTimestamp)
-				}
-				// Insert a row to `schema_migrations`
-				if _, err := conn.Exec(ctx, commit.INSERT_MIGRATION_VERSION, migrationTimestamp); err != nil {
-					return fmt.Errorf("%w; while inserting migration %s", err, migrationTimestamp)
-				}
-				if err := tx.Commit(ctx); err != nil {
-					return fmt.Errorf("%w; while committing migration %s", err, migrationTimestamp)
-				}
-			}
-
-			return nil
-		}(); err != nil {
+		if err := pushMigration(ctx, conn, filename, fsys); err != nil {
 			return err
 		}
 	}
-
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
+	return nil
+}
+
+func getPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
+	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	localMigrations, err := list.LoadLocalMigrations(fsys)
+	if err != nil {
+		return nil, err
+	}
+	// Check remote is in-sync or behind local
+	if len(remoteMigrations) > len(localMigrations) {
+		return nil, fmt.Errorf("%w; Found %d versions and %d migrations.", errConflict, len(remoteMigrations), len(localMigrations))
+	}
+	for i, remote := range remoteMigrations {
+		filename := localMigrations[i]
+		// LoadLocalMigrations guarantees we always have a match
+		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		if remote != local {
+			return nil, fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", errConflict, remote, filename, i)
+		}
+	}
+	return localMigrations[len(remoteMigrations):], nil
+}
+
+func pushMigration(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
+	fmt.Fprintln(os.Stderr, "Pushing migration "+utils.Bold(filename)+"...")
+	sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
+	if err != nil {
+		return err
+	}
+	lines, err := parser.SplitAndTrim(sql)
+	if err != nil {
+		return err
+	}
+	batch := pgconn.Batch{}
+	for _, line := range lines {
+		batch.ExecParams(line, nil, nil, nil, nil)
+	}
+	// Insert into migration history
+	lines = append(lines, commit.INSERT_MIGRATION_VERSION)
+	version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+	batch.ExecParams(
+		commit.INSERT_MIGRATION_VERSION,
+		[][]byte{[]byte(version)},
+		[]uint32{pgtype.TextOID},
+		[]int16{pgtype.TextFormatCode},
+		nil,
+	)
+	// ExecBatch is implicitly transactional
+	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		i := len(result)
+		var stat string
+		if i < len(lines) {
+			stat = lines[i]
+		}
+		return fmt.Errorf("%v\nAt statement %d: %s", err, i, utils.Aqua(stat))
+	}
 	return nil
 }
