@@ -113,13 +113,10 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          application/json: &ref_4
             schema:
-              $ref: "#/components/schemas/CreateFunctionBody"
-          application/vnd.denoland.eszip:
-            schema:
-              type: string
-              format: binary
+              $ref: '#/components/schemas/CreateFunctionBody'
+          application/vnd.denoland.eszip: *ref_4
       responses:
         '201':
           description: ''
@@ -131,9 +128,9 @@ paths:
           description: ''
         '500':
           description: Failed to create project's function
-      tags: &ref_4
+      tags: &ref_5
         - projects
-      security: &ref_5
+      security: &ref_6
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -166,19 +163,14 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's functions
-      tags: *ref_4
-      security: *ref_5
+      tags: *ref_5
+      security: *ref_6
   /v1/projects/{ref}/functions/{function_slug}:
     get:
       operationId: getFunction
       summary: Retrieve a function
       description: Retrieves a function with the specified slug and project.
       parameters:
-        - name: include_body
-          required: false
-          in: query
-          schema:
-            type: boolean
         - name: ref
           required: true
           in: path
@@ -205,9 +197,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve function with given slug
-      tags: &ref_6
+      tags: &ref_8
         - projects
-      security: &ref_7
+      security: &ref_9
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -250,13 +242,10 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          application/json: &ref_7
             schema:
-              $ref: "#/components/schemas/UpdateFunctionBody"
-          application/vnd.denoland.eszip:
-            schema:
-              type: string
-              format: binary
+              $ref: '#/components/schemas/UpdateFunctionBody'
+          application/vnd.denoland.eszip: *ref_7
       responses:
         '200':
           description: ''
@@ -268,8 +257,8 @@ paths:
           description: ''
         '500':
           description: Failed to update function with given slug
-      tags: *ref_6
-      security: *ref_7
+      tags: *ref_8
+      security: *ref_9
     delete:
       operationId: deleteFunction
       summary: Delete a function
@@ -297,8 +286,38 @@ paths:
           description: ''
         '500':
           description: Failed to delete function with given slug
-      tags: *ref_6
-      security: *ref_7
+      tags: *ref_8
+      security: *ref_9
+  /v1/projects/{ref}/functions/{function_slug}/body:
+    get:
+      operationId: getFunctionBody
+      summary: Retrieve a function body
+      description: Retrieves a function body for the specified slug and project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve function body with given slug
+      tags: *ref_8
+      security: *ref_9
   /v1/projects/{ref}/custom-hostname:
     get:
       operationId: getCustomHostnameConfig
@@ -323,9 +342,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's custom hostname config
-      tags: &ref_8
+      tags: &ref_10
         - custom hostname (beta)
-      security: &ref_9
+      security: &ref_11
         - bearer: []
     delete:
       operationId: removeCustomHostnameConfig
@@ -346,8 +365,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete project custom hostname configuration
-      tags: *ref_8
-      security: *ref_9
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/initialize:
     post:
       operationId: createCustomHostnameConfig
@@ -378,8 +397,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project custom hostname configuration
-      tags: *ref_8
-      security: *ref_9
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/reverify:
     post:
       operationId: reverify
@@ -406,8 +425,8 @@ paths:
           description: ''
         '500':
           description: Failed to verify project custom hostname configuration
-      tags: *ref_8
-      security: *ref_9
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/activate:
     post:
       operationId: activate
@@ -432,8 +451,8 @@ paths:
           description: ''
         '500':
           description: Failed to activate project custom hostname configuration
-      tags: *ref_8
-      security: *ref_9
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/pgsodium:
     get:
       operationId: getConfig
@@ -458,9 +477,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's pgsodium config
-      tags: &ref_10
+      tags: &ref_12
         - pgsodium (beta)
-      security: &ref_11
+      security: &ref_13
         - bearer: []
     put:
       operationId: updateConfig
@@ -493,8 +512,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project's pgsodium config
-      tags: *ref_10
-      security: *ref_11
+      tags: *ref_12
+      security: *ref_13
   /v1/projects/{ref}/secrets:
     get:
       operationId: getSecrets
@@ -522,9 +541,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's secrets
-      tags: &ref_12
+      tags: &ref_14
         - projects
-      security: &ref_13
+      security: &ref_15
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -556,8 +575,8 @@ paths:
           description: ''
         '500':
           description: Failed to create project's secrets
-      tags: *ref_12
-      security: *ref_13
+      tags: *ref_14
+      security: *ref_15
     delete:
       operationId: deleteSecrets
       summary: Bulk delete secrets
@@ -590,8 +609,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete secrets with given names
-      tags: *ref_12
-      security: *ref_13
+      tags: *ref_14
+      security: *ref_15
   /v1/projects/{ref}/types/typescript:
     get:
       operationId: getTypescriptTypes
@@ -653,9 +672,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network bans
-      tags: &ref_14
+      tags: &ref_16
         - network bans (beta)
-      security: &ref_15
+      security: &ref_17
         - bearer: []
   /v1/projects/{ref}/network-bans:
     delete:
@@ -683,8 +702,8 @@ paths:
           description: ''
         '500':
           description: Failed to remove network bans.
-      tags: *ref_14
-      security: *ref_15
+      tags: *ref_16
+      security: *ref_17
 info:
   title: Supabase API (v1)
   description: ''
@@ -703,6 +722,16 @@ components:
       bearerFormat: JWT
       type: http
   schemas:
+    DatabaseResponse:
+      type: object
+      properties:
+        host:
+          type: string
+        version:
+          type: string
+      required:
+        - host
+        - version
     ProjectResponse:
       type: object
       properties:
@@ -716,6 +745,8 @@ components:
           type: string
         created_at:
           type: string
+        database:
+          $ref: '#/components/schemas/DatabaseResponse'
       required:
         - id
         - organization_id
@@ -747,6 +778,7 @@ components:
             - ap-southeast-2
             - eu-west-1
             - eu-west-2
+            - eu-west-3
             - eu-central-1
             - ca-central-1
             - ap-south-1
@@ -776,6 +808,22 @@ components:
           type: string
       required:
         - name
+    CreateFunctionBody:
+      type: object
+      properties:
+        slug:
+          type: string
+          pattern: /^[A-Za-z0-9_-]+$/
+        name:
+          type: string
+        body:
+          type: string
+        verify_jwt:
+          type: boolean
+      required:
+        - slug
+        - name
+        - body
     FunctionResponse:
       type: object
       properties:
@@ -786,7 +834,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_16
+          enum: &ref_18
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -807,21 +855,6 @@ components:
         - version
         - created_at
         - updated_at
-    CreateFunctionBody:
-      type: object
-      properties:
-        slug:
-          type: string
-        name:
-          type: string
-        body:
-          type: string
-        verify_jwt:
-          type: boolean
-      required:
-        - slug
-        - name
-        - body
     FunctionSlugResponse:
       type: object
       properties:
@@ -832,7 +865,7 @@ components:
         name:
           type: string
         status:
-          enum: *ref_16
+          enum: *ref_18
           type: string
         version:
           type: number
