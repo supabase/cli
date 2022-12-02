@@ -98,7 +98,7 @@ func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
 func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool) error {
 	var deployedFuncId string
 	{
-		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug, &api.GetFunctionParams{})
+		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
 		if err != nil {
 			return err
 		}
