@@ -134,15 +134,12 @@ type ClientInterface interface {
 	DeleteFunction(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetFunction request
-	GetFunction(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetFunction(ctx context.Context, ref string, functionSlug string, params *GetFunctionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateFunction request with any body
 	UpdateFunctionWithBody(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateFunction(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetFunctionBody request
-	GetFunctionBody(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveNetworkBan request with any body
 	RemoveNetworkBanWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -369,8 +366,8 @@ func (c *Client) DeleteFunction(ctx context.Context, ref string, functionSlug st
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetFunction(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetFunctionRequest(c.Server, ref, functionSlug)
+func (c *Client) GetFunction(ctx context.Context, ref string, functionSlug string, params *GetFunctionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetFunctionRequest(c.Server, ref, functionSlug, params)
 	if err != nil {
 		return nil, err
 	}
@@ -395,18 +392,6 @@ func (c *Client) UpdateFunctionWithBody(ctx context.Context, ref string, functio
 
 func (c *Client) UpdateFunction(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateFunctionRequest(c.Server, ref, functionSlug, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetFunctionBody(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetFunctionBodyRequest(c.Server, ref, functionSlug)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,7 +1038,7 @@ func NewDeleteFunctionRequest(server string, ref string, functionSlug string) (*
 }
 
 // NewGetFunctionRequest generates requests for GetFunction
-func NewGetFunctionRequest(server string, ref string, functionSlug string) (*http.Request, error) {
+func NewGetFunctionRequest(server string, ref string, functionSlug string, params *GetFunctionParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1084,6 +1069,26 @@ func NewGetFunctionRequest(server string, ref string, functionSlug string) (*htt
 	if err != nil {
 		return nil, err
 	}
+
+	queryValues := queryURL.Query()
+
+	if params.IncludeBody != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include_body", runtime.ParamLocationQuery, *params.IncludeBody); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	queryURL.RawQuery = queryValues.Encode()
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
@@ -1195,47 +1200,6 @@ func NewUpdateFunctionRequestWithBody(server string, ref string, functionSlug st
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetFunctionBodyRequest generates requests for GetFunctionBody
-func NewGetFunctionBodyRequest(server string, ref string, functionSlug string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "function_slug", runtime.ParamLocationPath, functionSlug)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/functions/%s/body", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -1672,15 +1636,12 @@ type ClientWithResponsesInterface interface {
 	DeleteFunctionWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*DeleteFunctionResponse, error)
 
 	// GetFunction request
-	GetFunctionWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*GetFunctionResponse, error)
+	GetFunctionWithResponse(ctx context.Context, ref string, functionSlug string, params *GetFunctionParams, reqEditors ...RequestEditorFn) (*GetFunctionResponse, error)
 
 	// UpdateFunction request with any body
 	UpdateFunctionWithBodyWithResponse(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateFunctionResponse, error)
 
 	UpdateFunctionWithResponse(ctx context.Context, ref string, functionSlug string, params *UpdateFunctionParams, body UpdateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateFunctionResponse, error)
-
-	// GetFunctionBody request
-	GetFunctionBodyWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*GetFunctionBodyResponse, error)
 
 	// RemoveNetworkBan request with any body
 	RemoveNetworkBanWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error)
@@ -2021,27 +1982,6 @@ func (r UpdateFunctionResponse) StatusCode() int {
 	return 0
 }
 
-type GetFunctionBodyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetFunctionBodyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetFunctionBodyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type RemoveNetworkBanResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2357,8 +2297,8 @@ func (c *ClientWithResponses) DeleteFunctionWithResponse(ctx context.Context, re
 }
 
 // GetFunctionWithResponse request returning *GetFunctionResponse
-func (c *ClientWithResponses) GetFunctionWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*GetFunctionResponse, error) {
-	rsp, err := c.GetFunction(ctx, ref, functionSlug, reqEditors...)
+func (c *ClientWithResponses) GetFunctionWithResponse(ctx context.Context, ref string, functionSlug string, params *GetFunctionParams, reqEditors ...RequestEditorFn) (*GetFunctionResponse, error) {
+	rsp, err := c.GetFunction(ctx, ref, functionSlug, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2380,15 +2320,6 @@ func (c *ClientWithResponses) UpdateFunctionWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseUpdateFunctionResponse(rsp)
-}
-
-// GetFunctionBodyWithResponse request returning *GetFunctionBodyResponse
-func (c *ClientWithResponses) GetFunctionBodyWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*GetFunctionBodyResponse, error) {
-	rsp, err := c.GetFunctionBody(ctx, ref, functionSlug, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetFunctionBodyResponse(rsp)
 }
 
 // RemoveNetworkBanWithBodyWithResponse request with arbitrary body returning *RemoveNetworkBanResponse
@@ -2834,22 +2765,6 @@ func ParseUpdateFunctionResponse(rsp *http.Response) (*UpdateFunctionResponse, e
 		}
 		response.JSON200 = &dest
 
-	}
-
-	return response, nil
-}
-
-// ParseGetFunctionBodyResponse parses an HTTP response from a GetFunctionBodyWithResponse call
-func ParseGetFunctionBodyResponse(rsp *http.Response) (*GetFunctionBodyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetFunctionBodyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
 	}
 
 	return response, nil

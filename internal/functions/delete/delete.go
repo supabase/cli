@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) error {
@@ -30,7 +31,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) 
 
 	// 2. Delete Function.
 	{
-		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug, &api.GetFunctionParams{})
 		if err != nil {
 			return err
 		}
