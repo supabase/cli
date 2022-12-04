@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/jackc/pgconn"
@@ -13,18 +14,18 @@ import (
 
 // Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	// Build connection string
 	// Use port 6543 for connection pooling
-	pgUrl := "postgresql://:@:6543/?connect_timeout=10"
+	pgUrl := fmt.Sprintf(
+		"postgresql://%s@%s:6543/%s?connect_timeout=10",
+		url.UserPassword(username, password),
+		host,
+		url.PathEscape(database),
+	)
 	// Parse connection url
 	config, err := pgx.ParseConfig(pgUrl)
 	if err != nil {
 		return nil, err
 	}
-	config.User = username
-	config.Password = password
-	config.Host = host
-	config.Database = database
 	// Simple protocol is preferred over pgx default Parse -> Bind flow because
 	//   1. Using a single command for each query reduces RTT over an Internet connection.
 	//   2. Performance gains from using the alternate binary protocol is negligible because
