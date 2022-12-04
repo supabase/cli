@@ -15,6 +15,13 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+const (
+	user = "admin"
+	pass = "password"
+	host = "localhost"
+	db   = "postgres"
+)
+
 func TestMigrationList(t *testing.T) {
 	t.Run("lists remote migrations", func(t *testing.T) {
 		// Setup in-memory fs
@@ -25,7 +32,7 @@ func TestMigrationList(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), "admin", "password", "postgres", "localhost", fsys, conn.Intercept)
+		err := Run(context.Background(), user, pass, db, host, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -34,9 +41,9 @@ func TestMigrationList(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "admin", "password", "postgres", "localhost:0", fsys)
+		err := Run(context.Background(), user, pass, db, "0", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "hostname resolving error (lookup localhost:0: no such host)")
+		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
 	})
 
 	t.Run("throws error on local failure", func(t *testing.T) {
@@ -48,18 +55,13 @@ func TestMigrationList(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), "admin", "password", "postgres", "localhost", afero.NewReadOnlyFs(fsys), conn.Intercept)
+		err := Run(context.Background(), user, pass, db, host, afero.NewReadOnlyFs(fsys), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
 }
 
 func TestRemoteMigrations(t *testing.T) {
-	user := "admin"
-	pass := "password"
-	host := "localhost"
-	db := "postgres"
-
 	t.Run("loads migration versions", func(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -75,9 +77,9 @@ func TestRemoteMigrations(t *testing.T) {
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Run test
-		_, err := loadRemoteMigrations(context.Background(), user, pass, db, host+":0")
+		_, err := loadRemoteMigrations(context.Background(), user, pass, db, "0")
 		// Check error
-		assert.ErrorContains(t, err, "hostname resolving error (lookup localhost:0: no such host)")
+		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
 	})
 
 	t.Run("throws error on missing schema", func(t *testing.T) {

@@ -59,9 +59,9 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, user, pass, database, host+":0", fsys)
+		err := Run(context.Background(), false, user, pass, database, "0", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "hostname resolving error (lookup localhost:0: no such host)")
+		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
 	})
 
 	t.Run("throws error on remote load failure", func(t *testing.T) {
