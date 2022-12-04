@@ -38,8 +38,8 @@ func TestConnectRemotePostgres(t *testing.T) {
 func TestConnectLocal(t *testing.T) {
 	t.Run("connects with debug log", func(t *testing.T) {
 		viper.Set("DEBUG", true)
-		_, err := ConnectLocalPostgres(context.Background(), "localhost", 5432, "postgres")
-		assert.ErrorContains(t, err, "dial error (dial tcp 127.0.0.1:5432: connect: connection refused)")
+		_, err := ConnectLocalPostgres(context.Background(), "0", 5432, "postgres")
+		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:5432: connect: connection refused)")
 	})
 
 	t.Run("throws error on invalid port", func(t *testing.T) {
