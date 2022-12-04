@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -61,7 +60,7 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 }
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
 		return err
 	}
@@ -82,7 +81,7 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 // Recreate postgres database by connecting to template1
 func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := lint.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
 	if err != nil {
 		return err
 	}
@@ -107,17 +106,14 @@ func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	}
 	defer sql.Close()
 	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	// Batch seed commands, safe to use statement cache
-	batch := pgx.Batch{}
-	lines, err := parser.Split(sql)
+	lines, err := parser.SplitAndTrim(sql)
 	if err != nil {
 		return err
 	}
+	// Batch seed commands, safe to use statement cache
+	batch := pgx.Batch{}
 	for _, line := range lines {
-		trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-		if len(trim) > 0 {
-			batch.Queue(trim)
-		}
+		batch.Queue(line)
 	}
 	return conn.SendBatch(ctx, &batch).Close()
 }

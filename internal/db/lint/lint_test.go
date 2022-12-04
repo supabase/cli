@@ -11,7 +11,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -121,7 +120,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -167,7 +166,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -187,7 +186,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -207,27 +206,12 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
 		_, err = LintDatabase(ctx, mock, []string{"public"})
 		assert.Error(t, err)
-	})
-}
-
-func TestConnectLocal(t *testing.T) {
-	t.Run("connects with debug log", func(t *testing.T) {
-		viper.Set("DEBUG", true)
-		_, err := ConnectLocalPostgres(context.Background(), "localhost", 5432, "postgres")
-		assert.ErrorContains(t, err, "dial error (dial tcp 127.0.0.1:5432: connect: connection refused)")
-	})
-
-	t.Run("throws error on invalid port", func(t *testing.T) {
-		_, err := ConnectLocalPostgres(context.Background(), "localhost", 0, "postgres")
-		assert.ErrorContains(t, err, "invalid port (outside range)")
-		_, err = ConnectLocalPostgres(context.Background(), "localhost", 65536, "postgres")
-		assert.ErrorContains(t, err, `invalid port (strconv.ParseUint: parsing "65536": value out of range)`)
 	})
 }
 

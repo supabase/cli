@@ -2,10 +2,13 @@ package parser
 
 import (
 	"bufio"
+	"fmt"
 	"io"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils"
 )
 
 const (
@@ -77,7 +80,7 @@ func (t *tokenizer) ScanToken(data []byte, atEOF bool) (advance int, token []byt
 // token can be parsed as statement separator.
 //
 // Each statement is split as it is, without removing comments or white spaces.
-func Split(sql io.Reader) (stats []string, err error) {
+func Split(sql io.Reader, transform ...func(string) string) (stats []string, err error) {
 	t := tokenizer{state: &ReadyState{}}
 	scanner := bufio.NewScanner(sql)
 
@@ -88,11 +91,28 @@ func Split(sql io.Reader) (stats []string, err error) {
 		maxbuf = MaxScannerCapacity
 	}
 	scanner.Buffer(buf, int(maxbuf))
-
 	scanner.Split(t.ScanToken)
+
+	var token string
 	for scanner.Scan() {
-		token := scanner.Text()
-		stats = append(stats, token)
+		token = scanner.Text()
+		trim := token
+		for _, apply := range transform {
+			trim = apply(trim)
+		}
+		if len(trim) > 0 {
+			stats = append(stats, trim)
+		}
 	}
-	return stats, scanner.Err()
+	err = scanner.Err()
+	if err != nil {
+		err = fmt.Errorf("%v\nAfter statement %d: %s", err, len(stats), utils.Aqua(token))
+	}
+	return stats, err
+}
+
+func SplitAndTrim(sql io.Reader) (stats []string, err error) {
+	return Split(sql, func(token string) string {
+		return strings.TrimRight(token, ";")
+	}, strings.TrimSpace)
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -126,7 +125,7 @@ func TestResetDatabase(t *testing.T) {
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "table.sql")
+		path := filepath.Join(utils.MigrationsDir, "0_table.sql")
 		sql := "CREATE TABLE example()"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock postgres
@@ -157,7 +156,7 @@ func TestSeedDatabase(t *testing.T) {
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := lint.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -181,7 +180,7 @@ func TestSeedDatabase(t *testing.T) {
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := lint.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

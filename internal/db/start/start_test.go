@@ -39,7 +39,7 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.Split(strings.NewReader(utils.GlobalsSql))
+		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
 		require.NoError(t, err)
 		for _, line := range globals {
 			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
@@ -106,7 +106,7 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.Split(strings.NewReader(utils.GlobalsSql))
+		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
 		require.NoError(t, err)
 		for _, line := range globals {
 			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
@@ -139,7 +139,7 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.Split(strings.NewReader(utils.GlobalsSql))
+		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
 		require.NoError(t, err)
 		for _, line := range globals {
 			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
@@ -178,7 +178,7 @@ func TestInitDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.Split(strings.NewReader(utils.GlobalsSql))
+		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
 		require.NoError(t, err)
 		for _, line := range globals {
 			trim := strings.TrimSpace(strings.TrimRight(line, ";"))

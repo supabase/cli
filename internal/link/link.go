@@ -3,11 +3,15 @@ package link
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
+	"golang.org/x/term"
 )
 
 func Run(ctx context.Context, projectRef, username, password, database string, fsys afero.Fs) error {
@@ -21,7 +25,7 @@ func Run(ctx context.Context, projectRef, username, password, database string, f
 
 	// 2. Check database connection
 	{
-		conn, err := commit.ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
+		conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, utils.GetSupabaseDbHost(projectRef))
 		if err != nil {
 			return err
 		}
@@ -35,6 +39,10 @@ func Run(ctx context.Context, projectRef, username, password, database string, f
 			if _, err := conn.Exec(ctx, commit.CREATE_MIGRATION_TABLE); err != nil {
 				return err
 			}
+		}
+		// Save database password
+		if err := credentials.Set(projectRef, password); err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 		}
 	}
 
@@ -66,4 +74,14 @@ func validateProjectRef(ctx context.Context, projectRef string, fsys afero.Fs) e
 	}
 
 	return nil
+}
+
+func PromptPassword(stdin *os.File) string {
+	fmt.Print("Enter your database password: ")
+	bytepw, err := term.ReadPassword(int(stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return ""
+	}
+	return string(bytepw)
 }
