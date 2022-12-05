@@ -102,7 +102,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 
 	denoCacheCmd := []string{"deno", "cache"}
 	{
-		if _, err := os.Stat(localImportMapPath); err == nil {
+		if _, err := fsys.Stat(localImportMapPath); err == nil {
 			denoCacheCmd = append(denoCacheCmd, "--import-map="+dockerImportMapPath)
 		} else if errors.Is(err, os.ErrNotExist) {
 			// skip
