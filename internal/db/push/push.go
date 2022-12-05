@@ -66,7 +66,7 @@ func pushVersion(ctx context.Context, dryRun bool, conn *pgx.Conn, fsys afero.Fs
 		return err
 	}
 	if dryRun {
-		fmt.Fprintln(os.Stderr, "Would rewrite migration history as:")
+		fmt.Fprintln(os.Stderr, "Would rewrite migration versions as:")
 		return list.RenderTable(localVersions, localVersions)
 	}
 	// Create history table if not exists
@@ -83,8 +83,11 @@ func pushVersion(ctx context.Context, dryRun bool, conn *pgx.Conn, fsys afero.Fs
 	for _, version := range localVersions {
 		insertVersionSQL(&batch, version)
 	}
-	_, err = conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
-	return err
+	if _, err = conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Pushed migration versions to remote:")
+	return list.RenderTable(localVersions, localVersions)
 }
 
 func getPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {

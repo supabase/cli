@@ -312,4 +312,27 @@ func TestPushVersion(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
+
+	t.Run("throws error on insert failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("CREATE SCHEMA IF NOT EXISTS supabase_migrations").
+			Reply("CREATE SCHEMA").
+			Query("CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)").
+			Reply("CREATE TABLE").
+			Query(CLEAR_MIGRATION).
+			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`)
+		// Connect to mock
+		ctx := context.Background()
+		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		require.NoError(t, err)
+		defer mock.Close(ctx)
+		// Run test
+		err = pushVersion(context.Background(), false, mock, fsys)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
+	})
 }
