@@ -142,7 +142,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 
 		denoRunCmd := []string{"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm"}
 		{
-			if _, err := os.Stat(localImportMapPath); err == nil {
+			if _, err := fsys.Stat(localImportMapPath); err == nil {
 				denoRunCmd = append(denoRunCmd, "--import-map="+dockerImportMapPath)
 			} else if errors.Is(err, os.ErrNotExist) {
 				// skip
