@@ -22,7 +22,7 @@ async function buildAndWrite(p: string) {
         actualPath = specifier.replace(virtualBasePath, `./${funcDirPath}/`);
       }
       try {
-        const content = await Deno.readTextFile((actualPath));
+        const content = await Deno.readTextFile(actualPath);
         return {
           kind: "module",
           specifier,
