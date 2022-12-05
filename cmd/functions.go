@@ -74,7 +74,6 @@ var (
 	}
 
 	envFilePath string
-	importMap   bool
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
@@ -82,7 +81,7 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, importMap, afero.NewOsFs())
+			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, afero.NewOsFs())
 		},
 	}
 )
@@ -94,7 +93,6 @@ func init() {
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsServeCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
-	functionsServeCmd.Flags().BoolVar(&importMap, "import-map", false, "Use import map defined in import_map.json")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
