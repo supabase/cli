@@ -24,25 +24,11 @@ func Run(ctx context.Context, username, password, database, host string, fsys af
 	if err != nil {
 		return err
 	}
-	localVersions, err := loadLocalMigrations(fsys)
+	localVersions, err := LoadLocalVersions(fsys)
 	if err != nil {
 		return err
 	}
-	// Render table
-	table := makeTable(remoteVersions, localVersions)
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-	out, err := r.Render(table)
-	if err != nil {
-		return err
-	}
-	fmt.Print(out)
-	return nil
+	return RenderTable(remoteVersions, localVersions)
 }
 
 func loadRemoteMigrations(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) ([]string, error) {
@@ -83,7 +69,7 @@ func formatTimestamp(version string) string {
 	return timestamp.Format(layoutHuman)
 }
 
-func makeTable(remoteMigrations []string, localMigrations []string) string {
+func makeTable(remoteMigrations, localMigrations []string) string {
 	var err error
 	table := "|Local|Remote|Time (UTC)|\n|-|-|-|\n"
 	for i, j := 0, 0; i < len(remoteMigrations) || j < len(localMigrations); {
@@ -117,7 +103,24 @@ func makeTable(remoteMigrations []string, localMigrations []string) string {
 	return table
 }
 
-func loadLocalMigrations(fsys afero.Fs) ([]string, error) {
+func RenderTable(remoteVersions, localVersions []string) error {
+	table := makeTable(remoteVersions, localVersions)
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(-1),
+	)
+	if err != nil {
+		return err
+	}
+	out, err := r.Render(table)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
+}
+
+func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 	names, err := LoadLocalMigrations(fsys)
 	if err != nil {
 		return nil, err

@@ -29,8 +29,7 @@ import (
 const (
 	CHECK_MIGRATION_EXISTS = "SELECT 1 FROM supabase_migrations.schema_migrations LIMIT 1"
 	CREATE_MIGRATION_TABLE = `CREATE SCHEMA IF NOT EXISTS supabase_migrations;
-CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);
-`
+CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);`
 	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
 )
 
