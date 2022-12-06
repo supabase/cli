@@ -76,15 +76,22 @@ async function parsePackageJson() {
   return { binName, binPath, url, version };
 }
 
+const errGlobal = `Installing Supabase CLI as a global module is not supported.
+Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
+`;
+
 /**
  * Reads the configuration from application's package.json,
  * validates properties, copied the binary from the package and stores at
- * ./bin in the package's root. NPM already has support to install binary files
- * specific locations when invoked with "npm install -g"
+ * ./bin in the package's root.
  *
  *  See: https://docs.npmjs.com/files/package.json#bin
  */
 async function main() {
+  if (process.env.npm_config_global) {
+    throw errGlobal;
+  }
+
   const opts = await parsePackageJson();
   await fs.promises.mkdir(opts.binPath, { recursive: true });
 
