@@ -100,7 +100,7 @@ brew upgrade supabase
 
 ##### via Linux packages
 
-Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg` file depending on your package manager and run the respective commands.
+Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
 
 ```sh
 sudo apk add --allow-untrusted <...>.apk
@@ -115,7 +115,7 @@ sudo rpm -i <...>.rpm
 ```
 
 ```sh
-sudo pacman -S <...>.pkg
+sudo pacman -U <...>.pkg.tar.zst
 ```
 
 #### Other Platforms

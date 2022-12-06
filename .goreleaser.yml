@@ -64,8 +64,6 @@ nfpms:
     maintainer: Supabase CLI
     homepage: https://supabase.com
     license: MIT
-    description: |
-      Supabase is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
     formats:
       - apk
       - deb
