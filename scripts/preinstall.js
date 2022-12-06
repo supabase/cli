@@ -59,10 +59,11 @@ async function parsePackageJson() {
   }
 
   // We have validated the config. It exists in all its glory
-  let binName = path.basename(packageJson.bin);
-  const binPath = path.dirname(packageJson.bin);
-  let url = packageJson.url;
-  let version = packageJson.version;
+  const bin = packageJson.bin.toString();
+  const binName = path.basename(bin);
+  const binPath = path.dirname(bin);
+  let url = packageJson.url.toString();
+  let version = packageJson.version.toString();
 
   // strip the 'v' if necessary v0.0.1 => 0.0.1
   if (version[0] === "v") version = version.substr(1);
