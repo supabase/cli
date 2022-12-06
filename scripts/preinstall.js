@@ -24,6 +24,10 @@ const PLATFORM_MAPPING = {
 };
 
 function validateConfiguration(packageJson) {
+  if (!packageJson.name) {
+    return "'name' property must be specified";
+  }
+
   if (!packageJson.version) {
     return "'version' property must be specified";
   }
@@ -59,6 +63,7 @@ async function parsePackageJson() {
   }
 
   // We have validated the config. It exists in all its glory
+  const pkgName = packageJson.name.toString();
   const bin = packageJson.bin.toString();
   const binName = path.basename(bin);
   const binPath = path.dirname(bin);
@@ -74,7 +79,7 @@ async function parsePackageJson() {
   url = url.replace(/{{version}}/g, version);
   url = url.replace(/{{bin_name}}/g, binName);
 
-  return { binName, binPath, url, version };
+  return { pkgName, binName, binPath, url, version };
 }
 
 const errGlobal = `Installing Supabase CLI as a global module is not supported.
@@ -118,9 +123,9 @@ async function main() {
 
   // Copy binary because yarn runs as postinstall
   if (process.env.npm_config_user_agent.startsWith("yarn/")) {
-    const bin = path.join(opts.binPath, opts.binName);
-    const link = path.join("..", ".bin", opts.binName);
-    await fs.promises.symlink(bin, link);
+    const src = path.join("..", opts.pkgName, opts.binPath, opts.binName);
+    const dst = path.join("..", ".bin", opts.binName);
+    await fs.promises.symlink(src, dst);
   }
 
   // TODO: verify checksums
