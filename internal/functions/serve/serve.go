@@ -94,11 +94,26 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 
 	// 4. Start Function.
 	localFuncDir := filepath.Join(utils.FunctionsDir, slug)
+	localImportMapPath := filepath.Join(localFuncDir, "import_map.json")
+	// We assume the image is always Linux, so path separator must always be `/`.
+	// We can't use filepath.Join because it uses the path separator for the host system, which is `\` for Windows.
 	dockerFuncPath := relayFuncDir + "/" + slug + "/index.ts"
+	dockerImportMapPath := relayFuncDir + "/" + slug + "/import_map.json"
+
+	denoCacheCmd := []string{"deno", "cache"}
+	{
+		if _, err := fsys.Stat(localImportMapPath); err == nil {
+			denoCacheCmd = append(denoCacheCmd, "--import-map="+dockerImportMapPath)
+		} else if errors.Is(err, os.ErrNotExist) {
+			// skip
+		} else {
+			return fmt.Errorf("failed to check import_map.json for function %s: %w", slug, err)
+		}
+		denoCacheCmd = append(denoCacheCmd, dockerFuncPath)
+	}
+
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
-	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, []string{
-		"deno", "cache", dockerFuncPath,
-	}); err != nil {
+	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, denoCacheCmd); err != nil {
 		return err
 	}
 
@@ -125,14 +140,24 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			}
 		}
 
+		denoRunCmd := []string{"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm"}
+		{
+			if _, err := fsys.Stat(localImportMapPath); err == nil {
+				denoRunCmd = append(denoRunCmd, "--import-map="+dockerImportMapPath)
+			} else if errors.Is(err, os.ErrNotExist) {
+				// skip
+			} else {
+				return fmt.Errorf("failed to check index.ts for function %s: %w", slug, err)
+			}
+			denoRunCmd = append(denoRunCmd, dockerFuncPath)
+		}
+
 		exec, err := utils.Docker.ContainerExecCreate(
 			ctx,
 			utils.DenoRelayId,
 			types.ExecConfig{
-				Env: env,
-				Cmd: []string{
-					"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm", dockerFuncPath,
-				},
+				Env:          env,
+				Cmd:          denoRunCmd,
 				AttachStderr: true,
 				AttachStdout: true,
 			},
