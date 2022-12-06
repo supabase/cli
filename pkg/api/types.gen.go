@@ -100,6 +100,7 @@ type DatabaseResponse struct {
 type FunctionResponse struct {
 	CreatedAt float32                `json:"created_at"`
 	Id        string                 `json:"id"`
+	ImportMap *bool                  `json:"import_map,omitempty"`
 	Name      string                 `json:"name"`
 	Slug      string                 `json:"slug"`
 	Status    FunctionResponseStatus `json:"status"`
@@ -116,6 +117,7 @@ type FunctionSlugResponse struct {
 	Body      *string                    `json:"body,omitempty"`
 	CreatedAt float32                    `json:"created_at"`
 	Id        string                     `json:"id"`
+	ImportMap *bool                      `json:"import_map,omitempty"`
 	Name      string                     `json:"name"`
 	Slug      string                     `json:"slug"`
 	Status    FunctionSlugResponseStatus `json:"status"`
@@ -196,6 +198,7 @@ type CreateFunctionParams struct {
 	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
 	Name      *string `form:"name,omitempty" json:"name,omitempty"`
 	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
 }
 
 // UpdateFunctionParams defines parameters for UpdateFunction.
@@ -203,6 +206,7 @@ type UpdateFunctionParams struct {
 	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
 	Name      *string `form:"name,omitempty" json:"name,omitempty"`
 	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
 }
 
 // DeleteSecretsJSONBody defines parameters for DeleteSecrets.
