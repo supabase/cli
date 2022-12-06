@@ -503,3 +503,8 @@ func ShowStatus() {
         ` + Aqua("anon key") + `: ` + AnonKey + `
 ` + Aqua("service_role key") + `: ` + ServiceRoleKey)
 }
+
+func ShortContainerImageName(imageName string) string {
+	var re = regexp.MustCompile(`\/(.*):`)
+	return re.FindStringSubmatch(imageName)[1]
+}

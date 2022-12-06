@@ -34,7 +34,7 @@ func (t StatusWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -59,7 +59,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(p, ctx, fsys)
+		errCh <- run(p, ctx, fsys, excludedContainers)
 		p.Send(tea.Quit())
 	}()
 
@@ -108,7 +108,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 	return err
 }
 
-func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.DockerNetworkCreateIfNotExists(ctx, utils.NetId); err != nil {
 		return err
 	}
@@ -121,6 +121,11 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*p
 			return err
 		}
 		for _, image := range utils.ServiceImages {
+			if isContainerExcluded(image, excludedContainers) {
+				fmt.Println("excluding container:", image)
+				continue
+			}
+
 			if err := pullImage(p, ctx, image); err != nil {
 				return err
 			}
@@ -136,7 +141,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, options ...func(*p
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Kong.
-	{
+	if !isContainerExcluded(utils.KongImage, excludedContainers) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
 			ProjectId:      utils.Config.ProjectId,
@@ -177,7 +182,7 @@ EOF
 	}
 
 	// Start GoTrue.
-	{
+	if !isContainerExcluded(utils.GotrueImage, excludedContainers) {
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
@@ -255,162 +260,176 @@ EOF
 		}
 	}
 
-	inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
-	if utils.Config.Inbucket.SmtpPort != 0 {
-		inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
-	}
-	if utils.Config.Inbucket.Pop3Port != 0 {
-		inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
-	}
 	// Start Inbucket.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.InbucketImage,
-		},
-		container.HostConfig{
-			PortBindings:  inbucketPortBindings,
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.InbucketId,
-	); err != nil {
-		return err
+	if !isContainerExcluded(utils.InbucketImage, excludedContainers) {
+		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+		if utils.Config.Inbucket.SmtpPort != 0 {
+			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+		}
+		if utils.Config.Inbucket.Pop3Port != 0 {
+			inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+		}
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.InbucketImage,
+			},
+			container.HostConfig{
+				PortBindings:  inbucketPortBindings,
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.InbucketId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Realtime.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.RealtimeImage,
-			Env: []string{
-				"PORT=4000",
-				"DB_HOST=" + utils.DbId,
-				"DB_PORT=5432",
-				"DB_USER=postgres",
-				"DB_PASSWORD=postgres",
-				"DB_NAME=postgres",
-				"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-				"DB_ENC_KEY=supabaserealtime",
-				"FLY_ALLOC_ID=abc123",
-				"FLY_APP_NAME=realtime",
-				"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-				"ERL_AFLAGS=-proto_dist inet_tcp",
-				"ENABLE_TAILSCALE=false",
-				"DNS_NODES=''",
+	if !isContainerExcluded(utils.RealtimeImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.RealtimeImage,
+				Env: []string{
+					"PORT=4000",
+					"DB_HOST=" + utils.DbId,
+					"DB_PORT=5432",
+					"DB_USER=postgres",
+					"DB_PASSWORD=postgres",
+					"DB_NAME=postgres",
+					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+					"DB_ENC_KEY=supabaserealtime",
+					"FLY_ALLOC_ID=abc123",
+					"FLY_APP_NAME=realtime",
+					"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+					"ERL_AFLAGS=-proto_dist inet_tcp",
+					"ENABLE_TAILSCALE=false",
+					"DNS_NODES=''",
+				},
 			},
-		},
-		container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.RealtimeId,
-	); err != nil {
-		return err
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.RealtimeId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start PostgREST.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.PostgrestImage,
-			Env: []string{
-				"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
-				"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
-				"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
-				"PGRST_DB_ANON_ROLE=anon",
-				"PGRST_JWT_SECRET=" + utils.JWTSecret,
+	if !isContainerExcluded(utils.PostgrestImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.PostgrestImage,
+				Env: []string{
+					"PGRST_DB_URI=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
+					"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
+					"PGRST_DB_ANON_ROLE=anon",
+					"PGRST_JWT_SECRET=" + utils.JWTSecret,
+				},
 			},
-		},
-		container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.RestId,
-	); err != nil {
-		return err
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.RestId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Storage.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.StorageImage,
-			Env: []string{
-				"ANON_KEY=" + utils.AnonKey,
-				"SERVICE_KEY=" + utils.ServiceRoleKey,
-				"POSTGREST_URL=http://" + utils.RestId + ":3000",
-				"PGRST_JWT_SECRET=" + utils.JWTSecret,
-				"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
-				fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
-				"STORAGE_BACKEND=file",
-				"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
-				"TENANT_ID=stub",
-				// TODO: https://github.com/supabase/storage-api/issues/55
-				"REGION=stub",
-				"GLOBAL_S3_BUCKET=stub",
+	if !isContainerExcluded(utils.StorageImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.StorageImage,
+				Env: []string{
+					"ANON_KEY=" + utils.AnonKey,
+					"SERVICE_KEY=" + utils.ServiceRoleKey,
+					"POSTGREST_URL=http://" + utils.RestId + ":3000",
+					"PGRST_JWT_SECRET=" + utils.JWTSecret,
+					"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
+					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+					"STORAGE_BACKEND=file",
+					"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
+					"TENANT_ID=stub",
+					// TODO: https://github.com/supabase/storage-api/issues/55
+					"REGION=stub",
+					"GLOBAL_S3_BUCKET=stub",
+				},
 			},
-		},
-		container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.StorageId,
-	); err != nil {
-		return err
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.StorageId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start diff tool.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image:      utils.DifferImage,
-			Entrypoint: []string{"sleep", "infinity"},
-		},
-		container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.DifferId,
-	); err != nil {
-		return err
+	if !isContainerExcluded(utils.DifferImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image:      utils.DifferImage,
+				Entrypoint: []string{"sleep", "infinity"},
+			},
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.DifferId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start pg-meta.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.PgmetaImage,
-			Env: []string{
-				"PG_META_PORT=8080",
-				"PG_META_DB_HOST=" + utils.DbId,
+	if !isContainerExcluded(utils.PgmetaImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.PgmetaImage,
+				Env: []string{
+					"PG_META_PORT=8080",
+					"PG_META_DB_HOST=" + utils.DbId,
+				},
 			},
-		},
-		container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.PgmetaId,
-	); err != nil {
-		return err
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.PgmetaId,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Start Studio.
-	if _, err := utils.DockerStart(
-		ctx,
-		container.Config{
-			Image: utils.StudioImage,
-			Env: []string{
-				"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
-				"POSTGRES_PASSWORD=postgres",
+	if !isContainerExcluded(utils.StudioImage, excludedContainers) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.StudioImage,
+				Env: []string{
+					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
+					"POSTGRES_PASSWORD=postgres",
 
-				"SUPABASE_URL=http://" + utils.KongId + ":8000",
-				fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-				"SUPABASE_ANON_KEY=" + utils.AnonKey,
-				"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
+					"SUPABASE_URL=http://" + utils.KongId + ":8000",
+					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
+					"SUPABASE_ANON_KEY=" + utils.AnonKey,
+					"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
+				},
 			},
-		},
-		container.HostConfig{
-			PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-		utils.StudioId,
-	); err != nil {
-		return err
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.StudioId,
+		); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -502,4 +521,13 @@ func (m model) View() string {
 	}
 
 	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
+}
+
+func isContainerExcluded(imageName string, excludedContainers []string) bool {
+	for _, excludedContainer := range excludedContainers {
+		if utils.ShortContainerImageName(imageName) == excludedContainer {
+			return true
+		}
+	}
+	return false
 }

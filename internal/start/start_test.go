@@ -18,7 +18,7 @@ import (
 
 func TestStartCommand(t *testing.T) {
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs())
+		err := Run(context.Background(), afero.NewMemMapFs(), []string{})
 		assert.ErrorContains(t, err, "Have you set up the project with supabase init?")
 	})
 
@@ -27,7 +27,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "Failed to read config: toml")
 	})
@@ -46,7 +46,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/_ping").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -74,7 +74,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "supabase start is already running. Try running supabase stop first.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -108,7 +108,7 @@ func TestStartCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/networks/supabase_network_").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -233,7 +233,7 @@ func TestDatabaseStart(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		err := run(p, context.Background(), fsys, conn.Intercept)
+		err := run(p, context.Background(), fsys, []string{}, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
