@@ -116,6 +116,13 @@ async function main() {
     await fs.promises.link(bin + ext, bin);
   }
 
+  // Copy binary because yarn runs as postinstall
+  if (process.env.npm_config_user_agent.startsWith("yarn/")) {
+    const bin = path.join(opts.binPath, opts.binName);
+    const link = path.join("..", ".bin", opts.binName);
+    await fs.promises.symlink(bin, link);
+  }
+
   // TODO: verify checksums
   console.info("Installed Supabase CLI successfully");
 }
