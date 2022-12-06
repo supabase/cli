@@ -21,7 +21,7 @@ This repository contains all the functionality for Supabase CLI.
 
 #### NodeJS
 
-Available via [NPM](https://www.npmjs.com). To install:
+Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
 
 ```bash
 npm i supabase --save-dev
