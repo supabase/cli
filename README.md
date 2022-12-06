@@ -49,7 +49,25 @@ brew upgrade supabase
 
 #### Windows
 
-Available via [Scoop](https://scoop.sh). To install:
+Available via [Scoop](https://scoop.sh) and [Chocolatey](https://chocolatey.org).
+
+##### via Chocolatey
+
+To install:
+
+```powershell
+choco install supabase
+```
+
+To upgrade:
+
+```powershell
+choco upgrade supabase
+```
+
+##### via Scoop
+
+To install:
 
 ```powershell
 scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
@@ -82,7 +100,7 @@ brew upgrade supabase
 
 ##### via Linux packages
 
-Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm` file depending on your package manager and run the respective commands.
+Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg` file depending on your package manager and run the respective commands.
 
 ```sh
 sudo apk add --allow-untrusted <...>.apk
@@ -94,6 +112,10 @@ sudo dpkg -i <...>.deb
 
 ```sh
 sudo rpm -i <...>.rpm
+```
+
+```sh
+sudo pacman -S <...>.pkg
 ```
 
 #### Other Platforms
@@ -110,7 +132,7 @@ Add a symlink to the binary in `$PATH` for easier access:
 ln -s "$(go env GOPATH)/cli" /usr/bin/supabase
 ```
 
-This works on non-standard linux distros, like archlinux.
+This works on other non-standard Linux distros.
 
 ### Run the CLI
 
@@ -140,4 +162,3 @@ go run . help
 ## Sponsors
 
 [![New Sponsor](https://user-images.githubusercontent.com/10214025/90518111-e74bbb00-e198-11ea-8f88-c9e3c1aa4b5b.png)](https://github.com/sponsors/supabase)
-
