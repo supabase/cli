@@ -22,7 +22,7 @@ var startCmd = &cobra.Command{
 
 func init() {
 	flags := startCmd.Flags()
-	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "names of containers to not start. ["+excludableContainers()+"]")
+	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+excludableContainers()+"]")
 	rootCmd.AddCommand(startCmd)
 }
 
