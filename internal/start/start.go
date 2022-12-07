@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"text/template"
@@ -114,6 +115,10 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	p.Send(utils.StatusMsg("Pulling images..."))
+	excluded := make(map[string]bool)
+	for _, name := range excludedContainers {
+		excluded[name] = true
+	}
 
 	// Pull images.
 	{
@@ -121,8 +126,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			return err
 		}
 		for _, image := range utils.ServiceImages {
-			if isContainerExcluded(image, excludedContainers) {
-				fmt.Println("excluding container:", image)
+			if isContainerExcluded(image, excluded) {
+				fmt.Fprintln(os.Stderr, "Excluding container:", image)
 				continue
 			}
 
@@ -141,7 +146,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Kong.
-	if !isContainerExcluded(utils.KongImage, excludedContainers) {
+	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
 			ProjectId:      utils.Config.ProjectId,
@@ -182,7 +187,7 @@ EOF
 	}
 
 	// Start GoTrue.
-	if !isContainerExcluded(utils.GotrueImage, excludedContainers) {
+	if !isContainerExcluded(utils.GotrueImage, excluded) {
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
@@ -261,7 +266,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if !isContainerExcluded(utils.InbucketImage, excludedContainers) {
+	if !isContainerExcluded(utils.InbucketImage, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -285,7 +290,7 @@ EOF
 	}
 
 	// Start Realtime.
-	if !isContainerExcluded(utils.RealtimeImage, excludedContainers) {
+	if !isContainerExcluded(utils.RealtimeImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -317,7 +322,7 @@ EOF
 	}
 
 	// Start PostgREST.
-	if !isContainerExcluded(utils.PostgrestImage, excludedContainers) {
+	if !isContainerExcluded(utils.PostgrestImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -340,7 +345,7 @@ EOF
 	}
 
 	// Start Storage.
-	if !isContainerExcluded(utils.StorageImage, excludedContainers) {
+	if !isContainerExcluded(utils.StorageImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -370,7 +375,7 @@ EOF
 	}
 
 	// Start diff tool.
-	if !isContainerExcluded(utils.DifferImage, excludedContainers) {
+	if !isContainerExcluded(utils.DifferImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -387,7 +392,7 @@ EOF
 	}
 
 	// Start pg-meta.
-	if !isContainerExcluded(utils.PgmetaImage, excludedContainers) {
+	if !isContainerExcluded(utils.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -407,7 +412,7 @@ EOF
 	}
 
 	// Start Studio.
-	if !isContainerExcluded(utils.StudioImage, excludedContainers) {
+	if !isContainerExcluded(utils.StudioImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -523,11 +528,10 @@ func (m model) View() string {
 	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
 }
 
-func isContainerExcluded(imageName string, excludedContainers []string) bool {
-	for _, excludedContainer := range excludedContainers {
-		if utils.ShortContainerImageName(imageName) == excludedContainer {
-			return true
-		}
+func isContainerExcluded(imageName string, excluded map[string]bool) bool {
+	short := utils.ShortContainerImageName(imageName)
+	if val, ok := excluded[short]; ok && val {
+		return true
 	}
 	return false
 }
