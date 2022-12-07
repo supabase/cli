@@ -45,17 +45,32 @@ scoop:
 chocolateys:
   - owners: Supabase
     title: Supabase CLI
-    summary: Supabase CLI
+    summary: The open source Firebase alternative.
     authors: Supabase CLI
     tags: "Supabase CLI firebase postgres serverless BaaS"
     url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     project_url: https://supabase.com
+    icon_rul: https://avatars.githubusercontent.com/u/54469796
     license_url: https://github.com/supabase/cli/blob/main/LICENSE
+    package_source_url: https://github.com/supabase/cli
     project_source_url: https://github.com/supabase/cli
     docs_url: https://supabase.com/docs/reference/cli
     bug_tracker_url: https://github.com/supabase/cli/issues
     description: |
-      Supabase is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+      [![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main)
+
+      [Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+
+      This repository contains all the functionality for Supabase CLI.
+
+      - [x] Running Supabase locally
+      - [x] Managing database migrations
+      - [x] Pushing your local changes to production
+      - [x] Create and Deploy Supabase Functions
+      - [ ] Manage your Supabase Account
+      - [x] Manage your Supabase Projects
+      - [x] Generating types directly from your database schema
+      - [ ] Generating API and validation schemas from your database
     release_notes: "https://github.com/supabase/cli/releases/tag/v{{ .Version }}"
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
     source_repo: "https://push.chocolatey.org/"
