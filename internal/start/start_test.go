@@ -18,7 +18,7 @@ import (
 
 func TestStartCommand(t *testing.T) {
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs())
+		err := Run(context.Background(), afero.NewMemMapFs(), []string{})
 		assert.ErrorContains(t, err, "Have you set up the project with supabase init?")
 	})
 
@@ -27,7 +27,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "Failed to read config: toml")
 	})
@@ -46,7 +46,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/_ping").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -74,7 +74,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "supabase start is already running. Try running supabase stop first.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -108,7 +108,7 @@ func TestStartCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/networks/supabase_network_").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), fsys, []string{})
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -233,7 +233,52 @@ func TestDatabaseStart(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		err := run(p, context.Background(), fsys, conn.Intercept)
+		err := run(p, context.Background(), fsys, []string{}, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips excluded containers", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(types.NetworkCreateResponse{})
+		// Caches all dependencies
+		utils.DbImage = utils.Pg14Image
+		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ImageInspect{})
+		// Start postgres
+		utils.DbId = "test-postgres"
+		utils.Config.Db.Port = 54322
+		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+			}})
+		// Setup mock postgres
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaSql = "create schema private"
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA")
+		// Run test
+		exclude := ExcludableContainers()
+		exclude = append(exclude, "invalid", exclude[0])
+		err := run(p, context.Background(), fsys, exclude, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

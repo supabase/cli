@@ -56,6 +56,14 @@ var ServiceImages = []string{
 	DenoRelayImage,
 }
 
+func ShortContainerImageName(imageName string) string {
+	matches := ImageNamePattern.FindStringSubmatch(imageName)
+	if len(matches) < 2 {
+		return imageName
+	}
+	return matches[1]
+}
+
 const (
 	ShadowDbName = "supabase_shadow"
 
@@ -98,6 +106,7 @@ var (
 	MigrateFilePattern = regexp.MustCompile(`([0-9]+)_.*\.sql`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from schema diffs
 	InternalSchemas = []string{
