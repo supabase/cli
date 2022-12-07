@@ -16,10 +16,6 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
-const (
-	CLEAR_MIGRATION = "TRUNCATE ONLY supabase_migrations.schema_migrations"
-)
-
 var (
 	errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
 )

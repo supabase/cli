@@ -20,18 +20,18 @@ const LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_m
 var initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
 
 func Run(ctx context.Context, username, password, database, host string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	remoteVersions, err := loadRemoteMigrations(ctx, username, password, database, host, options...)
+	remoteVersions, err := loadRemoteVersions(ctx, username, password, database, host, options...)
 	if err != nil {
 		return err
 	}
-	localVersions, err := LoadLocalVersions(fsys)
+	localVersions, err := loadLocalVersions(fsys)
 	if err != nil {
 		return err
 	}
 	return RenderTable(remoteVersions, localVersions)
 }
 
-func loadRemoteMigrations(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) ([]string, error) {
+func loadRemoteVersions(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) ([]string, error) {
 	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func RenderTable(remoteVersions, localVersions []string) error {
 	return nil
 }
 
-func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
+func loadLocalVersions(fsys afero.Fs) ([]string, error) {
 	names, err := LoadLocalMigrations(fsys)
 	if err != nil {
 		return nil, err

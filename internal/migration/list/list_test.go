@@ -69,7 +69,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
-		versions, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)
+		versions, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"20220727064247"}, versions)
@@ -77,7 +77,7 @@ func TestRemoteMigrations(t *testing.T) {
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Run test
-		_, err := loadRemoteMigrations(context.Background(), user, pass, db, "0")
+		_, err := loadRemoteVersions(context.Background(), user, pass, db, "0")
 		// Check error
 		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
 	})
@@ -89,7 +89,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
-		_, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)
+		_, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
 	})
@@ -101,7 +101,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", nil)
 		// Run test
-		_, err := loadRemoteMigrations(context.Background(), user, pass, db, host, conn.Intercept)
+		_, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "number of field descriptions must equal number of destinations, got 0 and 1")
 	})
@@ -128,7 +128,7 @@ func TestLocalMigrations(t *testing.T) {
 		path = filepath.Join(utils.MigrationsDir, "20220727064248_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Run test
-		versions, err := LoadLocalVersions(fsys)
+		versions, err := loadLocalVersions(fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"20220727064246", "20220727064248"}, versions)
@@ -142,7 +142,7 @@ func TestLocalMigrations(t *testing.T) {
 		path = filepath.Join(utils.MigrationsDir, "20211208000001_invalid.ts")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Run test
-		versions, err := LoadLocalVersions(fsys)
+		versions, err := loadLocalVersions(fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, versions)
@@ -152,7 +152,7 @@ func TestLocalMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		_, err := LoadLocalVersions(afero.NewReadOnlyFs(fsys))
+		_, err := loadLocalVersions(afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -161,7 +161,7 @@ func TestLocalMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := MockFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		_, err := LoadLocalVersions(&fsys)
+		_, err := loadLocalVersions(&fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
