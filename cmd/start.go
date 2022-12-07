@@ -6,10 +6,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/start"
-	"github.com/supabase/cli/internal/utils"
 )
 
 var (
+	allowedContainers  = start.ExcludableContainers()
 	excludedContainers []string
 
 	startCmd = &cobra.Command{
@@ -24,14 +24,7 @@ var (
 
 func init() {
 	flags := startCmd.Flags()
-	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+excludableContainers()+"]")
+	names := strings.Join(allowedContainers, ", ")
+	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	rootCmd.AddCommand(startCmd)
-}
-
-func excludableContainers() string {
-	names := []string{}
-	for _, image := range utils.ServiceImages {
-		names = append(names, utils.ShortContainerImageName(image))
-	}
-	return strings.Join(names, ", ")
 }

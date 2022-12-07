@@ -238,4 +238,49 @@ func TestDatabaseStart(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("skips excluded containers", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(types.NetworkCreateResponse{})
+		// Caches all dependencies
+		utils.DbImage = utils.Pg14Image
+		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ImageInspect{})
+		// Start postgres
+		utils.DbId = "test-postgres"
+		utils.Config.Db.Port = 54322
+		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+			}})
+		// Setup mock postgres
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaSql = "create schema private"
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA")
+		// Run test
+		exclude := ExcludableContainers()
+		exclude = append(exclude, "invalid", exclude[0])
+		err := run(p, context.Background(), fsys, exclude, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
