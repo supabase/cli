@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -36,7 +36,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), true, user, pass, database, host, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -50,7 +50,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -59,21 +59,9 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, false, user, pass, database, "0", fsys)
+		err := Run(context.Background(), false, user, pass, database, "0", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
-	})
-
-	t.Run("throws error on local load failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		// Run test
-		err := Run(context.Background(), false, true, user, pass, database, host, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
 	})
 
 	t.Run("throws error on remote load failure", func(t *testing.T) {
@@ -85,7 +73,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
 	})
@@ -100,13 +88,13 @@ func TestMigrationPush(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0").
-			Query(commit.INSERT_MIGRATION_VERSION, "0").
+			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
-		err := Run(context.Background(), false, false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+commit.INSERT_MIGRATION_VERSION)
+		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)
 	})
 }
 
@@ -213,7 +201,7 @@ func TestPushLocal(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(commit.INSERT_MIGRATION_VERSION, "0").
+			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
@@ -255,7 +243,7 @@ func TestPushLocal(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.INSERT_MIGRATION_VERSION, "0").
+		conn.Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Connect to mock
 		ctx := context.Background()
@@ -266,73 +254,6 @@ func TestPushLocal(t *testing.T) {
 		err = pushMigration(ctx, mock, "0_test.sql", fsys)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+commit.INSERT_MIGRATION_VERSION)
-	})
-}
-
-func TestPushVersion(t *testing.T) {
-	t.Run("push version only", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_zero.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
-		path = filepath.Join(utils.MigrationsDir, "1_one.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query("CREATE SCHEMA IF NOT EXISTS supabase_migrations").
-			Reply("CREATE SCHEMA").
-			Query("CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)").
-			Reply("CREATE TABLE").
-			Query(CLEAR_MIGRATION).
-			Reply("TRUNCATE TABLE").
-			Query(commit.INSERT_MIGRATION_VERSION, "0").
-			Reply("INSERT 0 1").
-			Query(commit.INSERT_MIGRATION_VERSION, "1").
-			Reply("INSERT 0 1")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
-		// Run test
-		err = pushVersion(context.Background(), false, mock, fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("dry run", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_zero.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
-		// Run test
-		err := pushVersion(context.Background(), true, nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on insert failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query("CREATE SCHEMA IF NOT EXISTS supabase_migrations").
-			Reply("CREATE SCHEMA").
-			Query("CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)").
-			Reply("CREATE TABLE").
-			Query(CLEAR_MIGRATION).
-			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`)
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
-		// Run test
-		err = pushVersion(context.Background(), false, mock, fsys)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
+		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)
 	})
 }

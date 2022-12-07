@@ -111,6 +111,9 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 			}
 		}
 
+		// Note: imageMap is always set to true, since eszip created will always contain a `import_map.json`.
+		importMap := true
+
 		switch resp.StatusCode() {
 		case http.StatusNotFound: // Function doesn't exist yet, so do a POST
 			var resp *api.CreateFunctionResponse
@@ -127,6 +130,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 					Slug:      &slug,
 					Name:      &slug,
 					VerifyJwt: &verifyJWT,
+					ImportMap: &importMap,
 				}, EszipContentType, functionBody)
 			}
 			if err != nil {
@@ -147,6 +151,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 			} else {
 				resp, err = utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
 					VerifyJwt: &verifyJWT,
+					ImportMap: &importMap,
 				}, EszipContentType, functionBody)
 			}
 			if err != nil {

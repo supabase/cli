@@ -110,6 +110,11 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: import_map
+          required: false
+          in: query
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:
@@ -235,6 +240,11 @@ paths:
           schema:
             type: string
         - name: verify_jwt
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: import_map
           required: false
           in: query
           schema:
@@ -847,6 +857,8 @@ components:
           type: number
         verify_jwt:
           type: boolean
+        import_map:
+          type: boolean
       required:
         - id
         - slug
@@ -874,6 +886,8 @@ components:
         updated_at:
           type: number
         verify_jwt:
+          type: boolean
+        import_map:
           type: boolean
         body:
           type: string

@@ -24,6 +24,10 @@ const PLATFORM_MAPPING = {
 };
 
 function validateConfiguration(packageJson) {
+  if (!packageJson.name) {
+    return "'name' property must be specified";
+  }
+
   if (!packageJson.version) {
     return "'version' property must be specified";
   }
@@ -59,10 +63,12 @@ async function parsePackageJson() {
   }
 
   // We have validated the config. It exists in all its glory
-  let binName = path.basename(packageJson.bin);
-  const binPath = path.dirname(packageJson.bin);
-  let url = packageJson.url;
-  let version = packageJson.version;
+  const pkgName = packageJson.name.toString();
+  const bin = packageJson.bin.toString();
+  const binName = path.basename(bin);
+  const binPath = path.dirname(bin);
+  let url = packageJson.url.toString();
+  let version = packageJson.version.toString();
 
   // strip the 'v' if necessary v0.0.1 => 0.0.1
   if (version[0] === "v") version = version.substr(1);
@@ -73,18 +79,25 @@ async function parsePackageJson() {
   url = url.replace(/{{version}}/g, version);
   url = url.replace(/{{bin_name}}/g, binName);
 
-  return { binName, binPath, url, version };
+  return { pkgName, binName, binPath, url, version };
 }
+
+const errGlobal = `Installing Supabase CLI as a global module is not supported.
+Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
+`;
 
 /**
  * Reads the configuration from application's package.json,
  * validates properties, copied the binary from the package and stores at
- * ./bin in the package's root. NPM already has support to install binary files
- * specific locations when invoked with "npm install -g"
+ * ./bin in the package's root.
  *
  *  See: https://docs.npmjs.com/files/package.json#bin
  */
 async function main() {
+  if (process.env.npm_config_global) {
+    throw errGlobal;
+  }
+
   const opts = await parsePackageJson();
   await fs.promises.mkdir(opts.binPath, { recursive: true });
 
@@ -106,6 +119,13 @@ async function main() {
   if (ext) {
     const bin = path.join(opts.binPath, opts.binName);
     await fs.promises.link(bin + ext, bin);
+  }
+
+  // Copy binary because yarn runs as postinstall
+  if (process.env.npm_config_user_agent.startsWith("yarn/")) {
+    const src = path.join("..", opts.pkgName, opts.binPath, opts.binName);
+    const dst = path.join("..", ".bin", opts.binName);
+    await fs.promises.symlink(src, dst);
   }
 
   // TODO: verify checksums

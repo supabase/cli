@@ -201,7 +201,7 @@ func GetRegistryAuth() string {
 }
 
 // Defaults to Supabase public ECR for faster image pull
-const defaultRegistry = "public.ecr.aws/supabase"
+const defaultRegistry = "public.ecr.aws"
 
 func getRegistry() string {
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
@@ -216,11 +216,10 @@ func GetRegistryImageUrl(imageName string) string {
 	if registry == "docker.io" {
 		return imageName
 	}
-	if registry == defaultRegistry {
-		parts := strings.Split(imageName, "/")
-		imageName = parts[len(parts)-1]
-	}
-	return registry + "/" + imageName
+	// Configure mirror registry
+	parts := strings.Split(imageName, "/")
+	imageName = parts[len(parts)-1]
+	return registry + "/supabase/" + imageName
 }
 
 func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {

@@ -96,8 +96,7 @@ var (
 		},
 	}
 
-	dryRun      bool
-	versionOnly bool
+	dryRun bool
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
@@ -111,7 +110,7 @@ var (
 			password := getPassword(projectRef)
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, versionOnly, username, password, database, host, fsys)
+			return push.Run(ctx, dryRun, username, password, database, host, fsys)
 		},
 	}
 
@@ -211,7 +210,6 @@ func init() {
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
-	pushFlags.BoolVar(&versionOnly, "version-only", false, "Updates the migration version history table to match local.")
 	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPushCmd)
