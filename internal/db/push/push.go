@@ -8,11 +8,10 @@ import (
 	"path/filepath"
 
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -91,15 +90,9 @@ func pushMigration(ctx context.Context, conn *pgx.Conn, filename string, fsys af
 		batch.ExecParams(line, nil, nil, nil, nil)
 	}
 	// Insert into migration history
-	lines = append(lines, commit.INSERT_MIGRATION_VERSION)
+	lines = append(lines, repair.INSERT_MIGRATION_VERSION)
 	version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-	batch.ExecParams(
-		commit.INSERT_MIGRATION_VERSION,
-		[][]byte{[]byte(version)},
-		[]uint32{pgtype.TextOID},
-		[]int16{pgtype.TextFormatCode},
-		nil,
-	)
+	repair.InsertVersionSQL(&batch, version)
 	// ExecBatch is implicitly transactional
 	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		i := len(result)

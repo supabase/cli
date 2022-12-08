@@ -209,6 +209,7 @@ var RegionMap = map[string]string{
 	"eu-central-1":   "Central EU (Frankfurt)",
 	"eu-west-1":      "West EU (Ireland)",
 	"eu-west-2":      "West EU (London)",
+	"eu-west-3":      "West EU (Paris)",
 	"sa-east-1":      "South America (São Paulo)",
 	"us-east-1":      "East US (North Virginia)",
 	"us-west-1":      "West US (North California)",
