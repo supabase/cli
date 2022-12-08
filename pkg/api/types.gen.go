@@ -46,6 +46,18 @@ const (
 	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
 )
 
+// Defines values for NetworkRestrictionsResponseEntitlement.
+const (
+	Allowed    NetworkRestrictionsResponseEntitlement = "allowed"
+	Disallowed NetworkRestrictionsResponseEntitlement = "disallowed"
+)
+
+// Defines values for NetworkRestrictionsResponseStatus.
+const (
+	Applied NetworkRestrictionsResponseStatus = "applied"
+	Stored  NetworkRestrictionsResponseStatus = "stored"
+)
+
 // Defines values for UpdateCustomHostnameResponseStatus.
 const (
 	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
@@ -133,6 +145,24 @@ type FunctionSlugResponseStatus string
 type NetworkBanResponse struct {
 	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
 }
+
+// NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
+type NetworkRestrictionsRequest struct {
+	DbAllowedCidrs []string `json:"dbAllowedCidrs"`
+}
+
+// NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
+type NetworkRestrictionsResponse struct {
+	Config      NetworkRestrictionsRequest             `json:"config"`
+	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
+	Status      NetworkRestrictionsResponseStatus      `json:"status"`
+}
+
+// NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
+type NetworkRestrictionsResponseEntitlement string
+
+// NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
+type NetworkRestrictionsResponseStatus string
 
 // OrganizationResponse defines model for OrganizationResponse.
 type OrganizationResponse struct {
@@ -237,6 +267,9 @@ type UpdateFunctionJSONRequestBody = UpdateFunctionBody
 
 // RemoveNetworkBanJSONRequestBody defines body for RemoveNetworkBan for application/json ContentType.
 type RemoveNetworkBanJSONRequestBody = RemoveNetworkBanRequest
+
+// ApplyNetworkRestrictionsJSONRequestBody defines body for ApplyNetworkRestrictions for application/json ContentType.
+type ApplyNetworkRestrictionsJSONRequestBody = NetworkRestrictionsRequest
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePgsodiumConfigBody
