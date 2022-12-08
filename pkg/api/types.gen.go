@@ -67,6 +67,18 @@ const (
 	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
 )
 
+// Defines values for VanitySubdomainConfigResponseStatus.
+const (
+	Active           VanitySubdomainConfigResponseStatus = "active"
+	CustomDomainUsed VanitySubdomainConfigResponseStatus = "custom-domain-used"
+	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
+)
+
+// ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
+type ActivateVanitySubdomainResponse struct {
+	CustomDomain string `json:"custom_domain"`
+}
+
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
 	Body      string `json:"body"`
@@ -191,6 +203,11 @@ type SecretResponse struct {
 	Value string `json:"value"`
 }
 
+// SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
+type SubdomainAvailabilityResponse struct {
+	Available bool `json:"available"`
+}
+
 // TypescriptResponse defines model for TypescriptResponse.
 type TypescriptResponse struct {
 	Types string `json:"types"`
@@ -222,6 +239,20 @@ type UpdateFunctionBody struct {
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
 }
+
+// VanitySubdomainBody defines model for VanitySubdomainBody.
+type VanitySubdomainBody struct {
+	VanitySubdomain string `json:"vanity_subdomain"`
+}
+
+// VanitySubdomainConfigResponse defines model for VanitySubdomainConfigResponse.
+type VanitySubdomainConfigResponse struct {
+	CustomDomain *string                             `json:"custom_domain,omitempty"`
+	Status       VanitySubdomainConfigResponseStatus `json:"status"`
+}
+
+// VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
+type VanitySubdomainConfigResponseStatus string
 
 // CreateFunctionParams defines parameters for CreateFunction.
 type CreateFunctionParams struct {
@@ -279,3 +310,9 @@ type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
 
 // CreateSecretsJSONRequestBody defines body for CreateSecrets for application/json ContentType.
 type CreateSecretsJSONRequestBody = CreateSecretsJSONBody
+
+// ActivateVanitySubdomainPleaseJSONRequestBody defines body for ActivateVanitySubdomainPlease for application/json ContentType.
+type ActivateVanitySubdomainPleaseJSONRequestBody = VanitySubdomainBody
+
+// CheckVanitySubdomainAvailabilityJSONRequestBody defines body for CheckVanitySubdomainAvailability for application/json ContentType.
+type CheckVanitySubdomainAvailabilityJSONRequestBody = VanitySubdomainBody

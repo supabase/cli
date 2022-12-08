@@ -774,6 +774,119 @@ paths:
           description: Failed to update project network restrictions
       tags: *ref_18
       security: *ref_19
+  /v1/projects/{ref}/vanity-subdomain:
+    get:
+      operationId: getVanitySubdomainConfig
+      summary: Gets current vanity subdomain config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VanitySubdomainConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to get project vanity subdomain configuration
+      tags: &ref_20
+        - vanity subdomain (beta)
+      security: &ref_21
+        - bearer: []
+    delete:
+      operationId: removeVanitySubdomainConfig
+      summary: Deletes a project's vanity subdomain configuration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete project vanity subdomain configuration
+      tags: *ref_20
+      security: *ref_21
+  /v1/projects/{ref}/vanity-subdomain/check-availability:
+    post:
+      operationId: checkVanitySubdomainAvailability
+      summary: Checks vanity subdomain availability
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VanitySubdomainBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubdomainAvailabilityResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to check project vanity subdomain configuration
+      tags: *ref_20
+      security: *ref_21
+  /v1/projects/{ref}/vanity-subdomain/activate:
+    post:
+      operationId: activateVanitySubdomainPlease
+      summary: Activates a vanity subdomain for a project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VanitySubdomainBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateVanitySubdomainResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to activate project vanity subdomain configuration
+      tags: *ref_20
+      security: *ref_21
 info:
   title: Supabase API (v1)
   description: ''
@@ -904,7 +1017,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_20
+          enum: &ref_22
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -937,7 +1050,7 @@ components:
         name:
           type: string
         status:
-          enum: *ref_20
+          enum: *ref_22
           type: string
         version:
           type: number
@@ -1075,3 +1188,37 @@ components:
         - entitlement
         - config
         - status
+    VanitySubdomainConfigResponse:
+      type: object
+      properties:
+        status:
+          enum:
+            - not-used
+            - custom-domain-used
+            - active
+          type: string
+        custom_domain:
+          type: string
+      required:
+        - status
+    VanitySubdomainBody:
+      type: object
+      properties:
+        vanity_subdomain:
+          type: string
+      required:
+        - vanity_subdomain
+    SubdomainAvailabilityResponse:
+      type: object
+      properties:
+        available:
+          type: boolean
+      required:
+        - available
+    ActivateVanitySubdomainResponse:
+      type: object
+      properties:
+        custom_domain:
+          type: string
+      required:
+        - custom_domain

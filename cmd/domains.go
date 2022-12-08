@@ -19,6 +19,10 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "domains",
 		Short:   "Manage custom domain names for Supabase projects",
+		Long: `Manage custom domain names for Supabase projects.
+
+Use of custom domains and vanity subdomains is mutually exclusive.
+`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if !experimental {
 				return errors.New("must set the --experimental flag to run this command")
@@ -32,7 +36,7 @@ var (
 
 	customHostnamesCreateCmd = &cobra.Command{
 		Use:   "create",
-		Short: "Create a custom hostname.",
+		Short: "Create a custom hostname",
 		Long: `Create a custom hostname for your Supabase project.
 
 Expects your custom hostname to have a CNAME record to your Supabase project's subdomain.`,
@@ -48,7 +52,7 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 
 	customHostnamesGetCmd = &cobra.Command{
 		Use:   "get",
-		Short: "Get the current custom hostname config.",
+		Short: "Get the current custom hostname config",
 		Long:  "Retrieve the custom hostname config for your project, as stored in the Supabase platform.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
@@ -62,7 +66,7 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 
 	customHostnamesReverifyCmd = &cobra.Command{
 		Use:   "reverify",
-		Short: "Re-verify the custom hostname config for your project.",
+		Short: "Re-verify the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return reverify.Run(ctx, projectRef, rawOutput, afero.NewOsFs())
@@ -71,7 +75,7 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 
 	customHostnamesActivateCmd = &cobra.Command{
 		Use:   "activate",
-		Short: "Activate the custom hostname for a project.",
+		Short: "Activate the custom hostname for a project",
 		Long: `Activates the custom hostname configuration for a project.
 
 This reconfigures your Supabase project to respond to requests on your custom hostname.
@@ -84,7 +88,7 @@ After the custom hostname is activated, your project's auth services will no lon
 
 	customHostnamesDeleteCmd = &cobra.Command{
 		Use:   "delete",
-		Short: "Deletes the custom hostname config for your project.",
+		Short: "Deletes the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return delete.Run(ctx, projectRef, afero.NewOsFs())
