@@ -183,6 +183,22 @@ type ClientInterface interface {
 
 	// GetTypescriptTypes request
 	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveVanitySubdomainConfig request
+	RemoveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVanitySubdomainConfig request
+	GetVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateVanitySubdomainPlease request with any body
+	ActivateVanitySubdomainPleaseWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ActivateVanitySubdomainPlease(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckVanitySubdomainAvailability request with any body
+	CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetOrganizations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -595,6 +611,78 @@ func (c *Client) CreateSecrets(ctx context.Context, ref string, body CreateSecre
 
 func (c *Client) GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTypescriptTypesRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveVanitySubdomainConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVanitySubdomainConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateVanitySubdomainPleaseWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateVanitySubdomainPleaseRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateVanitySubdomainPlease(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateVanitySubdomainPleaseRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckVanitySubdomainAvailabilityRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckVanitySubdomainAvailabilityRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1741,6 +1829,168 @@ func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescri
 	return req, nil
 }
 
+// NewRemoveVanitySubdomainConfigRequest generates requests for RemoveVanitySubdomainConfig
+func NewRemoveVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVanitySubdomainConfigRequest generates requests for GetVanitySubdomainConfig
+func NewGetVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewActivateVanitySubdomainPleaseRequest calls the generic ActivateVanitySubdomainPlease builder with application/json body
+func NewActivateVanitySubdomainPleaseRequest(server string, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateVanitySubdomainPleaseRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewActivateVanitySubdomainPleaseRequestWithBody generates requests for ActivateVanitySubdomainPlease with any type of body
+func NewActivateVanitySubdomainPleaseRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain/activate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCheckVanitySubdomainAvailabilityRequest calls the generic CheckVanitySubdomainAvailability builder with application/json body
+func NewCheckVanitySubdomainAvailabilityRequest(server string, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCheckVanitySubdomainAvailabilityRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCheckVanitySubdomainAvailabilityRequestWithBody generates requests for CheckVanitySubdomainAvailability with any type of body
+func NewCheckVanitySubdomainAvailabilityRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain/check-availability", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1878,6 +2128,22 @@ type ClientWithResponsesInterface interface {
 
 	// GetTypescriptTypes request
 	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
+
+	// RemoveVanitySubdomainConfig request
+	RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error)
+
+	// GetVanitySubdomainConfig request
+	GetVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetVanitySubdomainConfigResponse, error)
+
+	// ActivateVanitySubdomainPlease request with any body
+	ActivateVanitySubdomainPleaseWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error)
+
+	ActivateVanitySubdomainPleaseWithResponse(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error)
+
+	// CheckVanitySubdomainAvailability request with any body
+	CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
+
+	CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
 }
 
 type GetOrganizationsResponse struct {
@@ -2425,6 +2691,93 @@ func (r GetTypescriptTypesResponse) StatusCode() int {
 	return 0
 }
 
+type RemoveVanitySubdomainConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveVanitySubdomainConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveVanitySubdomainConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetVanitySubdomainConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *VanitySubdomainConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVanitySubdomainConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVanitySubdomainConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateVanitySubdomainPleaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *ActivateVanitySubdomainResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateVanitySubdomainPleaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateVanitySubdomainPleaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CheckVanitySubdomainAvailabilityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SubdomainAvailabilityResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckVanitySubdomainAvailabilityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckVanitySubdomainAvailabilityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetOrganizationsWithResponse request returning *GetOrganizationsResponse
 func (c *ClientWithResponses) GetOrganizationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOrganizationsResponse, error) {
 	rsp, err := c.GetOrganizations(ctx, reqEditors...)
@@ -2728,6 +3081,58 @@ func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseGetTypescriptTypesResponse(rsp)
+}
+
+// RemoveVanitySubdomainConfigWithResponse request returning *RemoveVanitySubdomainConfigResponse
+func (c *ClientWithResponses) RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error) {
+	rsp, err := c.RemoveVanitySubdomainConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveVanitySubdomainConfigResponse(rsp)
+}
+
+// GetVanitySubdomainConfigWithResponse request returning *GetVanitySubdomainConfigResponse
+func (c *ClientWithResponses) GetVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetVanitySubdomainConfigResponse, error) {
+	rsp, err := c.GetVanitySubdomainConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVanitySubdomainConfigResponse(rsp)
+}
+
+// ActivateVanitySubdomainPleaseWithBodyWithResponse request with arbitrary body returning *ActivateVanitySubdomainPleaseResponse
+func (c *ClientWithResponses) ActivateVanitySubdomainPleaseWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error) {
+	rsp, err := c.ActivateVanitySubdomainPleaseWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateVanitySubdomainPleaseResponse(rsp)
+}
+
+func (c *ClientWithResponses) ActivateVanitySubdomainPleaseWithResponse(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error) {
+	rsp, err := c.ActivateVanitySubdomainPlease(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateVanitySubdomainPleaseResponse(rsp)
+}
+
+// CheckVanitySubdomainAvailabilityWithBodyWithResponse request with arbitrary body returning *CheckVanitySubdomainAvailabilityResponse
+func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	rsp, err := c.CheckVanitySubdomainAvailabilityWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
+}
+
+func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	rsp, err := c.CheckVanitySubdomainAvailability(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
 }
 
 // ParseGetOrganizationsResponse parses an HTTP response from a GetOrganizationsWithResponse call
@@ -3324,6 +3729,100 @@ func ParseGetTypescriptTypesResponse(rsp *http.Response) (*GetTypescriptTypesRes
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveVanitySubdomainConfigResponse parses an HTTP response from a RemoveVanitySubdomainConfigWithResponse call
+func ParseRemoveVanitySubdomainConfigResponse(rsp *http.Response) (*RemoveVanitySubdomainConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveVanitySubdomainConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetVanitySubdomainConfigResponse parses an HTTP response from a GetVanitySubdomainConfigWithResponse call
+func ParseGetVanitySubdomainConfigResponse(rsp *http.Response) (*GetVanitySubdomainConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVanitySubdomainConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VanitySubdomainConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateVanitySubdomainPleaseResponse parses an HTTP response from a ActivateVanitySubdomainPleaseWithResponse call
+func ParseActivateVanitySubdomainPleaseResponse(rsp *http.Response) (*ActivateVanitySubdomainPleaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateVanitySubdomainPleaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ActivateVanitySubdomainResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckVanitySubdomainAvailabilityResponse parses an HTTP response from a CheckVanitySubdomainAvailabilityWithResponse call
+func ParseCheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckVanitySubdomainAvailabilityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SubdomainAvailabilityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 
