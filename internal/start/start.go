@@ -84,8 +84,8 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 var (
 	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
-	kongConfigEmbed       string
-	kongConfigTemplate, _ = template.New("kongConfig").Parse(kongConfigEmbed)
+	kongConfigEmbed    string
+	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
 )
 
 func pullImage(p utils.Program, ctx context.Context, image string) error {

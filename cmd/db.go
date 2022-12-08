@@ -79,15 +79,17 @@ var (
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if linked {
-				projectRef, err := utils.LoadProjectRef(fsys)
-				if err != nil {
+				fsys := afero.NewOsFs()
+				if err := loadLinkedProject(fsys); err != nil {
 					return err
 				}
-				dbPassword = getPassword(projectRef)
 			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
@@ -101,22 +103,31 @@ var (
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
+			if err := loadLinkedProject(fsys); err != nil {
 				return err
 			}
-			password := getPassword(projectRef)
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, username, password, database, host, fsys)
+			return push.Run(ctx, dryRun, username, dbPassword, database, host, fsys)
 		},
 	}
 
 	dbRemoteCmd = &cobra.Command{
 		Use:   "remote",
 		Short: "Manage remote databases",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := loadLinkedProject(fsys); err != nil {
+				return err
+			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
@@ -126,12 +137,7 @@ var (
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			password := getPassword(projectRef)
-			return changes.Run(cmd.Context(), username, password, database, fsys)
+			return changes.Run(cmd.Context(), username, dbPassword, database, fsys)
 		},
 	}
 
@@ -140,13 +146,8 @@ var (
 		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			password := getPassword(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, username, password, database, fsys)
+			return commit.Run(ctx, username, dbPassword, database, fsys)
 		},
 	}
 
