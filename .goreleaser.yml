@@ -50,7 +50,7 @@ chocolateys:
     tags: "Supabase CLI firebase postgres serverless BaaS"
     url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     project_url: https://supabase.com
-    icon_rul: https://avatars.githubusercontent.com/u/54469796
+    icon_url: https://avatars.githubusercontent.com/u/54469796
     license_url: https://github.com/supabase/cli/blob/main/LICENSE
     package_source_url: https://github.com/supabase/cli
     project_source_url: https://github.com/supabase/cli
