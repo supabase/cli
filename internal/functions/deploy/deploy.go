@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
-const MB float64 = 1 << (10 * 2)
 const EszipContentType = "application/vnd.denoland.eszip"
 
 func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, fsys afero.Fs) error {
@@ -85,7 +85,8 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 	}
 
 	// 3. Deploy new Function.
-	return deployFunction(ctx, projectRef, slug, functionBody, verifyJWT, useLegacyBundle, functionSize)
+	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(units.HumanSize(float64(functionSize))) + ")")
+	return deployFunction(ctx, projectRef, slug, functionBody, verifyJWT, useLegacyBundle)
 }
 
 func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
@@ -98,10 +99,7 @@ func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
 	return buf.String(), nil
 }
 
-func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool, functionSize int) error {
-	functionSizeFmt := fmt.Sprintf("%.2fMB", float64(functionSize)/MB)
-	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSizeFmt) + ")")
-
+func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool) error {
 	var deployedFuncId string
 	{
 		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
