@@ -7,7 +7,7 @@ import { load } from "https://deno.land/x/eszip@v0.30.0/loader.ts";
 
 const virtualBasePath = "file:///src/";
 
-async function buildAndWrite(p: string) {
+async function buildAndWrite(p: string, importMapPath: string) {
   const funcDirPath = path.dirname(p);
   const entrypoint = new URL("index.ts", virtualBasePath).href;
 
@@ -20,6 +20,12 @@ async function buildAndWrite(p: string) {
       // if the path is `file:///src/*`, treat it as a relative path from current dir
       if (specifier.startsWith(virtualBasePath)) {
         actualPath = specifier.replace(virtualBasePath, `./${funcDirPath}/`);
+      }
+
+      // If an import map path is set read file from the given path.
+      // Otherwise default to `import_map.json` in functions directory.
+      if (specifier.endsWith('import_map.json') && importMapPath != "") {
+        actualPath = importMapPath
       }
       try {
         const content = await Deno.readTextFile(actualPath);
@@ -57,4 +63,4 @@ async function buildAndWrite(p: string) {
   await writeAll(Deno.stdout, combinedPayload);
 }
 
-buildAndWrite(Deno.args[0]);
+buildAndWrite(Deno.args[0], Deno.args[1]);

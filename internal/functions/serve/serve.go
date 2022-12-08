@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	relayFuncDir = "/home/deno/functions"
+	relayFuncDir              = "/home/deno/functions"
+	customDockerImportMapPath = "/home/deno/import_map.json"
 )
 
-func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -39,6 +40,11 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 		if envFilePath != "" {
 			if _, err := fsys.Stat(envFilePath); err != nil {
 				return fmt.Errorf("Failed to read env file: %w", err)
+			}
+		}
+		if importMapPath != "" {
+			if _, err := fsys.Stat(importMapPath); err != nil {
+				return fmt.Errorf("Failed to read import map: %w", err)
 			}
 		}
 	}
@@ -65,6 +71,11 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 			return err
 		}
 
+		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"}
+		// If a import map path is explcitly provided, mount it as a separate file
+		if importMapPath != "" {
+			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -72,7 +83,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 				Env:   env,
 			},
 			container.HostConfig{
-				Binds: []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"},
+				Binds: binds,
 			},
 			utils.DenoRelayId,
 		); err != nil {
@@ -95,10 +106,16 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, f
 	// 4. Start Function.
 	localFuncDir := filepath.Join(utils.FunctionsDir, slug)
 	localImportMapPath := filepath.Join(localFuncDir, "import_map.json")
+
 	// We assume the image is always Linux, so path separator must always be `/`.
 	// We can't use filepath.Join because it uses the path separator for the host system, which is `\` for Windows.
 	dockerFuncPath := relayFuncDir + "/" + slug + "/index.ts"
 	dockerImportMapPath := relayFuncDir + "/" + slug + "/import_map.json"
+
+	if importMapPath != "" {
+		localImportMapPath = importMapPath
+		dockerImportMapPath = customDockerImportMapPath
+	}
 
 	denoCacheCmd := []string{"deno", "cache"}
 	{
