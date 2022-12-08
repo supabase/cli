@@ -20,7 +20,7 @@ import (
 
 const EszipContentType = "application/vnd.denoland.eszip"
 
-func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
 	var buildScriptPath string
@@ -68,7 +68,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 			}
 		}
 
-		args := []string{"run", "-A", buildScriptPath, filepath.Join(functionPath, "index.ts")}
+		args := []string{"run", "-A", buildScriptPath, filepath.Join(functionPath, "index.ts"), importMapPath}
 		if useLegacyBundle {
 			args = []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
 		}

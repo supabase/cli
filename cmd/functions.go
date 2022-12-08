@@ -44,6 +44,7 @@ var (
 
 	noVerifyJWT     bool
 	useLegacyBundle bool
+	importMapPath   string
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy <Function name>",
@@ -59,7 +60,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, useLegacyBundle, fsys)
+			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, useLegacyBundle, importMapPath, fsys)
 		},
 	}
 
@@ -81,7 +82,7 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, afero.NewOsFs())
+			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 )
@@ -91,8 +92,10 @@ func init() {
 	functionsDeployCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsDeployCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
+	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
