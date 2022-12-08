@@ -714,6 +714,66 @@ paths:
           description: Failed to remove network bans.
       tags: *ref_16
       security: *ref_17
+  /v1/projects/{ref}/network-restrictions:
+    get:
+      operationId: getNetworkRestrictions
+      summary: Gets project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's network restrictions
+      tags: &ref_18
+        - network restrictions (beta)
+      security: &ref_19
+        - bearer: []
+  /v1/projects/{ref}/network-restrictions/apply:
+    post:
+      operationId: applyNetworkRestrictions
+      summary: Updates project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkRestrictionsRequest'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project network restrictions
+      tags: *ref_18
+      security: *ref_19
 info:
   title: Supabase API (v1)
   description: ''
@@ -844,7 +904,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_18
+          enum: &ref_20
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -877,7 +937,7 @@ components:
         name:
           type: string
         status:
-          enum: *ref_18
+          enum: *ref_20
           type: string
         version:
           type: number
@@ -987,3 +1047,31 @@ components:
             type: string
       required:
         - ipv4_addresses
+    NetworkRestrictionsRequest:
+      type: object
+      properties:
+        dbAllowedCidrs:
+          type: array
+          items:
+            type: string
+      required:
+        - dbAllowedCidrs
+    NetworkRestrictionsResponse:
+      type: object
+      properties:
+        entitlement:
+          enum:
+            - disallowed
+            - allowed
+          type: string
+        config:
+          $ref: '#/components/schemas/NetworkRestrictionsRequest'
+        status:
+          enum:
+            - stored
+            - applied
+          type: string
+      required:
+        - entitlement
+        - config
+        - status

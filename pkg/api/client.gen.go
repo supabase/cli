@@ -152,6 +152,14 @@ type ClientInterface interface {
 	// GetNetworkBans request
 	GetNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetNetworkRestrictions request
+	GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyNetworkRestrictions request with any body
+	ApplyNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ApplyNetworkRestrictions(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConfig request
 	GetConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -443,6 +451,42 @@ func (c *Client) RemoveNetworkBan(ctx context.Context, ref string, body RemoveNe
 
 func (c *Client) GetNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetNetworkBansRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNetworkRestrictionsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApplyNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyNetworkRestrictionsRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApplyNetworkRestrictions(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyNetworkRestrictionsRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1353,6 +1397,87 @@ func NewGetNetworkBansRequest(server string, ref string) (*http.Request, error) 
 	return req, nil
 }
 
+// NewGetNetworkRestrictionsRequest generates requests for GetNetworkRestrictions
+func NewGetNetworkRestrictionsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApplyNetworkRestrictionsRequest calls the generic ApplyNetworkRestrictions builder with application/json body
+func NewApplyNetworkRestrictionsRequest(server string, ref string, body ApplyNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyNetworkRestrictionsRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewApplyNetworkRestrictionsRequestWithBody generates requests for ApplyNetworkRestrictions with any type of body
+func NewApplyNetworkRestrictionsRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions/apply", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetConfigRequest generates requests for GetConfig
 func NewGetConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -1721,6 +1846,14 @@ type ClientWithResponsesInterface interface {
 
 	// GetNetworkBans request
 	GetNetworkBansWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkBansResponse, error)
+
+	// GetNetworkRestrictions request
+	GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkRestrictionsResponse, error)
+
+	// ApplyNetworkRestrictions request with any body
+	ApplyNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error)
+
+	ApplyNetworkRestrictionsWithResponse(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error)
 
 	// GetConfig request
 	GetConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetConfigResponse, error)
@@ -2117,6 +2250,50 @@ func (r GetNetworkBansResponse) StatusCode() int {
 	return 0
 }
 
+type GetNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkRestrictionsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ApplyNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *NetworkRestrictionsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2447,6 +2624,32 @@ func (c *ClientWithResponses) GetNetworkBansWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetNetworkBansResponse(rsp)
+}
+
+// GetNetworkRestrictionsWithResponse request returning *GetNetworkRestrictionsResponse
+func (c *ClientWithResponses) GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkRestrictionsResponse, error) {
+	rsp, err := c.GetNetworkRestrictions(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNetworkRestrictionsResponse(rsp)
+}
+
+// ApplyNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *ApplyNetworkRestrictionsResponse
+func (c *ClientWithResponses) ApplyNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error) {
+	rsp, err := c.ApplyNetworkRestrictionsWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyNetworkRestrictionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) ApplyNetworkRestrictionsWithResponse(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error) {
+	rsp, err := c.ApplyNetworkRestrictions(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyNetworkRestrictionsResponse(rsp)
 }
 
 // GetConfigWithResponse request returning *GetConfigResponse
@@ -2919,6 +3122,58 @@ func ParseGetNetworkBansResponse(rsp *http.Response) (*GetNetworkBansResponse, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest NetworkBanResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetNetworkRestrictionsResponse parses an HTTP response from a GetNetworkRestrictionsWithResponse call
+func ParseGetNetworkRestrictionsResponse(rsp *http.Response) (*GetNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkRestrictionsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyNetworkRestrictionsResponse parses an HTTP response from a ApplyNetworkRestrictionsWithResponse call
+func ParseApplyNetworkRestrictionsResponse(rsp *http.Response) (*ApplyNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest NetworkRestrictionsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
