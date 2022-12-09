@@ -27,7 +27,7 @@ Use of custom domains and vanity subdomains is mutually exclusive.
 			if !experimental {
 				return errors.New("must set the --experimental flag to run this command")
 			}
-			return nil
+			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 	}
 
