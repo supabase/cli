@@ -25,15 +25,11 @@ var (
 	migrationListCmd = &cobra.Command{
 		Use:   "list",
 		Short: "List local and remote migrations",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := loadLinkedProject(fsys); err != nil {
 				return err
 			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return list.Run(ctx, username, dbPassword, database, host, fsys)
@@ -60,14 +56,11 @@ var (
 		Use:   "repair <version>",
 		Short: "Repairs the migration history table",
 		Args:  cobra.ExactArgs(1),
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := loadLinkedProject(fsys); err != nil {
 				return err
 			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return repair.Run(ctx, username, dbPassword, database, host, args[0], targetStatus.Value)
