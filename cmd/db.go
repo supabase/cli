@@ -79,17 +79,13 @@ var (
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
 			if linked {
-				fsys := afero.NewOsFs()
 				if err := loadLinkedProject(fsys); err != nil {
 					return err
 				}
 			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
@@ -103,15 +99,11 @@ var (
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := loadLinkedProject(fsys); err != nil {
 				return err
 			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return push.Run(ctx, dryRun, username, dbPassword, database, host, fsys)
@@ -122,11 +114,11 @@ var (
 		Use:   "remote",
 		Short: "Manage remote databases",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
 				return err
 			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
+			fsys := afero.NewOsFs()
+			return loadLinkedProject(fsys)
 		},
 	}
 
