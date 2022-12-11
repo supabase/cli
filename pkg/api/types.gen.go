@@ -182,6 +182,18 @@ type OrganizationResponse struct {
 	Name string `json:"name"`
 }
 
+// PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
+type PgsodiumConfigResponse struct {
+	RootKey string `json:"root_key"`
+}
+
+// PostgrestConfigResponse defines model for PostgrestConfigResponse.
+type PostgrestConfigResponse struct {
+	DbExtraSearchPath string  `json:"db_extra_search_path"`
+	DbSchema          string  `json:"db_schema"`
+	MaxRows           float32 `json:"max_rows"`
+}
+
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
 	CreatedAt      string            `json:"created_at"`
@@ -238,6 +250,13 @@ type UpdateFunctionBody struct {
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
+}
+
+// UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
+type UpdatePostgrestConfigBody struct {
+	DbExtraSearchPath *string  `json:"db_extra_search_path,omitempty"`
+	DbSchema          *string  `json:"db_schema,omitempty"`
+	MaxRows           *float32 `json:"max_rows,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -304,6 +323,9 @@ type ApplyNetworkRestrictionsJSONRequestBody = NetworkRestrictionsRequest
 
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePgsodiumConfigBody
+
+// UpdatePostgRESTConfigJSONRequestBody defines body for UpdatePostgRESTConfig for application/json ContentType.
+type UpdatePostgRESTConfigJSONRequestBody = UpdatePostgrestConfigBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
