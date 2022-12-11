@@ -350,6 +350,9 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.StorageImage,
+				Volumes: map[string]struct{}{
+					"/var/lib/storage": {},
+				},
 				Env: []string{
 					"ANON_KEY=" + utils.AnonKey,
 					"SERVICE_KEY=" + utils.ServiceRoleKey,
@@ -363,12 +366,36 @@ EOF
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"REGION=stub",
 					"GLOBAL_S3_BUCKET=stub",
+					"ENABLE_IMAGE_TRANSFORMATION=true",
+					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
 				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.StorageId,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Start Storage ImgProxy.
+	if !isContainerExcluded(utils.ImageProxyImage, excluded) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.ImageProxyImage,
+				Env: []string{
+					"IMGPROXY_BIND=:5001",
+					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
+					"IMGPROXY_USE_ETAG=/",
+				},
+			},
+			container.HostConfig{
+				VolumesFrom:   []string{utils.StorageId},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.ImgProxyId,
 		); err != nil {
 			return err
 		}

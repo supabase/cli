@@ -25,6 +25,7 @@ var (
 	RealtimeId  string
 	RestId      string
 	StorageId   string
+	ImgProxyId  string
 	DifferId    string
 	PgmetaId    string
 	StudioId    string
@@ -168,6 +169,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			RealtimeId = "realtime-demo.supabase_realtime_" + Config.ProjectId
 			RestId = "supabase_rest_" + Config.ProjectId
 			StorageId = "supabase_storage_" + Config.ProjectId
+			ImgProxyId = "storage_imgproxy_" + Config.ProjectId
 			DifferId = "supabase_differ_" + Config.ProjectId
 			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
 			StudioId = "supabase_studio_" + Config.ProjectId
