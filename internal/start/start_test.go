@@ -217,6 +217,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PostgrestImage), utils.RestId)
 		utils.StorageId = "test-storage"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), utils.StorageId)
+		utils.StudioId = "test-imgproxy"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.ImageProxyImage), utils.ImgProxyId)
 		utils.DifferId = "test-differ"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
 		utils.PgmetaId = "test-pgmeta"
