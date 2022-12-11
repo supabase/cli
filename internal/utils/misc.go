@@ -27,25 +27,27 @@ const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
 	// Append to ServiceImages when adding new dependencies below
-	KongImage      = "library/kong:2.8.1"
-	InbucketImage  = "inbucket/inbucket:3.0.3"
-	PostgrestImage = "postgrest/postgrest:v9.0.1.20220717"
-	DifferImage    = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage     = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage    = "supabase/postgres-meta:v0.53.1"
-	StudioImage    = "supabase/studio:0.22.08"
-	DenoRelayImage = "supabase/deno-relay:v1.5.0"
+	KongImage       = "library/kong:2.8.1"
+	InbucketImage   = "inbucket/inbucket:3.0.3"
+	PostgrestImage  = "postgrest/postgrest:v9.0.1.20220717"
+	DifferImage     = "supabase/pgadmin-schema-diff:cli-0.0.5"
+	MigraImage      = "djrobstep/migra:3.0.1621480950"
+	PgmetaImage     = "supabase/postgres-meta:v0.53.1"
+	StudioImage     = "supabase/studio:0.22.08"
+	DenoRelayImage  = "supabase/deno-relay:v1.5.0"
+	ImageProxyImage = "supabase/imgproxy:v1.0.2"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.25.1"
 	RealtimeImage = "supabase/realtime:v1.0.0-rc.11"
-	StorageImage  = "supabase/storage-api:v0.21.4"
+	StorageImage  = "supabase/storage-api:v0.26.1"
 )
 
 var ServiceImages = []string{
 	GotrueImage,
 	RealtimeImage,
 	StorageImage,
+	ImageProxyImage,
 	KongImage,
 	InbucketImage,
 	PostgrestImage,
