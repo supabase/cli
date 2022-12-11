@@ -35,7 +35,7 @@ const (
 	PgmetaImage     = "supabase/postgres-meta:v0.53.1"
 	StudioImage     = "supabase/studio:0.22.08"
 	DenoRelayImage  = "supabase/deno-relay:v1.5.0"
-	ImageProxyImage = "supabase/imgproxy:v1.0.2"
+	ImageProxyImage = "supabase/imgproxy:v1.0.4"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.25.1"
