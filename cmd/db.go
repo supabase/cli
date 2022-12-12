@@ -82,11 +82,9 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if linked {
-				projectRef, err := utils.LoadProjectRef(fsys)
-				if err != nil {
+				if err := loadLinkedProject(fsys); err != nil {
 					return err
 				}
-				dbPassword = getPassword(projectRef)
 			}
 			if useMigra {
 				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -103,20 +101,25 @@ var (
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
+			if err := loadLinkedProject(fsys); err != nil {
 				return err
 			}
-			password := getPassword(projectRef)
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, username, password, database, host, fsys)
+			return push.Run(ctx, dryRun, username, dbPassword, database, host, fsys)
 		},
 	}
 
 	dbRemoteCmd = &cobra.Command{
 		Use:   "remote",
 		Short: "Manage remote databases",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
+				return err
+			}
+			fsys := afero.NewOsFs()
+			return loadLinkedProject(fsys)
+		},
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
@@ -126,12 +129,7 @@ var (
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			password := getPassword(projectRef)
-			return changes.Run(cmd.Context(), username, password, database, fsys)
+			return changes.Run(cmd.Context(), username, dbPassword, database, fsys)
 		},
 	}
 
@@ -140,13 +138,8 @@ var (
 		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			projectRef, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			password := getPassword(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, username, password, database, fsys)
+			return commit.Run(ctx, username, dbPassword, database, fsys)
 		},
 	}
 

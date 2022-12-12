@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 
 	"github.com/spf13/afero"
@@ -83,6 +84,7 @@ func init() {
 		region.Allowed[i] = k
 		i++
 	}
+	sort.Strings(region.Allowed)
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
 	createFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")

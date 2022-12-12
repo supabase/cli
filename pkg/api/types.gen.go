@@ -46,6 +46,18 @@ const (
 	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
 )
 
+// Defines values for NetworkRestrictionsResponseEntitlement.
+const (
+	Allowed    NetworkRestrictionsResponseEntitlement = "allowed"
+	Disallowed NetworkRestrictionsResponseEntitlement = "disallowed"
+)
+
+// Defines values for NetworkRestrictionsResponseStatus.
+const (
+	Applied NetworkRestrictionsResponseStatus = "applied"
+	Stored  NetworkRestrictionsResponseStatus = "stored"
+)
+
 // Defines values for UpdateCustomHostnameResponseStatus.
 const (
 	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
@@ -54,6 +66,18 @@ const (
 	N4OriginSetupCompleted UpdateCustomHostnameResponseStatus = "4_origin_setup_completed"
 	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
 )
+
+// Defines values for VanitySubdomainConfigResponseStatus.
+const (
+	Active           VanitySubdomainConfigResponseStatus = "active"
+	CustomDomainUsed VanitySubdomainConfigResponseStatus = "custom-domain-used"
+	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
+)
+
+// ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
+type ActivateVanitySubdomainResponse struct {
+	CustomDomain string `json:"custom_domain"`
+}
 
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
@@ -134,10 +158,40 @@ type NetworkBanResponse struct {
 	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
 }
 
+// NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
+type NetworkRestrictionsRequest struct {
+	DbAllowedCidrs []string `json:"dbAllowedCidrs"`
+}
+
+// NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
+type NetworkRestrictionsResponse struct {
+	Config      NetworkRestrictionsRequest             `json:"config"`
+	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
+	Status      NetworkRestrictionsResponseStatus      `json:"status"`
+}
+
+// NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
+type NetworkRestrictionsResponseEntitlement string
+
+// NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
+type NetworkRestrictionsResponseStatus string
+
 // OrganizationResponse defines model for OrganizationResponse.
 type OrganizationResponse struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
+type PgsodiumConfigResponse struct {
+	RootKey string `json:"root_key"`
+}
+
+// PostgrestConfigResponse defines model for PostgrestConfigResponse.
+type PostgrestConfigResponse struct {
+	DbExtraSearchPath string  `json:"db_extra_search_path"`
+	DbSchema          string  `json:"db_schema"`
+	MaxRows           float32 `json:"max_rows"`
 }
 
 // ProjectResponse defines model for ProjectResponse.
@@ -159,6 +213,11 @@ type RemoveNetworkBanRequest struct {
 type SecretResponse struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
+type SubdomainAvailabilityResponse struct {
+	Available bool `json:"available"`
 }
 
 // TypescriptResponse defines model for TypescriptResponse.
@@ -192,6 +251,27 @@ type UpdateFunctionBody struct {
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
 }
+
+// UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
+type UpdatePostgrestConfigBody struct {
+	DbExtraSearchPath *string  `json:"db_extra_search_path,omitempty"`
+	DbSchema          *string  `json:"db_schema,omitempty"`
+	MaxRows           *float32 `json:"max_rows,omitempty"`
+}
+
+// VanitySubdomainBody defines model for VanitySubdomainBody.
+type VanitySubdomainBody struct {
+	VanitySubdomain string `json:"vanity_subdomain"`
+}
+
+// VanitySubdomainConfigResponse defines model for VanitySubdomainConfigResponse.
+type VanitySubdomainConfigResponse struct {
+	CustomDomain *string                             `json:"custom_domain,omitempty"`
+	Status       VanitySubdomainConfigResponseStatus `json:"status"`
+}
+
+// VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
+type VanitySubdomainConfigResponseStatus string
 
 // CreateFunctionParams defines parameters for CreateFunction.
 type CreateFunctionParams struct {
@@ -238,11 +318,23 @@ type UpdateFunctionJSONRequestBody = UpdateFunctionBody
 // RemoveNetworkBanJSONRequestBody defines body for RemoveNetworkBan for application/json ContentType.
 type RemoveNetworkBanJSONRequestBody = RemoveNetworkBanRequest
 
+// ApplyNetworkRestrictionsJSONRequestBody defines body for ApplyNetworkRestrictions for application/json ContentType.
+type ApplyNetworkRestrictionsJSONRequestBody = NetworkRestrictionsRequest
+
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePgsodiumConfigBody
+
+// UpdatePostgRESTConfigJSONRequestBody defines body for UpdatePostgRESTConfig for application/json ContentType.
+type UpdatePostgRESTConfigJSONRequestBody = UpdatePostgrestConfigBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
 
 // CreateSecretsJSONRequestBody defines body for CreateSecrets for application/json ContentType.
 type CreateSecretsJSONRequestBody = CreateSecretsJSONBody
+
+// ActivateVanitySubdomainPleaseJSONRequestBody defines body for ActivateVanitySubdomainPlease for application/json ContentType.
+type ActivateVanitySubdomainPleaseJSONRequestBody = VanitySubdomainBody
+
+// CheckVanitySubdomainAvailabilityJSONRequestBody defines body for CheckVanitySubdomainAvailability for application/json ContentType.
+type CheckVanitySubdomainAvailabilityJSONRequestBody = VanitySubdomainBody

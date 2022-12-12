@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -88,13 +88,13 @@ func TestMigrationPush(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0").
-			Query(commit.INSERT_MIGRATION_VERSION, "0").
+			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
 		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+commit.INSERT_MIGRATION_VERSION)
+		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)
 	})
 }
 
@@ -201,7 +201,7 @@ func TestPushLocal(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(commit.INSERT_MIGRATION_VERSION, "0").
+			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
@@ -243,7 +243,7 @@ func TestPushLocal(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(commit.INSERT_MIGRATION_VERSION, "0").
+		conn.Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Connect to mock
 		ctx := context.Background()
@@ -254,6 +254,6 @@ func TestPushLocal(t *testing.T) {
 		err = pushMigration(ctx, mock, "0_test.sql", fsys)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+commit.INSERT_MIGRATION_VERSION)
+		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)
 	})
 }

@@ -134,11 +134,8 @@ paths:
         '500':
           description: Failed to create project's function
       tags: &ref_5
-        - projects
+        - functions
       security: &ref_6
-        - apiKeyHeader: []
-          apiKeyParam: []
-        - bearer: []
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -203,7 +200,7 @@ paths:
         '500':
           description: Failed to retrieve function with given slug
       tags: &ref_8
-        - projects
+        - functions
       security: &ref_9
         - apiKeyHeader: []
           apiKeyParam: []
@@ -328,202 +325,6 @@ paths:
           description: Failed to retrieve function body with given slug
       tags: *ref_8
       security: *ref_9
-  /v1/projects/{ref}/custom-hostname:
-    get:
-      operationId: getCustomHostnameConfig
-      summary: Gets project's custom hostname config
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's custom hostname config
-      tags: &ref_10
-        - custom hostname (beta)
-      security: &ref_11
-        - bearer: []
-    delete:
-      operationId: removeCustomHostnameConfig
-      summary: Deletes a project's custom hostname configuration
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to delete project custom hostname configuration
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/custom-hostname/initialize:
-    post:
-      operationId: createCustomHostnameConfig
-      summary: Updates project's custom hostname configuration
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateCustomHostnameBody'
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to update project custom hostname configuration
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/custom-hostname/reverify:
-    post:
-      operationId: reverify
-      summary: >-
-        Attempts to verify the DNS configuration for project's custom hostname
-        configuration
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to verify project custom hostname configuration
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/custom-hostname/activate:
-    post:
-      operationId: activate
-      summary: Activates a custom hostname for a project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to activate project custom hostname configuration
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/pgsodium:
-    get:
-      operationId: getConfig
-      summary: Gets project's pgsodium config
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's pgsodium config
-      tags: &ref_12
-        - pgsodium (beta)
-      security: &ref_13
-        - bearer: []
-    put:
-      operationId: updateConfig
-      summary: >-
-        Updates project's pgsodium config. Updating the root_key can cause all
-        data encrypted with the older key to become inaccessible.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePgsodiumConfigBody'
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: ''
-        '500':
-          description: Failed to update project's pgsodium config
-      tags: *ref_12
-      security: *ref_13
   /v1/projects/{ref}/secrets:
     get:
       operationId: getSecrets
@@ -551,9 +352,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's secrets
-      tags: &ref_14
-        - projects
-      security: &ref_15
+      tags: &ref_10
+        - secrets
+      security: &ref_11
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -585,8 +386,8 @@ paths:
           description: ''
         '500':
           description: Failed to create project's secrets
-      tags: *ref_14
-      security: *ref_15
+      tags: *ref_10
+      security: *ref_11
     delete:
       operationId: deleteSecrets
       summary: Bulk delete secrets
@@ -619,8 +420,263 @@ paths:
           description: ''
         '500':
           description: Failed to delete secrets with given names
+      tags: *ref_10
+      security: *ref_11
+  /v1/projects/{ref}/postgrest:
+    get:
+      operationId: getPostgRESTConfig
+      summary: Gets project's postgrest config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostgrestConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's postgrest config
+      tags: &ref_12
+        - services
+      security: &ref_13
+        - bearer: []
+    patch:
+      operationId: updatePostgRESTConfig
+      summary: Updates project's postgrest config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePostgrestConfigBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostgrestConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's postgrest config
+      tags: *ref_12
+      security: *ref_13
+  /v1/projects/{ref}/custom-hostname:
+    get:
+      operationId: getCustomHostnameConfig
+      summary: Gets project's custom hostname config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's custom hostname config
+      tags: &ref_14
+        - custom hostname (beta)
+      security: &ref_15
+        - bearer: []
+    delete:
+      operationId: removeCustomHostnameConfig
+      summary: Deletes a project's custom hostname configuration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete project custom hostname configuration
       tags: *ref_14
       security: *ref_15
+  /v1/projects/{ref}/custom-hostname/initialize:
+    post:
+      operationId: createCustomHostnameConfig
+      summary: Updates project's custom hostname configuration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomHostnameBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project custom hostname configuration
+      tags: *ref_14
+      security: *ref_15
+  /v1/projects/{ref}/custom-hostname/reverify:
+    post:
+      operationId: reverify
+      summary: >-
+        Attempts to verify the DNS configuration for project's custom hostname
+        configuration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to verify project custom hostname configuration
+      tags: *ref_14
+      security: *ref_15
+  /v1/projects/{ref}/custom-hostname/activate:
+    post:
+      operationId: activate
+      summary: Activates a custom hostname for a project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to activate project custom hostname configuration
+      tags: *ref_14
+      security: *ref_15
+  /v1/projects/{ref}/pgsodium:
+    get:
+      operationId: getConfig
+      summary: Gets project's pgsodium config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PgsodiumConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's pgsodium config
+      tags: &ref_16
+        - pgsodium (beta)
+      security: &ref_17
+        - bearer: []
+    put:
+      operationId: updateConfig
+      summary: >-
+        Updates project's pgsodium config. Updating the root_key can cause all
+        data encrypted with the older key to become inaccessible.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePgsodiumConfigBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PgsodiumConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's pgsodium config
+      tags: *ref_16
+      security: *ref_17
   /v1/projects/{ref}/types/typescript:
     get:
       operationId: getTypescriptTypes
@@ -682,9 +738,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network bans
-      tags: &ref_16
+      tags: &ref_18
         - network bans (beta)
-      security: &ref_17
+      security: &ref_19
         - bearer: []
   /v1/projects/{ref}/network-bans:
     delete:
@@ -712,8 +768,181 @@ paths:
           description: ''
         '500':
           description: Failed to remove network bans.
-      tags: *ref_16
-      security: *ref_17
+      tags: *ref_18
+      security: *ref_19
+  /v1/projects/{ref}/network-restrictions:
+    get:
+      operationId: getNetworkRestrictions
+      summary: Gets project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's network restrictions
+      tags: &ref_20
+        - network restrictions (beta)
+      security: &ref_21
+        - bearer: []
+  /v1/projects/{ref}/network-restrictions/apply:
+    post:
+      operationId: applyNetworkRestrictions
+      summary: Updates project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkRestrictionsRequest'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project network restrictions
+      tags: *ref_20
+      security: *ref_21
+  /v1/projects/{ref}/vanity-subdomain:
+    get:
+      operationId: getVanitySubdomainConfig
+      summary: Gets current vanity subdomain config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VanitySubdomainConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to get project vanity subdomain configuration
+      tags: &ref_22
+        - vanity subdomain (beta)
+      security: &ref_23
+        - bearer: []
+    delete:
+      operationId: removeVanitySubdomainConfig
+      summary: Deletes a project's vanity subdomain configuration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete project vanity subdomain configuration
+      tags: *ref_22
+      security: *ref_23
+  /v1/projects/{ref}/vanity-subdomain/check-availability:
+    post:
+      operationId: checkVanitySubdomainAvailability
+      summary: Checks vanity subdomain availability
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VanitySubdomainBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubdomainAvailabilityResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to check project vanity subdomain configuration
+      tags: *ref_22
+      security: *ref_23
+  /v1/projects/{ref}/vanity-subdomain/activate:
+    post:
+      operationId: activateVanitySubdomainPlease
+      summary: Activates a vanity subdomain for a project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VanitySubdomainBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateVanitySubdomainResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to activate project vanity subdomain configuration
+      tags: *ref_22
+      security: *ref_23
 info:
   title: Supabase API (v1)
   description: ''
@@ -844,7 +1073,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_18
+          enum: &ref_24
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -877,7 +1106,7 @@ components:
         name:
           type: string
         status:
-          enum: *ref_18
+          enum: *ref_24
           type: string
         version:
           type: number
@@ -908,6 +1137,50 @@ components:
           type: string
         verify_jwt:
           type: boolean
+    SecretResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - name
+        - value
+    CreateSecretBody:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+          pattern: /^(?!SUPABASE_).*/
+      required:
+        - name
+        - value
+    PostgrestConfigResponse:
+      type: object
+      properties:
+        db_schema:
+          type: string
+        max_rows:
+          type: number
+        db_extra_search_path:
+          type: string
+      required:
+        - db_schema
+        - max_rows
+        - db_extra_search_path
+    UpdatePostgrestConfigBody:
+      type: object
+      properties:
+        db_extra_search_path:
+          type: string
+        db_schema:
+          type: string
+        max_rows:
+          type: number
+          maximum: 1000000
     UpdateCustomHostnameResponse:
       type: object
       properties:
@@ -934,6 +1207,13 @@ components:
           type: string
       required:
         - custom_hostname
+    PgsodiumConfigResponse:
+      type: object
+      properties:
+        root_key:
+          type: string
+      required:
+        - root_key
     UpdatePgsodiumConfigBody:
       type: object
       properties:
@@ -941,27 +1221,6 @@ components:
           type: string
       required:
         - root_key
-    SecretResponse:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-      required:
-        - name
-        - value
-    CreateSecretBody:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-          pattern: /^(?!SUPABASE_).*/
-      required:
-        - name
-        - value
     TypescriptResponse:
       type: object
       properties:
@@ -987,3 +1246,65 @@ components:
             type: string
       required:
         - ipv4_addresses
+    NetworkRestrictionsRequest:
+      type: object
+      properties:
+        dbAllowedCidrs:
+          type: array
+          items:
+            type: string
+      required:
+        - dbAllowedCidrs
+    NetworkRestrictionsResponse:
+      type: object
+      properties:
+        entitlement:
+          enum:
+            - disallowed
+            - allowed
+          type: string
+        config:
+          $ref: '#/components/schemas/NetworkRestrictionsRequest'
+        status:
+          enum:
+            - stored
+            - applied
+          type: string
+      required:
+        - entitlement
+        - config
+        - status
+    VanitySubdomainConfigResponse:
+      type: object
+      properties:
+        status:
+          enum:
+            - not-used
+            - custom-domain-used
+            - active
+          type: string
+        custom_domain:
+          type: string
+      required:
+        - status
+    VanitySubdomainBody:
+      type: object
+      properties:
+        vanity_subdomain:
+          type: string
+      required:
+        - vanity_subdomain
+    SubdomainAvailabilityResponse:
+      type: object
+      properties:
+        available:
+          type: boolean
+      required:
+        - available
+    ActivateVanitySubdomainResponse:
+      type: object
+      properties:
+        custom_domain:
+          type: string
+      required:
+        - custom_domain

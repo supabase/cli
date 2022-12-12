@@ -30,7 +30,7 @@ jobs:
     name: GoReleaser
     needs:
       - release
-    if: needs.release.outputs.new-release-published == 'true' || github.ref_type == 'tag'
+    if: needs.release.outputs.new-release-published == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3

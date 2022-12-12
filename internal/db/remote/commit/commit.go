@@ -23,15 +23,8 @@ import (
 	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-)
-
-const (
-	CHECK_MIGRATION_EXISTS = "SELECT 1 FROM supabase_migrations.schema_migrations LIMIT 1"
-	CREATE_MIGRATION_TABLE = `CREATE SCHEMA IF NOT EXISTS supabase_migrations;
-CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY);
-`
-	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
 )
 
 var (
@@ -123,7 +116,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		}
 
 		// Insert a row to `schema_migrations`
-		if _, err := conn.Query(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
+		if _, err := conn.Exec(ctx, repair.INSERT_MIGRATION_VERSION, timestamp); err != nil {
 			return err
 		}
 
@@ -309,7 +302,7 @@ EOSQL
 	}
 
 	// 5. Insert a row to `schema_migrations`
-	if _, err := conn.Exec(ctx, INSERT_MIGRATION_VERSION, timestamp); err != nil {
+	if _, err := conn.Exec(ctx, repair.INSERT_MIGRATION_VERSION, timestamp); err != nil {
 		return err
 	}
 

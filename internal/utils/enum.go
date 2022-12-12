@@ -32,5 +32,9 @@ func (a *EnumFlag) Set(p string) error {
 }
 
 func (a *EnumFlag) Type() string {
+	values := strings.Join(a.Allowed, " | ")
+	if len(values) < 40 {
+		return fmt.Sprintf("[ %s ]", values)
+	}
 	return "string"
 }

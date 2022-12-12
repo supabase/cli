@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -49,6 +50,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 
 	// 2. Bundle Function.
 	var functionBody io.Reader
+	var functionSize int
 	{
 		fmt.Println("Bundling " + utils.Bold(slug))
 		denoPath, err := utils.GetDenoPath()
@@ -79,9 +81,11 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 		}
 
 		functionBody = &outBuf
+		functionSize = outBuf.Len()
 	}
 
 	// 3. Deploy new Function.
+	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(units.HumanSize(float64(functionSize))) + ")")
 	return deployFunction(ctx, projectRef, slug, functionBody, verifyJWT, useLegacyBundle)
 }
 

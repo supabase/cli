@@ -152,6 +152,14 @@ type ClientInterface interface {
 	// GetNetworkBans request
 	GetNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetNetworkRestrictions request
+	GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApplyNetworkRestrictions request with any body
+	ApplyNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ApplyNetworkRestrictions(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConfig request
 	GetConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -159,6 +167,14 @@ type ClientInterface interface {
 	UpdateConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateConfig(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPostgRESTConfig request
+	GetPostgRESTConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdatePostgRESTConfig request with any body
+	UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -175,6 +191,22 @@ type ClientInterface interface {
 
 	// GetTypescriptTypes request
 	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveVanitySubdomainConfig request
+	RemoveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVanitySubdomainConfig request
+	GetVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateVanitySubdomainPlease request with any body
+	ActivateVanitySubdomainPleaseWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ActivateVanitySubdomainPlease(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckVanitySubdomainAvailability request with any body
+	CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetOrganizations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -453,6 +485,42 @@ func (c *Client) GetNetworkBans(ctx context.Context, ref string, reqEditors ...R
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNetworkRestrictionsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApplyNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyNetworkRestrictionsRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApplyNetworkRestrictions(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApplyNetworkRestrictionsRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConfigRequest(c.Server, ref)
 	if err != nil {
@@ -479,6 +547,42 @@ func (c *Client) UpdateConfigWithBody(ctx context.Context, ref string, contentTy
 
 func (c *Client) UpdateConfig(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetPostgRESTConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPostgRESTConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePostgRESTConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdatePostgRESTConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -551,6 +655,78 @@ func (c *Client) CreateSecrets(ctx context.Context, ref string, body CreateSecre
 
 func (c *Client) GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTypescriptTypesRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveVanitySubdomainConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVanitySubdomainConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateVanitySubdomainPleaseWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateVanitySubdomainPleaseRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateVanitySubdomainPlease(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateVanitySubdomainPleaseRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckVanitySubdomainAvailabilityRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckVanitySubdomainAvailabilityRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1353,6 +1529,87 @@ func NewGetNetworkBansRequest(server string, ref string) (*http.Request, error) 
 	return req, nil
 }
 
+// NewGetNetworkRestrictionsRequest generates requests for GetNetworkRestrictions
+func NewGetNetworkRestrictionsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewApplyNetworkRestrictionsRequest calls the generic ApplyNetworkRestrictions builder with application/json body
+func NewApplyNetworkRestrictionsRequest(server string, ref string, body ApplyNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApplyNetworkRestrictionsRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewApplyNetworkRestrictionsRequestWithBody generates requests for ApplyNetworkRestrictions with any type of body
+func NewApplyNetworkRestrictionsRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions/apply", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetConfigRequest generates requests for GetConfig
 func NewGetConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -1425,6 +1682,87 @@ func NewUpdateConfigRequestWithBody(server string, ref string, contentType strin
 	}
 
 	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPostgRESTConfigRequest generates requests for GetPostgRESTConfig
+func NewGetPostgRESTConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/postgrest", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdatePostgRESTConfigRequest calls the generic UpdatePostgRESTConfig builder with application/json body
+func NewUpdatePostgRESTConfigRequest(server string, ref string, body UpdatePostgRESTConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdatePostgRESTConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewUpdatePostgRESTConfigRequestWithBody generates requests for UpdatePostgRESTConfig with any type of body
+func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/postgrest", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -1616,6 +1954,168 @@ func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescri
 	return req, nil
 }
 
+// NewRemoveVanitySubdomainConfigRequest generates requests for RemoveVanitySubdomainConfig
+func NewRemoveVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVanitySubdomainConfigRequest generates requests for GetVanitySubdomainConfig
+func NewGetVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewActivateVanitySubdomainPleaseRequest calls the generic ActivateVanitySubdomainPlease builder with application/json body
+func NewActivateVanitySubdomainPleaseRequest(server string, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateVanitySubdomainPleaseRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewActivateVanitySubdomainPleaseRequestWithBody generates requests for ActivateVanitySubdomainPlease with any type of body
+func NewActivateVanitySubdomainPleaseRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain/activate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCheckVanitySubdomainAvailabilityRequest calls the generic CheckVanitySubdomainAvailability builder with application/json body
+func NewCheckVanitySubdomainAvailabilityRequest(server string, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCheckVanitySubdomainAvailabilityRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCheckVanitySubdomainAvailabilityRequestWithBody generates requests for CheckVanitySubdomainAvailability with any type of body
+func NewCheckVanitySubdomainAvailabilityRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/vanity-subdomain/check-availability", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -1722,6 +2222,14 @@ type ClientWithResponsesInterface interface {
 	// GetNetworkBans request
 	GetNetworkBansWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkBansResponse, error)
 
+	// GetNetworkRestrictions request
+	GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkRestrictionsResponse, error)
+
+	// ApplyNetworkRestrictions request with any body
+	ApplyNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error)
+
+	ApplyNetworkRestrictionsWithResponse(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error)
+
 	// GetConfig request
 	GetConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetConfigResponse, error)
 
@@ -1729,6 +2237,14 @@ type ClientWithResponsesInterface interface {
 	UpdateConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
 
 	UpdateConfigWithResponse(ctx context.Context, ref string, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
+
+	// GetPostgRESTConfig request
+	GetPostgRESTConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgRESTConfigResponse, error)
+
+	// UpdatePostgRESTConfig request with any body
+	UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
+
+	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteSecretsResponse, error)
@@ -1745,6 +2261,22 @@ type ClientWithResponsesInterface interface {
 
 	// GetTypescriptTypes request
 	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
+
+	// RemoveVanitySubdomainConfig request
+	RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error)
+
+	// GetVanitySubdomainConfig request
+	GetVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetVanitySubdomainConfigResponse, error)
+
+	// ActivateVanitySubdomainPlease request with any body
+	ActivateVanitySubdomainPleaseWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error)
+
+	ActivateVanitySubdomainPleaseWithResponse(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error)
+
+	// CheckVanitySubdomainAvailability request with any body
+	CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
+
+	CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
 }
 
 type GetOrganizationsResponse struct {
@@ -2117,10 +2649,54 @@ func (r GetNetworkBansResponse) StatusCode() int {
 	return 0
 }
 
+type GetNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkRestrictionsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ApplyNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *NetworkRestrictionsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ApplyNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApplyNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2142,7 +2718,7 @@ func (r GetConfigResponse) StatusCode() int {
 type UpdateConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
+	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2155,6 +2731,50 @@ func (r UpdateConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetPostgRESTConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgrestConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPostgRESTConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPostgRESTConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdatePostgRESTConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgrestConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdatePostgRESTConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdatePostgRESTConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2242,6 +2862,93 @@ func (r GetTypescriptTypesResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetTypescriptTypesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RemoveVanitySubdomainConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveVanitySubdomainConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveVanitySubdomainConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetVanitySubdomainConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *VanitySubdomainConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVanitySubdomainConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVanitySubdomainConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateVanitySubdomainPleaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *ActivateVanitySubdomainResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateVanitySubdomainPleaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateVanitySubdomainPleaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CheckVanitySubdomainAvailabilityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SubdomainAvailabilityResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckVanitySubdomainAvailabilityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckVanitySubdomainAvailabilityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2449,6 +3156,32 @@ func (c *ClientWithResponses) GetNetworkBansWithResponse(ctx context.Context, re
 	return ParseGetNetworkBansResponse(rsp)
 }
 
+// GetNetworkRestrictionsWithResponse request returning *GetNetworkRestrictionsResponse
+func (c *ClientWithResponses) GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetNetworkRestrictionsResponse, error) {
+	rsp, err := c.GetNetworkRestrictions(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNetworkRestrictionsResponse(rsp)
+}
+
+// ApplyNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *ApplyNetworkRestrictionsResponse
+func (c *ClientWithResponses) ApplyNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error) {
+	rsp, err := c.ApplyNetworkRestrictionsWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyNetworkRestrictionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) ApplyNetworkRestrictionsWithResponse(ctx context.Context, ref string, body ApplyNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ApplyNetworkRestrictionsResponse, error) {
+	rsp, err := c.ApplyNetworkRestrictions(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApplyNetworkRestrictionsResponse(rsp)
+}
+
 // GetConfigWithResponse request returning *GetConfigResponse
 func (c *ClientWithResponses) GetConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetConfigResponse, error) {
 	rsp, err := c.GetConfig(ctx, ref, reqEditors...)
@@ -2473,6 +3206,32 @@ func (c *ClientWithResponses) UpdateConfigWithResponse(ctx context.Context, ref 
 		return nil, err
 	}
 	return ParseUpdateConfigResponse(rsp)
+}
+
+// GetPostgRESTConfigWithResponse request returning *GetPostgRESTConfigResponse
+func (c *ClientWithResponses) GetPostgRESTConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgRESTConfigResponse, error) {
+	rsp, err := c.GetPostgRESTConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPostgRESTConfigResponse(rsp)
+}
+
+// UpdatePostgRESTConfigWithBodyWithResponse request with arbitrary body returning *UpdatePostgRESTConfigResponse
+func (c *ClientWithResponses) UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error) {
+	rsp, err := c.UpdatePostgRESTConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePostgRESTConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error) {
+	rsp, err := c.UpdatePostgRESTConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdatePostgRESTConfigResponse(rsp)
 }
 
 // DeleteSecretsWithBodyWithResponse request with arbitrary body returning *DeleteSecretsResponse
@@ -2525,6 +3284,58 @@ func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseGetTypescriptTypesResponse(rsp)
+}
+
+// RemoveVanitySubdomainConfigWithResponse request returning *RemoveVanitySubdomainConfigResponse
+func (c *ClientWithResponses) RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error) {
+	rsp, err := c.RemoveVanitySubdomainConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveVanitySubdomainConfigResponse(rsp)
+}
+
+// GetVanitySubdomainConfigWithResponse request returning *GetVanitySubdomainConfigResponse
+func (c *ClientWithResponses) GetVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetVanitySubdomainConfigResponse, error) {
+	rsp, err := c.GetVanitySubdomainConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVanitySubdomainConfigResponse(rsp)
+}
+
+// ActivateVanitySubdomainPleaseWithBodyWithResponse request with arbitrary body returning *ActivateVanitySubdomainPleaseResponse
+func (c *ClientWithResponses) ActivateVanitySubdomainPleaseWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error) {
+	rsp, err := c.ActivateVanitySubdomainPleaseWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateVanitySubdomainPleaseResponse(rsp)
+}
+
+func (c *ClientWithResponses) ActivateVanitySubdomainPleaseWithResponse(ctx context.Context, ref string, body ActivateVanitySubdomainPleaseJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateVanitySubdomainPleaseResponse, error) {
+	rsp, err := c.ActivateVanitySubdomainPlease(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateVanitySubdomainPleaseResponse(rsp)
+}
+
+// CheckVanitySubdomainAvailabilityWithBodyWithResponse request with arbitrary body returning *CheckVanitySubdomainAvailabilityResponse
+func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	rsp, err := c.CheckVanitySubdomainAvailabilityWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
+}
+
+func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	rsp, err := c.CheckVanitySubdomainAvailability(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
 }
 
 // ParseGetOrganizationsResponse parses an HTTP response from a GetOrganizationsWithResponse call
@@ -2929,6 +3740,58 @@ func ParseGetNetworkBansResponse(rsp *http.Response) (*GetNetworkBansResponse, e
 	return response, nil
 }
 
+// ParseGetNetworkRestrictionsResponse parses an HTTP response from a GetNetworkRestrictionsWithResponse call
+func ParseGetNetworkRestrictionsResponse(rsp *http.Response) (*GetNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkRestrictionsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApplyNetworkRestrictionsResponse parses an HTTP response from a ApplyNetworkRestrictionsWithResponse call
+func ParseApplyNetworkRestrictionsResponse(rsp *http.Response) (*ApplyNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApplyNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest NetworkRestrictionsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetConfigResponse parses an HTTP response from a GetConfigWithResponse call
 func ParseGetConfigResponse(rsp *http.Response) (*GetConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2944,7 +3807,7 @@ func ParseGetConfigResponse(rsp *http.Response) (*GetConfigResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest PgsodiumConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2970,7 +3833,59 @@ func ParseUpdateConfigResponse(rsp *http.Response) (*UpdateConfigResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest PgsodiumConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPostgRESTConfigResponse parses an HTTP response from a GetPostgRESTConfigWithResponse call
+func ParseGetPostgRESTConfigResponse(rsp *http.Response) (*GetPostgRESTConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPostgRESTConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PostgrestConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdatePostgRESTConfigResponse parses an HTTP response from a UpdatePostgRESTConfigWithResponse call
+func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdatePostgRESTConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PostgrestConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3069,6 +3984,100 @@ func ParseGetTypescriptTypesResponse(rsp *http.Response) (*GetTypescriptTypesRes
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveVanitySubdomainConfigResponse parses an HTTP response from a RemoveVanitySubdomainConfigWithResponse call
+func ParseRemoveVanitySubdomainConfigResponse(rsp *http.Response) (*RemoveVanitySubdomainConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveVanitySubdomainConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetVanitySubdomainConfigResponse parses an HTTP response from a GetVanitySubdomainConfigWithResponse call
+func ParseGetVanitySubdomainConfigResponse(rsp *http.Response) (*GetVanitySubdomainConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVanitySubdomainConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VanitySubdomainConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateVanitySubdomainPleaseResponse parses an HTTP response from a ActivateVanitySubdomainPleaseWithResponse call
+func ParseActivateVanitySubdomainPleaseResponse(rsp *http.Response) (*ActivateVanitySubdomainPleaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateVanitySubdomainPleaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ActivateVanitySubdomainResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckVanitySubdomainAvailabilityResponse parses an HTTP response from a CheckVanitySubdomainAvailabilityWithResponse call
+func ParseCheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*CheckVanitySubdomainAvailabilityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckVanitySubdomainAvailabilityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SubdomainAvailabilityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 

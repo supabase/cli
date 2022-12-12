@@ -57,9 +57,7 @@ func (p *fakeProgram) Send(msg tea.Msg) {
 		}
 	}
 
-	model, cmd := p.model.Update(msg)
-	p.model = model
-
+	_, cmd := p.model.Update(msg)
 	if cmd != nil {
 		cmd()
 	}

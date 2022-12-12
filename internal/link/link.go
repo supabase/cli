@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/remote/commit"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"golang.org/x/term"
@@ -35,10 +36,8 @@ func Run(ctx context.Context, projectRef, username, password, database string, f
 			return err
 		}
 		// If `schema_migrations` doesn't exist on the remote database, create it.
-		if _, err := conn.Exec(ctx, commit.CHECK_MIGRATION_EXISTS); err != nil {
-			if _, err := conn.Exec(ctx, commit.CREATE_MIGRATION_TABLE); err != nil {
-				return err
-			}
+		if _, err := conn.Exec(ctx, repair.CREATE_MIGRATION_TABLE); err != nil {
+			return err
 		}
 		// Save database password
 		if err := credentials.Set(projectRef, password); err != nil {
