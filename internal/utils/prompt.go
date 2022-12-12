@@ -126,7 +126,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 	ctx, cancel := context.WithCancel(ctx)
 	initial := model{cancel: cancel, list: l}
 	prog := tea.NewProgram(initial)
-	state, err := prog.StartReturningModel()
+	state, err := prog.Run()
 	if err != nil {
 		return initial.choice, err
 	}
