@@ -24,7 +24,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
 
       // If an import map path is set read file from the given path.
       // Otherwise default to `import_map.json` in functions directory.
-      if (specifier.endsWith('import_map.json') && importMapPath != "") {
+      if (specifier.endsWith('import_map.json') && importMapPath) {
         actualPath = importMapPath
       }
       try {
