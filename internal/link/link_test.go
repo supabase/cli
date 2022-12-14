@@ -27,6 +27,7 @@ const (
 )
 
 func TestPreRun(t *testing.T) {
+	// Reset global variable
 	copy := utils.Config
 	t.Cleanup(func() {
 		utils.Config = copy
@@ -95,6 +96,7 @@ func TestLinkCommand(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	// Reset global variable
 	t.Cleanup(func() {
 		for k := range updatedConfig {
@@ -188,6 +190,7 @@ func TestLinkPostgrest(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	// Reset global variable
 	t.Cleanup(func() {
 		for k := range updatedConfig {
