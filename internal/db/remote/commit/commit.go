@@ -397,29 +397,6 @@ func (m model) View() string {
 	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
 }
 
-func AssertPostgresVersionMatch(conn *pgx.Conn) error {
-	serverVersion := conn.PgConn().ParameterStatus("server_version")
-	// Safe to assume that supported Postgres version is 10.0 <= n < 100.0
-	majorDigits := len(serverVersion)
-	if majorDigits > 2 {
-		majorDigits = 2
-	}
-	dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7)
-	if err != nil {
-		return err
-	}
-	if dbMajorVersion != uint64(utils.Config.Db.MajorVersion) {
-		return fmt.Errorf(
-			"Remote database Postgres version %[1]d is incompatible with %[3]s %[2]d. If you are setting up a fresh Supabase CLI project, try changing %[3]s in %[4]s to %[1]d.",
-			dbMajorVersion,
-			utils.Config.Db.MajorVersion,
-			utils.Aqua("db.major_version"),
-			utils.Bold(utils.ConfigPath),
-		)
-	}
-	return nil
-}
-
 func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {

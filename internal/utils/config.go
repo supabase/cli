@@ -76,36 +76,36 @@ var Config config
 
 type (
 	config struct {
-		ProjectId string `toml:"project_id"`
-		Api       api
-		Db        db
-		Studio    studio
-		Inbucket  inbucket
-		Storage   storage
-		Auth      auth
+		ProjectId string   `toml:"project_id"`
+		Api       api      `toml:"api"`
+		Db        db       `toml:"db"`
+		Studio    studio   `toml:"studio"`
+		Inbucket  inbucket `toml:"inbucket"`
+		Storage   storage  `toml:"storage"`
+		Auth      auth     `toml:"auth"`
 		// TODO
 		// Scripts   scripts
 	}
 
 	api struct {
-		Port            uint
-		Schemas         []string
+		Port            uint     `toml:"port"`
+		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
 	}
 
 	db struct {
-		Port         uint
+		Port         uint `toml:"port"`
 		ShadowPort   uint `toml:"shadow_port"`
 		MajorVersion uint `toml:"major_version"`
 	}
 
 	studio struct {
-		Port uint
+		Port uint `toml:"port"`
 	}
 
 	inbucket struct {
-		Port     uint
+		Port     uint `toml:"port"`
 		SmtpPort uint `toml:"smtp_port"`
 		Pop3Port uint `toml:"pop3_port"`
 	}
@@ -119,7 +119,7 @@ type (
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
 		JwtExpiry              uint     `toml:"jwt_expiry"`
 		EnableSignup           *bool    `toml:"enable_signup"`
-		Email                  email
+		Email                  email    `toml:"email"`
 		External               map[string]provider
 	}
 
@@ -130,10 +130,10 @@ type (
 	}
 
 	provider struct {
-		Enabled     bool
+		Enabled     bool   `toml:"enabled"`
 		ClientId    string `toml:"client_id"`
-		Secret      string
-		Url         string
+		Secret      string `toml:"secret"`
+		Url         string `toml:"url"`
 		RedirectUri string `toml:"redirect_uri"`
 	}
 
