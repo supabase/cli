@@ -189,9 +189,9 @@ type PgsodiumConfigResponse struct {
 
 // PostgrestConfigResponse defines model for PostgrestConfigResponse.
 type PostgrestConfigResponse struct {
-	DbExtraSearchPath string  `json:"db_extra_search_path"`
-	DbSchema          string  `json:"db_schema"`
-	MaxRows           float32 `json:"max_rows"`
+	DbExtraSearchPath string `json:"db_extra_search_path"`
+	DbSchema          string `json:"db_schema"`
+	MaxRows           int    `json:"max_rows"`
 }
 
 // ProjectResponse defines model for ProjectResponse.
@@ -213,6 +213,22 @@ type RemoveNetworkBanRequest struct {
 type SecretResponse struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// SslEnforcementRequest defines model for SslEnforcementRequest.
+type SslEnforcementRequest struct {
+	RequestedConfig SslEnforcements `json:"requestedConfig"`
+}
+
+// SslEnforcementResponse defines model for SslEnforcementResponse.
+type SslEnforcementResponse struct {
+	AppliedSuccessfully bool            `json:"appliedSuccessfully"`
+	CurrentConfig       SslEnforcements `json:"currentConfig"`
+}
+
+// SslEnforcements defines model for SslEnforcements.
+type SslEnforcements struct {
+	Database bool `json:"database"`
 }
 
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
@@ -254,9 +270,9 @@ type UpdatePgsodiumConfigBody struct {
 
 // UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
 type UpdatePostgrestConfigBody struct {
-	DbExtraSearchPath *string  `json:"db_extra_search_path,omitempty"`
-	DbSchema          *string  `json:"db_schema,omitempty"`
-	MaxRows           *float32 `json:"max_rows,omitempty"`
+	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
+	DbSchema          *string `json:"db_schema,omitempty"`
+	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -332,6 +348,9 @@ type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
 
 // CreateSecretsJSONRequestBody defines body for CreateSecrets for application/json ContentType.
 type CreateSecretsJSONRequestBody = CreateSecretsJSONBody
+
+// UpdateSslEnforcementConfigJSONRequestBody defines body for UpdateSslEnforcementConfig for application/json ContentType.
+type UpdateSslEnforcementConfigJSONRequestBody = SslEnforcementRequest
 
 // ActivateVanitySubdomainPleaseJSONRequestBody defines body for ActivateVanitySubdomainPlease for application/json ContentType.
 type ActivateVanitySubdomainPleaseJSONRequestBody = VanitySubdomainBody

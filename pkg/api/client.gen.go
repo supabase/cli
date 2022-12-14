@@ -189,6 +189,14 @@ type ClientInterface interface {
 
 	CreateSecrets(ctx context.Context, ref string, body CreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetSslEnforcementConfig request
+	GetSslEnforcementConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSslEnforcementConfig request with any body
+	UpdateSslEnforcementConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateSslEnforcementConfig(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetTypescriptTypes request
 	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -643,6 +651,42 @@ func (c *Client) CreateSecretsWithBody(ctx context.Context, ref string, contentT
 
 func (c *Client) CreateSecrets(ctx context.Context, ref string, body CreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateSecretsRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSslEnforcementConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSslEnforcementConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateSslEnforcementConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSslEnforcementConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateSslEnforcementConfig(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSslEnforcementConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1900,6 +1944,87 @@ func NewCreateSecretsRequestWithBody(server string, ref string, contentType stri
 	return req, nil
 }
 
+// NewGetSslEnforcementConfigRequest generates requests for GetSslEnforcementConfig
+func NewGetSslEnforcementConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/ssl-enforcement", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateSslEnforcementConfigRequest calls the generic UpdateSslEnforcementConfig builder with application/json body
+func NewUpdateSslEnforcementConfigRequest(server string, ref string, body UpdateSslEnforcementConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateSslEnforcementConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewUpdateSslEnforcementConfigRequestWithBody generates requests for UpdateSslEnforcementConfig with any type of body
+func NewUpdateSslEnforcementConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/ssl-enforcement", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetTypescriptTypesRequest generates requests for GetTypescriptTypes
 func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescriptTypesParams) (*http.Request, error) {
 	var err error
@@ -2258,6 +2383,14 @@ type ClientWithResponsesInterface interface {
 	CreateSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSecretsResponse, error)
 
 	CreateSecretsWithResponse(ctx context.Context, ref string, body CreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSecretsResponse, error)
+
+	// GetSslEnforcementConfig request
+	GetSslEnforcementConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSslEnforcementConfigResponse, error)
+
+	// UpdateSslEnforcementConfig request with any body
+	UpdateSslEnforcementConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error)
+
+	UpdateSslEnforcementConfigWithResponse(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error)
 
 	// GetTypescriptTypes request
 	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
@@ -2846,6 +2979,50 @@ func (r CreateSecretsResponse) StatusCode() int {
 	return 0
 }
 
+type GetSslEnforcementConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SslEnforcementResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSslEnforcementConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSslEnforcementConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateSslEnforcementConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SslEnforcementResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSslEnforcementConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSslEnforcementConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetTypescriptTypesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3275,6 +3452,32 @@ func (c *ClientWithResponses) CreateSecretsWithResponse(ctx context.Context, ref
 		return nil, err
 	}
 	return ParseCreateSecretsResponse(rsp)
+}
+
+// GetSslEnforcementConfigWithResponse request returning *GetSslEnforcementConfigResponse
+func (c *ClientWithResponses) GetSslEnforcementConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSslEnforcementConfigResponse, error) {
+	rsp, err := c.GetSslEnforcementConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSslEnforcementConfigResponse(rsp)
+}
+
+// UpdateSslEnforcementConfigWithBodyWithResponse request with arbitrary body returning *UpdateSslEnforcementConfigResponse
+func (c *ClientWithResponses) UpdateSslEnforcementConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error) {
+	rsp, err := c.UpdateSslEnforcementConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSslEnforcementConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateSslEnforcementConfigWithResponse(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error) {
+	rsp, err := c.UpdateSslEnforcementConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSslEnforcementConfigResponse(rsp)
 }
 
 // GetTypescriptTypesWithResponse request returning *GetTypescriptTypesResponse
@@ -3959,6 +4162,58 @@ func ParseCreateSecretsResponse(rsp *http.Response) (*CreateSecretsResponse, err
 	response := &CreateSecretsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetSslEnforcementConfigResponse parses an HTTP response from a GetSslEnforcementConfigWithResponse call
+func ParseGetSslEnforcementConfigResponse(rsp *http.Response) (*GetSslEnforcementConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSslEnforcementConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SslEnforcementResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSslEnforcementConfigResponse parses an HTTP response from a UpdateSslEnforcementConfigWithResponse call
+func ParseUpdateSslEnforcementConfigResponse(rsp *http.Response) (*UpdateSslEnforcementConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSslEnforcementConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SslEnforcementResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	}
 
 	return response, nil
