@@ -23,7 +23,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.14.3",
+			Version:     "1.24.0",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -140,12 +140,23 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		yamlDoc.Usage = forceMultiLine(cmd.UseLine())
 	}
 
-	flags := cmd.NonInheritedFlags()
-	flags.VisitAll(func(flag *pflag.Flag) {
-		if !flag.Hidden {
-			yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
-		}
-	})
+	// Only print flags for root and leaf commands
+	if !cmd.HasSubCommands() {
+		flags := cmd.LocalFlags()
+		flags.VisitAll(func(flag *pflag.Flag) {
+			if !flag.Hidden {
+				yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
+			}
+		})
+		// Leaf commands should inherit parent flags except root
+		parentFlags := cmd.InheritedFlags()
+		globalFlags := cmd.Root().Flags()
+		parentFlags.VisitAll(func(flag *pflag.Flag) {
+			if !flag.Hidden && globalFlags.Lookup(flag.Name) == nil {
+				yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
+			}
+		})
+	}
 
 	return yamlDoc
 }
