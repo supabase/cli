@@ -325,162 +325,6 @@ paths:
           description: Failed to retrieve function body with given slug
       tags: *ref_8
       security: *ref_9
-  /v1/projects/{ref}/secrets:
-    get:
-      operationId: getSecrets
-      summary: List all secrets
-      description: Returns all secrets you've previously added to the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SecretResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's secrets
-      tags: &ref_10
-        - secrets
-      security: &ref_11
-        - apiKeyHeader: []
-          apiKeyParam: []
-        - bearer: []
-    post:
-      operationId: createSecrets
-      summary: Bulk create secrets
-      description: Creates multiple secrets and adds them to the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/CreateSecretBody'
-      responses:
-        '201':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to create project's secrets
-      tags: *ref_10
-      security: *ref_11
-    delete:
-      operationId: deleteSecrets
-      summary: Bulk delete secrets
-      description: Deletes all secrets with the given names from the specified project
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: ''
-        '500':
-          description: Failed to delete secrets with given names
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/postgrest:
-    get:
-      operationId: getPostgRESTConfig
-      summary: Gets project's postgrest config
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PostgrestConfigResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's postgrest config
-      tags: &ref_12
-        - services
-      security: &ref_13
-        - bearer: []
-    patch:
-      operationId: updatePostgRESTConfig
-      summary: Updates project's postgrest config
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePostgrestConfigBody'
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PostgrestConfigResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to update project's postgrest config
-      tags: *ref_12
-      security: *ref_13
   /v1/projects/{ref}/custom-hostname:
     get:
       operationId: getCustomHostnameConfig
@@ -505,9 +349,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's custom hostname config
-      tags: &ref_14
+      tags: &ref_10
         - custom hostname (beta)
-      security: &ref_15
+      security: &ref_11
         - bearer: []
     delete:
       operationId: removeCustomHostnameConfig
@@ -528,8 +372,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete project custom hostname configuration
-      tags: *ref_14
-      security: *ref_15
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/initialize:
     post:
       operationId: createCustomHostnameConfig
@@ -560,8 +404,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project custom hostname configuration
-      tags: *ref_14
-      security: *ref_15
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/reverify:
     post:
       operationId: reverify
@@ -588,8 +432,8 @@ paths:
           description: ''
         '500':
           description: Failed to verify project custom hostname configuration
-      tags: *ref_14
-      security: *ref_15
+      tags: *ref_10
+      security: *ref_11
   /v1/projects/{ref}/custom-hostname/activate:
     post:
       operationId: activate
@@ -614,6 +458,122 @@ paths:
           description: ''
         '500':
           description: Failed to activate project custom hostname configuration
+      tags: *ref_10
+      security: *ref_11
+  /v1/projects/{ref}/network-bans/retrieve:
+    post:
+      operationId: getNetworkBans
+      summary: Gets project's network bans
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkBanResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's network bans
+      tags: &ref_12
+        - network bans (beta)
+      security: &ref_13
+        - bearer: []
+  /v1/projects/{ref}/network-bans:
+    delete:
+      operationId: removeNetworkBan
+      summary: Remove network bans.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveNetworkBanRequest'
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to remove network bans.
+      tags: *ref_12
+      security: *ref_13
+  /v1/projects/{ref}/network-restrictions:
+    get:
+      operationId: getNetworkRestrictions
+      summary: Gets project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's network restrictions
+      tags: &ref_14
+        - network restrictions (beta)
+      security: &ref_15
+        - bearer: []
+  /v1/projects/{ref}/network-restrictions/apply:
+    post:
+      operationId: applyNetworkRestrictions
+      summary: Updates project's network restrictions
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkRestrictionsRequest'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project network restrictions
       tags: *ref_14
       security: *ref_15
   /v1/projects/{ref}/pgsodium:
@@ -677,6 +637,221 @@ paths:
           description: Failed to update project's pgsodium config
       tags: *ref_16
       security: *ref_17
+  /v1/projects/{ref}/postgrest:
+    get:
+      operationId: getPostgRESTConfig
+      summary: Gets project's postgrest config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostgrestConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's postgrest config
+      tags: &ref_18
+        - services
+      security: &ref_19
+        - bearer: []
+    patch:
+      operationId: updatePostgRESTConfig
+      summary: Updates project's postgrest config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePostgrestConfigBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostgrestConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's postgrest config
+      tags: *ref_18
+      security: *ref_19
+  /v1/projects/{ref}/secrets:
+    get:
+      operationId: getSecrets
+      summary: List all secrets
+      description: Returns all secrets you've previously added to the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecretResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's secrets
+      tags: &ref_20
+        - secrets
+      security: &ref_21
+        - apiKeyHeader: []
+          apiKeyParam: []
+        - bearer: []
+    post:
+      operationId: createSecrets
+      summary: Bulk create secrets
+      description: Creates multiple secrets and adds them to the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/CreateSecretBody'
+      responses:
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to create project's secrets
+      tags: *ref_20
+      security: *ref_21
+    delete:
+      operationId: deleteSecrets
+      summary: Bulk delete secrets
+      description: Deletes all secrets with the given names from the specified project
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete secrets with given names
+      tags: *ref_20
+      security: *ref_21
+  /v1/projects/{ref}/ssl-enforcement:
+    get:
+      operationId: getSslEnforcementConfig
+      summary: Get project's SSL enforcement configuration.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SslEnforcementResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's SSL enforcement config
+      tags: &ref_22
+        - ssl enforcement (beta)
+      security: &ref_23
+        - bearer: []
+    put:
+      operationId: updateSslEnforcementConfig
+      summary: Update project's SSL enforcement configuration.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SslEnforcementRequest'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SslEnforcementResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's SSL enforcement configuration.
+      tags: *ref_22
+      security: *ref_23
   /v1/projects/{ref}/types/typescript:
     get:
       operationId: getTypescriptTypes
@@ -714,122 +889,6 @@ paths:
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
-  /v1/projects/{ref}/network-bans/retrieve:
-    post:
-      operationId: getNetworkBans
-      summary: Gets project's network bans
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkBanResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's network bans
-      tags: &ref_18
-        - network bans (beta)
-      security: &ref_19
-        - bearer: []
-  /v1/projects/{ref}/network-bans:
-    delete:
-      operationId: removeNetworkBan
-      summary: Remove network bans.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RemoveNetworkBanRequest'
-      responses:
-        '200':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to remove network bans.
-      tags: *ref_18
-      security: *ref_19
-  /v1/projects/{ref}/network-restrictions:
-    get:
-      operationId: getNetworkRestrictions
-      summary: Gets project's network restrictions
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkRestrictionsResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's network restrictions
-      tags: &ref_20
-        - network restrictions (beta)
-      security: &ref_21
-        - bearer: []
-  /v1/projects/{ref}/network-restrictions/apply:
-    post:
-      operationId: applyNetworkRestrictions
-      summary: Updates project's network restrictions
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/NetworkRestrictionsRequest'
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkRestrictionsResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to update project network restrictions
-      tags: *ref_20
-      security: *ref_21
   /v1/projects/{ref}/vanity-subdomain:
     get:
       operationId: getVanitySubdomainConfig
@@ -854,9 +913,9 @@ paths:
           description: ''
         '500':
           description: Failed to get project vanity subdomain configuration
-      tags: &ref_22
+      tags: &ref_24
         - vanity subdomain (beta)
-      security: &ref_23
+      security: &ref_25
         - bearer: []
     delete:
       operationId: removeVanitySubdomainConfig
@@ -877,8 +936,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete project vanity subdomain configuration
-      tags: *ref_22
-      security: *ref_23
+      tags: *ref_24
+      security: *ref_25
   /v1/projects/{ref}/vanity-subdomain/check-availability:
     post:
       operationId: checkVanitySubdomainAvailability
@@ -909,8 +968,8 @@ paths:
           description: ''
         '500':
           description: Failed to check project vanity subdomain configuration
-      tags: *ref_22
-      security: *ref_23
+      tags: *ref_24
+      security: *ref_25
   /v1/projects/{ref}/vanity-subdomain/activate:
     post:
       operationId: activateVanitySubdomainPlease
@@ -941,8 +1000,8 @@ paths:
           description: ''
         '500':
           description: Failed to activate project vanity subdomain configuration
-      tags: *ref_22
-      security: *ref_23
+      tags: *ref_24
+      security: *ref_25
 info:
   title: Supabase API (v1)
   description: ''
@@ -1073,7 +1132,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_24
+          enum: &ref_26
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -1106,7 +1165,7 @@ components:
         name:
           type: string
         status:
-          enum: *ref_24
+          enum: *ref_26
           type: string
         version:
           type: number
@@ -1137,50 +1196,6 @@ components:
           type: string
         verify_jwt:
           type: boolean
-    SecretResponse:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-      required:
-        - name
-        - value
-    CreateSecretBody:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-          pattern: /^(?!SUPABASE_).*/
-      required:
-        - name
-        - value
-    PostgrestConfigResponse:
-      type: object
-      properties:
-        db_schema:
-          type: string
-        max_rows:
-          type: number
-        db_extra_search_path:
-          type: string
-      required:
-        - db_schema
-        - max_rows
-        - db_extra_search_path
-    UpdatePostgrestConfigBody:
-      type: object
-      properties:
-        db_extra_search_path:
-          type: string
-        db_schema:
-          type: string
-        max_rows:
-          type: number
-          maximum: 1000000
     UpdateCustomHostnameResponse:
       type: object
       properties:
@@ -1207,27 +1222,6 @@ components:
           type: string
       required:
         - custom_hostname
-    PgsodiumConfigResponse:
-      type: object
-      properties:
-        root_key:
-          type: string
-      required:
-        - root_key
-    UpdatePgsodiumConfigBody:
-      type: object
-      properties:
-        root_key:
-          type: string
-      required:
-        - root_key
-    TypescriptResponse:
-      type: object
-      properties:
-        types:
-          type: string
-      required:
-        - types
     NetworkBanResponse:
       type: object
       properties:
@@ -1274,15 +1268,105 @@ components:
         - entitlement
         - config
         - status
+    PgsodiumConfigResponse:
+      type: object
+      properties:
+        root_key:
+          type: string
+      required:
+        - root_key
+    UpdatePgsodiumConfigBody:
+      type: object
+      properties:
+        root_key:
+          type: string
+      required:
+        - root_key
+    PostgrestConfigResponse:
+      type: object
+      properties:
+        max_rows:
+          type: integer
+        db_schema:
+          type: string
+        db_extra_search_path:
+          type: string
+      required:
+        - max_rows
+        - db_schema
+        - db_extra_search_path
+    UpdatePostgrestConfigBody:
+      type: object
+      properties:
+        max_rows:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        db_extra_search_path:
+          type: string
+        db_schema:
+          type: string
+    SecretResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - name
+        - value
+    CreateSecretBody:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+          pattern: /^(?!SUPABASE_).*/
+      required:
+        - name
+        - value
+    SslEnforcements:
+      type: object
+      properties:
+        database:
+          type: boolean
+      required:
+        - database
+    SslEnforcementResponse:
+      type: object
+      properties:
+        currentConfig:
+          $ref: '#/components/schemas/SslEnforcements'
+        appliedSuccessfully:
+          type: boolean
+      required:
+        - currentConfig
+        - appliedSuccessfully
+    SslEnforcementRequest:
+      type: object
+      properties:
+        requestedConfig:
+          $ref: '#/components/schemas/SslEnforcements'
+      required:
+        - requestedConfig
+    TypescriptResponse:
+      type: object
+      properties:
+        types:
+          type: string
+      required:
+        - types
     VanitySubdomainConfigResponse:
       type: object
       properties:
         status:
+          type: string
           enum:
             - not-used
             - custom-domain-used
             - active
-          type: string
         custom_domain:
           type: string
       required:
