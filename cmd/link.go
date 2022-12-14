@@ -11,7 +11,6 @@ import (
 )
 
 var (
-	noPassword = false
 	// TODO: allow switching roles on backend
 	database = "postgres"
 	username = "postgres"
@@ -21,11 +20,9 @@ var (
 		Use:     "link",
 		Short:   "Link to a Supabase project",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if !viper.GetBool("NO_PASSWORD") {
-				dbPassword = viper.GetString("DB_PASSWORD")
-				if dbPassword == "" {
-					dbPassword = link.PromptPassword(os.Stdin)
-				}
+			dbPassword = viper.GetString("DB_PASSWORD")
+			if dbPassword == "" {
+				dbPassword = link.PromptPassword(os.Stdin)
 			}
 			return link.PreRun(projectRef, afero.NewOsFs())
 		},
@@ -43,8 +40,6 @@ var (
 func init() {
 	flags := linkCmd.Flags()
 	flags.StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
-	flags.BoolVarP(&noPassword, "no-password", "w", false, "Never prompt for database password.")
-	cobra.CheckErr(viper.BindPFlag("NO_PASSWORD", flags.Lookup("no-password")))
 	flags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", flags.Lookup("password")))
 	cobra.CheckErr(linkCmd.MarkFlagRequired("project-ref"))
