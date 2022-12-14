@@ -285,7 +285,7 @@ func LoadProjectRef(fsys afero.Fs) (string, error) {
 	if err != nil {
 		return "", errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	}
-	projectRef := string(projectRefBytes)
+	projectRef := string(bytes.TrimSpace(projectRefBytes))
 	if !ProjectRefPattern.MatchString(projectRef) {
 		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 	}

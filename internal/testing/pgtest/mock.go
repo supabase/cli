@@ -65,6 +65,9 @@ func (r *MockConn) Intercept(config *pgx.ConnConfig) {
 	config.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return r.server.DialContext(ctx)
 	}
+	config.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
+		return []string{"127.0.0.1"}, nil
+	}
 	config.TLSConfig = nil
 	// Add startup message
 	r.script.Steps = append(r.getStartupMessage(config), r.script.Steps...)
