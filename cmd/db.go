@@ -123,10 +123,13 @@ var (
 	}
 
 	dbRemoteChangesCmd = &cobra.Command{
-		Deprecated: "use \"db diff --use-migra --linked\" instead.\n",
-		Use:        "changes",
-		Short:      "Show changes on the remote database",
-		Long:       "Show changes on the remote database since last migration.",
+		Deprecated: `use the following commands instead.
+
+  supabase db diff --use-migra --linked
+`,
+		Use:   "changes",
+		Short: "Show changes on the remote database",
+		Long:  "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			return changes.Run(cmd.Context(), username, dbPassword, database, fsys)
@@ -134,6 +137,11 @@ var (
 	}
 
 	dbRemoteCommitCmd = &cobra.Command{
+		Deprecated: `use the following commands instead.
+
+  supabase migration pull
+  supabase migration repair --status applied <version>
+`,
 		Use:   "commit",
 		Short: "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
