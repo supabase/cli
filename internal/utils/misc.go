@@ -33,7 +33,7 @@ const (
 	DifferImage     = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage      = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage     = "supabase/postgres-meta:v0.53.1"
-	StudioImage     = "supabase/studio:0.22.08"
+	StudioImage     = "supabase/studio:20221214-4eecc99"
 	DenoRelayImage  = "supabase/deno-relay:v1.5.0"
 	ImageProxyImage = "supabase/imgproxy:v1.0.4"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
