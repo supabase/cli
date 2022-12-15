@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 const (
@@ -81,6 +82,7 @@ DO 'BEGIN WHILE (
 	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
+	AccessTokenKey = "access-token"
 
 	ConfigPath     = "supabase/config.toml"
 	ProjectRefPath = "supabase/.temp/project-ref"
@@ -478,22 +480,24 @@ func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 		if !AccessTokenPattern.MatchString(accessToken) {
 			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 		}
-
 		return accessToken, nil
 	}
-
+	// Load from native credentials store
+	if token, err := credentials.Get(AccessTokenKey); err == nil {
+		return token, nil
+	}
+	// Fallback to home directory
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	accessTokenPath := filepath.Join(home, ".supabase", "access-token")
+	accessTokenPath := filepath.Join(home, ".supabase", AccessTokenKey)
 	accessToken, err := afero.ReadFile(fsys, accessTokenPath)
 	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
 		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
 	} else if err != nil {
 		return "", err
 	}
-
 	return string(accessToken), nil
 }
 
