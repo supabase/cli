@@ -2,7 +2,7 @@
 // https://deno.land/manual/getting_started/setup_your_environment
 // This enables autocomplete, go to definition, etc.
 
-import { serve } from "https://deno.land/std@0.131.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 console.log("Hello from Functions!")
 
