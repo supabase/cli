@@ -66,6 +66,13 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			env = append(env, "VERIFY_JWT=false")
 		}
 
+		// mirror local DENO_* env variables to the Docker container.
+		env = append(env,
+			"DENO_TLS_CA_STORE="+os.Getenv("DENO_TLS_CA_STORE"),
+			"DENO_CERT="+os.Getenv("DENO_CERT"),
+			"DENO_AUTH_TOKENS="+os.Getenv("DENO_AUTH_TOKENS"),
+		)
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
