@@ -16,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/zalando/go-keyring"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -96,6 +97,8 @@ func TestLinkCommand(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	// Mock credentials store
+	keyring.MockInit()
 
 	// Reset global variable
 	t.Cleanup(func() {

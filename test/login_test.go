@@ -4,6 +4,7 @@ package integration
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -13,8 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/test/mocks/supabase"
 )
 
@@ -54,7 +53,11 @@ func (suite *LoginTestSuite) TestLink() {
 	require.NoError(suite.T(), login.RunE(login, []string{}))
 
 	// check token is saved
-	token, err := credentials.Get(utils.AccessTokenKey)
+	home, err := os.UserHomeDir()
+	require.NoError(suite.T(), err)
+	_, err = os.Stat(filepath.Join(home, ".supabase/access-token"))
+	require.NoError(suite.T(), err)
+	token, err := os.ReadFile(filepath.Join(home, ".supabase/access-token"))
 	require.NoError(suite.T(), err)
 	require.Equal(suite.T(), key, string(token))
 }
