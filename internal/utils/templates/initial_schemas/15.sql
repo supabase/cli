@@ -17,6 +17,15 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: _realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
+--
+
+CREATE SCHEMA IF NOT EXISTS _realtime;
+
+
+ALTER SCHEMA _realtime OWNER TO supabase_admin;
+
+--
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -833,6 +842,53 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.extensions (
+    id uuid NOT NULL,
+    type character varying(255),
+    settings jsonb,
+    tenant_external_id character varying(255),
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL
+);
+
+
+ALTER TABLE _realtime.extensions OWNER TO postgres;
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
+    version bigint NOT NULL,
+    inserted_at timestamp(0) without time zone
+);
+
+
+ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
+
+--
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.tenants (
+    id uuid NOT NULL,
+    name character varying(255),
+    external_id character varying(255),
+    jwt_secret character varying(500),
+    max_concurrent_users integer DEFAULT 200 NOT NULL,
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL,
+    max_events_per_second integer DEFAULT 100 NOT NULL,
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+);
+
+
+ALTER TABLE _realtime.tenants OWNER TO postgres;
+
+--
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1321,6 +1377,34 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+
+
+--
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2022-12-15 04:27:09');
+
+
+--
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+
+
+--
 -- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1412,6 +1496,22 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
 
 
 --
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+--
+
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
+    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+
+
+--
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+--
+
+INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
+    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"I4YigNuoYSZbe+Xs4vInbw==","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+
+
+--
 -- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1488,6 +1588,38 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
+
+
+--
+-- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.tenants
+    ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tenants uniq_external_id; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.tenants
+    ADD CONSTRAINT uniq_external_id UNIQUE (external_id);
 
 
 --
@@ -1680,6 +1812,20 @@ ALTER TABLE ONLY storage.migrations
 
 ALTER TABLE ONLY storage.objects
     ADD CONSTRAINT objects_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extensions USING btree (tenant_external_id, type);
+
+
+--
+-- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (external_id);
 
 
 --
@@ -1897,6 +2043,14 @@ CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_patter
 --
 
 CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.update_updated_at_column();
+
+
+--
+-- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_tenant_external_id_fkey FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE;
 
 
 --
