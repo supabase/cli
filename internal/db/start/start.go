@@ -40,7 +40,10 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	config := container.Config{
 		Image: utils.DbImage,
-		Env:   []string{"POSTGRES_PASSWORD=postgres"},
+		Env: []string{
+			"POSTGRES_PASSWORD=postgres",
+			"POSTGRES_HOST=/var/run/postgresql",
+		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
 			Interval: 2 * time.Second,
