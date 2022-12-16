@@ -118,7 +118,6 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Pulling images..."))
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -126,18 +125,21 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 
 	// Pull images.
 	{
+		total := len(utils.ServiceImages) + 1
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (0/%d)", total)))
 		if err := pullImage(p, ctx, utils.DbImage); err != nil {
 			return err
 		}
-		for _, image := range utils.ServiceImages {
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (1/%d)", total)))
+		for i, image := range utils.ServiceImages {
 			if isContainerExcluded(image, excluded) {
 				fmt.Fprintln(os.Stderr, "Excluding container:", image)
 				continue
 			}
-
 			if err := pullImage(p, ctx, image); err != nil {
 				return err
 			}
+			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (%d/%d)", i+1, total)))
 		}
 	}
 
