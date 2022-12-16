@@ -21,7 +21,7 @@ const (
 )
 
 func TestPullCommand(t *testing.T) {
-	imageUrl := utils.GetRegistryImageUrl(utils.Pg14Image)
+	imageUrl := utils.GetRegistryImageUrl(utils.Pg15Image)
 	const containerId = "test-container"
 
 	t.Run("pulls from remote", func(t *testing.T) {

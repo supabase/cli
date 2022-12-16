@@ -17,7 +17,7 @@ var dumpInitialMigrationScript string
 
 func Run(ctx context.Context, path, username, password, database, host string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
-	out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
+	out, err := utils.DockerRunOnce(ctx, utils.Pg15Image, []string{
 		"PGHOST=" + host,
 		"PGUSER=" + username,
 		"PGPASSWORD=" + password,
