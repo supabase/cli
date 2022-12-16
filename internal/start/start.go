@@ -16,7 +16,9 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
@@ -101,8 +103,9 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 			break
 		}
 		defer out.Close()
-		if err := utils.ProcessPullOutput(out, p); err != nil {
-			p.Send(utils.ProgressMsg(nil))
+		err = jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(os.Stderr), nil)
+		if err != nil {
+			break
 		}
 		_, _, err = utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
 	}
