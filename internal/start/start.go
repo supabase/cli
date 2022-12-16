@@ -84,6 +84,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 }
 
 var (
+	pullRetry = 2
 	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed    string
@@ -98,7 +99,7 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 			break
 		}
 		var out io.ReadCloser
-		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, 2)
+		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, pullRetry)
 		if err != nil {
 			break
 		}
