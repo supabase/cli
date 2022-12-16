@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/db/branch/list"
 	"github.com/supabase/cli/internal/db/branch/switch_"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/remote/changes"
@@ -91,6 +92,20 @@ var (
 				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
 			}
 			return diff.Run(file, fsys)
+		},
+	}
+
+	dbDumpCmd = &cobra.Command{
+		Use:   "dump",
+		Short: "Dumps schemas from the remote database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := loadLinkedProject(fsys); err != nil {
+				return err
+			}
+			host := utils.GetSupabaseDbHost(projectRef)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return dump.Run(ctx, file, username, dbPassword, database, host, fsys)
 		},
 	}
 
@@ -197,9 +212,15 @@ func init() {
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
-	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a file.")
+	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
+	// Build dump command
+	dumpFlags := dbDumpCmd.Flags()
+	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped schema.")
+	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
+	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")

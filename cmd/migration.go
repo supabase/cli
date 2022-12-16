@@ -10,7 +10,6 @@ import (
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
-	"github.com/supabase/cli/internal/migration/pull"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -67,20 +66,6 @@ var (
 			return repair.Run(ctx, username, dbPassword, database, host, args[0], targetStatus.Value)
 		},
 	}
-
-	migrationPullCmd = &cobra.Command{
-		Use:   "pull",
-		Short: "Pulls remote schema as a new migration",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
-				return err
-			}
-			host := utils.GetSupabaseDbHost(projectRef)
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return pull.Run(ctx, username, dbPassword, database, host, fsys)
-		},
-	}
 )
 
 func init() {
@@ -96,11 +81,6 @@ func init() {
 	repairFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", repairFlags.Lookup("password")))
 	migrationCmd.AddCommand(migrationRepairCmd)
-	// Build pull command
-	pullFlags := migrationPullCmd.Flags()
-	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
-	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
-	migrationCmd.AddCommand(migrationPullCmd)
 	// Build new command
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
