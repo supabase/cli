@@ -104,7 +104,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
 
 		// Use pg_dump instead of schema diff
-		out, err := utils.DockerRunOnce(ctx, utils.Pg14Image, []string{
+		out, err := utils.DockerRunOnce(ctx, utils.Pg15Image, []string{
 			"PGHOST=" + host,
 			"PGUSER=" + username,
 			"PGPASSWORD=" + password,

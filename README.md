@@ -49,25 +49,7 @@ brew upgrade supabase
 
 #### Windows
 
-Available via [Scoop](https://scoop.sh) and [Chocolatey](https://chocolatey.org).
-
-##### via Chocolatey
-
-To install:
-
-```powershell
-choco install supabase
-```
-
-To upgrade:
-
-```powershell
-choco upgrade supabase
-```
-
-##### via Scoop
-
-To install:
+Available via [Scoop](https://scoop.sh). To install:
 
 ```powershell
 scoop bucket add supabase https://github.com/supabase/scoop-bucket.git

@@ -16,7 +16,9 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/muesli/reflow/wrap"
@@ -82,6 +84,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 }
 
 var (
+	pullRetry = 2
 	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed    string
@@ -96,13 +99,14 @@ func pullImage(p utils.Program, ctx context.Context, image string) error {
 			break
 		}
 		var out io.ReadCloser
-		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, 2)
+		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, pullRetry)
 		if err != nil {
 			break
 		}
 		defer out.Close()
-		if err := utils.ProcessPullOutput(out, p); err != nil {
-			p.Send(utils.ProgressMsg(nil))
+		err = jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(os.Stderr), nil)
+		if err != nil {
+			break
 		}
 		_, _, err = utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
 	}
@@ -114,7 +118,6 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Pulling images..."))
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -122,18 +125,21 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 
 	// Pull images.
 	{
+		total := len(utils.ServiceImages) + 1
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (0/%d)", total)))
 		if err := pullImage(p, ctx, utils.DbImage); err != nil {
 			return err
 		}
-		for _, image := range utils.ServiceImages {
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (1/%d)", total)))
+		for i, image := range utils.ServiceImages {
 			if isContainerExcluded(image, excluded) {
 				fmt.Fprintln(os.Stderr, "Excluding container:", image)
 				continue
 			}
-
 			if err := pullImage(p, ctx, image); err != nil {
 				return err
 			}
+			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (%d/%d)", i+1, total)))
 		}
 	}
 

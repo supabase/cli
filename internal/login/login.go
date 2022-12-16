@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 func Run(stdin io.Reader, fsys afero.Fs) error {
@@ -26,29 +27,28 @@ Enter your access token: `, utils.GetSupabaseDashboardURL())
 	accessToken := strings.TrimSpace(scanner.Text())
 
 	// 1. Validate access token
-	{
-		if !utils.AccessTokenPattern.MatchString(accessToken) {
-			return errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
-		}
+	if !utils.AccessTokenPattern.MatchString(accessToken) {
+		return errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 	}
 
 	// 2. Save access token
-	{
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
+	if err := credentials.Set(utils.AccessTokenKey, accessToken); err == nil {
+		return nil
+	}
+	return fallbackSaveToken(accessToken, fsys)
+}
 
-		configPath := filepath.Join(home, ".supabase")
-		if err := utils.MkdirIfNotExistFS(fsys, configPath); err != nil {
-			return err
-		}
-
-		accessTokenPath := filepath.Join(configPath, "access-token")
-		if err := afero.WriteFile(fsys, accessTokenPath, []byte(accessToken), 0600); err != nil {
-			return err
-		}
+func fallbackSaveToken(accessToken string, fsys afero.Fs) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	configPath := filepath.Join(home, ".supabase")
+	if err := utils.MkdirIfNotExistFS(fsys, configPath); err != nil {
+		return err
+	}
+
+	accessTokenPath := filepath.Join(configPath, utils.AccessTokenKey)
+	return afero.WriteFile(fsys, accessTokenPath, []byte(accessToken), 0600)
 }

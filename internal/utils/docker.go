@@ -15,6 +15,7 @@ import (
 	"time"
 
 	dockerConfig "github.com/docker/cli/cli/config"
+	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -253,12 +254,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 		return err
 	}
 	defer out.Close()
-	fmt.Fprintln(os.Stderr, "Pulling docker image:", imageUrl)
-	if viper.GetBool("DEBUG") {
-		return jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, os.Stderr.Fd(), true, nil)
-	}
-	_, err = io.Copy(io.Discard, out)
-	return err
+	return jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(os.Stderr), nil)
 }
 
 func DockerStop(containerID string) {
