@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,7 +148,7 @@ func TestPullImage(t *testing.T) {
 			MatchParam("fromImage", image).
 			MatchParam("tag", "latest").
 			Reply(http.StatusAccepted).
-			BodyString("progress")
+			BodyString("")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
@@ -159,7 +160,49 @@ func TestPullImage(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	// TODO: test for transient error
+	t.Run("throws error on pull failure", func(t *testing.T) {
+		pullRetry = 0
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusNotFound)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
+			MatchParam("fromImage", image).
+			MatchParam("tag", "latest").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := pullImage(p, context.Background(), image)
+		// Check error
+		assert.ErrorContains(t, err, "request returned Service Unavailable")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on no space left", func(t *testing.T) {
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusNotFound)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
+			MatchParam("fromImage", image).
+			MatchParam("tag", "latest").
+			Reply(http.StatusAccepted).
+			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "no space left on device"}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ImageInspect{})
+		// Run test
+		err := pullImage(p, context.Background(), image)
+		// Check error
+		assert.ErrorContains(t, err, "no space left on device")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
 
 func TestDatabaseStart(t *testing.T) {
