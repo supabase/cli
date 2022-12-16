@@ -74,6 +74,7 @@ chocolateys:
     release_notes: "https://github.com/supabase/cli/releases/tag/v{{ .Version }}"
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
     source_repo: "https://push.chocolatey.org/"
+    skip_publish: true
 nfpms:
   - vendor: Supabase
     description: Supabase CLI
