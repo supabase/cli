@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -72,6 +73,7 @@ func TestPullImage(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
+		timeUnit = time.Duration(0)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(Docker))
 		defer gock.OffAll()
@@ -88,15 +90,18 @@ func TestPullImage(t *testing.T) {
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusAccepted).
+			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "toomanyrequests"}})
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusAccepted).
+			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "no space left on device"}})
 		// Run test
-		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
+		err := DockerPullImageIfNotCached(context.Background(), imageId)
 		// Validate api
+		assert.ErrorContains(t, err, "no space left on device")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
