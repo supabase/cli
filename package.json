@@ -12,11 +12,10 @@
     "scripts"
   ],
   "scripts": {
-    "preinstall": "node scripts/preinstall.js"
+    "postinstall": "node scripts/postinstall.js"
   },
-  "url": "https://github.com/supabase/cli/releases/download/v{{version}}/{{bin_name}}_{{version}}_{{platform}}_{{arch}}.tar.gz",
-  "bin": "bin/supabase",
   "dependencies": {
+    "bin-links": "^4.0.1",
     "node-fetch": "^3.2.10",
     "tar": "6.1.13"
   },
