@@ -223,23 +223,33 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
-func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {
+func DockerImagePull(ctx context.Context, image string, w io.Writer) error {
 	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{
 		RegistryAuth: GetRegistryAuth(),
 	})
-	for i := time.Duration(1); retries > 0; retries-- {
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	return jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(w), nil)
+}
+
+// Used by unit tests
+var timeUnit = time.Second
+
+func DockerImagePullWithRetry(ctx context.Context, image string, retries int) error {
+	err := DockerImagePull(ctx, image, os.Stderr)
+	for i := 0; i < retries; i++ {
 		if err == nil {
 			break
 		}
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintf(os.Stderr, "Retrying after %d seconds: %s\n", i, image)
-		time.Sleep(i * time.Second)
-		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{
-			RegistryAuth: GetRegistryAuth(),
-		})
-		i *= 2
+		period := time.Duration(2<<(i+1)) * timeUnit
+		fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)
+		time.Sleep(period)
+		err = DockerImagePull(ctx, image, os.Stderr)
 	}
-	return out, err
+	return err
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
@@ -249,12 +259,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	} else if !client.IsErrNotFound(err) {
 		return err
 	}
-	out, err := DockerImagePullWithRetry(ctx, imageUrl, 2)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	return jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(os.Stderr), nil)
+	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
 func DockerStop(containerID string) {

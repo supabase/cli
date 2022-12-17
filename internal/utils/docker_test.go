@@ -72,6 +72,7 @@ func TestPullImage(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
+		timeUnit = time.Duration(0)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(Docker))
 		defer gock.OffAll()
