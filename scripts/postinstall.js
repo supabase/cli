@@ -24,13 +24,14 @@ const PLATFORM_MAPPING = {
   win32: "windows",
 };
 
+// TODO: import pkg from "../package.json" assert { type: "json" };
 const readPackageJson = async () => {
   const packageJsonPath = path.join(".", "package.json");
   const contents = await fs.promises.readFile(packageJsonPath);
   return JSON.parse(contents);
 };
 
-const parsePackageJson = (pkg) => {
+const parsePackageJson = (packageJson) => {
   const arch = ARCH_MAPPING[process.arch];
   if (!arch) {
     throw Error(
@@ -46,9 +47,9 @@ const parsePackageJson = (pkg) => {
   }
 
   // Build the download url from package.json
-  const pkgName = pkg.name;
-  const version = pkg.version;
-  const repo = pkg.repository;
+  const pkgName = packageJson.name;
+  const version = packageJson.version;
+  const repo = packageJson.repository;
   const url = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${version}_${platform}_${arch}.tar.gz`;
 
   let binPath = path.join("bin", "supabase");
