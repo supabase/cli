@@ -232,7 +232,7 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (i
 			break
 		}
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintf(os.Stderr, "Retrying after %d seconds...\n", i)
+		fmt.Fprintf(os.Stderr, "Retrying after %d seconds: %s\n", i, image)
 		time.Sleep(i * time.Second)
 		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{
 			RegistryAuth: GetRegistryAuth(),
