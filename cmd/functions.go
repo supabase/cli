@@ -76,13 +76,15 @@ var (
 
 	envFilePath string
 
+	denoArgs string
+
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
 		Short: "Serve a Function locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, importMapPath, afero.NewOsFs())
+			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, importMapPath, denoArgs, afero.NewOsFs())
 		},
 	}
 )
@@ -96,6 +98,7 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
+	functionsServeCmd.Flags().StringVar(&denoArgs, "deno-cli-args", "", "Deno CLI arguments to pass to the Function environment.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)

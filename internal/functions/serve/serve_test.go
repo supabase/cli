@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestServeCommand(t *testing.T) {
@@ -35,7 +34,7 @@ func TestServeCommand(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "test-func", "", true, "", fsys)
+		err := Run(context.Background(), "test-func", "", true, "", "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version http://localhost/v1.41/containers/supabase_deno_relay_serve/exec")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

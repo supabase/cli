@@ -22,7 +22,7 @@ const (
 	customDockerImportMapPath = "/home/deno/import_map.json"
 )
 
-func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMapPath string, denoCLIArgs string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -118,6 +118,11 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 	}
 
 	denoCacheCmd := []string{"deno", "cache"}
+
+	if denoCLIArgs != "" {
+		denoCacheCmd = append(denoCacheCmd, strings.Split(denoCLIArgs, " ")...)
+	}
+
 	{
 		if _, err := fsys.Stat(localImportMapPath); err == nil {
 			denoCacheCmd = append(denoCacheCmd, "--import-map="+dockerImportMapPath)
@@ -128,6 +133,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 		}
 		denoCacheCmd = append(denoCacheCmd, dockerFuncPath)
 	}
+	fmt.Println("Running " + utils.Bold(strings.Join(denoCacheCmd, " ")))
 
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
 	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, denoCacheCmd); err != nil {
@@ -158,6 +164,9 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 		}
 
 		denoRunCmd := []string{"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm"}
+		if denoCLIArgs != "" {
+			denoCacheCmd = append(denoCacheCmd, strings.Split(denoCLIArgs, " ")...)
+		}
 		{
 			if _, err := fsys.Stat(localImportMapPath); err == nil {
 				denoRunCmd = append(denoRunCmd, "--import-map="+dockerImportMapPath)
@@ -168,6 +177,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			}
 			denoRunCmd = append(denoRunCmd, dockerFuncPath)
 		}
+		fmt.Println("Running " + utils.Bold(strings.Join(denoRunCmd, " ")))
 
 		exec, err := utils.Docker.ContainerExecCreate(
 			ctx,

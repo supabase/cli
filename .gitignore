@@ -20,3 +20,9 @@
 # NPM
 node_modules
 package-lock.json
+
+# Ignore built artifact - go build
+cli
+
+#Ignore IDE
+.idea
