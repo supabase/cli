@@ -99,26 +99,9 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	p.Send(utils.StatusMsg("Pulling images..."))
 
 	// Pull images.
-	{
-		dbImage := utils.GetRegistryImageUrl(utils.DbImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, dbImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, dbImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
-		}
-		diffImage := utils.GetRegistryImageUrl(utils.DifferImage)
-		if _, _, err := utils.Docker.ImageInspectWithRaw(ctx, diffImage); err != nil {
-			out, err := utils.DockerImagePullWithRetry(ctx, diffImage, 2)
-			if err != nil {
-				return err
-			}
-			if err := utils.ProcessPullOutput(out, p); err != nil {
-				return err
-			}
+	for _, image := range []string{utils.DbImage, utils.DifferImage} {
+		if err := utils.DockerPullImageIfNotCached(ctx, image); err != nil {
+			return err
 		}
 	}
 
