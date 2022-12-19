@@ -23,7 +23,7 @@ import (
 func TestRunMigra(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
 		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg14Sql = "create schema private"
+		utils.InitialSchemaPg15Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -32,7 +32,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
 			Reply(http.StatusOK)
@@ -44,7 +44,7 @@ func TestRunMigra(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
+			Query(utils.InitialSchemaPg15Sql).
 			Reply("CREATE SCHEMA")
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys, conn.Intercept)
@@ -107,7 +107,7 @@ func TestRunMigra(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg14Image) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "", "password", fsys)
@@ -126,7 +126,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
 			Reply(http.StatusOK)
@@ -145,7 +145,7 @@ At statement 0: create schema public`)
 
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg14Sql = "create schema private"
+		utils.InitialSchemaPg15Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -154,7 +154,7 @@ At statement 0: create schema public`)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
 			Reply(http.StatusOK)
@@ -167,7 +167,7 @@ At statement 0: create schema public`)
 		defer conn.Close(t)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
+			Query(utils.InitialSchemaPg15Sql).
 			Reply("CREATE SCHEMA")
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys, conn.Intercept)

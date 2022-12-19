@@ -129,7 +129,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
@@ -205,7 +205,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
