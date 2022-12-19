@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"gopkg.in/h2non/gock.v1"
 )
 
 func TestServeCommand(t *testing.T) {
