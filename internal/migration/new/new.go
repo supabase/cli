@@ -11,11 +11,10 @@ import (
 )
 
 func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+	path := GetMigrationPath(migrationName)
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
-
-	path := GetMigrationPath(migrationName)
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err

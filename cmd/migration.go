@@ -78,6 +78,8 @@ func init() {
 	repairFlags := migrationRepairCmd.Flags()
 	repairFlags.Var(&targetStatus, "status", "Version status to update.")
 	cobra.CheckErr(migrationRepairCmd.MarkFlagRequired("status"))
+	repairFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", repairFlags.Lookup("password")))
 	migrationCmd.AddCommand(migrationRepairCmd)
 	// Build new command
 	migrationCmd.AddCommand(migrationNewCmd)

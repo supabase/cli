@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,95 +115,6 @@ func TestStartCommand(t *testing.T) {
 	})
 }
 
-func TestPullImage(t *testing.T) {
-	const image = "postgres"
-	imageUrl := utils.GetRegistryImageUrl(image)
-	p := utils.NewProgram(model{})
-
-	t.Run("inspects image before pull", func(t *testing.T) {
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("pulls missing image", func(t *testing.T) {
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
-			MatchParam("fromImage", image).
-			MatchParam("tag", "latest").
-			Reply(http.StatusAccepted).
-			BodyString("")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on pull failure", func(t *testing.T) {
-		pullRetry = 0
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
-			MatchParam("fromImage", image).
-			MatchParam("tag", "latest").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on no space left", func(t *testing.T) {
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
-			MatchParam("fromImage", image).
-			MatchParam("tag", "latest").
-			Reply(http.StatusAccepted).
-			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "no space left on device"}})
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.ErrorContains(t, err, "no space left on device")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
 func TestDatabaseStart(t *testing.T) {
 	p := utils.NewProgram(model{})
 
@@ -219,7 +129,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
@@ -295,7 +205,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
