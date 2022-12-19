@@ -3,7 +3,6 @@ package new
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -24,9 +23,8 @@ func TestNewCommand(t *testing.T) {
 		// Validate output
 		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		assert.NoError(t, err)
-		match, err := regexp.MatchString(`([0-9]{14})_test_migrate\.sql`, files[0].Name())
-		assert.NoError(t, err)
-		assert.True(t, match)
+		assert.Equal(t, 1, len(files))
+		assert.Regexp(t, `([0-9]{14})_test_migrate\.sql`, files[0].Name())
 	})
 
 	t.Run("streams content from pipe", func(t *testing.T) {
@@ -44,6 +42,7 @@ func TestNewCommand(t *testing.T) {
 		// Validate output
 		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
 		assert.NoError(t, err)
+		assert.Equal(t, 1, len(files))
 		path := filepath.Join(utils.MigrationsDir, files[0].Name())
 		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
