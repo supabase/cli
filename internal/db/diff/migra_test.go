@@ -162,6 +162,9 @@ At statement 0: create schema public`)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/logs").
 			ReplyError(errors.New("network error"))
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-migra").
+			Reply(http.StatusOK)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
