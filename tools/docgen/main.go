@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/supabase/cli/cmd"
+	cli "github.com/supabase/cli/cmd"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -16,14 +16,14 @@ import (
 const tagOthers = "other-commands"
 
 func main() {
-	root := cmd.GetRootCmd()
+	root := cli.GetRootCmd()
 	root.InitDefaultCompletionCmd()
 	root.InitDefaultHelpFlag()
 	spec := SpecDoc{
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.24.0",
+			Version:     "1.27.0",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -38,6 +38,7 @@ func main() {
 			spec.Flags = append(spec.Flags, getFlags(flag))
 		}
 	})
+	cobra.CheckErr(root.MarkFlagRequired("experimental"))
 	// Generate, serialise, and print
 	yamlDoc := GenYamlDoc(root, &spec)
 	spec.Info.Options = yamlDoc.Options
@@ -148,9 +149,14 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 				yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
 			}
 		})
+		// Print required flag for experimental commands
+		globalFlags := cmd.Root().Flags()
+		if cli.IsExperimental(cmd) {
+			flag := globalFlags.Lookup("experimental")
+			yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
+		}
 		// Leaf commands should inherit parent flags except root
 		parentFlags := cmd.InheritedFlags()
-		globalFlags := cmd.Root().Flags()
 		parentFlags.VisitAll(func(flag *pflag.Flag) {
 			if !flag.Hidden && globalFlags.Lookup(flag.Name) == nil {
 				yamlDoc.Flags = append(yamlDoc.Flags, getFlags(flag))
