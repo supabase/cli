@@ -171,7 +171,7 @@ func TestRunOnce(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("stops container on cancel", func(t *testing.T) {
+	t.Run("removes container on cancel", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(Docker))
 		defer gock.OffAll()
@@ -181,11 +181,11 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Delay(1 * time.Second)
-		gock.New(Docker.DaemonHost()).
-			Post("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/stop").
-			Reply(http.StatusServiceUnavailable)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(200*time.Millisecond))
 		defer cancel()
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err := DockerRunOnce(ctx, imageId, nil, nil)
 		assert.Error(t, err)
@@ -203,6 +203,9 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			BodyString("hello world")
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
@@ -228,6 +231,9 @@ func TestRunOnce(t *testing.T) {
 		gock.New("http:///var/run/docker.sock").
 			Get("/v" + version + "/containers/" + containerId + "/json").
 			Reply(http.StatusServiceUnavailable)
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
@@ -254,6 +260,9 @@ func TestRunOnce(t *testing.T) {
 			Get("/v" + version + "/containers/" + containerId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 1}})
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)

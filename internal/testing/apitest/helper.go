@@ -62,6 +62,9 @@ func MockDockerLogs(docker *client.Client, containerID, stdout string) error {
 		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
 		Reply(http.StatusOK).
 		JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 0}})
+	gock.New(docker.DaemonHost()).
+		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
+		Reply(http.StatusOK)
 	return err
 }
 
