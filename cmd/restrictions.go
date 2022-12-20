@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"os"
 	"os/signal"
 
@@ -16,12 +15,6 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "network-restrictions",
 		Short:   "Manage network restrictions",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if !experimental {
-				return errors.New("must set the --experimental flag to run this command")
-			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	dbCidrsToAllow   []string

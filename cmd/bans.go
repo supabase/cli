@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"os"
 	"os/signal"
 
@@ -19,12 +18,6 @@ var (
 		Long: `Network bans are IPs that get temporarily blocked if their traffic pattern looks abusive (e.g. multiple failed auth attempts).
 
 The subcommands help you view the current bans, and unblock IPs if desired.`,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if !experimental {
-				return errors.New("must set the --experimental flag to run this command")
-			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	dbIpsToUnban []string
