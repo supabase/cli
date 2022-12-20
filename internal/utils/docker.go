@@ -263,11 +263,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 }
 
 func DockerStop(containerID string) {
-	stopContainer(Docker, containerID)
-}
-
-func stopContainer(docker *client.Client, containerID string) {
-	if err := docker.ContainerStop(context.Background(), containerID, nil); err != nil {
+	if err := Docker.ContainerStop(context.Background(), containerID, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
 	}
 }
@@ -301,23 +297,29 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 }
 
+func DockerRemove(containerId string) {
+	if err := Docker.ContainerRemove(context.Background(), containerId, types.ContainerRemoveOptions{
+		RemoveVolumes: true,
+		Force:         true,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to remove container:", containerId, err)
+	}
+}
+
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
 func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
+	// Cannot rely on docker's auto remove because
+	//   1. We must inspect exit code after container stops
+	//   2. Context cancellation may happen after start
 	container, err := DockerStart(ctx, container.Config{
 		Image: image,
 		Env:   env,
 		Cmd:   cmd,
-	}, container.HostConfig{AutoRemove: true}, "")
+	}, container.HostConfig{}, "")
 	if err != nil {
 		return "", err
 	}
-	// Propagate cancellation to terminate early
-	go func() {
-		<-ctx.Done()
-		if ctx.Err() != nil {
-			stopContainer(NewDocker(), container)
-		}
-	}()
+	defer DockerRemove(container)
 	// Stream logs
 	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,
