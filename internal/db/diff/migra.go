@@ -28,7 +28,7 @@ var (
 	diffSchemaScript string
 )
 
-func RunMigra(ctx context.Context, schema []string, file string, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func RunMigra(ctx context.Context, schema []string, file, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -40,12 +40,13 @@ func RunMigra(ctx context.Context, schema []string, file string, password string
 	}
 	// 2. Create shadow database
 	fmt.Fprintln(os.Stderr, "Creating shadow database...")
-	shadow, err := createShadowDatabase(ctx)
+	shadow, err := CreateShadowDatabase(ctx)
 	if err != nil {
 		return err
 	}
-	defer utils.DockerStop(shadow)
-	if err := migrateShadowDatabase(ctx, fsys, options...); err != nil {
+	defer utils.DockerRemove(shadow)
+	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
 		return err
 	}
 	// 3. Run migra to diff schema
@@ -88,7 +89,7 @@ func buildTargetUrl(password string, fsys afero.Fs) (target string, err error) {
 	return target, err
 }
 
-func createShadowDatabase(ctx context.Context) (string, error) {
+func CreateShadowDatabase(ctx context.Context) (string, error) {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env:   []string{"POSTGRES_PASSWORD=postgres"},
@@ -124,13 +125,12 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return conn, err
 }
 
-func migrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(os.Stderr, "Initialising schema...")
 	if err := BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func diffSchema(ctx context.Context, source, target string, schema []string) (st
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
 	out, err := utils.DockerRunOnce(ctx, utils.MigraImage, env, cmd)
 	if err != nil {
-		return "", errors.New("error diffing schema")
+		return "", errors.New("error diffing schema: " + err.Error())
 	}
 	return out, nil
 }
