@@ -34,7 +34,7 @@ func TestRunMigra(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
@@ -128,7 +128,7 @@ func TestRunMigra(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -156,7 +156,7 @@ At statement 0: create schema public`)
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/stop").
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		gock.New(utils.Docker.DaemonHost()).
@@ -313,7 +313,7 @@ func TestMigrateShadow(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		// Run test
-		err := migrateShadowDatabase(ctx, fsys)
+		err := MigrateShadowDatabase(ctx, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation was canceled")
 	})
@@ -329,7 +329,7 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := migrateShadowDatabase(ctx, fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
@@ -348,7 +348,7 @@ func TestMigrateShadow(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := migrateShadowDatabase(ctx, fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
