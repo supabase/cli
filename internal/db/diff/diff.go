@@ -75,13 +75,26 @@ func run(p utils.Program, ctx context.Context, schema []string, fsys afero.Fs) e
 
 func DiffSchema(ctx context.Context, source, target string, schema []string, p utils.Program) (string, error) {
 	stream := utils.NewDiffStream(p)
+	args := []string{"--json-diff", source, target}
+	if len(schema) == 0 {
+		if err := utils.DockerRunOnceWithStream(
+			ctx,
+			utils.DifferImage,
+			nil,
+			args,
+			stream.Stdout(),
+			stream.Stderr(),
+		); err != nil {
+			return "", err
+		}
+	}
 	for _, s := range schema {
 		p.Send(utils.StatusMsg("Diffing schema: " + s))
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
 			utils.DifferImage,
 			nil,
-			[]string{"--schema", s, "--json-diff", source, target},
+			append([]string{"--schema", s}, args...),
 			stream.Stdout(),
 			stream.Stderr(),
 		); err != nil {
