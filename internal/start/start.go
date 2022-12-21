@@ -359,23 +359,6 @@ EOF
 		}
 	}
 
-	// Start diff tool.
-	if !isContainerExcluded(utils.DifferImage, excluded) {
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image:      utils.DifferImage,
-				Entrypoint: []string{"sleep", "infinity"},
-			},
-			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			utils.DifferId,
-		); err != nil {
-			return err
-		}
-	}
-
 	// Start pg-meta.
 	if !isContainerExcluded(utils.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
