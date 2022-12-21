@@ -46,7 +46,7 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 
 	// Reload PostgREST schema cache.
 	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error reloading PostgREST schema cache: %v", err)
+		fmt.Fprintln(os.Stderr, "Error reloading PostgREST schema cache:", err)
 	}
 
 	branch, err := utils.GetCurrentBranchFS(fsys)

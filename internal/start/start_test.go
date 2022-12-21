@@ -116,8 +116,6 @@ func TestStartCommand(t *testing.T) {
 }
 
 func TestDatabaseStart(t *testing.T) {
-	p := utils.NewProgram(model{})
-
 	t.Run("starts database locally", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -188,7 +186,9 @@ func TestDatabaseStart(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		err := run(p, context.Background(), fsys, []string{}, conn.Intercept)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, context.Background(), fsys, []string{}, conn.Intercept)
+		})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -233,7 +233,9 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
-		err := run(p, context.Background(), fsys, exclude, conn.Intercept)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, context.Background(), fsys, exclude, conn.Intercept)
+		})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
