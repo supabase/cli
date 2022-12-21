@@ -69,7 +69,11 @@ type DiffStream struct {
 
 func NewDiffStream(p Program) *DiffStream {
 	r, w := io.Pipe()
-	go ProcessDiffProgress(p, r)
+	go func() {
+		if err := ProcessDiffProgress(p, r); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
 	return &DiffStream{r: r, w: w, p: p}
 }
 
