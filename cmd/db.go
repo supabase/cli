@@ -87,11 +87,11 @@ var (
 					return err
 				}
 			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if useMigra {
-				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
 			}
-			return diff.Run(file, fsys)
+			return diff.Run(ctx, schema, file, dbPassword, fsys)
 		},
 	}
 
@@ -144,7 +144,8 @@ var (
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			return changes.Run(cmd.Context(), username, dbPassword, database, fsys)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return changes.Run(ctx, username, dbPassword, database, fsys)
 		},
 	}
 
