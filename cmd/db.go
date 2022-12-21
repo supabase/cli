@@ -145,7 +145,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return changes.Run(ctx, username, dbPassword, database, fsys)
+			return changes.Run(ctx, schema, username, dbPassword, database, fsys)
 		},
 	}
 
@@ -155,7 +155,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, username, dbPassword, database, fsys)
+			return commit.Run(ctx, schema, username, dbPassword, database, fsys)
 		},
 	}
 
@@ -232,6 +232,7 @@ func init() {
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
+	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)

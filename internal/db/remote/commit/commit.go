@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 
 	"github.com/jackc/pgx/v4"
@@ -16,7 +17,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, username, password, database string, fsys afero.Fs) error {
+func Run(ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(); err != nil {
@@ -28,11 +29,11 @@ func Run(ctx context.Context, username, password, database string, fsys afero.Fs
 	}
 
 	return utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, username, password, database, fsys)
+		return run(p, ctx, schema, username, password, database, fsys)
 	})
 }
 
-func run(p utils.Program, ctx context.Context, username, password, database string, fsys afero.Fs) error {
+func run(p utils.Program, ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
 	projectRef, err := utils.LoadProjectRef(fsys)
 	if err != nil {
 		return err
@@ -51,7 +52,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 
 	// 2. Fetch remote schema changes
 	timestamp := utils.GetCurrentTimestamp()
-	if err := fetchRemote(p, ctx, timestamp, username, password, database, host, fsys); err != nil {
+	if err := fetchRemote(p, ctx, schema, timestamp, username, password, database, host, fsys); err != nil {
 		return err
 	}
 
@@ -64,7 +65,7 @@ func run(p utils.Program, ctx context.Context, username, password, database stri
 	return nil
 }
 
-func fetchRemote(p utils.Program, ctx context.Context, timestamp, username, password, database, host string, fsys afero.Fs) error {
+func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp, username, password, database, host string, fsys afero.Fs) error {
 	path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
 	// Special case if this is the first migration
 	if migrations, err := list.LoadLocalMigrations(fsys); err != nil {
@@ -97,9 +98,9 @@ func fetchRemote(p utils.Program, ctx context.Context, timestamp, username, pass
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	p.Send(utils.StatusMsg("Committing changes on remote database as a new migration..."))
 
-	src := fmt.Sprintf(`dbname='%s' user='%s' host='%s' password='%s'`, database, username, host, password)
-	dst := fmt.Sprintf(`dbname=postgres user=postgres host='%s' password=postgres`, shadow[:12])
-	diff, err := diff.DiffSchema(ctx, src, dst, nil, p)
+	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
+	target := fmt.Sprintf("postgresql://%s@%s:6543/postgres", url.UserPassword(database, password), host)
+	diff, err := diff.DiffSchemaMigra(ctx, source, target, schema)
 	if err != nil {
 		return err
 	}

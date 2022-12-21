@@ -56,7 +56,7 @@ func RunMigra(ctx context.Context, schema []string, file, password string, fsys 
 	}
 	fmt.Fprintln(os.Stderr, progress)
 	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
-	out, err := diffSchema(ctx, source, target, schema)
+	out, err := DiffSchemaMigra(ctx, source, target, schema)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
-func diffSchema(ctx context.Context, source, target string, schema []string) (string, error) {
+func DiffSchemaMigra(ctx context.Context, source, target string, schema []string) (string, error) {
 	env := []string{"SOURCE=" + source, "TARGET=" + target}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
