@@ -308,6 +308,16 @@ func DockerRemove(containerId string) {
 
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
 func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
+	stderr := io.Discard
+	if viper.GetBool("DEBUG") {
+		stderr = os.Stderr
+	}
+	var out bytes.Buffer
+	err := DockerRunOnceWithStream(ctx, image, env, cmd, &out, stderr)
+	return out.String(), err
+}
+
+func DockerRunOnceWithStream(ctx context.Context, image string, env []string, cmd []string, stdout, stderr io.Writer) error {
 	// Cannot rely on docker's auto remove because
 	//   1. We must inspect exit code after container stops
 	//   2. Context cancellation may happen after start
@@ -317,32 +327,31 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 		Cmd:   cmd,
 	}, container.HostConfig{}, "")
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer DockerRemove(container)
 	// Stream logs
 	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,
-		ShowStderr: viper.GetBool("DEBUG"),
+		ShowStderr: true,
 		Follow:     true,
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer logs.Close()
-	var out bytes.Buffer
-	if _, err := stdcopy.StdCopy(&out, os.Stderr, logs); err != nil {
-		return "", err
+	if _, err := stdcopy.StdCopy(stdout, stderr, logs); err != nil {
+		return err
 	}
 	// Check exit code
 	resp, err := Docker.ContainerInspect(ctx, container)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if resp.State.ExitCode > 0 {
-		return "", errors.New("error running container")
+		return fmt.Errorf("error running container: exit %d", resp.State.ExitCode)
 	}
-	return out.String(), nil
+	return nil
 }
 
 // Exec a command once inside a container, returning stdout and throwing error on non-zero exit code.
