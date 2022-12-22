@@ -77,7 +77,7 @@ func checkServiceHealth(ctx context.Context, services []string, w io.Writer) err
 	for _, name := range services {
 		resp, err := utils.Docker.ContainerInspect(ctx, name)
 		if err != nil {
-			return fmt.Errorf("%s container not found. Have your run %s?", name, utils.Aqua("supabase start"))
+			return fmt.Errorf("%s container not found. Have you run %s?", name, utils.Aqua("supabase start"))
 		}
 		if !resp.State.Running {
 			fmt.Fprintln(w, name, "container is not running:", resp.State.Status)
