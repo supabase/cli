@@ -22,6 +22,24 @@ const (
 	customDockerImportMapPath = "/home/deno/import_map.json"
 )
 
+func ParseEnvFile(envFilePath string) ([]string, error) {
+	env := []string{}
+	if len(envFilePath) == 0 {
+		return env, nil
+	}
+	envMap, err := godotenv.Read(envFilePath)
+	if err != nil {
+		return env, err
+	}
+	for name, value := range envMap {
+		if strings.HasPrefix(name, "SUPABASE_") {
+			return env, errors.New("Invalid env name: " + name + ". Env names cannot start with SUPABASE_.")
+		}
+		env = append(env, name+"="+value)
+	}
+	return env, nil
+}
+
 func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
@@ -47,6 +65,12 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 				return fmt.Errorf("Failed to read import map: %w", err)
 			}
 		}
+	}
+
+	// 2. Parse user defined env
+	userEnv, err := ParseEnvFile(envFilePath)
+	if err != nil {
+		return err
 	}
 
 	// 3. Start relay.
@@ -80,7 +104,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			ctx,
 			container.Config{
 				Image: utils.DenoRelayImage,
-				Env:   env,
+				Env:   append(env, userEnv...),
 			},
 			container.HostConfig{
 				Binds: binds,
@@ -93,12 +117,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 		go func() {
 			<-ctx.Done()
 			if ctx.Err() != nil {
-				if err := utils.Docker.ContainerRemove(context.Background(), utils.DenoRelayId, types.ContainerRemoveOptions{
-					RemoveVolumes: true,
-					Force:         true,
-				}); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to remove container:", utils.DenoRelayId, err)
-				}
+				utils.DockerRemove(utils.DenoRelayId)
 			}
 		}()
 	}
@@ -130,7 +149,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 	}
 
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
-	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, nil, denoCacheCmd); err != nil {
+	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, userEnv, denoCacheCmd); err != nil {
 		return err
 	}
 
@@ -142,19 +161,6 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			"SUPABASE_ANON_KEY=" + utils.AnonKey,
 			"SUPABASE_SERVICE_ROLE_KEY=" + utils.ServiceRoleKey,
 			"SUPABASE_DB_URL=postgresql://postgres:postgres@localhost:" + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + "/postgres",
-		}
-
-		if envFilePath != "" {
-			envMap, err := godotenv.Read(envFilePath)
-			if err != nil {
-				return err
-			}
-			for name, value := range envMap {
-				if strings.HasPrefix(name, "SUPABASE_") {
-					return errors.New("Invalid secret name: " + name + ". Secret names cannot start with SUPABASE_.")
-				}
-				env = append(env, name+"="+value)
-			}
 		}
 
 		denoRunCmd := []string{"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm"}
@@ -173,7 +179,7 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			ctx,
 			utils.DenoRelayId,
 			types.ExecConfig{
-				Env:          env,
+				Env:          append(env, userEnv...),
 				Cmd:          denoRunCmd,
 				AttachStderr: true,
 				AttachStdout: true,
