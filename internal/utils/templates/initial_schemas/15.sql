@@ -1380,6 +1380,7 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "I4YigNuoYSZbe+Xs4vInbw==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "MqmbZ5ZiXXFlSy8FeFYPAQ==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
@@ -1402,6 +1403,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202211021
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, '2022-11-14 23:04:49', '2022-11-14 23:04:49', 100, 'postgres_cdc_rls');
 
 
 --
@@ -1496,22 +1498,6 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
 
 
 --
--- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
-    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
-
-
---
--- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
-    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"I4YigNuoYSZbe+Xs4vInbw==","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
-
-
---
 -- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1539,13 +1525,6 @@ INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, insert
 -- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
-
-
---
--- Data for Name: key; Type: TABLE DATA; Schema: pgsodium; Owner: postgres
---
-
--- INSERT INTO pgsodium.key (id, status, created, expires, key_type, key_id, key_context, name, associated_data, raw_key, raw_key_nonce, parent_key, comment) VALUES ('463342b1-c264-4850-931e-9afa154f151d', 'valid', '2022-12-14 17:16:50.253224+00', NULL, 'aead-det', 1, '\x7067736f6469756d', 'default_vault_key', '', NULL, NULL, NULL, NULL);
 
 
 --
