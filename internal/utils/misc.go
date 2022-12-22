@@ -34,7 +34,7 @@ const (
 	PostgrestImage  = "postgrest/postgrest:v10.1.1.20221215"
 	DifferImage     = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage      = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage     = "supabase/postgres-meta:v0.53.1"
+	PgmetaImage     = "supabase/postgres-meta:v0.54.1"
 	StudioImage     = "supabase/studio:20221214-4eecc99"
 	DenoRelayImage  = "supabase/deno-relay:v1.5.0"
 	ImageProxyImage = "supabase/imgproxy:v1.0.4"
