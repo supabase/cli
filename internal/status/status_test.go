@@ -108,7 +108,7 @@ func TestStatusCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "container not found. Have your run supabase start?")
+		assert.ErrorContains(t, err, "container not found. Have you run supabase start?")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -153,7 +153,7 @@ func TestServiceHealth(t *testing.T) {
 		// Run test
 		err := checkServiceHealth(context.Background(), services, io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "supabase_db container not found. Have your run supabase start?")
+		assert.ErrorContains(t, err, "supabase_db container not found. Have you run supabase start?")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
