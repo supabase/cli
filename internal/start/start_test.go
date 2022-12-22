@@ -115,56 +115,7 @@ func TestStartCommand(t *testing.T) {
 	})
 }
 
-func TestPullImage(t *testing.T) {
-	const image = "postgres"
-	imageUrl := utils.GetRegistryImageUrl(image)
-	p := utils.NewProgram(model{})
-
-	t.Run("inspects image before pull", func(t *testing.T) {
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("pulls missing image", func(t *testing.T) {
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
-			MatchParam("fromImage", image).
-			MatchParam("tag", "latest").
-			Reply(http.StatusAccepted).
-			BodyString("progress")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		// Run test
-		err := pullImage(p, context.Background(), image)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	// TODO: test for transient error
-}
-
 func TestDatabaseStart(t *testing.T) {
-	p := utils.NewProgram(model{})
-
 	t.Run("starts database locally", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -176,7 +127,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
@@ -235,7 +186,9 @@ func TestDatabaseStart(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		err := run(p, context.Background(), fsys, []string{}, conn.Intercept)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, context.Background(), fsys, []string{}, conn.Intercept)
+		})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -252,7 +205,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(types.NetworkCreateResponse{})
 		// Caches all dependencies
-		utils.DbImage = utils.Pg14Image
+		utils.DbImage = utils.Pg15Image
 		imageUrl := utils.GetRegistryImageUrl(utils.DbImage)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
@@ -280,7 +233,9 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
-		err := run(p, context.Background(), fsys, exclude, conn.Intercept)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, context.Background(), fsys, exclude, conn.Intercept)
+		})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

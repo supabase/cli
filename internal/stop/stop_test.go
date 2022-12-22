@@ -187,7 +187,7 @@ func TestStopServices(t *testing.T) {
 func TestBackupDatabase(t *testing.T) {
 	const containerId = "test-db"
 	const dumped = "create schema public"
-	imageUrl := utils.GetRegistryImageUrl(utils.Pg14Image)
+	imageUrl := utils.GetRegistryImageUrl(utils.Pg15Image)
 
 	t.Run("backup main branch", func(t *testing.T) {
 		// Setup in-memory fs

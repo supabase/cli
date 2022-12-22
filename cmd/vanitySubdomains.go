@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"os"
 	"os/signal"
 
@@ -21,12 +20,6 @@ var (
 		Long: `Manage vanity subdomains for Supabase projects.
 
 Usage of vanity subdomains and custom domains is mutually exclusive.`,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if !experimental {
-				return errors.New("must set the --experimental flag to run this command")
-			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	desiredSubdomain string

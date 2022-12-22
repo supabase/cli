@@ -6,20 +6,14 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 	"text/template"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
-	"github.com/muesli/reflow/wrap"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
@@ -52,32 +46,15 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 		}
 	}
 
-	s := spinner.NewModel()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	ctx, cancel := context.WithCancel(ctx)
-	p := utils.NewProgram(model{cancel: cancel, spinner: s})
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- run(p, ctx, fsys, excludedContainers)
-		p.Send(tea.Quit())
-	}()
-
-	if err := p.Start(); err != nil {
-		return err
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		return errors.New("Aborted " + utils.Aqua("supabase start") + ".")
-	}
-	if err := <-errCh; err != nil {
+	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+		return run(p, ctx, fsys, excludedContainers)
+	}); err != nil {
 		utils.DockerRemoveAll(context.Background(), utils.NetId)
 		return err
 	}
 
 	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
 	utils.ShowStatus()
-
 	return nil
 }
 
@@ -88,33 +65,11 @@ var (
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
 )
 
-func pullImage(p utils.Program, ctx context.Context, image string) error {
-	imageUrl := utils.GetRegistryImageUrl(image)
-	_, _, err := utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
-	for i := 0; i < 3; i++ {
-		if err == nil {
-			break
-		}
-		var out io.ReadCloser
-		out, err = utils.DockerImagePullWithRetry(ctx, imageUrl, 2)
-		if err != nil {
-			break
-		}
-		defer out.Close()
-		if err := utils.ProcessPullOutput(out, p); err != nil {
-			p.Send(utils.ProgressMsg(nil))
-		}
-		_, _, err = utils.Docker.ImageInspectWithRaw(ctx, imageUrl)
-	}
-	return err
-}
-
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.DockerNetworkCreateIfNotExists(ctx, utils.NetId); err != nil {
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Pulling images..."))
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -122,18 +77,21 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 
 	// Pull images.
 	{
-		if err := pullImage(p, ctx, utils.DbImage); err != nil {
+		total := len(utils.ServiceImages) + 1
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (0/%d)", total)))
+		if err := utils.DockerPullImageIfNotCached(ctx, utils.DbImage); err != nil {
 			return err
 		}
-		for _, image := range utils.ServiceImages {
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (1/%d)", total)))
+		for i, image := range utils.ServiceImages {
 			if isContainerExcluded(image, excluded) {
 				fmt.Fprintln(os.Stderr, "Excluding container:", image)
 				continue
 			}
-
-			if err := pullImage(p, ctx, image); err != nil {
+			if err := utils.DockerPullImageIfNotCached(ctx, image); err != nil {
 				return err
 			}
+			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (%d/%d)", i+1, total)))
 		}
 	}
 
@@ -401,23 +359,6 @@ EOF
 		}
 	}
 
-	// Start diff tool.
-	if !isContainerExcluded(utils.DifferImage, excluded) {
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image:      utils.DifferImage,
-				Entrypoint: []string{"sleep", "infinity"},
-			},
-			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			utils.DifferId,
-		); err != nil {
-			return err
-		}
-	}
-
 	// Start pg-meta.
 	if !isContainerExcluded(utils.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
@@ -466,94 +407,6 @@ EOF
 	}
 
 	return nil
-}
-
-type model struct {
-	cancel      context.CancelFunc
-	spinner     spinner.Model
-	status      string
-	progress    *progress.Model
-	psqlOutputs []string
-
-	width int
-}
-
-func (m model) Init() tea.Cmd {
-	return spinner.Tick
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			// Stop future runs
-			m.cancel()
-			// Stop current runs
-			utils.DockerRemoveAll(context.Background(), utils.NetId)
-			return m, tea.Quit
-		default:
-			return m, nil
-		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		return m, nil
-	case spinner.TickMsg:
-		spinnerModel, cmd := m.spinner.Update(msg)
-		m.spinner = spinnerModel
-		return m, cmd
-	case progress.FrameMsg:
-		if m.progress == nil {
-			return m, nil
-		}
-
-		tmp, cmd := m.progress.Update(msg)
-		progressModel := tmp.(progress.Model)
-		m.progress = &progressModel
-		return m, cmd
-	case utils.StatusMsg:
-		m.status = string(msg)
-		return m, nil
-	case utils.ProgressMsg:
-		if msg == nil {
-			m.progress = nil
-			return m, nil
-		}
-
-		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithGradient("#1c1c1c", "#34b27b"))
-			m.progress = &progressModel
-		}
-
-		return m, m.progress.SetPercent(*msg)
-	case utils.PsqlMsg:
-		if msg == nil {
-			m.psqlOutputs = []string{}
-			return m, nil
-		}
-
-		m.psqlOutputs = append(m.psqlOutputs, *msg)
-		if len(m.psqlOutputs) > 5 {
-			m.psqlOutputs = m.psqlOutputs[1:]
-		}
-		return m, nil
-	default:
-		return m, nil
-	}
-}
-
-func (m model) View() string {
-	var progress string
-	if m.progress != nil {
-		progress = "\n\n" + m.progress.View()
-	}
-
-	var psqlOutputs string
-	if len(m.psqlOutputs) > 0 {
-		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
-	}
-
-	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

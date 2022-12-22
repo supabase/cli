@@ -15,6 +15,7 @@ import (
 	"time"
 
 	dockerConfig "github.com/docker/cli/cli/config"
+	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -222,23 +223,33 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
-func DockerImagePullWithRetry(ctx context.Context, image string, retries int) (io.ReadCloser, error) {
+func DockerImagePull(ctx context.Context, image string, w io.Writer) error {
 	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{
 		RegistryAuth: GetRegistryAuth(),
 	})
-	for i := time.Duration(1); retries > 0; retries-- {
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	return jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(w), nil)
+}
+
+// Used by unit tests
+var timeUnit = time.Second
+
+func DockerImagePullWithRetry(ctx context.Context, image string, retries int) error {
+	err := DockerImagePull(ctx, image, os.Stderr)
+	for i := 0; i < retries; i++ {
 		if err == nil {
 			break
 		}
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintf(os.Stderr, "Retrying after %d seconds...\n", i)
-		time.Sleep(i * time.Second)
-		out, err = Docker.ImagePull(ctx, image, types.ImagePullOptions{
-			RegistryAuth: GetRegistryAuth(),
-		})
-		i *= 2
+		period := time.Duration(2<<(i+1)) * timeUnit
+		fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)
+		time.Sleep(period)
+		err = DockerImagePull(ctx, image, os.Stderr)
 	}
-	return out, err
+	return err
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
@@ -248,25 +259,11 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	} else if !client.IsErrNotFound(err) {
 		return err
 	}
-	out, err := DockerImagePullWithRetry(ctx, imageUrl, 2)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	fmt.Fprintln(os.Stderr, "Pulling docker image:", imageUrl)
-	if viper.GetBool("DEBUG") {
-		return jsonmessage.DisplayJSONMessagesStream(out, os.Stderr, os.Stderr.Fd(), true, nil)
-	}
-	_, err = io.Copy(io.Discard, out)
-	return err
+	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
 func DockerStop(containerID string) {
-	stopContainer(Docker, containerID)
-}
-
-func stopContainer(docker *client.Client, containerID string) {
-	if err := docker.ContainerStop(context.Background(), containerID, nil); err != nil {
+	if err := Docker.ContainerStop(context.Background(), containerID, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
 	}
 }
@@ -300,46 +297,61 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 }
 
+func DockerRemove(containerId string) {
+	if err := Docker.ContainerRemove(context.Background(), containerId, types.ContainerRemoveOptions{
+		RemoveVolumes: true,
+		Force:         true,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to remove container:", containerId, err)
+	}
+}
+
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
 func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
+	stderr := io.Discard
+	if viper.GetBool("DEBUG") {
+		stderr = os.Stderr
+	}
+	var out bytes.Buffer
+	err := DockerRunOnceWithStream(ctx, image, env, cmd, &out, stderr)
+	return out.String(), err
+}
+
+func DockerRunOnceWithStream(ctx context.Context, image string, env []string, cmd []string, stdout, stderr io.Writer) error {
+	// Cannot rely on docker's auto remove because
+	//   1. We must inspect exit code after container stops
+	//   2. Context cancellation may happen after start
 	container, err := DockerStart(ctx, container.Config{
 		Image: image,
 		Env:   env,
 		Cmd:   cmd,
-	}, container.HostConfig{AutoRemove: true}, "")
+	}, container.HostConfig{}, "")
 	if err != nil {
-		return "", err
+		return err
 	}
-	// Propagate cancellation to terminate early
-	go func() {
-		<-ctx.Done()
-		if ctx.Err() != nil {
-			stopContainer(NewDocker(), container)
-		}
-	}()
+	defer DockerRemove(container)
 	// Stream logs
 	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,
-		ShowStderr: viper.GetBool("DEBUG"),
+		ShowStderr: true,
 		Follow:     true,
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer logs.Close()
-	var out bytes.Buffer
-	if _, err := stdcopy.StdCopy(&out, os.Stderr, logs); err != nil {
-		return "", err
+	if _, err := stdcopy.StdCopy(stdout, stderr, logs); err != nil {
+		return err
 	}
 	// Check exit code
 	resp, err := Docker.ContainerInspect(ctx, container)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if resp.State.ExitCode > 0 {
-		return "", errors.New("error running container")
+		return fmt.Errorf("error running container: exit %d", resp.State.ExitCode)
 	}
-	return out.String(), nil
+	return nil
 }
 
 // Exec a command once inside a container, returning stdout and throwing error on non-zero exit code.

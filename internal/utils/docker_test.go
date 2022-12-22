@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -72,6 +73,7 @@ func TestPullImage(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
+		timeUnit = time.Duration(0)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(Docker))
 		defer gock.OffAll()
@@ -88,15 +90,18 @@ func TestPullImage(t *testing.T) {
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusAccepted).
+			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "toomanyrequests"}})
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusAccepted).
+			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "no space left on device"}})
 		// Run test
-		assert.Error(t, DockerPullImageIfNotCached(context.Background(), imageId))
+		err := DockerPullImageIfNotCached(context.Background(), imageId)
 		// Validate api
+		assert.ErrorContains(t, err, "no space left on device")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -166,7 +171,7 @@ func TestRunOnce(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("stops container on cancel", func(t *testing.T) {
+	t.Run("removes container on cancel", func(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(Docker))
 		defer gock.OffAll()
@@ -176,11 +181,11 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Delay(1 * time.Second)
-		gock.New(Docker.DaemonHost()).
-			Post("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/stop").
-			Reply(http.StatusServiceUnavailable)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(200*time.Millisecond))
 		defer cancel()
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err := DockerRunOnce(ctx, imageId, nil, nil)
 		assert.Error(t, err)
@@ -198,6 +203,9 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			BodyString("hello world")
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err := DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
@@ -223,6 +231,9 @@ func TestRunOnce(t *testing.T) {
 		gock.New("http:///var/run/docker.sock").
 			Get("/v" + version + "/containers/" + containerId + "/json").
 			Reply(http.StatusServiceUnavailable)
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
@@ -249,6 +260,9 @@ func TestRunOnce(t *testing.T) {
 			Get("/v" + version + "/containers/" + containerId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 1}})
+		gock.New(Docker.DaemonHost()).
+			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
 		assert.Error(t, err)
