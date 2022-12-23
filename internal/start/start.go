@@ -78,20 +78,19 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	// Pull images.
 	{
 		total := len(utils.ServiceImages) + 1
-		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (0/%d)", total)))
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (1/%d)", total)))
 		if err := utils.DockerPullImageIfNotCached(ctx, utils.DbImage); err != nil {
 			return err
 		}
-		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (1/%d)", total)))
 		for i, image := range utils.ServiceImages {
 			if isContainerExcluded(image, excluded) {
 				fmt.Fprintln(os.Stderr, "Excluding container:", image)
 				continue
 			}
+			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (%d/%d)", i+1, total)))
 			if err := utils.DockerPullImageIfNotCached(ctx, image); err != nil {
 				return err
 			}
-			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images... (%d/%d)", i+1, total)))
 		}
 	}
 
