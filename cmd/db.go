@@ -73,9 +73,10 @@ var (
 		},
 	}
 
-	useMigra bool
-	schema   []string
-	file     string
+	useMigra   bool
+	usePgAdmin bool
+	schema     []string
+	file       string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
@@ -88,10 +89,10 @@ var (
 				}
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			if useMigra {
-				return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
+			if usePgAdmin {
+				return diff.Run(ctx, schema, file, dbPassword, fsys)
 			}
-			return diff.Run(ctx, schema, file, dbPassword, fsys)
+			return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
 		},
 	}
 
@@ -211,7 +212,9 @@ func init() {
 	dbCmd.AddCommand(dbBranchCmd)
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
-	diffFlags.BoolVar(&useMigra, "use-migra", false, "Use migra to generate schema diff.")
+	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
+	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
+	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
 	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
