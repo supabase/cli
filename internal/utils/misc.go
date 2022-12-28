@@ -43,6 +43,8 @@ const (
 	GotrueImage   = "supabase/gotrue:v2.25.1"
 	RealtimeImage = "supabase/realtime:v1.0.0-rc.11"
 	StorageImage  = "supabase/storage-api:v0.26.1"
+	// Should be kept in-sync with DenoRelayImage
+	denoVersion = "1.28.0"
 )
 
 var ServiceImages = []string{
@@ -317,7 +319,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", "1.28.0")
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", denoVersion)
 		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -330,7 +332,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	// 1. Determine OS triple
 	var assetFilename string
-	assetsUrl := "https://github.com/denoland/deno/releases/latest/download/"
+	assetRepo := "denoland/deno"
 	{
 		if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
 			assetFilename = "deno-x86_64-apple-darwin.zip"
@@ -340,7 +342,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 			assetFilename = "deno-x86_64-unknown-linux-gnu.zip"
 		} else if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
 			// TODO: version pin to official release once available https://github.com/denoland/deno/issues/1846
-			assetsUrl = "https://github.com/LukeChannings/deno-arm64/releases/latest/download/"
+			assetRepo = "LukeChannings/deno-arm64"
 			assetFilename = "deno-linux-arm64.zip"
 		} else if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
 			assetFilename = "deno-x86_64-pc-windows-msvc.zip"
@@ -351,7 +353,8 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	// 2. Download & install Deno binary.
 	{
-		req, err := http.NewRequestWithContext(ctx, "GET", assetsUrl+assetFilename, nil)
+		assetUrl := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", assetRepo, denoVersion, assetFilename)
+		req, err := http.NewRequestWithContext(ctx, "GET", assetUrl, nil)
 		if err != nil {
 			return err
 		}
