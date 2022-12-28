@@ -212,7 +212,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New("https://github.com").
-			Get("/denoland/deno/releases/latest/download/").
+			Get("/denoland/deno/releases/download/v" + utils.DenoVersion).
 			Reply(http.StatusOK).
 			Body(&body)
 		// Run test
@@ -239,7 +239,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New("https://github.com").
-			Get("/denoland/deno/releases/latest/download/").
+			Get("/denoland/deno/releases/download/v" + utils.DenoVersion).
 			Reply(http.StatusOK).
 			Body(&body)
 

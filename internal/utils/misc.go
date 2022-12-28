@@ -44,7 +44,7 @@ const (
 	RealtimeImage = "supabase/realtime:v1.0.0-rc.11"
 	StorageImage  = "supabase/storage-api:v0.26.1"
 	// Should be kept in-sync with DenoRelayImage
-	denoVersion = "1.28.0"
+	DenoVersion = "1.28.0"
 )
 
 var ServiceImages = []string{
@@ -319,7 +319,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
-		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", denoVersion)
+		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", DenoVersion)
 		cmd.Stderr = os.Stderr
 		cmd.Stdout = os.Stdout
 		return cmd.Run()
@@ -355,7 +355,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 
 	// 2. Download & install Deno binary.
 	{
-		assetUrl := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", assetRepo, denoVersion, assetFilename)
+		assetUrl := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", assetRepo, DenoVersion, assetFilename)
 		req, err := http.NewRequestWithContext(ctx, "GET", assetUrl, nil)
 		if err != nil {
 			return err
