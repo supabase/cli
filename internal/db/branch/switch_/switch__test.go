@@ -124,7 +124,7 @@ func TestSwitchCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), utils.ShadowDbName, fsys)
+		err := Run(context.Background(), "postgres", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "branch name is reserved.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
