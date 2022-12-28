@@ -320,6 +320,8 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	if _, err := fsys.Stat(denoPath); err == nil {
 		// Upgrade Deno.
 		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", denoVersion)
+		cmd.Stderr = os.Stderr
+		cmd.Stdout = os.Stdout
 		return cmd.Run()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
