@@ -69,8 +69,6 @@ func ShortContainerImageName(imageName string) string {
 }
 
 const (
-	ShadowDbName = "supabase_shadow"
-
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
 	TerminateDbSqlFmt = `
@@ -244,7 +242,7 @@ func GetProjectRoot(fsys afero.Fs) (string, error) {
 
 func IsBranchNameReserved(branch string) bool {
 	switch branch {
-	case "_current_branch", "main", "supabase_shadow", "postgres", "template0", "template1":
+	case "_current_branch", "main", "postgres", "template0", "template1":
 		return true
 	default:
 		return false
