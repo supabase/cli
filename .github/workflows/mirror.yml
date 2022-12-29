@@ -1,4 +1,4 @@
-name: Sync Docker Hub to ECR
+name: Mirror Image
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
           cache: true
       - id: list
         run: |
-          echo "::set-output name=tags::$(go run tools/listdep/main.go)"
+          echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
 
   mirror:
     runs-on: ubuntu-latest
