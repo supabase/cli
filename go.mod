@@ -15,7 +15,7 @@ require (
 	github.com/jackc/pgx/v4 v4.17.2
 	github.com/joho/godotenv v1.4.0
 	github.com/matoous/go-nanoid/v2 v2.0.0
-	github.com/mattn/go-isatty v0.0.16
+	github.com/mattn/go-isatty v0.0.17
 	github.com/muesli/reflow v0.3.0
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.14.0
