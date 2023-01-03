@@ -114,23 +114,30 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from schema diffs
-	InternalSchemas = []string{
-		"auth",
-		"extensions",
+	SystemSchemas = []string{
+		"information_schema",
+		"pg_catalog",
+		"pg_toast",
+		// "pg_temp_1",
+		// "pg_toast_temp_1",
+		// Owned by extensions
+		"cron",
 		"graphql",
 		"graphql_public",
-		"pgbouncer",
+		"net",
 		"pgsodium",
 		"pgsodium_masks",
-		"_realtime",
+	}
+	InternalSchemas = append([]string{
+		"auth",
+		"extensions",
+		"pgbouncer",
 		"realtime",
+		"_realtime",
 		"storage",
 		"supabase_functions",
 		"supabase_migrations",
-		"pg_catalog",
-		"pg_toast",
-		"information_schema",
-	}
+	}, SystemSchemas...)
 )
 
 // Used by unit tests
