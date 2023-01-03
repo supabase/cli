@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -78,6 +79,16 @@ type (
 	ProgressMsg *float64
 	PsqlMsg     *string
 )
+
+type StatusWriter struct {
+	Program
+}
+
+func (t StatusWriter) Write(p []byte) (int, error) {
+	trimmed := bytes.TrimRight(p, "\n")
+	t.Send(StatusMsg(trimmed))
+	return len(p), nil
+}
 
 func RunProgram(ctx context.Context, f func(p Program, ctx context.Context) error) error {
 	ctx, cancel := context.WithCancel(ctx)
