@@ -19,16 +19,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-type StatusWriter struct {
-	utils.Program
-}
-
-func (t StatusWriter) Write(p []byte) (int, error) {
-	trimmed := bytes.TrimRight(p, "\n")
-	t.Send(utils.StatusMsg(trimmed))
-	return len(p), nil
-}
-
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error {
 	// Sanity checks.
 	{
@@ -95,7 +85,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	// Start Postgres.
-	w := StatusWriter{p}
+	w := utils.StatusWriter{Program: p}
 	if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
 		return err
 	}

@@ -217,7 +217,8 @@ func init() {
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
 	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
-	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	diffFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
@@ -235,7 +236,8 @@ func init() {
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
-	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	remoteFlags.Lookup("schema").DefValue = "all"
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
@@ -243,7 +245,8 @@ func init() {
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
-	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{"public"}, "List of schema to include.")
+	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	lintFlags.Lookup("schema").DefValue = "all"
 	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
 	// Build start command
