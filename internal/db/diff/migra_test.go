@@ -3,6 +3,7 @@ package diff
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -97,7 +98,24 @@ func TestRunMigra(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on failure to create shadow", func(t *testing.T) {
+	t.Run("throws error on failure to load user schemas", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		project := apitest.RandomProjectRef()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name = ANY('{pgbouncer,realtime,_realtime,supabase_functions,supabase_migrations,information_schema,pg_catalog,pg_toast,cron,graphql,graphql_public,net,pgsodium,pgsodium_masks,vault}') ORDER BY schema_name").
+			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
+		// Run test
+		err := RunMigra(context.Background(), []string{}, "", "password", fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
+	})
+
+	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -110,77 +128,10 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", "password", fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on failure to migrate shadow", func(t *testing.T) {
-		utils.GlobalsSql = "create schema public"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
-			Reply(http.StatusOK)
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
-		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", "password", fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
-At statement 0: create schema public`)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on failure to diff target", func(t *testing.T) {
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg15Sql = "create schema private"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
-			Reply(http.StatusOK)
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/logs").
-			ReplyError(errors.New("network error"))
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-migra").
-			Reply(http.StatusOK)
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg15Sql).
-			Reply("CREATE SCHEMA")
-		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "error diffing schema")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-		// Check diff file
-		exists, err := afero.DirExists(fsys, utils.MigrationsDir)
-		assert.NoError(t, err)
-		assert.True(t, exists)
 	})
 }
 
@@ -266,7 +217,9 @@ func TestApplyMigrations(t *testing.T) {
 		conn.Query(query).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
-		assert.Error(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
+		err := ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: relation \"test\" already exists (SQLSTATE 42P07)\nAt statement 0: create table test")
 	})
 }
 
@@ -352,4 +305,102 @@ func TestMigrateShadow(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
+}
+
+func TestDiffDatabase(t *testing.T) {
+	utils.DbImage = utils.Pg15Image
+	utils.Config.Db.ShadowPort = 54320
+	utils.GlobalsSql = "create schema public"
+	utils.InitialSchemaSql = "create schema private"
+
+	t.Run("throws error on failure to create shadow", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
+			ReplyError(errors.New("network error"))
+		// Run test
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys)
+		// Check error
+		assert.Empty(t, diff)
+		assert.ErrorContains(t, err, "network error")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on failure to migrate shadow", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
+			Reply(http.StatusOK)
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		// Run test
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys, conn.Intercept)
+		// Check error
+		assert.Empty(t, diff)
+		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
+At statement 0: create schema public`)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on failure to diff target", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
+			Reply(http.StatusOK)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/logs").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-migra").
+			Reply(http.StatusOK)
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA")
+		// Run test
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys, conn.Intercept)
+		// Check error
+		assert.Empty(t, diff)
+		assert.ErrorContains(t, err, "error diffing schema")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestUserSchema(t *testing.T) {
+	// Setup mock postgres
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public}'")).
+		Reply("SELECT 1", []interface{}{"test"})
+	// Connect to mock
+	ctx := context.Background()
+	mock, err := utils.ConnectRemotePostgres(ctx, "admin", "pass", "postgres", "localhost", conn.Intercept)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+	// Run test
+	schemas, err := LoadUserSchemas(ctx, mock, "public")
+	// Check error
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"test"}, schemas)
 }
