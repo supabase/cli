@@ -127,6 +127,7 @@ var (
 		"net",
 		"pgsodium",
 		"pgsodium_masks",
+		"vault",
 	}
 	InternalSchemas = append([]string{
 		"auth",

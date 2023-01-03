@@ -23,6 +23,8 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
+const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name = ANY($1) ORDER BY schema_name"
+
 var (
 	//go:embed templates/migra.sh
 	diffSchemaScript string
@@ -38,25 +40,25 @@ func RunMigra(ctx context.Context, schema []string, file, password string, fsys 
 	if err != nil {
 		return err
 	}
-	// 2. Create shadow database
-	fmt.Fprintln(os.Stderr, "Creating shadow database...")
-	shadow, err := CreateShadowDatabase(ctx)
-	if err != nil {
-		return err
-	}
-	defer utils.DockerRemove(shadow)
-	fmt.Fprintln(os.Stderr, "Initialising schema...")
-	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
-		return err
+	// 2. Load all user defined schemas
+	if len(schema) == 0 {
+		if len(password) > 0 {
+			options = append(options, func(cc *pgx.ConnConfig) {
+				cc.PreferSimpleProtocol = true
+			})
+		}
+		conn, err := utils.ConnectByUrl(ctx, target, options...)
+		if err != nil {
+			return err
+		}
+		defer conn.Close(context.Background())
+		schema, err = LoadUserSchemas(ctx, conn)
+		if err != nil {
+			return err
+		}
 	}
 	// 3. Run migra to diff schema
-	progress := "Diffing local database..."
-	if len(password) > 0 {
-		progress = "Diffing linked project..."
-	}
-	fmt.Fprintln(os.Stderr, progress)
-	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
-	out, err := DiffSchemaMigra(ctx, source, target, schema)
+	out, err := DiffDatabase(ctx, schema, target, os.Stderr, fsys, options...)
 	if err != nil {
 		return err
 	}
@@ -80,13 +82,42 @@ func buildTargetUrl(password string, fsys afero.Fs) (target string, err error) {
 			url.UserPassword("postgres", password),
 			utils.GetSupabaseDbHost(ref),
 		)
+		fmt.Fprintln(os.Stderr, "Connecting to linked project...")
 	} else {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return target, err
 		}
 		target = "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
+		fmt.Fprintln(os.Stderr, "Connecting to local database...")
 	}
 	return target, err
+}
+
+func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
+	// Include auth,storage,extensions by default for RLS policies
+	if len(exclude) == 0 {
+		exclude = append([]string{
+			"pgbouncer",
+			"realtime",
+			"_realtime",
+			// Exclude functions because Webhooks support is early alpha
+			"supabase_functions",
+			"supabase_migrations",
+		}, utils.SystemSchemas...)
+	}
+	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
+	if err != nil {
+		return nil, err
+	}
+	schemas := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		schemas = append(schemas, name)
+	}
+	return schemas, nil
 }
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
@@ -212,4 +243,20 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 		return "", errors.New("error diffing schema: " + err.Error())
 	}
 	return out, nil
+}
+
+func DiffDatabase(ctx context.Context, schema []string, target string, w io.Writer, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (string, error) {
+	fmt.Fprintln(w, "Creating shadow database...")
+	shadow, err := CreateShadowDatabase(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer utils.DockerRemove(shadow)
+	fmt.Fprintln(w, "Initialising schema...")
+	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
+		return "", err
+	}
+	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
+	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
+	return DiffSchemaMigra(ctx, source, target, schema)
 }
