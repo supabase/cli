@@ -252,7 +252,6 @@ func DiffDatabase(ctx context.Context, schema []string, target string, w io.Writ
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	fmt.Fprintln(w, "Initialising schema...")
 	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
 		return "", err
 	}
