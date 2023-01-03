@@ -14,14 +14,14 @@ jobs:
       - uses: actions/checkout@v3
 
       - run: |
-          jq -c '.version = "1.0.0"' package.json > tmp.$$.json
+          jq -c '.version = "1.28.0"' package.json > tmp.$$.json
           mv tmp.$$.json package.json
           npm pack
 
       - uses: actions/upload-artifact@v3
         with:
           name: installer
-          path: supabase-1.0.0.tgz
+          path: supabase-1.28.0.tgz
 
   install:
     needs: pack
@@ -38,9 +38,9 @@ jobs:
       - run: npm init -y
 
       - if: ${{ matrix.pm == 'npm' }}
-        run: npm i --save-dev ./supabase-1.0.0.tgz
+        run: npm i --save-dev ./supabase-1.28.0.tgz
 
       - if: ${{ matrix.pm == 'yarn' }}
-        run: yarn add -D ./supabase-1.0.0.tgz
+        run: yarn add -D ./supabase-1.28.0.tgz
 
       - run: npx supabase --version
