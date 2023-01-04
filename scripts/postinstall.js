@@ -50,7 +50,7 @@ const parsePackageJson = (packageJson) => {
   const pkgName = packageJson.name;
   const version = packageJson.version;
   const repo = packageJson.repository;
-  const url = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${version}_${platform}_${arch}.tar.gz`;
+  const url = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${platform}_${arch}.tar.gz`;
 
   let binPath = path.join("bin", "supabase");
   if (platform == "windows") {
