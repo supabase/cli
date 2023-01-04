@@ -17,13 +17,13 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: _realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
+-- Name: _realtime; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
 CREATE SCHEMA IF NOT EXISTS _realtime;
 
 
-ALTER SCHEMA _realtime OWNER TO supabase_admin;
+ALTER SCHEMA _realtime OWNER TO postgres;
 
 --
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
@@ -814,7 +814,7 @@ $$;
 ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
 
 --
--- Name: secrets_encrypt_secret_secret(); Type: FUNCTION; Schema: vault; Owner: postgres
+-- Name: secrets_encrypt_secret_secret(); Type: FUNCTION; Schema: vault; Owner: supabase_admin
 --
 
 CREATE OR REPLACE FUNCTION vault.secrets_encrypt_secret_secret() RETURNS trigger
@@ -835,7 +835,7 @@ CREATE OR REPLACE FUNCTION vault.secrets_encrypt_secret_secret() RETURNS trigger
 		$$;
 
 
-ALTER FUNCTION vault.secrets_encrypt_secret_secret() OWNER TO postgres;
+ALTER FUNCTION vault.secrets_encrypt_secret_secret() OWNER TO supabase_admin;
 
 SET default_tablespace = '';
 
@@ -921,7 +921,8 @@ CREATE TABLE IF NOT EXISTS auth.identities (
     provider text NOT NULL,
     last_sign_in_at timestamp with time zone,
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    email text GENERATED ALWAYS AS (lower((identity_data ->> 'email'::text))) STORED
 );
 
 
@@ -932,6 +933,13 @@ ALTER TABLE auth.identities OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.identities IS 'Auth: Stores identities associated to a user.';
+
+
+--
+-- Name: COLUMN identities.email; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.identities.email IS 'Auth: Email is a generated column that references the optional email property in the identity_data';
 
 
 --
@@ -1154,7 +1162,8 @@ CREATE TABLE IF NOT EXISTS auth.sessions (
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
     factor_id uuid,
-    aal auth.aal_level
+    aal auth.aal_level,
+    not_after timestamp with time zone
 );
 
 
@@ -1165,6 +1174,13 @@ ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a user.';
+
+
+--
+-- Name: COLUMN sessions.not_after; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.sessions.not_after IS 'Auth: Not after is a nullable column that contains a timestamp after which the session should be regarded as expired.';
 
 
 --
@@ -1281,6 +1297,7 @@ CREATE TABLE IF NOT EXISTS auth.users (
     banned_until timestamp with time zone,
     reauthentication_token character varying(255) DEFAULT ''::character varying,
     reauthentication_sent_at timestamp with time zone,
+    is_sso_user boolean DEFAULT false NOT NULL,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1292,6 +1309,13 @@ ALTER TABLE auth.users OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure schema.';
+
+
+--
+-- Name: COLUMN users.is_sso_user; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.users.is_sso_user IS 'Auth: Set this column to true when the account comes from SSO. These accounts can have duplicate emails.';
 
 
 --
@@ -1344,7 +1368,7 @@ CREATE TABLE IF NOT EXISTS storage.objects (
 ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
 
 --
--- Name: decrypted_secrets; Type: VIEW; Schema: vault; Owner: postgres
+-- Name: decrypted_secrets; Type: VIEW; Schema: vault; Owner: supabase_admin
 --
 
 CREATE OR REPLACE VIEW vault.decrypted_secrets AS
@@ -1367,7 +1391,7 @@ CREATE OR REPLACE VIEW vault.decrypted_secrets AS
    FROM vault.secrets;
 
 
-ALTER TABLE vault.decrypted_secrets OWNER TO postgres;
+ALTER TABLE vault.decrypted_secrets OWNER TO supabase_admin;
 
 --
 -- Name: refresh_tokens id; Type: DEFAULT; Schema: auth; Owner: supabase_auth_admin
@@ -1557,7 +1581,7 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 
 
 --
--- Data for Name: secrets; Type: TABLE DATA; Schema: vault; Owner: postgres
+-- Data for Name: secrets; Type: TABLE DATA; Schema: vault; Owner: supabase_admin
 --
 
 
@@ -1738,14 +1762,6 @@ ALTER TABLE ONLY auth.sso_sessions
 
 
 --
--- Name: users users_email_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.users
-    ADD CONSTRAINT users_email_key UNIQUE (email);
-
-
---
 -- Name: users users_phone_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1843,6 +1859,20 @@ CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, 
 
 
 --
+-- Name: identities_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX identities_email_idx ON auth.identities USING btree (email text_pattern_ops);
+
+
+--
+-- Name: INDEX identities_email_idx; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.identities_email_idx IS 'Auth: Ensures indexed queries on the email column';
+
+
+--
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1868,13 +1898,6 @@ CREATE UNIQUE INDEX reauthentication_token_idx ON auth.users USING btree (reauth
 --
 
 CREATE UNIQUE INDEX recovery_token_idx ON auth.users USING btree (recovery_token) WHERE ((recovery_token)::text !~ '^[0-9 ]*$'::text);
-
-
---
--- Name: refresh_token_session_id; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX refresh_token_session_id ON auth.refresh_tokens USING btree (session_id);
 
 
 --
@@ -1983,6 +2006,13 @@ CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, creat
 
 
 --
+-- Name: users_email_partial_key; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX users_email_partial_key ON auth.users USING btree (email) WHERE (is_sso_user = false);
+
+
+--
 -- Name: users_instance_id_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2062,14 +2092,6 @@ ALTER TABLE ONLY auth.mfa_challenges
 
 ALTER TABLE ONLY auth.mfa_factors
     ADD CONSTRAINT mfa_factors_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
-
-
---
--- Name: refresh_tokens refresh_tokens_parent_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.refresh_tokens
-    ADD CONSTRAINT refresh_tokens_parent_fkey FOREIGN KEY (parent) REFERENCES auth.refresh_tokens(token);
 
 
 --
@@ -2669,36 +2691,40 @@ GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text)
 
 
 --
--- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: postgres
+-- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
+GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO postgres;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO anon;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO service_role;
 
 
 --
--- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: postgres
+-- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
+GRANT ALL ON FUNCTION graphql.exception(message text) TO postgres;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO anon;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO service_role;
 
 
 --
--- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
+-- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
+GRANT ALL ON FUNCTION graphql.get_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
+-- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
+GRANT ALL ON FUNCTION graphql.increment_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
@@ -2888,30 +2914,31 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 
 
 --
--- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: postgres
+-- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
 --
 
+GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
 
 
 --
--- Name: TABLE decrypted_key; Type: ACL; Schema: pgsodium; Owner: postgres
+-- Name: TABLE decrypted_key; Type: ACL; Schema: pgsodium; Owner: supabase_admin
 --
 
 GRANT ALL ON TABLE pgsodium.decrypted_key TO pgsodium_keyholder;
 
 
 --
--- Name: TABLE masking_rule; Type: ACL; Schema: pgsodium; Owner: postgres
+-- Name: TABLE masking_rule; Type: ACL; Schema: pgsodium; Owner: supabase_admin
 --
 
 GRANT ALL ON TABLE pgsodium.masking_rule TO pgsodium_keyholder;
 
 
 --
--- Name: TABLE mask_columns; Type: ACL; Schema: pgsodium; Owner: postgres
+-- Name: TABLE mask_columns; Type: ACL; Schema: pgsodium; Owner: supabase_admin
 --
 
 GRANT ALL ON TABLE pgsodium.mask_columns TO pgsodium_keyholder;
@@ -2982,16 +3009,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3002,16 +3019,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3019,16 +3026,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
 
 
 --
@@ -3062,24 +3059,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyholder;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: supabase_admin
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyholder;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyholder;
 
 
 --
@@ -3090,13 +3073,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium_masks GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
 --
 
@@ -3104,24 +3080,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium_masks GRANT ALL ON FUNCTIONS  TO pgsodium_keyiduser;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON FUNCTIONS  TO pgsodium_keyiduser;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium_masks GRANT ALL ON TABLES  TO pgsodium_keyiduser;
 
 
 --
