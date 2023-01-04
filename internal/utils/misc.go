@@ -27,7 +27,7 @@ import (
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.11"
+	Pg15Image = "supabase/postgres:15.1.0.18"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage       = "library/kong:2.8.1"
 	InbucketImage   = "inbucket/inbucket:3.0.3"
