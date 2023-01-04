@@ -71,13 +71,13 @@ CREATE SCHEMA IF NOT EXISTS pgbouncer;
 ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
 
 --
--- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: supabase_admin
+-- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
 CREATE SCHEMA IF NOT EXISTS pgsodium;
 
 
-ALTER SCHEMA pgsodium OWNER TO supabase_admin;
+ALTER SCHEMA pgsodium OWNER TO postgres;
 
 --
 -- Name: pgsodium; Type: EXTENSION; Schema: -; Owner: -
@@ -110,15 +110,6 @@ CREATE SCHEMA IF NOT EXISTS storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
-
---
--- Name: vault; Type: SCHEMA; Schema: -; Owner: supabase_admin
---
-
-CREATE SCHEMA IF NOT EXISTS vault;
-
-
-ALTER SCHEMA vault OWNER TO supabase_admin;
 
 --
 -- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
@@ -174,20 +165,6 @@ CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;
 --
 
 COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
-
-
---
--- Name: supabase_vault; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;
-
-
---
--- Name: EXTENSION supabase_vault; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION supabase_vault IS 'Supabase Vault Extension';
 
 
 --
@@ -813,30 +790,6 @@ $$;
 
 ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
 
---
--- Name: secrets_encrypt_secret_secret(); Type: FUNCTION; Schema: vault; Owner: supabase_admin
---
-
-CREATE OR REPLACE FUNCTION vault.secrets_encrypt_secret_secret() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-		BEGIN
-		        new.secret = CASE WHEN new.secret IS NULL THEN NULL ELSE
-			CASE WHEN new.key_id IS NULL THEN NULL ELSE pg_catalog.encode(
-			  pgsodium.crypto_aead_det_encrypt(
-				pg_catalog.convert_to(new.secret, 'utf8'),
-				pg_catalog.convert_to((new.id::text || new.description::text || new.created_at::text || new.updated_at::text)::text, 'utf8'),
-				new.key_id::uuid,
-				new.nonce
-			  ),
-				'base64') END END;
-		RETURN new;
-		END;
-		$$;
-
-
-ALTER FUNCTION vault.secrets_encrypt_secret_secret() OWNER TO supabase_admin;
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -1368,32 +1321,6 @@ CREATE TABLE IF NOT EXISTS storage.objects (
 ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
 
 --
--- Name: decrypted_secrets; Type: VIEW; Schema: vault; Owner: supabase_admin
---
-
-CREATE OR REPLACE VIEW vault.decrypted_secrets AS
- SELECT secrets.id,
-    secrets.name,
-    secrets.description,
-    secrets.secret,
-        CASE
-            WHEN (secrets.secret IS NULL) THEN NULL::text
-            ELSE
-            CASE
-                WHEN (secrets.key_id IS NULL) THEN NULL::text
-                ELSE convert_from(pgsodium.crypto_aead_det_decrypt(decode(secrets.secret, 'base64'::text), convert_to(((((secrets.id)::text || secrets.description) || (secrets.created_at)::text) || (secrets.updated_at)::text), 'utf8'::name), secrets.key_id, secrets.nonce), 'utf8'::name)
-            END
-        END AS decrypted_secret,
-    secrets.key_id,
-    secrets.nonce,
-    secrets.created_at,
-    secrets.updated_at
-   FROM vault.secrets;
-
-
-ALTER TABLE vault.decrypted_secrets OWNER TO supabase_admin;
-
---
 -- Name: refresh_tokens id; Type: DEFAULT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1576,12 +1503,6 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 
 --
 -- Data for Name: objects; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
---
-
-
-
---
--- Data for Name: secrets; Type: TABLE DATA; Schema: vault; Owner: supabase_admin
 --
 
 
@@ -2739,6 +2660,13 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
+-- Name: SEQUENCE key_key_id_seq; Type: ACL; Schema: pgsodium; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE pgsodium.key_key_id_seq TO pgsodium_keyiduser;
+
+
+--
 -- Name: FUNCTION extension(name text); Type: ACL; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -2924,24 +2852,10 @@ GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
 
 
 --
--- Name: TABLE decrypted_key; Type: ACL; Schema: pgsodium; Owner: supabase_admin
+-- Name: TABLE valid_key; Type: ACL; Schema: pgsodium; Owner: postgres
 --
 
-GRANT ALL ON TABLE pgsodium.decrypted_key TO pgsodium_keyholder;
-
-
---
--- Name: TABLE masking_rule; Type: ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE pgsodium.masking_rule TO pgsodium_keyholder;
-
-
---
--- Name: TABLE mask_columns; Type: ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE pgsodium.mask_columns TO pgsodium_keyholder;
+GRANT ALL ON TABLE pgsodium.valid_key TO pgsodium_keyiduser;
 
 
 --
@@ -3059,38 +2973,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyholder;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyholder;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON FUNCTIONS  TO pgsodium_keyiduser;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON TABLES  TO pgsodium_keyiduser;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyiduser;
 
 
 --
