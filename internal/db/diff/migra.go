@@ -42,12 +42,15 @@ func RunMigra(ctx context.Context, schema []string, file, password string, fsys 
 	}
 	// 2. Load all user defined schemas
 	if len(schema) == 0 {
+		var conn *pgx.Conn
 		if len(password) > 0 {
 			options = append(options, func(cc *pgx.ConnConfig) {
 				cc.PreferSimpleProtocol = true
 			})
+			conn, err = utils.ConnectByUrl(ctx, target, options...)
+		} else {
+			conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 		}
-		conn, err := utils.ConnectByUrl(ctx, target, options...)
 		if err != nil {
 			return err
 		}
