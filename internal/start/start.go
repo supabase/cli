@@ -251,12 +251,17 @@ EOF
 					"DB_NAME=postgres",
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=supabaserealtime",
+					"API_JWT_SECRET=" + utils.JWTSecret,
 					"FLY_ALLOC_ID=abc123",
 					"FLY_APP_NAME=realtime",
 					"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
+				},
+				Cmd: []string{
+					"/bin/sh", "-c",
+					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 			},
 			container.HostConfig{
