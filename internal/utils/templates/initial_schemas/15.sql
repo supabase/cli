@@ -1331,7 +1331,7 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "I4YigNuoYSZbe+Xs4vInbw==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "MqmbZ5ZiXXFlSy8FeFYPAQ==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('1d784f3e-9e48-45ac-9d56-50f8b39d5c64', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-05 05:01:34', '2023-01-05 05:01:34');
 
 
 --
@@ -1354,7 +1354,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202211021
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, '2022-11-14 23:04:49', '2022-11-14 23:04:49', 100, 'postgres_cdc_rls');
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('1b4a2e9b-e69c-40dc-ba5b-337c0eed2c88', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-05 05:01:34', '2023-01-05 05:01:34', 100, 'postgres_cdc_rls');
 
 
 --
