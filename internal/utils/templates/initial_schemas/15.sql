@@ -1446,6 +1446,13 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221020193600');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221021073300');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221021082433');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143410');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221120114718');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221121110412');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221124140122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221125140132');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221125141029');
 
 
 --
