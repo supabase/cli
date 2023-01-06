@@ -168,7 +168,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			KongId = "supabase_kong_" + Config.ProjectId
 			GotrueId = "supabase_auth_" + Config.ProjectId
 			InbucketId = "supabase_inbucket_" + Config.ProjectId
-			RealtimeId = "realtime-demo.supabase_realtime_" + Config.ProjectId
+			RealtimeId = "realtime-dev.supabase_realtime_" + Config.ProjectId
 			RestId = "supabase_rest_" + Config.ProjectId
 			StorageId = "supabase_storage_" + Config.ProjectId
 			ImgProxyId = "storage_imgproxy_" + Config.ProjectId
