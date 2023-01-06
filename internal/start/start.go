@@ -6,15 +6,18 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -91,6 +94,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	p.Send(utils.StatusMsg("Starting containers..."))
+	var started []string
 
 	// Start Kong.
 	if !isContainerExcluded(utils.KongImage, excluded) {
@@ -131,6 +135,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.KongId)
 	}
 
 	// Start GoTrue.
@@ -216,6 +221,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.GotrueId)
 	}
 
 	// Start Inbucket.
@@ -240,6 +246,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.InbucketId)
 	}
 
 	// Start Realtime.
@@ -283,6 +290,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.RealtimeId)
 	}
 
 	// Start PostgREST.
@@ -306,6 +314,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.RestId)
 	}
 
 	// Start Storage.
@@ -347,6 +356,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.StorageId)
 	}
 
 	// Start Storage ImgProxy.
@@ -375,6 +385,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.ImgProxyId)
 	}
 
 	// Start pg-meta.
@@ -401,6 +412,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.PgmetaId)
 	}
 
 	// Start Studio.
@@ -434,9 +446,10 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.StudioId)
 	}
 
-	return nil
+	return waitForServiceReady(ctx, started)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
@@ -453,4 +466,34 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
+}
+
+func waitForServiceReady(ctx context.Context, started []string) error {
+	timeout := 10 * time.Second
+	for _, container := range started {
+		var ready bool
+		if container == utils.RestId {
+			// PostgREST does not support native health checks
+			restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Add("apikey", utils.AnonKey)
+			ready = waitForStatusOK(req, timeout)
+		} else {
+			ready = reset.WaitForHealthyService(ctx, container, timeout)
+		}
+		if !ready {
+			fmt.Fprintln(os.Stderr, "Service not healthy:", container)
+		}
+	}
+	return nil
+}
+
+func waitForStatusOK(req *http.Request, timeout time.Duration) bool {
+	return reset.RetryWithBackoff(func() bool {
+		resp, err := http.DefaultClient.Do(req)
+		return err == nil && resp.StatusCode == http.StatusOK
+	}, timeout)
 }
