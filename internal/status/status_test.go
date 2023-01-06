@@ -24,7 +24,7 @@ func TestStatusCommand(t *testing.T) {
 			"supabase_kong_",
 			"supabase_auth_",
 			"supabase_inbucket_",
-			"realtime-demo.supabase_realtime_",
+			"realtime-dev.supabase_realtime_",
 			"supabase_rest_",
 			"supabase_storage_",
 			"supabase_pg_meta_",

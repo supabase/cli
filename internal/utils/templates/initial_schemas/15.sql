@@ -1338,16 +1338,17 @@ INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, insert
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2022-12-15 04:27:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2022-12-15 04:27:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-06 05:02:45');
 
 
 --
@@ -1543,14 +1544,6 @@ ALTER TABLE ONLY _realtime.schema_migrations
 
 ALTER TABLE ONLY _realtime.tenants
     ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
-
-
---
--- Name: tenants uniq_external_id; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
---
-
-ALTER TABLE ONLY _realtime.tenants
-    ADD CONSTRAINT uniq_external_id UNIQUE (external_id);
 
 
 --
