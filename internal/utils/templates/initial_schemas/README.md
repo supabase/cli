@@ -45,7 +45,7 @@ services:
 
   realtime:
     container_name: supabase-realtime
-    image: supabase/realtime:v2.0.2
+    image: supabase/realtime:v1.0.0-rc.11
     depends_on:
       - db
     restart: on-failure
@@ -53,19 +53,18 @@ services:
       PORT: 4000
       DB_HOST: db
       DB_PORT: 5432
+      DB_NAME: postgres
       DB_USER: supabase_admin
       DB_PASSWORD: postgres
-      DB_NAME: postgres
       DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
       DB_ENC_KEY: aaaaaaaaaaaaaaaa
-      API_JWT_SECRET: a,
       FLY_ALLOC_ID: a
       FLY_APP_NAME: a
       SECRET_KEY_BASE: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       ERL_AFLAGS: '-proto_dist inet_tcp'
       ENABLE_TAILSCALE: 'false'
       DNS_NODES: a
-    command: /app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server
+    command: /app/bin/realtime eval Realtime.Release.migrate
 
   storage:
     container_name: supabase-storage

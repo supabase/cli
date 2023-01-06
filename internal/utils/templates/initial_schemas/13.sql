@@ -890,6 +890,52 @@ COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure sch
 
 
 --
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+--
+
+CREATE TABLE _realtime.schema_migrations (
+   version bigint NOT NULL,
+   inserted_at timestamp(0) without time zone NULL,
+   PRIMARY KEY (version)
+);
+
+
+--
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+--
+
+CREATE TABLE _realtime.tenants (
+   id uuid NOT NULL,
+   name character varying(255) NULL,
+   external_id character varying(255) NULL,
+   jwt_secret character varying(500) NULL,
+   max_concurrent_users integer NOT NULL DEFAULT 200,
+   inserted_at timestamp(0) without time zone NOT NULL,
+   updated_at timestamp(0) without time zone NOT NULL,
+   max_events_per_second integer NOT NULL DEFAULT 100,
+   postgres_cdc_default character varying(255) NULL DEFAULT 'postgres_cdc_rls'::character varying,
+   PRIMARY KEY (id),
+   UNIQUE (external_id)
+);
+
+
+--
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+--
+
+CREATE TABLE _realtime.extensions (
+   id uuid NOT NULL,
+   type character varying(255) NULL,
+   settings jsonb NULL,
+   tenant_external_id character varying(255) NULL,
+   inserted_at timestamp(0) without time zone NOT NULL,
+   updated_at timestamp(0) without time zone NOT NULL,
+   PRIMARY KEY (id),
+   FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE
+);
+
+
+--
 -- Name: buckets; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -1001,6 +1047,40 @@ INSERT INTO auth.schema_migrations VALUES ('20220614074223');
 --
 -- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
+
+
+--
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+--
+
+INSERT INTO _realtime.schema_migrations (version, inserted_at)
+  VALUES
+    (20210706140551, '2022-11-16 23:23:23'),
+    (20220329161857, '2022-11-16 23:23:23'),
+    (20220410212326, '2022-11-16 23:23:23'),
+    (20220506102948, '2022-11-16 23:23:23'),
+    (20220527210857, '2022-11-16 23:23:23'),
+    (20220815211129, '2022-11-16 23:23:23'),
+    (20220815215024, '2022-11-16 23:23:23'),
+    (20220818141501, '2022-11-16 23:23:23'),
+    (20221018173709, '2022-11-16 23:23:23'),
+    (20221102172703, '2022-11-16 23:23:23');
+
+
+--
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+--
+
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
+    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
+
+
+--
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+--
+
+INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
+    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"I4YigNuoYSZbe+Xs4vInbw==","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
