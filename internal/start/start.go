@@ -492,7 +492,7 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 }
 
 func waitForStatusOK(req *http.Request, timeout time.Duration) bool {
-	return reset.RetryWithBackoff(func() bool {
+	return reset.RetryEverySecond(func() bool {
 		resp, err := http.DefaultClient.Do(req)
 		return err == nil && resp.StatusCode == http.StatusOK
 	}, timeout)

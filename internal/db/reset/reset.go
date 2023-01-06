@@ -151,7 +151,7 @@ func RestartDatabase(ctx context.Context) {
 	}
 }
 
-func RetryWithBackoff(callback func() bool, timeout time.Duration) bool {
+func RetryEverySecond(callback func() bool, timeout time.Duration) bool {
 	now := time.Now()
 	expiry := now.Add(timeout)
 	ticker := time.NewTicker(time.Second)
@@ -165,7 +165,7 @@ func RetryWithBackoff(callback func() bool, timeout time.Duration) bool {
 }
 
 func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
-	return RetryWithBackoff(func() bool {
+	return RetryEverySecond(func() bool {
 		// Poll for container health status
 		resp, err := utils.Docker.ContainerInspect(ctx, container)
 		return err == nil && resp.State.Health != nil && resp.State.Health.Status == "healthy"
