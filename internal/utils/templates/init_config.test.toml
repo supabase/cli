@@ -59,7 +59,8 @@ double_confirm_changes = true
 enable_confirmations = false
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
-# `discord`, `facebook`, `github`, `gitlab`, `google`, `twitch`, `twitter`, `slack`, `spotify`.
+# `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin`, `notion`, `twitch`,
+# `twitter`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.azure]
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"
