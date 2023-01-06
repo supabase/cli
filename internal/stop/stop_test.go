@@ -26,10 +26,6 @@ func TestStopCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
-		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
 			JSON([]types.Container{})
@@ -57,23 +53,6 @@ func TestStopCommand(t *testing.T) {
 		assert.ErrorContains(t, err, "Missing config: open supabase/config.toml: file does not exist")
 	})
 
-	t.Run("ignores stopped database", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		err := Run(context.Background(), false, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("throws error on backup failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -81,10 +60,6 @@ func TestStopCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			ReplyError(errors.New("network error"))
@@ -103,10 +78,6 @@ func TestStopCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
-		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
@@ -123,10 +94,6 @@ func TestStopCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).

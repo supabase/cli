@@ -28,14 +28,8 @@ var (
 
 func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			fmt.Println(utils.Aqua("supabase") + " local development setup is already stopped.")
-			return nil
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
 	}
 
 	if backup {
