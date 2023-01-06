@@ -164,10 +164,14 @@ func RetryEverySecond(callback func() bool, timeout time.Duration) bool {
 	return false
 }
 
+func IsContainerHealthy(ctx context.Context, container string) bool {
+	resp, err := utils.Docker.ContainerInspect(ctx, container)
+	return err == nil && resp.State.Health != nil && resp.State.Health.Status == "healthy"
+}
+
 func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
-	return RetryEverySecond(func() bool {
-		// Poll for container health status
-		resp, err := utils.Docker.ContainerInspect(ctx, container)
-		return err == nil && resp.State.Health != nil && resp.State.Health.Status == "healthy"
-	}, timeout)
+	probe := func() bool {
+		return IsContainerHealthy(ctx, container)
+	}
+	return RetryEverySecond(probe, timeout)
 }

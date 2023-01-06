@@ -469,31 +469,37 @@ func ExcludableContainers() []string {
 }
 
 func waitForServiceReady(ctx context.Context, started []string) error {
-	timeout := 10 * time.Second
-	for _, container := range started {
-		var ready bool
-		if container == utils.RestId {
-			// PostgREST does not support native health checks
-			restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
-			req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
-			if err != nil {
-				return err
+	probe := func() bool {
+		var unhealthy []string
+		for _, container := range started {
+			if !isServiceReady(ctx, container) {
+				unhealthy = append(unhealthy, container)
 			}
-			req.Header.Add("apikey", utils.AnonKey)
-			ready = waitForStatusOK(req, timeout)
-		} else {
-			ready = reset.WaitForHealthyService(ctx, container, timeout)
 		}
-		if !ready {
-			fmt.Fprintln(os.Stderr, "Service not healthy:", container)
-		}
+		started = unhealthy
+		return len(started) == 0
+	}
+	if !reset.RetryEverySecond(probe, 10*time.Second) {
+		return fmt.Errorf("service not healthy: %v", started)
 	}
 	return nil
 }
 
-func waitForStatusOK(req *http.Request, timeout time.Duration) bool {
-	return reset.RetryEverySecond(func() bool {
-		resp, err := http.DefaultClient.Do(req)
-		return err == nil && resp.StatusCode == http.StatusOK
-	}, timeout)
+func isServiceReady(ctx context.Context, container string) bool {
+	if container == utils.RestId {
+		return IsPostgRESTHealthy(ctx)
+	}
+	return reset.IsContainerHealthy(ctx, container)
+}
+
+func IsPostgRESTHealthy(ctx context.Context) bool {
+	// PostgREST does not support native health checks
+	restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Add("apikey", utils.AnonKey)
+	resp, err := http.DefaultClient.Do(req)
+	return err == nil && resp.StatusCode == http.StatusOK
 }
