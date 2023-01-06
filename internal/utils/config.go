@@ -48,10 +48,15 @@ var (
 		"github",
 		"gitlab",
 		"google",
+		"keycloak",
+		"linkedin",
+		"notion",
 		"twitch",
 		"twitter",
 		"slack",
 		"spotify",
+		"workos",
+		"zoom",
 	}
 
 	//go:embed templates/init_config.toml
