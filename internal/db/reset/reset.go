@@ -141,7 +141,7 @@ func RestartDatabase(ctx context.Context) {
 		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
 		return
 	}
-	if !WaitForHealthyDatabase(ctx, healthTimeout) {
+	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 		return
 	}
@@ -151,17 +151,27 @@ func RestartDatabase(ctx context.Context) {
 	}
 }
 
-func WaitForHealthyDatabase(ctx context.Context, timeout time.Duration) bool {
-	// Poll for container health status
+func RetryEverySecond(callback func() bool, timeout time.Duration) bool {
 	now := time.Now()
 	expiry := now.Add(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for t := now; t.Before(expiry); t = <-ticker.C {
-		if resp, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil &&
-			resp.State.Health != nil && resp.State.Health.Status == "healthy" {
+		if callback() {
 			return true
 		}
 	}
 	return false
+}
+
+func IsContainerHealthy(ctx context.Context, container string) bool {
+	resp, err := utils.Docker.ContainerInspect(ctx, container)
+	return err == nil && resp.State.Health != nil && resp.State.Health.Status == "healthy"
+}
+
+func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
+	probe := func() bool {
+		return IsContainerHealthy(ctx, container)
+	}
+	return RetryEverySecond(probe, timeout)
 }

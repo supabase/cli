@@ -81,7 +81,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 }
 
 func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	if !reset.WaitForHealthyDatabase(ctx, 20*time.Second) {
+	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
 	// Initialise globals

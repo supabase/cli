@@ -144,12 +144,6 @@ func TestDatabaseStart(t *testing.T) {
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
-			}})
 		// Start services
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)
@@ -168,7 +162,7 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PostgrestImage), utils.RestId)
 		utils.StorageId = "test-storage"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), utils.StorageId)
-		utils.StudioId = "test-imgproxy"
+		utils.ImgProxyId = "test-imgproxy"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.ImageProxyImage), utils.ImgProxyId)
 		utils.DifferId = "test-differ"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
@@ -185,6 +179,22 @@ func TestDatabaseStart(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
+		// Setup health probes
+		started := []string{
+			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
+			utils.StorageId, utils.ImgProxyId, utils.PgmetaId, utils.StudioId,
+		}
+		for _, container := range started {
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/json").
+				Reply(http.StatusOK).
+				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				}})
+		}
+		gock.New("localhost").
+			Head("/rest/v1/").
+			Reply(http.StatusOK)
 		// Run test
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
 			return run(p, context.Background(), fsys, []string{}, conn.Intercept)

@@ -6,15 +6,18 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -91,6 +94,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	p.Send(utils.StatusMsg("Starting containers..."))
+	var started []string
 
 	// Start Kong.
 	if !isContainerExcluded(utils.KongImage, excluded) {
@@ -131,6 +135,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.KongId)
 	}
 
 	// Start GoTrue.
@@ -202,6 +207,12 @@ EOF
 			container.Config{
 				Image: utils.GotrueImage,
 				Env:   env,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
@@ -210,6 +221,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.GotrueId)
 	}
 
 	// Start Inbucket.
@@ -234,6 +246,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.InbucketId)
 	}
 
 	// Start Realtime.
@@ -263,6 +276,12 @@ EOF
 					"/bin/sh", "-c",
 					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "printf", "\\0", ">", "/dev/tcp/localhost/4000"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
@@ -271,6 +290,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.RealtimeId)
 	}
 
 	// Start PostgREST.
@@ -294,6 +314,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.RestId)
 	}
 
 	// Start Storage.
@@ -321,6 +342,12 @@ EOF
 					"ENABLE_IMAGE_TRANSFORMATION=true",
 					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/status"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
@@ -329,6 +356,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.StorageId)
 	}
 
 	// Start Storage ImgProxy.
@@ -342,6 +370,12 @@ EOF
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
 					"IMGPROXY_USE_ETAG=/",
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "imgproxy", "health"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				VolumesFrom:   []string{utils.StorageId},
@@ -351,6 +385,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.ImgProxyId)
 	}
 
 	// Start pg-meta.
@@ -363,6 +398,12 @@ EOF
 					"PG_META_PORT=8080",
 					"PG_META_DB_HOST=" + utils.DbId,
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
@@ -371,6 +412,7 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.PgmetaId)
 	}
 
 	// Start Studio.
@@ -389,6 +431,12 @@ EOF
 					"SUPABASE_ANON_KEY=" + utils.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
@@ -398,9 +446,10 @@ EOF
 		); err != nil {
 			return err
 		}
+		started = append(started, utils.StudioId)
 	}
 
-	return nil
+	return waitForServiceReady(ctx, started)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
@@ -417,4 +466,40 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
+}
+
+func waitForServiceReady(ctx context.Context, started []string) error {
+	probe := func() bool {
+		var unhealthy []string
+		for _, container := range started {
+			if !isServiceReady(ctx, container) {
+				unhealthy = append(unhealthy, container)
+			}
+		}
+		started = unhealthy
+		return len(started) == 0
+	}
+	if !reset.RetryEverySecond(probe, 10*time.Second) {
+		return fmt.Errorf("service not healthy: %v", started)
+	}
+	return nil
+}
+
+func isServiceReady(ctx context.Context, container string) bool {
+	if container == utils.RestId {
+		return IsPostgRESTHealthy(ctx)
+	}
+	return reset.IsContainerHealthy(ctx, container)
+}
+
+func IsPostgRESTHealthy(ctx context.Context) bool {
+	// PostgREST does not support native health checks
+	restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Add("apikey", utils.AnonKey)
+	resp, err := http.DefaultClient.Do(req)
+	return err == nil && resp.StatusCode == http.StatusOK
 }
