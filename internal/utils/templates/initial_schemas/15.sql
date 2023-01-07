@@ -226,10 +226,10 @@ CREATE OR REPLACE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.email', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
-	)::text
+  coalesce(
+    nullif(current_setting('request.jwt.claim.email', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
+  )::text
 $$;
 
 
@@ -267,10 +267,10 @@ CREATE OR REPLACE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.role', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
-	)::text
+  coalesce(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+  )::text
 $$;
 
 
@@ -291,10 +291,10 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.sub', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
-	)::uuid
+  coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  )::uuid
 $$;
 
 
@@ -1189,31 +1189,6 @@ COMMENT ON COLUMN auth.sso_providers.resource_id IS 'Auth: Uniquely identifies a
 
 
 --
--- Name: sso_sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE TABLE IF NOT EXISTS auth.sso_sessions (
-    id uuid NOT NULL,
-    session_id uuid NOT NULL,
-    sso_provider_id uuid,
-    not_before timestamp with time zone,
-    not_after timestamp with time zone,
-    idp_initiated boolean DEFAULT false,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE auth.sso_sessions OWNER TO supabase_auth_admin;
-
---
--- Name: TABLE sso_sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
---
-
-COMMENT ON TABLE auth.sso_sessions IS 'Auth: A session initiated by an SSO Identity Provider';
-
-
---
 -- Name: users; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1449,11 +1424,11 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221021082433');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221114143122');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221114143410');
-INSERT INTO auth.schema_migrations (version) VALUES ('20221120114718');
-INSERT INTO auth.schema_migrations (version) VALUES ('20221121110412');
-INSERT INTO auth.schema_migrations (version) VALUES ('20221124140122');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221125140132');
-INSERT INTO auth.schema_migrations (version) VALUES ('20221125141029');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221208132122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195500');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195800');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
 
 
 --
@@ -1470,12 +1445,6 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221125141029');
 
 --
 -- Data for Name: sso_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
---
-
-
-
---
--- Data for Name: sso_sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
 
@@ -1672,14 +1641,6 @@ ALTER TABLE ONLY auth.sso_domains
 
 ALTER TABLE ONLY auth.sso_providers
     ADD CONSTRAINT sso_providers_pkey PRIMARY KEY (id);
-
-
---
--- Name: sso_sessions sso_sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -1906,20 +1867,6 @@ CREATE UNIQUE INDEX sso_providers_resource_id_idx ON auth.sso_providers USING bt
 
 
 --
--- Name: sso_sessions_session_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX sso_sessions_session_id_idx ON auth.sso_sessions USING btree (session_id);
-
-
---
--- Name: sso_sessions_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX sso_sessions_sso_provider_id_idx ON auth.sso_sessions USING btree (sso_provider_id);
-
-
---
 -- Name: user_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1931,6 +1878,13 @@ CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, creat
 --
 
 CREATE UNIQUE INDEX users_email_partial_key ON auth.users USING btree (email) WHERE (is_sso_user = false);
+
+
+--
+-- Name: INDEX users_email_partial_key; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.users_email_partial_key IS 'Auth: A partial unique index that applies only when is_sso_user is false';
 
 
 --
@@ -2053,22 +2007,6 @@ ALTER TABLE ONLY auth.sessions
 
 ALTER TABLE ONLY auth.sso_domains
     ADD CONSTRAINT sso_domains_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
-
-
---
--- Name: sso_sessions sso_sessions_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
-
-
---
--- Name: sso_sessions sso_sessions_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
 
 
 --
@@ -2823,14 +2761,6 @@ GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
 
 GRANT ALL ON TABLE auth.sso_providers TO postgres;
 GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
-
-
---
--- Name: TABLE sso_sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
---
-
-GRANT ALL ON TABLE auth.sso_sessions TO postgres;
-GRANT ALL ON TABLE auth.sso_sessions TO dashboard_user;
 
 
 --
