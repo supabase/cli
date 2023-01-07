@@ -301,8 +301,8 @@ EOF
 				Image: utils.PostgrestImage,
 				Env: []string{
 					"PGRST_DB_URI=postgresql://authenticator:postgres@" + utils.DbId + ":5432/postgres",
-					"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
-					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				},
