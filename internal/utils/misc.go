@@ -40,7 +40,7 @@ const (
 	ImageProxyImage = "darthsim/imgproxy:v3.8.0"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.36.1"
+	GotrueImage   = "supabase/gotrue:v2.40.1"
 	RealtimeImage = "supabase/realtime:v2.0.2"
 	StorageImage  = "supabase/storage-api:v0.26.1"
 	// Should be kept in-sync with DenoRelayImage
