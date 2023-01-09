@@ -2,8 +2,15 @@ package parser
 
 import (
 	"bytes"
+	"strings"
 	"unicode"
 	"unicode/utf8"
+)
+
+const (
+	// Allow arbitrary whitespaces between BEGIN and ATOMIC keywords
+	BEGIN_ATOMIC = "ATOMIC"
+	END_ATOMIC   = "END"
 )
 
 type State interface {
@@ -32,6 +39,13 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	case ';':
 		// Emit token
 		return nil
+	case 'c':
+		fallthrough
+	case 'C':
+		offset := len(data) - len(BEGIN_ATOMIC)
+		if offset >= 0 && strings.ToUpper(string(data[offset:])) == BEGIN_ATOMIC {
+			return &AtomicState{prev: s}
+		}
 	}
 	return s
 }
@@ -107,7 +121,7 @@ type DollarState struct {
 func (s *DollarState) Next(r rune, data []byte) State {
 	window := data[len(data)-len(s.delimiter):]
 	if bytes.Equal(window, s.delimiter) {
-		// Break out of block state
+		// Break out of dollar state
 		return &ReadyState{}
 	}
 	return s
@@ -142,4 +156,22 @@ type EscapeState struct{}
 
 func (s *EscapeState) Next(r rune, data []byte) State {
 	return &ReadyState{}
+}
+
+// Opened BEGIN ATOMIC function body
+type AtomicState struct {
+	prev State
+}
+
+func (s *AtomicState) Next(r rune, data []byte) State {
+	if _, ok := s.prev.(*ReadyState); ok {
+		window := data[len(data)-len(END_ATOMIC):]
+		if strings.ToUpper(string(window)) == END_ATOMIC {
+			return &ReadyState{}
+		}
+	}
+	if curr := s.prev.Next(r, data); curr != nil {
+		s.prev = curr
+	}
+	return s
 }
