@@ -3,7 +3,7 @@
 --
 
 -- Dumped from database version 13.3 (Debian 13.3-1.pgdg100+1)
--- Dumped by pg_dump version 14.5
+-- Dumped by pg_dump version 15.0
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -17,10 +17,19 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: _realtime; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA IF NOT EXISTS _realtime;
+
+
+ALTER SCHEMA _realtime OWNER TO postgres;
+
+--
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA auth;
+CREATE SCHEMA IF NOT EXISTS auth;
 
 
 ALTER SCHEMA auth OWNER TO supabase_admin;
@@ -29,7 +38,7 @@ ALTER SCHEMA auth OWNER TO supabase_admin;
 -- Name: extensions; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
-CREATE SCHEMA extensions;
+CREATE SCHEMA IF NOT EXISTS extensions;
 
 
 ALTER SCHEMA extensions OWNER TO postgres;
@@ -38,36 +47,34 @@ ALTER SCHEMA extensions OWNER TO postgres;
 -- Name: graphql_public; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA graphql_public;
+CREATE SCHEMA IF NOT EXISTS graphql_public;
 
 
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: public; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+-- *not* creating schema, since initdb creates it
+
+
+ALTER SCHEMA public OWNER TO postgres;
+
+--
 -- Name: realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA realtime;
+CREATE SCHEMA IF NOT EXISTS realtime;
 
 
 ALTER SCHEMA realtime OWNER TO supabase_admin;
-
-
---
--- Name: _realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
---
-
-CREATE SCHEMA _realtime;
-
-
-ALTER SCHEMA _realtime OWNER TO supabase_admin;
-
 
 --
 -- Name: storage; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
-CREATE SCHEMA storage;
+CREATE SCHEMA IF NOT EXISTS storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
@@ -115,10 +122,47 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 
 
 --
+-- Name: aal_level; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.aal_level AS ENUM (
+    'aal1',
+    'aal2',
+    'aal3'
+);
+
+
+ALTER TYPE auth.aal_level OWNER TO supabase_auth_admin;
+
+--
+-- Name: factor_status; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.factor_status AS ENUM (
+    'unverified',
+    'verified'
+);
+
+
+ALTER TYPE auth.factor_status OWNER TO supabase_auth_admin;
+
+--
+-- Name: factor_type; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.factor_type AS ENUM (
+    'totp',
+    'webauthn'
+);
+
+
+ALTER TYPE auth.factor_type OWNER TO supabase_auth_admin;
+
+--
 -- Name: email(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.email() RETURNS text
+CREATE OR REPLACE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -142,7 +186,7 @@ COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' ins
 -- Name: jwt(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.jwt() RETURNS jsonb
+CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -159,7 +203,7 @@ ALTER FUNCTION auth.jwt() OWNER TO supabase_auth_admin;
 -- Name: role(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.role() RETURNS text
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -183,7 +227,7 @@ COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' inste
 -- Name: uid(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE FUNCTION auth.uid() RETURNS uuid
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
   select 
@@ -207,7 +251,7 @@ COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
 --
 
-CREATE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -256,7 +300,7 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 -- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $_$
 DECLARE
@@ -319,7 +363,7 @@ COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg
 -- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: postgres
 --
 
-CREATE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -375,7 +419,7 @@ COMMENT ON FUNCTION extensions.grant_pg_net_access() IS 'Grants access to pg_net
 -- Name: pgrst_ddl_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -410,7 +454,7 @@ ALTER FUNCTION extensions.pgrst_ddl_watch() OWNER TO supabase_admin;
 -- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -443,7 +487,7 @@ ALTER FUNCTION extensions.pgrst_drop_watch() OWNER TO supabase_admin;
 -- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: supabase_admin
 --
 
-CREATE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
+CREATE OR REPLACE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
     LANGUAGE plpgsql
     AS $_$
     DECLARE
@@ -509,7 +553,7 @@ COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeh
 -- Name: graphql(text, text, jsonb, jsonb); Type: FUNCTION; Schema: graphql_public; Owner: supabase_admin
 --
 
-CREATE FUNCTION graphql_public.graphql("operationName" text DEFAULT NULL::text, query text DEFAULT NULL::text, variables jsonb DEFAULT NULL::jsonb, extensions jsonb DEFAULT NULL::jsonb) RETURNS jsonb
+CREATE OR REPLACE FUNCTION graphql_public.graphql("operationName" text DEFAULT NULL::text, query text DEFAULT NULL::text, variables jsonb DEFAULT NULL::jsonb, extensions jsonb DEFAULT NULL::jsonb) RETURNS jsonb
     LANGUAGE plpgsql
     AS $$
     DECLARE
@@ -540,12 +584,11 @@ $$;
 
 ALTER FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) OWNER TO supabase_admin;
 
-
 --
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.extension(name text) RETURNS text
+CREATE OR REPLACE FUNCTION storage.extension(name text) RETURNS text
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -566,7 +609,7 @@ ALTER FUNCTION storage.extension(name text) OWNER TO supabase_storage_admin;
 -- Name: filename(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.filename(name text) RETURNS text
+CREATE OR REPLACE FUNCTION storage.filename(name text) RETURNS text
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -584,7 +627,7 @@ ALTER FUNCTION storage.filename(name text) OWNER TO supabase_storage_admin;
 -- Name: foldername(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.foldername(name text) RETURNS text[]
+CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -602,7 +645,7 @@ ALTER FUNCTION storage.foldername(name text) OWNER TO supabase_storage_admin;
 -- Name: get_size_by_bucket(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.get_size_by_bucket() RETURNS TABLE(size bigint, bucket_id text)
+CREATE OR REPLACE FUNCTION storage.get_size_by_bucket() RETURNS TABLE(size bigint, bucket_id text)
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -620,7 +663,7 @@ ALTER FUNCTION storage.get_size_by_bucket() OWNER TO supabase_storage_admin;
 -- Name: search(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
+CREATE OR REPLACE FUNCTION storage.search(prefix text, bucketname text, limits integer DEFAULT 100, levels integer DEFAULT 1, offsets integer DEFAULT 0, search text DEFAULT ''::text, sortcolumn text DEFAULT 'name'::text, sortorder text DEFAULT 'asc'::text) RETURNS TABLE(name text, id uuid, updated_at timestamp with time zone, created_at timestamp with time zone, last_accessed_at timestamp with time zone, metadata jsonb)
     LANGUAGE plpgsql STABLE
     AS $_$
 declare
@@ -691,7 +734,7 @@ ALTER FUNCTION storage.search(prefix text, bucketname text, limits integer, leve
 -- Name: update_updated_at_column(); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE FUNCTION storage.update_updated_at_column() RETURNS trigger
+CREATE OR REPLACE FUNCTION storage.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -708,10 +751,57 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.extensions (
+    id uuid NOT NULL,
+    type character varying(255),
+    settings jsonb,
+    tenant_external_id character varying(255),
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL
+);
+
+
+ALTER TABLE _realtime.extensions OWNER TO postgres;
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
+    version bigint NOT NULL,
+    inserted_at timestamp(0) without time zone
+);
+
+
+ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
+
+--
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.tenants (
+    id uuid NOT NULL,
+    name character varying(255),
+    external_id character varying(255),
+    jwt_secret character varying(500),
+    max_concurrent_users integer DEFAULT 200 NOT NULL,
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL,
+    max_events_per_second integer DEFAULT 100 NOT NULL,
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+);
+
+
+ALTER TABLE _realtime.tenants OWNER TO postgres;
+
+--
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.audit_log_entries (
+CREATE TABLE IF NOT EXISTS auth.audit_log_entries (
     instance_id uuid,
     id uuid NOT NULL,
     payload json,
@@ -733,14 +823,15 @@ COMMENT ON TABLE auth.audit_log_entries IS 'Auth: Audit trail for user actions.'
 -- Name: identities; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.identities (
+CREATE TABLE IF NOT EXISTS auth.identities (
     id text NOT NULL,
     user_id uuid NOT NULL,
     identity_data jsonb NOT NULL,
     provider text NOT NULL,
     last_sign_in_at timestamp with time zone,
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    email text GENERATED ALWAYS AS (lower((identity_data ->> 'email'::text))) STORED
 );
 
 
@@ -754,10 +845,17 @@ COMMENT ON TABLE auth.identities IS 'Auth: Stores identities associated to a use
 
 
 --
+-- Name: COLUMN identities.email; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.identities.email IS 'Auth: Email is a generated column that references the optional email property in the identity_data';
+
+
+--
 -- Name: instances; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.instances (
+CREATE TABLE IF NOT EXISTS auth.instances (
     id uuid NOT NULL,
     uuid uuid,
     raw_base_config text,
@@ -776,10 +874,79 @@ COMMENT ON TABLE auth.instances IS 'Auth: Manages users across multiple sites.';
 
 
 --
+-- Name: mfa_amr_claims; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_amr_claims (
+    session_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    authentication_method text NOT NULL,
+    id uuid NOT NULL
+);
+
+
+ALTER TABLE auth.mfa_amr_claims OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_amr_claims; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_amr_claims IS 'auth: stores authenticator method reference claims for multi factor authentication';
+
+
+--
+-- Name: mfa_challenges; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_challenges (
+    id uuid NOT NULL,
+    factor_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    verified_at timestamp with time zone,
+    ip_address inet NOT NULL
+);
+
+
+ALTER TABLE auth.mfa_challenges OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_challenges; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_challenges IS 'auth: stores metadata about challenge requests made';
+
+
+--
+-- Name: mfa_factors; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.mfa_factors (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    friendly_name text,
+    factor_type auth.factor_type NOT NULL,
+    status auth.factor_status NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    secret text
+);
+
+
+ALTER TABLE auth.mfa_factors OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE mfa_factors; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.mfa_factors IS 'auth: stores metadata about factors';
+
+
+--
 -- Name: refresh_tokens; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.refresh_tokens (
+CREATE TABLE IF NOT EXISTS auth.refresh_tokens (
     instance_id uuid,
     id bigint NOT NULL,
     token character varying(255),
@@ -787,7 +954,8 @@ CREATE TABLE auth.refresh_tokens (
     revoked boolean,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    parent character varying(255)
+    parent character varying(255),
+    session_id uuid
 );
 
 
@@ -804,7 +972,7 @@ COMMENT ON TABLE auth.refresh_tokens IS 'Auth: Store of tokens used to refresh J
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE SEQUENCE auth.refresh_tokens_id_seq
+CREATE SEQUENCE IF NOT EXISTS auth.refresh_tokens_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -822,10 +990,64 @@ ALTER SEQUENCE auth.refresh_tokens_id_seq OWNED BY auth.refresh_tokens.id;
 
 
 --
+-- Name: saml_providers; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.saml_providers (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    entity_id text NOT NULL,
+    metadata_xml text NOT NULL,
+    metadata_url text,
+    attribute_mapping jsonb,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "entity_id not empty" CHECK ((char_length(entity_id) > 0)),
+    CONSTRAINT "metadata_url not empty" CHECK (((metadata_url = NULL::text) OR (char_length(metadata_url) > 0))),
+    CONSTRAINT "metadata_xml not empty" CHECK ((char_length(metadata_xml) > 0))
+);
+
+
+ALTER TABLE auth.saml_providers OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE saml_providers; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.saml_providers IS 'Auth: Manages SAML Identity Provider connections.';
+
+
+--
+-- Name: saml_relay_states; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.saml_relay_states (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    request_id text NOT NULL,
+    for_email text,
+    redirect_to text,
+    from_ip_address inet,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "request_id not empty" CHECK ((char_length(request_id) > 0))
+);
+
+
+ALTER TABLE auth.saml_relay_states OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE saml_relay_states; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.saml_relay_states IS 'Auth: Contains SAML Relay State information for each Service Provider initiated login.';
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.schema_migrations (
+CREATE TABLE IF NOT EXISTS auth.schema_migrations (
     version character varying(255) NOT NULL
 );
 
@@ -840,10 +1062,93 @@ COMMENT ON TABLE auth.schema_migrations IS 'Auth: Manages updates to the auth sy
 
 
 --
+-- Name: sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sessions (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    factor_id uuid,
+    aal auth.aal_level,
+    not_after timestamp with time zone
+);
+
+
+ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a user.';
+
+
+--
+-- Name: COLUMN sessions.not_after; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.sessions.not_after IS 'Auth: Not after is a nullable column that contains a timestamp after which the session should be regarded as expired.';
+
+
+--
+-- Name: sso_domains; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sso_domains (
+    id uuid NOT NULL,
+    sso_provider_id uuid NOT NULL,
+    domain text NOT NULL,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "domain not empty" CHECK ((char_length(domain) > 0))
+);
+
+
+ALTER TABLE auth.sso_domains OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sso_domains; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sso_domains IS 'Auth: Manages SSO email address domain mapping to an SSO Identity Provider.';
+
+
+--
+-- Name: sso_providers; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.sso_providers (
+    id uuid NOT NULL,
+    resource_id text,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    CONSTRAINT "resource_id not empty" CHECK (((resource_id = NULL::text) OR (char_length(resource_id) > 0)))
+);
+
+
+ALTER TABLE auth.sso_providers OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE sso_providers; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.sso_providers IS 'Auth: Manages SSO identity provider information; see saml_providers for SAML.';
+
+
+--
+-- Name: COLUMN sso_providers.resource_id; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.sso_providers.resource_id IS 'Auth: Uniquely identifies a SSO provider according to a user-chosen resource ID (case insensitive), useful in infrastructure as code.';
+
+
+--
 -- Name: users; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE auth.users (
+CREATE TABLE IF NOT EXISTS auth.users (
     instance_id uuid,
     id uuid NOT NULL,
     aud character varying(255),
@@ -876,6 +1181,7 @@ CREATE TABLE auth.users (
     banned_until timestamp with time zone,
     reauthentication_token character varying(255) DEFAULT ''::character varying,
     reauthentication_sent_at timestamp with time zone,
+    is_sso_user boolean DEFAULT false NOT NULL,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -890,56 +1196,17 @@ COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure sch
 
 
 --
--- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+-- Name: COLUMN users.is_sso_user; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE _realtime.schema_migrations (
-   version bigint NOT NULL,
-   inserted_at timestamp(0) without time zone NULL,
-   PRIMARY KEY (version)
-);
-
-
---
--- Name: tenants; Type: TABLE; Schema: _realtime; Owner: supabase_admin
---
-
-CREATE TABLE _realtime.tenants (
-   id uuid NOT NULL,
-   name character varying(255) NULL,
-   external_id character varying(255) NULL,
-   jwt_secret character varying(500) NULL,
-   max_concurrent_users integer NOT NULL DEFAULT 200,
-   inserted_at timestamp(0) without time zone NOT NULL,
-   updated_at timestamp(0) without time zone NOT NULL,
-   max_events_per_second integer NOT NULL DEFAULT 100,
-   postgres_cdc_default character varying(255) NULL DEFAULT 'postgres_cdc_rls'::character varying,
-   PRIMARY KEY (id),
-   UNIQUE (external_id)
-);
-
-
---
--- Name: extensions; Type: TABLE; Schema: _realtime; Owner: supabase_admin
---
-
-CREATE TABLE _realtime.extensions (
-   id uuid NOT NULL,
-   type character varying(255) NULL,
-   settings jsonb NULL,
-   tenant_external_id character varying(255) NULL,
-   inserted_at timestamp(0) without time zone NOT NULL,
-   updated_at timestamp(0) without time zone NOT NULL,
-   PRIMARY KEY (id),
-   FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE
-);
+COMMENT ON COLUMN auth.users.is_sso_user IS 'Auth: Set this column to true when the account comes from SSO. These accounts can have duplicate emails.';
 
 
 --
 -- Name: buckets; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.buckets (
+CREATE TABLE IF NOT EXISTS storage.buckets (
     id text NOT NULL,
     name text NOT NULL,
     owner uuid,
@@ -955,7 +1222,7 @@ ALTER TABLE storage.buckets OWNER TO supabase_storage_admin;
 -- Name: migrations; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.migrations (
+CREATE TABLE IF NOT EXISTS storage.migrations (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
     hash character varying(40) NOT NULL,
@@ -969,7 +1236,7 @@ ALTER TABLE storage.migrations OWNER TO supabase_storage_admin;
 -- Name: objects; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
 --
 
-CREATE TABLE storage.objects (
+CREATE TABLE IF NOT EXISTS storage.objects (
     id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
     bucket_id text,
     name text,
@@ -992,6 +1259,37 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('bb5b2c31-6743-458f-bd31-2e5086879de5', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-09 07:15:15', '2023-01-09 07:15:15');
+
+
+--
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-09 07:15:13');
+
+
+--
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('af55a147-351d-4faf-85a2-278bb6a4e225', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-09 07:15:15', '2023-01-09 07:15:15', 100, 'postgres_cdc_rls');
+
+
+--
 -- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1010,7 +1308,37 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Data for Name: mfa_amr_claims; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: mfa_challenges; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: mfa_factors; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
 -- Data for Name: refresh_tokens; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: saml_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: saml_relay_states; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
 
@@ -1019,68 +1347,68 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
-INSERT INTO auth.schema_migrations VALUES ('20171026211738');
-INSERT INTO auth.schema_migrations VALUES ('20171026211808');
-INSERT INTO auth.schema_migrations VALUES ('20171026211834');
-INSERT INTO auth.schema_migrations VALUES ('20180103212743');
-INSERT INTO auth.schema_migrations VALUES ('20180108183307');
-INSERT INTO auth.schema_migrations VALUES ('20180119214651');
-INSERT INTO auth.schema_migrations VALUES ('20180125194653');
-INSERT INTO auth.schema_migrations VALUES ('00');
-INSERT INTO auth.schema_migrations VALUES ('20210710035447');
-INSERT INTO auth.schema_migrations VALUES ('20210722035447');
-INSERT INTO auth.schema_migrations VALUES ('20210730183235');
-INSERT INTO auth.schema_migrations VALUES ('20210909172000');
-INSERT INTO auth.schema_migrations VALUES ('20210927181326');
-INSERT INTO auth.schema_migrations VALUES ('20211122151130');
-INSERT INTO auth.schema_migrations VALUES ('20211124214934');
-INSERT INTO auth.schema_migrations VALUES ('20211202183645');
-INSERT INTO auth.schema_migrations VALUES ('20220114185221');
-INSERT INTO auth.schema_migrations VALUES ('20220114185340');
-INSERT INTO auth.schema_migrations VALUES ('20220224000811');
-INSERT INTO auth.schema_migrations VALUES ('20220323170000');
-INSERT INTO auth.schema_migrations VALUES ('20220429102000');
-INSERT INTO auth.schema_migrations VALUES ('20220531120530');
-INSERT INTO auth.schema_migrations VALUES ('20220614074223');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211738');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211808');
+INSERT INTO auth.schema_migrations (version) VALUES ('20171026211834');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180103212743');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180108183307');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180119214651');
+INSERT INTO auth.schema_migrations (version) VALUES ('20180125194653');
+INSERT INTO auth.schema_migrations (version) VALUES ('00');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210710035447');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210722035447');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210730183235');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210909172000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20210927181326');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211122151130');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211124214934');
+INSERT INTO auth.schema_migrations (version) VALUES ('20211202183645');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220114185221');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220114185340');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220224000811');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220323170000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220429102000');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220531120530');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220614074223');
+INSERT INTO auth.schema_migrations (version) VALUES ('20220811173540');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221003041349');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221003041400');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221011041400');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221020193600');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221021073300');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221021082433');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143410');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221125140132');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221208132122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195500');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195800');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
+
+
+--
+-- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: sso_domains; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: sso_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
 
 
 --
 -- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
-
---
--- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.schema_migrations (version, inserted_at)
-  VALUES
-    (20210706140551, '2022-11-16 23:23:23'),
-    (20220329161857, '2022-11-16 23:23:23'),
-    (20220410212326, '2022-11-16 23:23:23'),
-    (20220506102948, '2022-11-16 23:23:23'),
-    (20220527210857, '2022-11-16 23:23:23'),
-    (20220815211129, '2022-11-16 23:23:23'),
-    (20220815215024, '2022-11-16 23:23:23'),
-    (20220818141501, '2022-11-16 23:23:23'),
-    (20221018173709, '2022-11-16 23:23:23'),
-    (20221102172703, '2022-11-16 23:23:23');
-
-
---
--- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
-    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
-
-
---
--- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
-    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"I4YigNuoYSZbe+Xs4vInbw==","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
@@ -1093,17 +1421,17 @@ INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, insert
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-04-14 09:52:39.214681');
-INSERT INTO storage.migrations VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-04-14 09:52:39.255149');
-INSERT INTO storage.migrations VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-04-14 09:52:39.276667');
-INSERT INTO storage.migrations VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-04-14 09:52:39.587158');
-INSERT INTO storage.migrations VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-04-14 09:52:39.621747');
-INSERT INTO storage.migrations VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-04-14 09:52:39.658796');
-INSERT INTO storage.migrations VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-04-14 09:52:39.702011');
-INSERT INTO storage.migrations VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-04-14 09:52:39.739731');
-INSERT INTO storage.migrations VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:52:39.781062');
-INSERT INTO storage.migrations VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-08-23 04:48:07.728336');
-INSERT INTO storage.migrations VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-08-23 04:48:07.736527');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-04-14 09:52:39.214681');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-04-14 09:52:39.255149');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-04-14 09:52:39.276667');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-04-14 09:52:39.587158');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-04-14 09:52:39.621747');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-04-14 09:52:39.658796');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-04-14 09:52:39.702011');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-04-14 09:52:39.739731');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:52:39.781062');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-08-23 04:48:07.728336');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-08-23 04:48:07.736527');
 
 
 --
@@ -1117,6 +1445,38 @@ INSERT INTO storage.migrations VALUES (10, 'add-trigger-to-auto-update-updated_a
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
+
+
+--
+-- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.tenants
+    ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_amr_claims amr_id_pk; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT amr_id_pk PRIMARY KEY (id);
 
 
 --
@@ -1144,6 +1504,30 @@ ALTER TABLE ONLY auth.instances
 
 
 --
+-- Name: mfa_amr_claims mfa_amr_claims_session_id_authentication_method_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT mfa_amr_claims_session_id_authentication_method_pkey UNIQUE (session_id, authentication_method);
+
+
+--
+-- Name: mfa_challenges mfa_challenges_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_challenges
+    ADD CONSTRAINT mfa_challenges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mfa_factors mfa_factors_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_factors
+    ADD CONSTRAINT mfa_factors_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: refresh_tokens refresh_tokens_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1160,6 +1544,30 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
+-- Name: saml_providers saml_providers_entity_id_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_entity_id_key UNIQUE (entity_id);
+
+
+--
+-- Name: saml_providers saml_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: saml_relay_states saml_relay_states_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_relay_states
+    ADD CONSTRAINT saml_relay_states_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1168,11 +1576,27 @@ ALTER TABLE ONLY auth.schema_migrations
 
 
 --
--- Name: users users_email_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
-ALTER TABLE ONLY auth.users
-    ADD CONSTRAINT users_email_key UNIQUE (email);
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sso_domains sso_domains_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_domains
+    ADD CONSTRAINT sso_domains_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sso_providers sso_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_providers
+    ADD CONSTRAINT sso_providers_pkey PRIMARY KEY (id);
 
 
 --
@@ -1224,6 +1648,20 @@ ALTER TABLE ONLY storage.objects
 
 
 --
+-- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extensions USING btree (tenant_external_id, type);
+
+
+--
+-- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (external_id);
+
+
+--
 -- Name: audit_logs_instance_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1252,10 +1690,38 @@ CREATE UNIQUE INDEX email_change_token_new_idx ON auth.users USING btree (email_
 
 
 --
+-- Name: factor_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, created_at);
+
+
+--
+-- Name: identities_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX identities_email_idx ON auth.identities USING btree (email text_pattern_ops);
+
+
+--
+-- Name: INDEX identities_email_idx; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.identities_email_idx IS 'Auth: Ensures indexed queries on the email column';
+
+
+--
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX identities_user_id_idx ON auth.identities USING btree (user_id);
+
+
+--
+-- Name: mfa_factors_user_friendly_name_unique; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX mfa_factors_user_friendly_name_unique ON auth.mfa_factors USING btree (friendly_name, user_id) WHERE (btrim(friendly_name) <> ''::text);
 
 
 --
@@ -1294,10 +1760,87 @@ CREATE INDEX refresh_tokens_parent_idx ON auth.refresh_tokens USING btree (paren
 
 
 --
+-- Name: refresh_tokens_session_id_revoked_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX refresh_tokens_session_id_revoked_idx ON auth.refresh_tokens USING btree (session_id, revoked);
+
+
+--
 -- Name: refresh_tokens_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX refresh_tokens_token_idx ON auth.refresh_tokens USING btree (token);
+
+
+--
+-- Name: saml_providers_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_providers_sso_provider_id_idx ON auth.saml_providers USING btree (sso_provider_id);
+
+
+--
+-- Name: saml_relay_states_for_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_relay_states_for_email_idx ON auth.saml_relay_states USING btree (for_email);
+
+
+--
+-- Name: saml_relay_states_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_relay_states_sso_provider_id_idx ON auth.saml_relay_states USING btree (sso_provider_id);
+
+
+--
+-- Name: sessions_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sessions_user_id_idx ON auth.sessions USING btree (user_id);
+
+
+--
+-- Name: sso_domains_domain_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX sso_domains_domain_idx ON auth.sso_domains USING btree (lower(domain));
+
+
+--
+-- Name: sso_domains_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sso_domains_sso_provider_id_idx ON auth.sso_domains USING btree (sso_provider_id);
+
+
+--
+-- Name: sso_providers_resource_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX sso_providers_resource_id_idx ON auth.sso_providers USING btree (lower(resource_id));
+
+
+--
+-- Name: user_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, created_at);
+
+
+--
+-- Name: users_email_partial_key; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX users_email_partial_key ON auth.users USING btree (email) WHERE (is_sso_user = false);
+
+
+--
+-- Name: INDEX users_email_partial_key; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.users_email_partial_key IS 'Auth: A partial unique index that applies only when is_sso_user is false';
 
 
 --
@@ -1343,6 +1886,14 @@ CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EA
 
 
 --
+-- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_tenant_external_id_fkey FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE;
+
+
+--
 -- Name: identities identities_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1351,11 +1902,67 @@ ALTER TABLE ONLY auth.identities
 
 
 --
--- Name: refresh_tokens refresh_tokens_parent_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+-- Name: mfa_amr_claims mfa_amr_claims_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_amr_claims
+    ADD CONSTRAINT mfa_amr_claims_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_challenges mfa_challenges_auth_factor_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_challenges
+    ADD CONSTRAINT mfa_challenges_auth_factor_id_fkey FOREIGN KEY (factor_id) REFERENCES auth.mfa_factors(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_factors mfa_factors_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.mfa_factors
+    ADD CONSTRAINT mfa_factors_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: refresh_tokens refresh_tokens_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
 ALTER TABLE ONLY auth.refresh_tokens
-    ADD CONSTRAINT refresh_tokens_parent_fkey FOREIGN KEY (parent) REFERENCES auth.refresh_tokens(token);
+    ADD CONSTRAINT refresh_tokens_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saml_providers saml_providers_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_providers
+    ADD CONSTRAINT saml_providers_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saml_relay_states saml_relay_states_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_relay_states
+    ADD CONSTRAINT saml_relay_states_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sessions
+    ADD CONSTRAINT sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sso_domains sso_domains_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.sso_domains
+    ADD CONSTRAINT sso_domains_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
 
 
 --
@@ -1445,6 +2052,8 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
 --
 
+REVOKE USAGE ON SCHEMA public FROM PUBLIC;
+GRANT ALL ON SCHEMA public TO PUBLIC;
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
@@ -1927,6 +2536,30 @@ GRANT ALL ON TABLE auth.instances TO postgres;
 
 
 --
+-- Name: TABLE mfa_amr_claims; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_amr_claims TO postgres;
+GRANT ALL ON TABLE auth.mfa_amr_claims TO dashboard_user;
+
+
+--
+-- Name: TABLE mfa_challenges; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_challenges TO postgres;
+GRANT ALL ON TABLE auth.mfa_challenges TO dashboard_user;
+
+
+--
+-- Name: TABLE mfa_factors; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.mfa_factors TO postgres;
+GRANT ALL ON TABLE auth.mfa_factors TO dashboard_user;
+
+
+--
 -- Name: TABLE refresh_tokens; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1943,11 +2576,51 @@ GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO postgres;
 
 
 --
+-- Name: TABLE saml_providers; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.saml_providers TO postgres;
+GRANT ALL ON TABLE auth.saml_providers TO dashboard_user;
+
+
+--
+-- Name: TABLE saml_relay_states; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.saml_relay_states TO postgres;
+GRANT ALL ON TABLE auth.saml_relay_states TO dashboard_user;
+
+
+--
 -- Name: TABLE schema_migrations; Type: ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
 GRANT ALL ON TABLE auth.schema_migrations TO dashboard_user;
 GRANT ALL ON TABLE auth.schema_migrations TO postgres;
+
+
+--
+-- Name: TABLE sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sessions TO postgres;
+GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+
+
+--
+-- Name: TABLE sso_domains; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sso_domains TO postgres;
+GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
+
+
+--
+-- Name: TABLE sso_providers; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.sso_providers TO postgres;
+GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
 
 
 --
