@@ -17,6 +17,15 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: _realtime; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA IF NOT EXISTS _realtime;
+
+
+ALTER SCHEMA _realtime OWNER TO postgres;
+
+--
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -101,15 +110,6 @@ CREATE SCHEMA IF NOT EXISTS realtime;
 
 
 ALTER SCHEMA realtime OWNER TO supabase_admin;
-
---
--- Name: _realtime; Type: SCHEMA; Schema: -; Owner: supabase_admin
---
-
-CREATE SCHEMA IF NOT EXISTS _realtime;
-
-
-ALTER SCHEMA _realtime OWNER TO supabase_admin;
 
 --
 -- Name: storage; Type: SCHEMA; Schema: -; Owner: supabase_admin
@@ -227,7 +227,6 @@ CREATE TYPE auth.factor_type AS ENUM (
 
 ALTER TYPE auth.factor_type OWNER TO supabase_auth_admin;
 
-
 --
 -- Name: email(); Type: FUNCTION; Schema: auth; Owner: supabase_auth_admin
 --
@@ -236,10 +235,10 @@ CREATE OR REPLACE FUNCTION auth.email() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.email', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
-	)::text
+  coalesce(
+    nullif(current_setting('request.jwt.claim.email', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
+  )::text
 $$;
 
 
@@ -277,10 +276,10 @@ CREATE OR REPLACE FUNCTION auth.role() RETURNS text
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.role', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
-	)::text
+  coalesce(
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+  )::text
 $$;
 
 
@@ -301,10 +300,10 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
   select 
-  	coalesce(
-		nullif(current_setting('request.jwt.claim.sub', true), ''),
-		(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
-	)::uuid
+  coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  )::uuid
 $$;
 
 
@@ -638,8 +637,6 @@ $$;
 
 ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO postgres;
 
-
-
 --
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
@@ -807,6 +804,53 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.extensions (
+    id uuid NOT NULL,
+    type character varying(255),
+    settings jsonb,
+    tenant_external_id character varying(255),
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL
+);
+
+
+ALTER TABLE _realtime.extensions OWNER TO postgres;
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
+    version bigint NOT NULL,
+    inserted_at timestamp(0) without time zone
+);
+
+
+ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
+
+--
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: postgres
+--
+
+CREATE TABLE IF NOT EXISTS _realtime.tenants (
+    id uuid NOT NULL,
+    name character varying(255),
+    external_id character varying(255),
+    jwt_secret character varying(500),
+    max_concurrent_users integer DEFAULT 200 NOT NULL,
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL,
+    max_events_per_second integer DEFAULT 100 NOT NULL,
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+);
+
+
+ALTER TABLE _realtime.tenants OWNER TO postgres;
+
+--
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -839,7 +883,8 @@ CREATE TABLE IF NOT EXISTS auth.identities (
     provider text NOT NULL,
     last_sign_in_at timestamp with time zone,
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    email text GENERATED ALWAYS AS (lower((identity_data ->> 'email'::text))) STORED
 );
 
 
@@ -850,6 +895,13 @@ ALTER TABLE auth.identities OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.identities IS 'Auth: Stores identities associated to a user.';
+
+
+--
+-- Name: COLUMN identities.email; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.identities.email IS 'Auth: Email is a generated column that references the optional email property in the identity_data';
 
 
 --
@@ -973,7 +1025,7 @@ COMMENT ON TABLE auth.refresh_tokens IS 'Auth: Store of tokens used to refresh J
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE SEQUENCE auth.refresh_tokens_id_seq
+CREATE SEQUENCE IF NOT EXISTS auth.refresh_tokens_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -1072,7 +1124,8 @@ CREATE TABLE IF NOT EXISTS auth.sessions (
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
     factor_id uuid,
-    aal auth.aal_level
+    aal auth.aal_level,
+    not_after timestamp with time zone
 );
 
 
@@ -1083,6 +1136,13 @@ ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a user.';
+
+
+--
+-- Name: COLUMN sessions.not_after; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON COLUMN auth.sessions.not_after IS 'Auth: Not after is a nullable column that contains a timestamp after which the session should be regarded as expired.';
 
 
 --
@@ -1138,31 +1198,6 @@ COMMENT ON COLUMN auth.sso_providers.resource_id IS 'Auth: Uniquely identifies a
 
 
 --
--- Name: sso_sessions; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE TABLE IF NOT EXISTS auth.sso_sessions (
-    id uuid NOT NULL,
-    session_id uuid NOT NULL,
-    sso_provider_id uuid,
-    not_before timestamp with time zone,
-    not_after timestamp with time zone,
-    idp_initiated boolean DEFAULT false,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
-);
-
-
-ALTER TABLE auth.sso_sessions OWNER TO supabase_auth_admin;
-
---
--- Name: TABLE sso_sessions; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
---
-
-COMMENT ON TABLE auth.sso_sessions IS 'Auth: A session initiated by an SSO Identity Provider';
-
-
---
 -- Name: users; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1199,6 +1234,7 @@ CREATE TABLE IF NOT EXISTS auth.users (
     banned_until timestamp with time zone,
     reauthentication_token character varying(255) DEFAULT ''::character varying,
     reauthentication_sent_at timestamp with time zone,
+    is_sso_user boolean DEFAULT false NOT NULL,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1213,49 +1249,10 @@ COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure sch
 
 
 --
--- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+-- Name: COLUMN users.is_sso_user; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
 --
 
-CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
-   version bigint NOT NULL,
-   inserted_at timestamp(0) without time zone NULL,
-   PRIMARY KEY (version)
-);
-
-
---
--- Name: tenants; Type: TABLE; Schema: _realtime; Owner: supabase_admin
---
-
-CREATE TABLE IF NOT EXISTS _realtime.tenants (
-   id uuid NOT NULL,
-   name character varying(255) NULL,
-   external_id character varying(255) NULL,
-   jwt_secret character varying(500) NULL,
-   max_concurrent_users integer NOT NULL DEFAULT 200,
-   inserted_at timestamp(0) without time zone NOT NULL,
-   updated_at timestamp(0) without time zone NOT NULL,
-   max_events_per_second integer NOT NULL DEFAULT 100,
-   postgres_cdc_default character varying(255) NULL DEFAULT 'postgres_cdc_rls'::character varying,
-   PRIMARY KEY (id),
-   UNIQUE (external_id)
-);
-
-
---
--- Name: extensions; Type: TABLE; Schema: _realtime; Owner: supabase_admin
---
-
-CREATE TABLE IF NOT EXISTS _realtime.extensions (
-   id uuid NOT NULL,
-   type character varying(255) NULL,
-   settings jsonb NULL,
-   tenant_external_id character varying(255) NULL,
-   inserted_at timestamp(0) without time zone NOT NULL,
-   updated_at timestamp(0) without time zone NOT NULL,
-   PRIMARY KEY (id),
-   FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE
-);
+COMMENT ON COLUMN auth.users.is_sso_user IS 'Auth: Set this column to true when the account comes from SSO. These accounts can have duplicate emails.';
 
 
 --
@@ -1312,6 +1309,37 @@ ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
 --
 
 ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.refresh_tokens_id_seq'::regclass);
+
+
+--
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('20f62b3b-8906-49e4-8806-1e4c743afd79', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-09 06:53:33', '2023-01-09 06:53:33');
+
+
+--
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-09 06:53:30');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-09 06:53:30');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-09 06:53:30');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-09 06:53:31');
+
+
+--
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('6b5dd60f-7ded-4bf4-8692-24bbbe92caa4', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-09 06:53:33', '2023-01-09 06:53:33', 100, 'postgres_cdc_rls');
 
 
 --
@@ -1403,6 +1431,13 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221020193600');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221021073300');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221021082433');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221114143410');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221125140132');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221208132122');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195500');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195800');
+INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
 
 
 --
@@ -1424,54 +1459,9 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221027105023');
 
 
 --
--- Data for Name: sso_sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
---
-
-
-
---
 -- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
-
-
---
--- Data for Name: key; Type: TABLE DATA; Schema: pgsodium; Owner: postgres
---
-
-
---
--- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.schema_migrations (version, inserted_at)
-  VALUES
-    (20210706140551, '2022-11-16 23:23:23'),
-    (20220329161857, '2022-11-16 23:23:23'),
-    (20220410212326, '2022-11-16 23:23:23'),
-    (20220506102948, '2022-11-16 23:23:23'),
-    (20220527210857, '2022-11-16 23:23:23'),
-    (20220815211129, '2022-11-16 23:23:23'),
-    (20220815215024, '2022-11-16 23:23:23'),
-    (20220818141501, '2022-11-16 23:23:23'),
-    (20221018173709, '2022-11-16 23:23:23'),
-    (20221102172703, '2022-11-16 23:23:23');
-
-
---
--- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, max_events_per_second, postgres_cdc_default, inserted_at, updated_at)
-    VALUES ('98d09d90-612d-4a69-8c84-e8e5ecbaed6d', 'realtime-demo', 'realtime-demo', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 300, 100, 'postgres_cdc_rls', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
-
-
---
--- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.extensions (id, settings, type, tenant_external_id, inserted_at, updated_at)
-    VALUES ('935b3773-e37c-4b3e-baa1-2309ddb697cf', '{"region":"us-east-1","db_host":"I4YigNuoYSZbe+Xs4vInbw==","db_name":"sWBpZNdjggEPTQVlI52Zfw==","db_port":"MqmbZ5ZiXXFlSy8FeFYPAQ==","db_user":"sWBpZNdjggEPTQVlI52Zfw==","slot_name":"supabase_realtime_replication_slot","ip_version":4,"db_password":"sWBpZNdjggEPTQVlI52Zfw==","publication":"supabase_realtime","poll_interval_ms":100,"poll_max_changes":100,"poll_max_record_bytes":1048576}', 'postgres_cdc_rls', 'realtime-demo', '2022-11-14 23:04:49', '2022-11-14 23:04:49');
 
 
 --
@@ -1508,6 +1498,30 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
+
+
+--
+-- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.tenants
+    ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
 
 
 --
@@ -1639,22 +1653,6 @@ ALTER TABLE ONLY auth.sso_providers
 
 
 --
--- Name: sso_sessions sso_sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_pkey PRIMARY KEY (id);
-
-
---
--- Name: users users_email_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.users
-    ADD CONSTRAINT users_email_key UNIQUE (email);
-
-
---
 -- Name: users users_phone_key; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1703,6 +1701,20 @@ ALTER TABLE ONLY storage.objects
 
 
 --
+-- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extensions USING btree (tenant_external_id, type);
+
+
+--
+-- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: postgres
+--
+
+CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (external_id);
+
+
+--
 -- Name: audit_logs_instance_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1738,6 +1750,20 @@ CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, 
 
 
 --
+-- Name: identities_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX identities_email_idx ON auth.identities USING btree (email text_pattern_ops);
+
+
+--
+-- Name: INDEX identities_email_idx; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.identities_email_idx IS 'Auth: Ensures indexed queries on the email column';
+
+
+--
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1763,13 +1789,6 @@ CREATE UNIQUE INDEX reauthentication_token_idx ON auth.users USING btree (reauth
 --
 
 CREATE UNIQUE INDEX recovery_token_idx ON auth.users USING btree (recovery_token) WHERE ((recovery_token)::text !~ '^[0-9 ]*$'::text);
-
-
---
--- Name: refresh_token_session_id; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX refresh_token_session_id ON auth.refresh_tokens USING btree (session_id);
 
 
 --
@@ -1857,24 +1876,24 @@ CREATE UNIQUE INDEX sso_providers_resource_id_idx ON auth.sso_providers USING bt
 
 
 --
--- Name: sso_sessions_session_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX sso_sessions_session_id_idx ON auth.sso_sessions USING btree (session_id);
-
-
---
--- Name: sso_sessions_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX sso_sessions_sso_provider_id_idx ON auth.sso_sessions USING btree (sso_provider_id);
-
-
---
 -- Name: user_id_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, created_at);
+
+
+--
+-- Name: users_email_partial_key; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE UNIQUE INDEX users_email_partial_key ON auth.users USING btree (email) WHERE (is_sso_user = false);
+
+
+--
+-- Name: INDEX users_email_partial_key; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON INDEX auth.users_email_partial_key IS 'Auth: A partial unique index that applies only when is_sso_user is false';
 
 
 --
@@ -1920,6 +1939,14 @@ CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EA
 
 
 --
+-- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: postgres
+--
+
+ALTER TABLE ONLY _realtime.extensions
+    ADD CONSTRAINT extensions_tenant_external_id_fkey FOREIGN KEY (tenant_external_id) REFERENCES _realtime.tenants(external_id) ON DELETE CASCADE;
+
+
+--
 -- Name: identities identities_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1949,14 +1976,6 @@ ALTER TABLE ONLY auth.mfa_challenges
 
 ALTER TABLE ONLY auth.mfa_factors
     ADD CONSTRAINT mfa_factors_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
-
-
---
--- Name: refresh_tokens refresh_tokens_parent_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.refresh_tokens
-    ADD CONSTRAINT refresh_tokens_parent_fkey FOREIGN KEY (parent) REFERENCES auth.refresh_tokens(token);
 
 
 --
@@ -1997,22 +2016,6 @@ ALTER TABLE ONLY auth.sessions
 
 ALTER TABLE ONLY auth.sso_domains
     ADD CONSTRAINT sso_domains_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
-
-
---
--- Name: sso_sessions sso_sessions_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_session_id_fkey FOREIGN KEY (session_id) REFERENCES auth.sessions(id) ON DELETE CASCADE;
-
-
---
--- Name: sso_sessions sso_sessions_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
---
-
-ALTER TABLE ONLY auth.sso_sessions
-    ADD CONSTRAINT sso_sessions_sso_provider_id_fkey FOREIGN KEY (sso_provider_id) REFERENCES auth.sso_providers(id) ON DELETE CASCADE;
 
 
 --
@@ -2774,14 +2777,6 @@ GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
 
 GRANT ALL ON TABLE auth.sso_providers TO postgres;
 GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
-
-
---
--- Name: TABLE sso_sessions; Type: ACL; Schema: auth; Owner: supabase_auth_admin
---
-
-GRANT ALL ON TABLE auth.sso_sessions TO postgres;
-GRANT ALL ON TABLE auth.sso_sessions TO dashboard_user;
 
 
 --
