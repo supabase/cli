@@ -301,8 +301,8 @@ EOF
 				Image: utils.PostgrestImage,
 				Env: []string{
 					"PGRST_DB_URI=postgresql://authenticator:postgres@" + utils.DbId + ":5432/postgres",
-					"PGRST_DB_SCHEMAS=" + strings.Join(append([]string{"public", "storage", "graphql_public"}, utils.Config.Api.Schemas...), ","),
-					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(append([]string{"public"}, utils.Config.Api.ExtraSearchPath...), ","),
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				},
@@ -424,7 +424,6 @@ EOF
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=postgres",
-
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
