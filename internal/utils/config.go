@@ -359,10 +359,10 @@ func WriteConfig(fsys afero.Fs, test bool) error {
 }
 
 func removeDuplicates(slice []string) (result []string) {
-	set := make(map[string]bool)
+	set := make(map[string]struct{})
 	for _, item := range slice {
 		if _, exists := set[item]; !exists {
-			set[item] = true
+			set[item] = struct{}{}
 			result = append(result, item)
 		}
 	}

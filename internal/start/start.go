@@ -424,7 +424,6 @@ EOF
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=postgres",
-
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
