@@ -77,7 +77,11 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
-	return initDatabase(ctx, fsys, w, options...)
+	err := initDatabase(ctx, fsys, w, options...)
+	if err != nil {
+		utils.DockerRemove(utils.DbId)
+	}
+	return err
 }
 
 func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
