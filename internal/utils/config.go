@@ -188,10 +188,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Api.MaxRows == 0 {
 			Config.Api.MaxRows = 1000
 		}
-		schemas := append([]string{"public", "storage", "graphql_public"}, Config.Api.Schemas...)
-		Config.Api.Schemas = removeDuplicates(schemas)
-		searchPath := append([]string{"public"}, Config.Api.ExtraSearchPath...)
-		Config.Api.ExtraSearchPath = removeDuplicates(searchPath)
+		if len(Config.Api.Schemas) == 0 {
+			Config.Api.Schemas = []string{"public", "storage", "graphql_public"}
+		}
+		// Append required schemas if they are missing
+		Config.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
+		Config.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
