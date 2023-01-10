@@ -1,0 +1,25 @@
+supabase-init:
+  - title: Basic usage
+    script: supabase init
+    output: Finished supabase init.
+  - title: Initialise from an existing directory
+    script: supabase init --workdir .
+    output: Finished supabase init.
+supabase-login:
+  - title: Basic usage
+    script: supabase login
+    output: |
+      You can generate an access token from https://app.supabase.com/account/tokens
+      Enter your access token: sbp_****************************************
+      Finished supabase login.
+supabase-link:
+  - title: Basic usage
+    script: supabase link --project-ref ********************
+    output: |
+      Enter your database password:
+      Finished supabase link.
+  - title: Link without database password
+    script: supabase link --project-ref ******************** <<< ""
+    output: |
+      Enter your database password:
+      Finished supabase link.
