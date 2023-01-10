@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -15,7 +16,17 @@ import (
 
 const tagOthers = "other-commands"
 
+var (
+	examples map[string][]ExampleDoc
+	//go:embed templates/examples.yaml
+	exampleSpec string
+)
+
 func main() {
+	dec := yaml.NewDecoder(strings.NewReader(exampleSpec))
+	if err := dec.Decode(&examples); err != nil {
+		log.Fatalln(err)
+	}
 	root := cli.GetRootCmd()
 	root.InitDefaultCompletionCmd()
 	root.InitDefaultHelpFlag()
@@ -89,18 +100,25 @@ type FlagDoc struct {
 	AcceptedValues []ValueDoc `yaml:"accepted_values,omitempty"`
 }
 
+type ExampleDoc struct {
+	Title  string `yaml:",omitempty"`
+	Script string `yaml:",omitempty"`
+	Output string `yaml:",omitempty"`
+}
+
 type CmdDoc struct {
-	Id          string    `yaml:",omitempty"`
-	Title       string    `yaml:",omitempty"`
-	Summary     string    `yaml:",omitempty"`
-	Source      string    `yaml:",omitempty"`
-	Description string    `yaml:",omitempty"`
-	Tags        []string  `yaml:""`
-	Links       []string  `yaml:""`
-	Usage       string    `yaml:",omitempty"`
-	Subcommands []string  `yaml:""`
-	Options     string    `yaml:",omitempty"`
-	Flags       []FlagDoc `yaml:""`
+	Id          string       `yaml:",omitempty"`
+	Title       string       `yaml:",omitempty"`
+	Summary     string       `yaml:",omitempty"`
+	Source      string       `yaml:",omitempty"`
+	Description string       `yaml:",omitempty"`
+	Examples    []ExampleDoc `yaml:",omitempty"`
+	Tags        []string     `yaml:""`
+	Links       []string     `yaml:""`
+	Usage       string       `yaml:",omitempty"`
+	Subcommands []string     `yaml:""`
+	Options     string       `yaml:",omitempty"`
+	Flags       []FlagDoc    `yaml:""`
 }
 
 type SpecDoc struct {
@@ -131,6 +149,10 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		Summary:     forceMultiLine(cmd.Short),
 		Description: forceMultiLine(strings.ReplaceAll(cmd.Long, "\t", "    ")),
 		Subcommands: subcommands,
+	}
+
+	if eg, ok := examples[yamlDoc.Id]; ok {
+		yamlDoc.Examples = eg
 	}
 
 	if len(cmd.GroupID) > 0 {
