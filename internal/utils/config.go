@@ -83,13 +83,14 @@ var Config config
 
 type (
 	config struct {
-		ProjectId string   `toml:"project_id"`
-		Api       api      `toml:"api"`
-		Db        db       `toml:"db"`
-		Studio    studio   `toml:"studio"`
-		Inbucket  inbucket `toml:"inbucket"`
-		Storage   storage  `toml:"storage"`
-		Auth      auth     `toml:"auth"`
+		ProjectId string              `toml:"project_id"`
+		Api       api                 `toml:"api"`
+		Db        db                  `toml:"db"`
+		Studio    studio              `toml:"studio"`
+		Inbucket  inbucket            `toml:"inbucket"`
+		Storage   storage             `toml:"storage"`
+		Auth      auth                `toml:"auth"`
+		Functions map[string]function `toml:"functions"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -142,6 +143,10 @@ type (
 		Secret      string `toml:"secret"`
 		Url         string `toml:"url"`
 		RedirectUri string `toml:"redirect_uri"`
+	}
+
+	function struct {
+		VerifyJWT *bool `toml:"verify_jwt"`
 	}
 
 	// TODO
@@ -320,6 +325,22 @@ func LoadConfigFS(fsys afero.Fs) error {
 					Url:         url,
 				}
 			}
+		}
+	}
+
+	if Config.Functions == nil {
+		Config.Functions = map[string]function{}
+	}
+	for name, functionConfig := range Config.Functions {
+		verifyJWT := functionConfig.VerifyJWT
+
+		if verifyJWT == nil {
+			x := true
+			verifyJWT = &x
+		}
+
+		Config.Functions[name] = function{
+			VerifyJWT: verifyJWT,
 		}
 	}
 

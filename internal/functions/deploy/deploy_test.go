@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -63,7 +65,8 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, false, true, "", fsys))
+		noVerifyJWT := true
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -90,7 +93,8 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, false, false, "", fsys))
+		noVerifyJWT := true
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, false, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -119,7 +123,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, "", true, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, "", nil, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -148,7 +152,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, "", true, false, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, "", nil, false, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -159,7 +163,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup invalid project ref
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte("test-project"), 0644))
 		// Run test
-		err := Run(context.Background(), "test-func", "", false, true, "", fsys)
+		noVerifyJWT := true
+		err := Run(context.Background(), "test-func", "", &noVerifyJWT, true, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
@@ -168,7 +173,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "test-func", "test-project", false, true, "", fsys)
+		noVerifyJWT := true
+		err := Run(context.Background(), "test-func", "test-project", &noVerifyJWT, true, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
@@ -179,7 +185,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "@", project, false, true, "", fsys)
+		noVerifyJWT := true
+		err := Run(context.Background(), "@", project, &noVerifyJWT, true, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -190,7 +197,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "test-func", project, false, true, "", fsys)
+		noVerifyJWT := true
+		err := Run(context.Background(), "test-func", project, &noVerifyJWT, true, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -216,7 +224,8 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 		// Run test
-		err = Run(context.Background(), "test-func", project, false, true, "", fsys)
+		noVerifyJWT := true
+		err = Run(context.Background(), "test-func", project, &noVerifyJWT, true, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -243,9 +252,117 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 
-		err = Run(context.Background(), "test-func", project, false, false, "", fsys)
+		noVerifyJWT := true
+		err = Run(context.Background(), "test-func", project, &noVerifyJWT, false, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\neszip failed\n")
+	})
+
+	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
+		const slug = "test-func"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile("supabase/config.toml", os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.` + slug + `]
+verify_jwt = false
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		b, e := afero.ReadFile(fsys, "supabase/config.toml")
+		fmt.Println(string(b), e)
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err = fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New("https://api.supabase.io").
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusNotFound)
+		gock.New("https://api.supabase.io").
+			Post("/v1/projects/" + project + "/functions").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					return false, err
+				}
+
+				fmt.Println(string(body))
+				var bodyJson map[string]interface{}
+				err = json.Unmarshal(body, &bodyJson)
+				if err != nil {
+					return false, err
+				}
+
+				return bodyJson["verify_jwt"] == false, nil
+			}).
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		assert.NoError(t, Run(context.Background(), slug, project, nil, true, "", fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("verify_jwt flag overrides config", func(t *testing.T) {
+		const slug = "test-func"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile("supabase/config.toml", os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.` + slug + `]
+verify_jwt = false
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		b, e := afero.ReadFile(fsys, "supabase/config.toml")
+		fmt.Println(string(b), e)
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err = fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New("https://api.supabase.io").
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusNotFound)
+		gock.New("https://api.supabase.io").
+			Post("/v1/projects/" + project + "/functions").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					return false, err
+				}
+
+				fmt.Println(string(body))
+				var bodyJson map[string]interface{}
+				err = json.Unmarshal(body, &bodyJson)
+				if err != nil {
+					return false, err
+				}
+
+				return bodyJson["verify_jwt"] == true, nil
+			}).
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		noVerifyJwt := false
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, true, "", fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
