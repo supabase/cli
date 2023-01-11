@@ -280,9 +280,8 @@ func TestRestartDatabase(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
-					Health: &types.Health{
-						Status: "healthy",
-					},
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
 		utils.StorageId = "test-storage"

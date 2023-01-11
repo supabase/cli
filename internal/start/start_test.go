@@ -189,7 +189,10 @@ func TestDatabaseStart(t *testing.T) {
 				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/json").
 				Reply(http.StatusOK).
 				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-					State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+					State: &types.ContainerState{
+						Running: true,
+						Health:  &types.Health{Status: "healthy"},
+					},
 				}})
 		}
 		gock.New("localhost").
@@ -229,7 +232,10 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Setup mock postgres
 		utils.GlobalsSql = "create schema public"

@@ -96,7 +96,10 @@ func TestServiceHealth(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + services[0] + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true, Health: &types.Health{Status: "Unhealthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "Unhealthy"},
+				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + services[1] + "/json").
@@ -138,11 +141,12 @@ func TestServiceHealth(t *testing.T) {
 }
 
 func TestPrintStatus(t *testing.T) {
+	utils.Config.Db.Port = 0
 	exclude := []string{
 		utils.ShortContainerImageName(utils.PostgrestImage),
 		utils.ShortContainerImageName(utils.StudioImage),
-		utils.ShortContainerImageName(utils.GotrueId),
-		utils.ShortContainerImageName(utils.InbucketId),
+		utils.GotrueId,
+		utils.InbucketId,
 	}
 
 	t.Run("outputs env var", func(t *testing.T) {
