@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -164,14 +165,9 @@ func RetryEverySecond(callback func() bool, timeout time.Duration) bool {
 	return false
 }
 
-func IsContainerHealthy(ctx context.Context, container string) bool {
-	resp, err := utils.Docker.ContainerInspect(ctx, container)
-	return err == nil && resp.State.Health != nil && resp.State.Health.Status == "healthy"
-}
-
 func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
 	probe := func() bool {
-		return IsContainerHealthy(ctx, container)
+		return status.AssertContainerHealthy(ctx, container) == nil
 	}
 	return RetryEverySecond(probe, timeout)
 }
