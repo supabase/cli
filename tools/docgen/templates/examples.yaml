@@ -16,10 +16,64 @@ supabase-link:
   - title: Basic usage
     script: supabase link --project-ref ********************
     output: |
-      Enter your database password:
+      Enter your database password: ********
       Finished supabase link.
   - title: Link without database password
     script: supabase link --project-ref ******************** <<< ""
     output: |
       Enter your database password:
       Finished supabase link.
+supabase-start:
+  - title: Basic usage
+    script: supabase start
+    output: |
+      Applying migration 20220810154536_employee.sql...
+      Seeding data supabase/seed.sql...
+      Started supabase local development setup.
+  - title: Start containers without studio
+    script: supabase start -x studio
+    output: |
+      Excluding container: supabase/studio:20221214-4eecc99
+      Seeding data supabase/seed.sql...
+      Started supabase local development setup.
+supabase-stop:
+  - title: Basic usage
+    script: supabase stop
+    output: |
+      Stopped supabase local development setup.
+  - title: Backup local database before stopping
+    script: supabase stop --backup
+    output: |
+      Database exported to supabase/.branches/main
+      Stopped supabase local development setup.
+supabase-status:
+  - title: Basic usage
+    script: supabase status
+    output: |
+      supabase local development setup is running.
+
+              API URL: http://localhost:54321
+                DB URL: postgresql://postgres:postgres@localhost:54322/postgres
+            Studio URL: http://localhost:54323
+          Inbucket URL: http://localhost:54324
+            JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
+              anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+      service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+  - title: Format status as environment variables
+    script: supabase status -o env
+    output: |
+      ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      API_URL="http://localhost:54321"
+      DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
+      INBUCKET_URL="http://localhost:54324"
+      JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
+      SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+      STUDIO_URL="http://localhost:54323"
+  - title: Customise the names of exported variables
+    script: supabase status -o env --override-name auth.anon_key=SUPABASE_ANON_KEY --override-name auth.service_role_key=SUPABASE_SERVICE_KEY
+    output: |
+      Stopped services: [supabase_inbucket_cli supabase_rest_cli supabase_studio_cli]
+      SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
+      JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
+      SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
