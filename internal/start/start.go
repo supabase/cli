@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -46,8 +46,8 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 		return err
 	}
 
-	fmt.Println("Started " + utils.Aqua("supabase") + " local development setup.")
-	utils.ShowStatus()
+	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
+	status.PrettyPrint(os.Stdout, excludedContainers...)
 	return nil
 }
 
@@ -471,7 +471,7 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 	probe := func() bool {
 		var unhealthy []string
 		for _, container := range started {
-			if !isServiceReady(ctx, container) {
+			if !status.IsServiceReady(ctx, container) {
 				unhealthy = append(unhealthy, container)
 			}
 		}
@@ -482,23 +482,4 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 		return fmt.Errorf("service not healthy: %v", started)
 	}
 	return nil
-}
-
-func isServiceReady(ctx context.Context, container string) bool {
-	if container == utils.RestId {
-		return IsPostgRESTHealthy(ctx)
-	}
-	return reset.IsContainerHealthy(ctx, container)
-}
-
-func IsPostgRESTHealthy(ctx context.Context) bool {
-	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Add("apikey", utils.AnonKey)
-	resp, err := http.DefaultClient.Do(req)
-	return err == nil && resp.StatusCode == http.StatusOK
 }

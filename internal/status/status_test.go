@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -27,6 +28,7 @@ func TestStatusCommand(t *testing.T) {
 			"realtime-dev.supabase_realtime_",
 			"supabase_rest_",
 			"supabase_storage_",
+			"storage_imgproxy_",
 			"supabase_pg_meta_",
 			"supabase_studio_",
 		}
@@ -36,11 +38,6 @@ func TestStatusCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		for _, container := range services {
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container).
@@ -78,37 +75,12 @@ func TestStatusCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusServiceUnavailable)
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on missing container", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusNotFound)
-		// Run test
-		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "container not found. Have you run supabase start?")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -124,7 +96,7 @@ func TestServiceHealth(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + services[0] + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true},
+				State: &types.ContainerState{Running: true, Health: &types.Health{Status: "Unhealthy"}},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + services[1] + "/json").
@@ -134,9 +106,14 @@ func TestServiceHealth(t *testing.T) {
 			}})
 		// Run test
 		var stderr bytes.Buffer
-		assert.NoError(t, checkServiceHealth(context.Background(), services, &stderr))
+		stopped := checkServiceHealth(context.Background(), services, &stderr)
 		// Check error
-		assert.Equal(t, "supabase_auth container is not running: exited\n", stderr.String())
+		assert.Empty(t, stopped)
+		lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+		assert.ElementsMatch(t, []string{
+			"supabase_db container is not ready: Unhealthy",
+			"supabase_auth container is not running: exited",
+		}, lines)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -147,47 +124,56 @@ func TestServiceHealth(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + services[0] + "/json").
-			Reply(http.StatusNotFound)
+		for _, name := range services {
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + name + "/json").
+				Reply(http.StatusNotFound)
+		}
 		// Run test
-		err := checkServiceHealth(context.Background(), services, io.Discard)
+		stopped := checkServiceHealth(context.Background(), services, io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "supabase_db container not found. Have you run supabase start?")
+		assert.ElementsMatch(t, services, stopped)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestPrintStatus(t *testing.T) {
+	exclude := []string{
+		utils.ShortContainerImageName(utils.PostgrestImage),
+		utils.ShortContainerImageName(utils.StudioImage),
+		utils.ShortContainerImageName(utils.GotrueId),
+		utils.ShortContainerImageName(utils.InbucketId),
+	}
+
 	t.Run("outputs env var", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(map[string]string{"2": "b", "1": "a"}, OutputEnv, &stdout))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputEnv, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "1=\"a\"\n2=\"b\"\n", stdout.String())
+		assert.Equal(t, "DB_URL=\"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
 	})
 
 	t.Run("outputs json object", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(map[string]string{"2": "b", "1": "a"}, OutputJson, &stdout))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputJson, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "{\"1\":\"a\",\"2\":\"b\"}\n", stdout.String())
+		assert.Equal(t, "{\"DB_URL\":\"postgresql://postgres:postgres@localhost:0/postgres\"}\n", stdout.String())
 	})
 
 	t.Run("outputs yaml properties", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(map[string]string{"2": "b", "1": "a"}, OutputYaml, &stdout))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputYaml, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "\"1\": a\n\"2\": b\n", stdout.String())
+		assert.Equal(t, "DB_URL: postgresql://postgres:postgres@localhost:0/postgres\n", stdout.String())
 	})
 
 	t.Run("outputs toml fields", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(map[string]string{"2": "b", "1": "a"}, OutputToml, &stdout))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputToml, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "1 = \"a\"\n2 = \"b\"\n", stdout.String())
+		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
 	})
 }
