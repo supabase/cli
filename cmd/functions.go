@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
-	"github.com/supabase/cli/internal/functions/new"
+	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
@@ -42,7 +42,7 @@ var (
 		},
 	}
 
-	noVerifyJWT     bool
+	noVerifyJWT     = new(bool)
 	useLegacyBundle bool
 	importMapPath   string
 
@@ -60,7 +60,11 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return deploy.Run(ctx, args[0], projectRef, !noVerifyJWT, useLegacyBundle, importMapPath, fsys)
+			// Fallback to config if user did not set the flag.
+			if !cmd.Flags().Changed("no-verify-jwt") {
+				noVerifyJWT = nil
+			}
+			return deploy.Run(ctx, args[0], projectRef, noVerifyJWT, useLegacyBundle, importMapPath, fsys)
 		},
 	}
 
@@ -70,7 +74,7 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return new.Run(ctx, args[0], afero.NewOsFs())
+			return new_.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
 
@@ -82,18 +86,22 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return serve.Run(ctx, args[0], envFilePath, !noVerifyJWT, importMapPath, afero.NewOsFs())
+			// Fallback to config if user did not set the flag.
+			if !cmd.Flags().Changed("no-verify-jwt") {
+				noVerifyJWT = nil
+			}
+			return serve.Run(ctx, args[0], envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
 	functionsDeleteCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDeployCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
+	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsDeployCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().BoolVar(&noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
+	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
