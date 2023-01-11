@@ -34,7 +34,10 @@ func TestInitDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -80,7 +83,10 @@ func TestInitDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Run test
 		err := initDatabase(context.Background(), fsys, io.Discard)
@@ -101,7 +107,10 @@ func TestInitDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -134,7 +143,10 @@ func TestInitDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -173,7 +185,10 @@ func TestInitDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Health: &types.Health{Status: "healthy"}},
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
 			}})
 		// Setup mock postgres
 		conn := pgtest.NewConn()

@@ -108,6 +108,7 @@ func checkServiceHealth(ctx context.Context, services []string, w io.Writer) (st
 			if client.IsErrNotFound(err) {
 				stopped = append(stopped, name)
 			} else {
+				// Log unhealthy containers instead of failing
 				fmt.Fprintln(w, err)
 			}
 		}
