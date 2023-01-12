@@ -152,12 +152,12 @@ func RestartDatabase(ctx context.Context) {
 	}
 }
 
-func RetryEverySecond(callback func() bool, timeout time.Duration) bool {
+func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
 	now := time.Now()
 	expiry := now.Add(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	for t := now; t.Before(expiry); t = <-ticker.C {
+	for t := now; t.Before(expiry) && ctx.Err() == nil; t = <-ticker.C {
 		if callback() {
 			return true
 		}
@@ -169,5 +169,5 @@ func WaitForHealthyService(ctx context.Context, container string, timeout time.D
 	probe := func() bool {
 		return status.AssertContainerHealthy(ctx, container) == nil
 	}
-	return RetryEverySecond(probe, timeout)
+	return RetryEverySecond(ctx, probe, timeout)
 }

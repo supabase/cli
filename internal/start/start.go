@@ -478,7 +478,7 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 		started = unhealthy
 		return len(started) == 0
 	}
-	if !reset.RetryEverySecond(probe, 20*time.Second) {
+	if !reset.RetryEverySecond(ctx, probe, 20*time.Second) {
 		return fmt.Errorf("service not healthy: %v", started)
 	}
 	return nil
