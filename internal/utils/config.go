@@ -146,7 +146,8 @@ type (
 	}
 
 	function struct {
-		VerifyJWT *bool `toml:"verify_jwt"`
+		VerifyJWT *bool  `toml:"verify_jwt"`
+		ImportMap string `toml:"import_map"`
 	}
 
 	// TODO
@@ -341,6 +342,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 
 		Config.Functions[name] = function{
 			VerifyJWT: verifyJWT,
+			ImportMap: functionConfig.ImportMap,
 		}
 	}
 
