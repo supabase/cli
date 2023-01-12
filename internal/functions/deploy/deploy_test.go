@@ -271,8 +271,6 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		b, e := afero.ReadFile(fsys, "supabase/config.toml")
-		fmt.Println(string(b), e)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -294,7 +292,6 @@ verify_jwt = false
 					return false, err
 				}
 
-				fmt.Println(string(body))
 				var bodyJson map[string]interface{}
 				err = json.Unmarshal(body, &bodyJson)
 				if err != nil {
@@ -324,8 +321,6 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		b, e := afero.ReadFile(fsys, "supabase/config.toml")
-		fmt.Println(string(b), e)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -347,7 +342,6 @@ verify_jwt = false
 					return false, err
 				}
 
-				fmt.Println(string(body))
 				var bodyJson map[string]interface{}
 				err = json.Unmarshal(body, &bodyJson)
 				if err != nil {
