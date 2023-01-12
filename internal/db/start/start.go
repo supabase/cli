@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -34,7 +35,11 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, "Postgres database is already running.")
 		return nil
 	}
-	return StartDatabase(ctx, fsys, os.Stderr)
+	err := StartDatabase(ctx, fsys, os.Stderr)
+	if err != nil {
+		utils.DockerRemoveAll(context.Background())
+	}
+	return err
 }
 
 func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
@@ -71,17 +76,19 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
-		Binds:         []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
+		Binds: []string{
+			utils.DbId + ":/var/lib/postgresql/data",
+			"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro",
+		},
 	}
 	fmt.Fprintln(w, "Starting database...")
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
+	// Creating volume will not override existing volume, so we must inspect explicitly
+	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
+	exists := !client.IsErrNotFound(err)
+	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil || exists {
 		return err
 	}
-	err := initDatabase(ctx, fsys, w, options...)
-	if err != nil {
-		utils.DockerRemove(utils.DbId)
-	}
-	return err
+	return initDatabase(ctx, fsys, w, options...)
 }
 
 func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
