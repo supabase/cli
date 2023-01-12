@@ -42,7 +42,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		return run(p, ctx, fsys, excludedContainers)
 	}); err != nil {
-		utils.DockerRemoveAll(context.Background(), utils.NetId)
+		utils.DockerRemoveAll(context.Background())
 		return err
 	}
 
@@ -323,9 +323,6 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.StorageImage,
-				Volumes: map[string]struct{}{
-					"/var/lib/storage": {},
-				},
 				Env: []string{
 					"ANON_KEY=" + utils.AnonKey,
 					"SERVICE_KEY=" + utils.ServiceRoleKey,
@@ -351,6 +348,7 @@ EOF
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				Binds:         []string{utils.StorageId + ":/var/lib/storage"},
 			},
 			utils.StorageId,
 		); err != nil {

@@ -14,10 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/cli/cli/compose/loader"
 	dockerConfig "github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -89,59 +91,34 @@ func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader,
 // NOTE: There's a risk of data race with reads & writes from `DockerRun` and
 // reads from `DockerRemoveAll`, but since they're expected to be run on the
 // same thread, this is fine.
-var containers []string
+var (
+	containers []string
+	volumes    []string
+)
 
-func DockerRun(
-	ctx context.Context,
-	name string,
-	config *container.Config,
-	hostConfig *container.HostConfig,
-) (io.Reader, error) {
-	config.Image = GetRegistryImageUrl(config.Image)
-	container, err := Docker.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
-	if err != nil {
-		return nil, err
-	}
-	containers = append(containers, name)
-
-	resp, err := Docker.ContainerAttach(ctx, container.ID, types.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := Docker.ContainerStart(ctx, container.ID, types.ContainerStartOptions{}); err != nil {
-		return nil, err
-	}
-
-	return resp.Reader, nil
-}
-
-func DockerRemoveContainers(ctx context.Context, containers []string) {
+func WaitAll(containers []string, exec func(container string)) {
 	var wg sync.WaitGroup
-
 	for _, container := range containers {
 		wg.Add(1)
-
 		go func(container string) {
-			if err := Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
-				RemoveVolumes: true,
-				Force:         true,
-			}); err != nil {
-				// TODO: Handle errors
-				// fmt.Fprintln(os.Stderr, err)
-				_ = err
-			}
-
-			wg.Done()
+			defer wg.Done()
+			exec(container)
 		}(container)
 	}
-
 	wg.Wait()
 }
 
-func DockerRemoveAll(ctx context.Context, netId string) {
-	DockerRemoveContainers(ctx, containers)
-	_ = Docker.NetworkRemove(ctx, netId)
+func DockerRemoveAll(ctx context.Context) {
+	WaitAll(containers, func(container string) {
+		_ = Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
+			RemoveVolumes: true,
+			Force:         true,
+		})
+	})
+	WaitAll(volumes, func(name string) {
+		_ = Docker.VolumeRemove(ctx, name, true)
+	})
+	_ = Docker.NetworkRemove(ctx, NetId)
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
@@ -292,7 +269,18 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if err != nil {
 		return "", err
 	}
+	// Track container id for cleanup
 	containers = append(containers, resp.ID)
+	for _, bind := range hostConfig.Binds {
+		spec, err := loader.ParseVolume(bind)
+		if err != nil {
+			return "", err
+		}
+		// Track named volumes for cleanup
+		if len(spec.Source) > 0 && spec.Type == string(mount.TypeVolume) {
+			volumes = append(volumes, spec.Source)
+		}
+	}
 	// Run container in background
 	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 }
