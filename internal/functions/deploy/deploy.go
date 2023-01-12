@@ -20,7 +20,7 @@ import (
 
 const EszipContentType = "application/vnd.denoland.eszip"
 
-func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
 	var buildScriptPath string
@@ -33,6 +33,17 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 			projectRef = ref
 		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+		}
+		// Ensure noVerifyJWT is not nil.
+		if noVerifyJWT == nil {
+			x := false
+			// Load function config if any, but continue on error.
+			if err := utils.LoadConfigFS(fsys); err == nil {
+				if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
+					x = true
+				}
+			}
+			noVerifyJWT = &x
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
@@ -86,7 +97,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, verifyJWT bool,
 
 	// 3. Deploy new Function.
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(units.HumanSize(float64(functionSize))) + ")")
-	return deployFunction(ctx, projectRef, slug, functionBody, verifyJWT, useLegacyBundle)
+	return deployFunction(ctx, projectRef, slug, functionBody, !*noVerifyJWT, useLegacyBundle)
 }
 
 func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {

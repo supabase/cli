@@ -40,7 +40,7 @@ func ParseEnvFile(envFilePath string) ([]string, error) {
 	return env, nil
 }
 
-func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -84,11 +84,15 @@ func Run(ctx context.Context, slug string, envFilePath string, verifyJWT bool, i
 			"JWT_SECRET=" + utils.JWTSecret,
 			"DENO_ORIGIN=http://localhost:8000",
 		}
-		if verifyJWT {
-			env = append(env, "VERIFY_JWT=true")
-		} else {
-			env = append(env, "VERIFY_JWT=false")
+		verifyJWTEnv := "VERIFY_JWT=true"
+		if noVerifyJWT == nil {
+			if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
+				verifyJWTEnv = "VERIFY_JWT=false"
+			}
+		} else if *noVerifyJWT {
+			verifyJWTEnv = "VERIFY_JWT=false"
 		}
+		env = append(env, verifyJWTEnv)
 
 		cwd, err := os.Getwd()
 		if err != nil {
