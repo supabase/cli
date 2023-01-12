@@ -18,7 +18,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-const EszipContentType = "application/vnd.denoland.eszip"
+const (
+	eszipContentType = "application/vnd.denoland.eszip"
+	supabaseDirPath  = "supabase"
+)
 
 func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -34,16 +37,22 @@ func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bo
 		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
 			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 		}
+		// Load function config if any for fallbacks for some flags, but continue on error.
+		_ = utils.LoadConfigFS(fsys)
 		// Ensure noVerifyJWT is not nil.
 		if noVerifyJWT == nil {
 			x := false
-			// Load function config if any, but continue on error.
-			if err := utils.LoadConfigFS(fsys); err == nil {
-				if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
-					x = true
-				}
+			if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
+				x = true
 			}
 			noVerifyJWT = &x
+		}
+		if functionConfig, ok := utils.Config.Functions[slug]; ok && importMapPath == "" && functionConfig.ImportMap != "" {
+			if filepath.IsAbs(functionConfig.ImportMap) {
+				importMapPath = functionConfig.ImportMap
+			} else {
+				importMapPath = filepath.Join(supabaseDirPath, functionConfig.ImportMap)
+			}
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
@@ -146,7 +155,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 					Name:      &slug,
 					VerifyJwt: &verifyJWT,
 					ImportMap: &importMap,
-				}, EszipContentType, functionBody)
+				}, eszipContentType, functionBody)
 			}
 			if err != nil {
 				return err
@@ -167,7 +176,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 				resp, err = utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
 					VerifyJwt: &verifyJWT,
 					ImportMap: &importMap,
-				}, EszipContentType, functionBody)
+				}, eszipContentType, functionBody)
 			}
 			if err != nil {
 				return err

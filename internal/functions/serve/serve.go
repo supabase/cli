@@ -20,6 +20,7 @@ import (
 const (
 	relayFuncDir              = "/home/deno/functions"
 	customDockerImportMapPath = "/home/deno/import_map.json"
+	supabaseDirPath           = "supabase"
 )
 
 func ParseEnvFile(envFilePath string) ([]string, error) {
@@ -58,6 +59,13 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 		if envFilePath != "" {
 			if _, err := fsys.Stat(envFilePath); err != nil {
 				return fmt.Errorf("Failed to read env file: %w", err)
+			}
+		}
+		if functionConfig, ok := utils.Config.Functions[slug]; ok && importMapPath == "" && functionConfig.ImportMap != "" {
+			if filepath.IsAbs(functionConfig.ImportMap) {
+				importMapPath = functionConfig.ImportMap
+			} else {
+				importMapPath = filepath.Join(supabaseDirPath, functionConfig.ImportMap)
 			}
 		}
 		if importMapPath != "" {
