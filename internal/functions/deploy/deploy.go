@@ -44,11 +44,20 @@ func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bo
 			}
 			noVerifyJWT = &x
 		}
-		if functionConfig, ok := utils.Config.Functions[slug]; ok && importMapPath == "" && functionConfig.ImportMap != "" {
+		if importMapPath != "" {
+			// skip
+		} else if functionConfig, ok := utils.Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
 			if filepath.IsAbs(functionConfig.ImportMap) {
 				importMapPath = functionConfig.ImportMap
 			} else {
 				importMapPath = filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)
+			}
+		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			importMapPath = utils.FallbackImportMapPath
+		}
+		if importMapPath != "" {
+			if _, err := fsys.Stat(importMapPath); err != nil {
+				return fmt.Errorf("Failed to read import map: %w", err)
 			}
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
