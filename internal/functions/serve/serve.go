@@ -60,12 +60,16 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 				return fmt.Errorf("Failed to read env file: %w", err)
 			}
 		}
-		if functionConfig, ok := utils.Config.Functions[slug]; ok && importMapPath == "" && functionConfig.ImportMap != "" {
+		if importMapPath != "" {
+			// skip
+		} else if functionConfig, ok := utils.Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
 			if filepath.IsAbs(functionConfig.ImportMap) {
 				importMapPath = functionConfig.ImportMap
 			} else {
 				importMapPath = filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)
 			}
+		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			importMapPath = utils.FallbackImportMapPath
 		}
 		if importMapPath != "" {
 			if _, err := fsys.Stat(importMapPath); err != nil {
