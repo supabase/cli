@@ -358,6 +358,37 @@ verify_jwt = false
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("uses fallback import map", func(t *testing.T) {
+		const slug = "test-func"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/functions/import_map.json", []byte(""), 0644))
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New("https://api.supabase.io").
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusNotFound)
+		gock.New("https://api.supabase.io").
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("import_map", "true").
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		noVerifyJwt := false
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, false, "", fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
 
 func TestDeployFunction(t *testing.T) {
