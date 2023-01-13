@@ -18,10 +18,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-const (
-	eszipContentType = "application/vnd.denoland.eszip"
-	supabaseDirPath  = "supabase"
-)
+const eszipContentType = "application/vnd.denoland.eszip"
 
 func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -51,7 +48,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bo
 			if filepath.IsAbs(functionConfig.ImportMap) {
 				importMapPath = functionConfig.ImportMap
 			} else {
-				importMapPath = filepath.Join(supabaseDirPath, functionConfig.ImportMap)
+				importMapPath = filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)
 			}
 		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
