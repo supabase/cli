@@ -131,14 +131,14 @@ var (
 	}, SystemSchemas...)
 
 	SupabaseDirPath = "supabase"
-	ConfigPath      = filepath.Join("supabase", "config.toml")
-	ProjectRefPath  = filepath.Join("supabase", ".temp", "project-ref")
-	RemoteDbPath    = filepath.Join("supabase", ".temp", "remote-db-url")
-	CurrBranchPath  = filepath.Join("supabase", ".branches", "_current_branch")
-	MigrationsDir   = filepath.Join("supabase", "migrations")
-	FunctionsDir    = filepath.Join("supabase", "functions")
-	DbTestsDir      = filepath.Join("supabase", "tests")
-	SeedDataPath    = filepath.Join("supabase", "seed.sql")
+	ConfigPath      = filepath.Join(SupabaseDirPath, "config.toml")
+	ProjectRefPath  = filepath.Join(SupabaseDirPath, ".temp", "project-ref")
+	RemoteDbPath    = filepath.Join(SupabaseDirPath, ".temp", "remote-db-url")
+	CurrBranchPath  = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	MigrationsDir   = filepath.Join(SupabaseDirPath, "migrations")
+	FunctionsDir    = filepath.Join(SupabaseDirPath, "functions")
+	DbTestsDir      = filepath.Join(SupabaseDirPath, "tests")
+	SeedDataPath    = filepath.Join(SupabaseDirPath, "seed.sql")
 )
 
 // Used by unit tests
