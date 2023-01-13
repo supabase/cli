@@ -82,15 +82,6 @@ DO 'BEGIN WHILE (
 	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 	AccessTokenKey = "access-token"
-
-	ConfigPath     = "supabase/config.toml"
-	ProjectRefPath = "supabase/.temp/project-ref"
-	RemoteDbPath   = "supabase/.temp/remote-db-url"
-	CurrBranchPath = "supabase/.branches/_current_branch"
-	MigrationsDir  = "supabase/migrations"
-	FunctionsDir   = "supabase/functions"
-	DbTestsDir     = "supabase/tests"
-	SeedDataPath   = "supabase/seed.sql"
 )
 
 var (
@@ -138,6 +129,16 @@ var (
 		"supabase_functions",
 		"supabase_migrations",
 	}, SystemSchemas...)
+
+	SupabaseDirPath = "supabase"
+	ConfigPath      = filepath.Join("supabase", "config.toml")
+	ProjectRefPath  = filepath.Join("supabase", ".temp", "project-ref")
+	RemoteDbPath    = filepath.Join("supabase", ".temp", "remote-db-url")
+	CurrBranchPath  = filepath.Join("supabase", ".branches", "_current_branch")
+	MigrationsDir   = filepath.Join("supabase", "migrations")
+	FunctionsDir    = filepath.Join("supabase", "functions")
+	DbTestsDir      = filepath.Join("supabase", "tests")
+	SeedDataPath    = filepath.Join("supabase", "seed.sql")
 )
 
 // Used by unit tests
