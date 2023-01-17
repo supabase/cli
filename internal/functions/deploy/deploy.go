@@ -23,7 +23,7 @@ const eszipContentType = "application/vnd.denoland.eszip"
 func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
-	var buildScriptPath string
+	var scriptDirPath string
 	{
 		if len(projectRefArg) == 0 {
 			ref, err := utils.LoadProjectRef(fsys)
@@ -68,7 +68,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bo
 		}
 
 		var err error
-		buildScriptPath, err = utils.CopyEszipScripts(ctx, fsys)
+		scriptDirPath, err = utils.CopyDenoScripts(ctx, fsys)
 		if err != nil {
 			return err
 		}
@@ -94,6 +94,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bo
 			}
 		}
 
+		buildScriptPath := filepath.Join(scriptDirPath, "build.ts")
 		args := []string{"run", "-A", buildScriptPath, filepath.Join(functionPath, "index.ts"), importMapPath}
 		if useLegacyBundle {
 			args = []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
