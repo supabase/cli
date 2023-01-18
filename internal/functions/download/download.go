@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -16,7 +17,7 @@ import (
 func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	projectRef := projectRefArg
-	var scriptDirPath string
+	var scriptDir *utils.DenoScriptDir
 	{
 		if len(projectRefArg) == 0 {
 			ref, err := utils.LoadProjectRef(fsys)
@@ -36,7 +37,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) 
 	}
 
 	var err error
-	scriptDirPath, err = utils.CopyDenoScripts(ctx, fsys)
+	scriptDir, err = utils.CopyDenoScripts(ctx, fsys)
 	if err != nil {
 		return err
 	}
@@ -49,11 +50,7 @@ func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) 
 			return err
 		}
 
-		resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
-			// set encoding header
-			req.Header.Set("Accept-Encoding", "br")
-			return nil
-		})
+		resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
 		if err != nil {
 			return err
 		}
@@ -64,19 +61,17 @@ func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) 
 		case http.StatusOK: // Function exists
 			resBuf := bytes.NewReader(resp.Body)
 
-			extractScriptPath := filepath.Join(scriptDirPath, "extract.ts")
+			extractScriptPath := scriptDir.ExtractPath
 			funcDir := filepath.Join(utils.FunctionsDir, slug)
-			var outBuf, errBuf bytes.Buffer
+			var errBuf bytes.Buffer
 			args := []string{"run", "-A", extractScriptPath, funcDir}
 			cmd := exec.CommandContext(ctx, denoPath, args...)
 			cmd.Stdin = resBuf
-			cmd.Stdout = &outBuf
+			cmd.Stdout = os.Stdout
 			cmd.Stderr = &errBuf
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("Error downloading function: %w\n%v", err, errBuf.String())
 			}
-
-			fmt.Println(outBuf.String())
 		default:
 			return errors.New("Unexpected error downloading Function: " + string(resp.Body))
 		}

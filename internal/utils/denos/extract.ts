@@ -5,7 +5,8 @@ import { decompress } from "https://deno.land/x/brotli@0.1.7/mod.ts";
 import { Parser } from "https://deno.land/x/eszip@v0.30.0/mod.ts";
 
 function url2path(url: string) {
-  return path.join(...(new URL(url).pathname.replace("/src", "").split("/").filter(Boolean)));
+  const srcPath = new URL(url).pathname.replace("/src", "");
+  return path.join(...srcPath.split("/").filter(Boolean));
 }
 
 async function write(p: string, content: string) {

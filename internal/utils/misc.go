@@ -422,11 +422,16 @@ func isScriptModified(fsys afero.Fs, destPath string, src []byte) (bool, error) 
 	return md5.Sum(dest) != md5.Sum(src), nil
 }
 
-// Copy Deno scripts needed for function deploy and downloads, returning the script directory path or an error.
-func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (string, error) {
+type DenoScriptDir struct {
+	ExtractPath string
+	BuildPath   string
+}
+
+// Copy Deno scripts needed for function deploy and downloads, returning a DenoScriptDir struct or an error.
+func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error) {
 	denoPath, err := GetDenoPath()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	denoDirPath := filepath.Dir(denoPath)
@@ -434,7 +439,7 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 
 	// make the script directory if not exist
 	if err := MkdirIfNotExistFS(fsys, scriptDirPath); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// copy embed files to script directory
@@ -472,10 +477,15 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return scriptDirPath, nil
+	sd := DenoScriptDir{
+		ExtractPath: filepath.Join(scriptDirPath, "extract.ts"),
+		BuildPath:   filepath.Join(scriptDirPath, "build.ts"),
+	}
+
+	return &sd, nil
 }
 
 func LoadAccessToken() (string, error) {
