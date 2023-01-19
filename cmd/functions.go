@@ -145,7 +145,7 @@ func PromptProjectRef(fsys afero.Fs) error {
 	} else if err := utils.AssertIsLinkedFS(fsys); err == nil {
 		return nil
 	} else if strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-		fmt.Printf(`You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
+		fmt.Fprintf(os.Stderr, `You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
 Enter your project ref: `, utils.GetSupabaseDashboardURL())
 
 		scanner := bufio.NewScanner(os.Stdin)
