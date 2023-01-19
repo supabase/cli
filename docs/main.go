@@ -1,10 +1,12 @@
 package main
 
 import (
-	_ "embed"
+	"bytes"
+	"embed"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +22,8 @@ var (
 	examples map[string][]ExampleDoc
 	//go:embed templates/examples.yaml
 	exampleSpec string
+	//go:embed supabase/*
+	docsDir embed.FS
 )
 
 func main() {
@@ -150,6 +154,15 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		Summary:     forceMultiLine(cmd.Short),
 		Description: forceMultiLine(strings.ReplaceAll(cmd.Long, "\t", "    ")),
 		Subcommands: subcommands,
+	}
+
+	names := strings.Split(cmd.CommandPath(), " ")
+	path := filepath.Join(names...) + ".md"
+	if contents, err := docsDir.ReadFile(path); err == nil {
+		noHeader := bytes.TrimLeftFunc(contents, func(r rune) bool {
+			return r != '\n'
+		})
+		yamlDoc.Description = forceMultiLine(string(noHeader))
 	}
 
 	if eg, ok := examples[yamlDoc.Id]; ok {
