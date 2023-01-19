@@ -62,7 +62,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			"PG_META_DB_URL=" + escaped,
 		}, []string{
 			"node",
-			"bin/src/server/app.js",
+			"dist/server/app.js",
 			"gen",
 			"types",
 			"typescript",
@@ -91,7 +91,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			"PG_META_DB_HOST=" + utils.DbId,
 		}, []string{
 			"node",
-			"bin/src/server/app.js",
+			"dist/server/app.js",
 			"gen",
 			"types",
 			"typescript",
