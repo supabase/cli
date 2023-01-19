@@ -34,7 +34,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.27.0",
+			Version:     "1.33.0",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -101,9 +101,10 @@ type FlagDoc struct {
 }
 
 type ExampleDoc struct {
-	Title  string `yaml:",omitempty"`
-	Script string `yaml:",omitempty"`
-	Output string `yaml:",omitempty"`
+	Id       string `yaml:",omitempty"`
+	Name     string `yaml:",omitempty"`
+	Code     string `yaml:",omitempty"`
+	Response string `yaml:",omitempty"`
 }
 
 type CmdDoc struct {
