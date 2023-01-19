@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
+	"github.com/supabase/cli/internal/functions/download"
 	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/login"
@@ -39,6 +40,21 @@ var (
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return delete.Run(ctx, args[0], projectRef, fsys)
+		},
+	}
+
+	functionsDownloadCmd = &cobra.Command{
+		Use:   "download <Function name>",
+		Short: "Download a Function from Supabase",
+		Long:  "Download source code of a Function from the linked Supabase project.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := PromptLogin(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return download.Run(ctx, args[0], projectRef, fsys)
 		},
 	}
 
@@ -104,10 +120,12 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
+	functionsDownloadCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
 	functionsCmd.AddCommand(functionsServeCmd)
+	functionsCmd.AddCommand(functionsDownloadCmd)
 	rootCmd.AddCommand(functionsCmd)
 }
 

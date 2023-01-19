@@ -92,8 +92,8 @@ var (
 	//go:embed templates/globals.sql
 	GlobalsSql string
 
-	//go:embed eszip/*
-	eszipEmbedDir embed.FS
+	//go:embed denos/*
+	denoEmbedDir embed.FS
 
 	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
@@ -408,8 +408,8 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	return nil
 }
 
-func isBuildScriptModified(fsys afero.Fs, buildScriptPath string) (bool, error) {
-	bs, err := afero.ReadFile(fsys, buildScriptPath)
+func isScriptModified(fsys afero.Fs, destPath string, src []byte) (bool, error) {
+	dest, err := afero.ReadFile(fsys, destPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return true, nil
@@ -417,43 +417,33 @@ func isBuildScriptModified(fsys afero.Fs, buildScriptPath string) (bool, error) 
 		return false, err
 	}
 
-	es, err := fs.ReadFile(eszipEmbedDir, "eszip/build.ts")
-	if err != nil {
-		return false, err
-	}
-
-	// compare the md5 checksum of current build script with user's copy.
-	// if the checksums doesn't match, build script is modified.
-	return md5.Sum(bs) != md5.Sum(es), nil
+	// compare the md5 checksum of src bytes with user's copy.
+	// if the checksums doesn't match, script is modified.
+	return md5.Sum(dest) != md5.Sum(src), nil
 }
 
-// Copy ESZIP scripts needed for function deploy, returning the build script path or an error.
-func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
+type DenoScriptDir struct {
+	ExtractPath string
+	BuildPath   string
+}
+
+// Copy Deno scripts needed for function deploy and downloads, returning a DenoScriptDir struct or an error.
+func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error) {
 	denoPath, err := GetDenoPath()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	denoDirPath := filepath.Dir(denoPath)
-	scriptDirPath := filepath.Join(denoDirPath, "eszip")
-	buildScriptPath := filepath.Join(scriptDirPath, "build.ts")
+	scriptDirPath := filepath.Join(denoDirPath, "denos")
 
 	// make the script directory if not exist
 	if err := MkdirIfNotExistFS(fsys, scriptDirPath); err != nil {
-		return "", err
-	}
-
-	// check if the build script should be copied
-	modified, err := isBuildScriptModified(fsys, buildScriptPath)
-	if err != nil {
-		return "", err
-	}
-	if !modified {
-		return buildScriptPath, nil
+		return nil, err
 	}
 
 	// copy embed files to script directory
-	err = fs.WalkDir(eszipEmbedDir, "eszip", func(path string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(denoEmbedDir, "denos", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -463,9 +453,20 @@ func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 			return nil
 		}
 
-		contents, err := fs.ReadFile(eszipEmbedDir, path)
+		destPath := filepath.Join(denoDirPath, path)
+
+		contents, err := fs.ReadFile(denoEmbedDir, path)
 		if err != nil {
 			return err
+		}
+
+		// check if the script should be copied
+		modified, err := isScriptModified(fsys, destPath, contents)
+		if err != nil {
+			return err
+		}
+		if !modified {
+			return nil
 		}
 
 		if err := afero.WriteFile(fsys, filepath.Join(denoDirPath, path), contents, 0666); err != nil {
@@ -476,10 +477,15 @@ func CopyEszipScripts(ctx context.Context, fsys afero.Fs) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return filepath.Join(buildScriptPath), nil
+	sd := DenoScriptDir{
+		ExtractPath: filepath.Join(scriptDirPath, "extract.ts"),
+		BuildPath:   filepath.Join(scriptDirPath, "build.ts"),
+	}
+
+	return &sd, nil
 }
 
 func LoadAccessToken() (string, error) {
