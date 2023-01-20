@@ -43,6 +43,13 @@ supabase-start:
       Excluding container: supabase/studio:20221214-4eecc99
       Seeding data supabase/seed.sql...
       Started supabase local development setup.
+  - id: ignore-health-check
+    name: Ignore service health checks
+    code: supabase start --ignore-health-check
+    response: |
+      Seeding data supabase/seed.sql...
+      service not healthy: [supabase_storage_cli]
+      Started supabase local development setup.
 supabase-stop:
   - id: basic-usage
     name: Basic usage
