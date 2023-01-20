@@ -22,7 +22,9 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error {
+var errUnhealthy = errors.New("service not healthy")
+
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
@@ -43,8 +45,12 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		return run(p, ctx, fsys, excludedContainers)
 	}); err != nil {
-		utils.DockerRemoveAll(context.Background())
-		return err
+		if ignoreHealthCheck && errors.Is(err, errUnhealthy) {
+			fmt.Fprintln(os.Stderr, err)
+		} else {
+			utils.DockerRemoveAll(context.Background())
+			return err
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
@@ -474,7 +480,7 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 		return len(started) == 0
 	}
 	if !reset.RetryEverySecond(ctx, probe, 20*time.Second) {
-		return fmt.Errorf("service not healthy: %v", started)
+		return fmt.Errorf("%w: %v", errUnhealthy, started)
 	}
 	return nil
 }
