@@ -34,8 +34,9 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 		if err := utils.AssertDockerIsRunning(ctx); err != nil {
 			return err
 		}
-		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
-			return errors.New(utils.Aqua("supabase start") + " is already running. Try running " + utils.Aqua("supabase stop") + " first.")
+		if _, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil {
+			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
+			return nil
 		}
 	}
 
