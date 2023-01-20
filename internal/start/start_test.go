@@ -18,7 +18,7 @@ import (
 
 func TestStartCommand(t *testing.T) {
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs(), []string{})
+		err := Run(context.Background(), afero.NewMemMapFs(), []string{}, false)
 		assert.ErrorContains(t, err, "Have you set up the project with supabase init?")
 	})
 
@@ -27,7 +27,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys, []string{})
+		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
 		assert.ErrorContains(t, err, "Failed to read config: toml")
 	})
@@ -46,13 +46,13 @@ func TestStartCommand(t *testing.T) {
 			Get("/_ping").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys, []string{})
+		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on running database", func(t *testing.T) {
+	t.Run("noop if database is already running", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -74,13 +74,13 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), fsys, []string{})
+		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is already running. Try running supabase stop first.")
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on failure to create network", func(t *testing.T) {
+	t.Run("throws error on image pull failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -101,14 +101,14 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			ReplyError(errors.New("network error"))
 		// Cleans up network on error
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/networks/supabase_network_").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), fsys, []string{})
+		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
