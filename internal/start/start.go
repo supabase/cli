@@ -60,10 +60,6 @@ var (
 )
 
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.DockerNetworkCreateIfNotExists(ctx, utils.NetId); err != nil {
-		return err
-	}
-
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
