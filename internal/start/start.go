@@ -280,7 +280,7 @@ EOF
 					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "printf", "\\0", ">", "/dev/tcp/localhost/4000"},
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
