@@ -280,7 +280,7 @@ EOF
 					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "printf", "\\0", ">", "/dev/tcp/localhost/4000"},
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
@@ -308,6 +308,12 @@ EOF
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.JWTSecret,
+				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/3000"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
 				},
 			},
 			container.HostConfig{
