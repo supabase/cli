@@ -28,7 +28,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if err := utils.AssertDockerIsRunning(); err != nil {
+	if err := utils.AssertDockerIsRunning(ctx); err != nil {
 		return err
 	}
 	if _, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil {
