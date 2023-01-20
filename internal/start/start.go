@@ -31,7 +31,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string) error 
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertDockerIsRunning(); err != nil {
+		if err := utils.AssertDockerIsRunning(ctx); err != nil {
 			return err
 		}
 		if err := utils.AssertSupabaseDbIsRunning(); err == nil {

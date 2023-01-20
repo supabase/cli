@@ -20,7 +20,7 @@ import (
 func Run(ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertDockerIsRunning(); err != nil {
+		if err := utils.AssertDockerIsRunning(ctx); err != nil {
 			return err
 		}
 		if err := utils.LoadConfigFS(fsys); err != nil {

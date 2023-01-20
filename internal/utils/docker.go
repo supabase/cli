@@ -43,8 +43,8 @@ func NewDocker() *client.Client {
 	return docker
 }
 
-func AssertDockerIsRunning() error {
-	if _, err := Docker.Ping(context.Background()); err != nil {
+func AssertDockerIsRunning(ctx context.Context) error {
+	if _, err := Docker.Ping(ctx); err != nil {
 		return NewError(err.Error())
 	}
 
