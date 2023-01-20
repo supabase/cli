@@ -309,6 +309,12 @@ EOF
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.JWTSecret,
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/3000"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
