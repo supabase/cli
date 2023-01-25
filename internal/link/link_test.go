@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestPreRun(t *testing.T) {
 		// Run test
 		err := PreRun(project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Missing config: open supabase/config.toml: file does not exist")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
 

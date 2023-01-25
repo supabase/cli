@@ -16,9 +16,6 @@ import (
 func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks
 	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}

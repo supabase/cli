@@ -68,9 +68,6 @@ func sliceContains(s []string, e string) bool {
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
