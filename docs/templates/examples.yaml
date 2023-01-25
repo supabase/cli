@@ -60,7 +60,8 @@ supabase-stop:
     name: Backup local database before stopping
     code: supabase stop --backup
     response: |
-      Database exported to supabase/.branches/main
+      Postgres database saved to volume: supabase_db_cli
+      Storage directory saved to volume: supabase_storage_cli
       Stopped supabase local development setup.
 supabase-status:
   - id: basic-usage

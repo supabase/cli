@@ -50,7 +50,10 @@ func stop(ctx context.Context, backup bool) error {
 		return err
 	}
 	// Remove named volumes
-	if !backup {
+	if backup {
+		fmt.Fprintln(os.Stderr, "Postgres database saved to volume:", utils.DbId)
+		fmt.Fprintln(os.Stderr, "Storage directory saved to volume:", utils.StorageId)
+	} else {
 		// TODO: label named volumes to use VolumesPrune for branch support
 		volumes := []string{utils.DbId, utils.StorageId}
 		utils.WaitAll(volumes, func(name string) {
