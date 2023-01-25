@@ -46,7 +46,7 @@ var (
 	functionsDownloadCmd = &cobra.Command{
 		Use:   "download <Function name>",
 		Short: "Download a Function from Supabase",
-		Long:  "Download source code of a Function from the linked Supabase project.",
+		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
