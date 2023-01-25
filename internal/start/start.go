@@ -27,9 +27,6 @@ var errUnhealthy = errors.New("service not healthy")
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}

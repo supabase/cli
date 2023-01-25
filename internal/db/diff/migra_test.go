@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func TestRunMigra(t *testing.T) {
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "", "", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Missing config: open supabase/config.toml: file does not exist")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on missing project", func(t *testing.T) {

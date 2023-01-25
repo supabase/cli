@@ -163,10 +163,13 @@ func LoadConfig() error {
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// TODO: provide a config interface for all sub commands to use fsys
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("Missing config: %w", err)
-	} else if err != nil {
-		return fmt.Errorf("Failed to read config: %w", err)
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
+		CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
+		cwd, osErr := os.Getwd()
+		if osErr != nil {
+			cwd = "current directory"
+		}
+		return fmt.Errorf("cannot read config in %s: %w", cwd, err)
 	}
 
 	// Process decoded TOML.

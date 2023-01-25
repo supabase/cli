@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -72,7 +73,7 @@ func TestSwitchCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Have you set up the project with supabase init?")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on malformed config", func(t *testing.T) {
@@ -82,7 +83,7 @@ func TestSwitchCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to read config: toml")
+		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
 	})
 
 	t.Run("throws error on missing database", func(t *testing.T) {
