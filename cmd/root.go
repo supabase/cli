@@ -34,8 +34,7 @@ func IsExperimental(cmd *cobra.Command) bool {
 
 var (
 	// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
-	version    string
-	suggestion string
+	version string
 
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
@@ -49,7 +48,7 @@ var (
 			if viper.GetBool("DEBUG") {
 				cmd.SetContext(utils.WithTraceContext(cmd.Context()))
 			} else {
-				suggestion = "Try rerunning the command with --debug to troubleshoot the error."
+				utils.CmdSuggestion = "Try rerunning the command with --debug to troubleshoot the error."
 			}
 			workdir := viper.GetString("WORKDIR")
 			if workdir == "" {
@@ -65,8 +64,8 @@ var (
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		if len(suggestion) > 0 {
-			fmt.Fprintln(os.Stderr, suggestion)
+		if len(utils.CmdSuggestion) > 0 {
+			fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 		}
 		os.Exit(1)
 	}

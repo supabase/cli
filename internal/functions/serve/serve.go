@@ -43,9 +43,6 @@ func ParseEnvFile(envFilePath string) ([]string, error) {
 func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}

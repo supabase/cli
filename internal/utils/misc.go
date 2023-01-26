@@ -85,6 +85,8 @@ DO 'BEGIN WHILE (
 )
 
 var (
+	CmdSuggestion string
+
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
 	// | sed '/^ALTER ROLE postgres WITH /d' \

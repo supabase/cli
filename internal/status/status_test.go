@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestStatusCommand(t *testing.T) {
 
 	t.Run("throws error on missing config", func(t *testing.T) {
 		err := Run(context.Background(), CustomName{}, OutputPretty, afero.NewMemMapFs())
-		assert.ErrorContains(t, err, "Have you set up the project with supabase init?")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on invalid config", func(t *testing.T) {
@@ -64,7 +65,7 @@ func TestStatusCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to read config: toml")
+		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
 	})
 
 	t.Run("throws error on missing docker", func(t *testing.T) {
