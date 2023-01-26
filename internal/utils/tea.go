@@ -94,7 +94,7 @@ func RunProgram(ctx context.Context, f func(p Program, ctx context.Context) erro
 	ctx, cancel := context.WithCancel(ctx)
 	p := NewProgram(logModel{
 		cancel: cancel,
-		spinner: spinner.NewModel(
+		spinner: spinner.New(
 			spinner.WithSpinner(spinner.Dot),
 			spinner.WithStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("205"))),
 		),
@@ -124,7 +124,7 @@ type logModel struct {
 }
 
 func (m logModel) Init() tea.Cmd {
-	return spinner.Tick
+	return m.spinner.Tick
 }
 
 func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -165,7 +165,7 @@ func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.progress == nil {
-			progressModel := progress.NewModel(progress.WithGradient("#1c1c1c", "#34b27b"))
+			progressModel := progress.New(progress.WithGradient("#1c1c1c", "#34b27b"))
 			m.progress = &progressModel
 		}
 
