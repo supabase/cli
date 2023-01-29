@@ -33,7 +33,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", username, password, database, host, fsys)
+		err := Run(context.Background(), "schema.sql", username, password, database, host, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -52,7 +52,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "", username, password, database, host, fsys)
+		err := Run(context.Background(), "", username, password, database, host, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -68,7 +68,7 @@ func TestPullCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "", username, password, database, host, fsys)
+		err := Run(context.Background(), "", username, password, database, host, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error running pg_dump on remote database: request returned Service Unavailable")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -83,7 +83,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", username, password, database, host, fsys)
+		err := Run(context.Background(), "schema.sql", username, password, database, host, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
