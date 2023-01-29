@@ -12,8 +12,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-//go:embed templates/dump_initial_migration.sh
-var dumpInitialMigrationScript string
+//go:embed templates/dump_schema.sh
+var dumpSchemaScript string
 
 func Run(ctx context.Context, path, username, password, database, host string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
@@ -23,7 +23,7 @@ func Run(ctx context.Context, path, username, password, database, host string, f
 		"PGPASSWORD=" + password,
 		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
 		"DB_URL=" + database,
-	}, []string{"bash", "-c", dumpInitialMigrationScript})
+	}, []string{"bash", "-c", dumpSchemaScript})
 	if err != nil {
 		return errors.New("Error running pg_dump on remote database: " + err.Error())
 	}
