@@ -15,15 +15,18 @@ import (
 var (
 	//go:embed templates/dump_schema.sh
 	dumpSchemaScript string
-	//go:embed templates/dump_schema.sh
+	//go:embed templates/dump_data.sh
 	dumpDataScript string
 )
 
 func Run(ctx context.Context, path, username, password, database, host string, dataOnly bool, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
-	script := dumpSchemaScript
+	var script string
 	if dataOnly {
+		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
 		script = dumpDataScript
+	} else {
+		fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
+		script = dumpSchemaScript
 	}
 	out, err := utils.DockerRunOnce(ctx, utils.Pg15Image, []string{
 		"PGHOST=" + host,

@@ -100,7 +100,7 @@ var (
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
-		Short: "Dumps data/schemas from the remote database",
+		Short: "Dumps data or schemas from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := loadLinkedProject(fsys); err != nil {
