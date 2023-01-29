@@ -16,7 +16,6 @@ set -euo pipefail
 #
 # TODO:
 #   - support pg_dumpall --roles-only
-#   - support pg_dump --data-only
 pg_dump \
     --schema-only \
     --quote-all-identifier \
