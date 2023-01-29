@@ -12,18 +12,26 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-//go:embed templates/dump_schema.sh
-var dumpSchemaScript string
+var (
+	//go:embed templates/dump_schema.sh
+	dumpSchemaScript string
+	//go:embed templates/dump_schema.sh
+	dumpDataScript string
+)
 
-func Run(ctx context.Context, path, username, password, database, host string, fsys afero.Fs) error {
+func Run(ctx context.Context, path, username, password, database, host string, dataOnly bool, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
+	script := dumpSchemaScript
+	if dataOnly {
+		script = dumpDataScript
+	}
 	out, err := utils.DockerRunOnce(ctx, utils.Pg15Image, []string{
 		"PGHOST=" + host,
 		"PGUSER=" + username,
 		"PGPASSWORD=" + password,
 		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
 		"DB_URL=" + database,
-	}, []string{"bash", "-c", dumpSchemaScript})
+	}, []string{"bash", "-c", script})
 	if err != nil {
 		return errors.New("Error running pg_dump on remote database: " + err.Error())
 	}
