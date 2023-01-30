@@ -96,9 +96,11 @@ var (
 		},
 	}
 
+	dataOnly bool
+
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
-		Short: "Dumps schemas from the remote database",
+		Short: "Dumps data or schemas from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := loadLinkedProject(fsys); err != nil {
@@ -106,7 +108,7 @@ var (
 			}
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, username, dbPassword, database, host, fsys)
+			return dump.Run(ctx, file, username, dbPassword, database, host, dataOnly, fsys)
 		},
 	}
 
@@ -222,7 +224,8 @@ func init() {
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
-	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped schema.")
+	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
+	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
 	dbCmd.AddCommand(dbDumpCmd)
