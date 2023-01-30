@@ -120,6 +120,8 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 			},
 			container.HostConfig{
 				Binds: binds,
+				// Allows containerized functions on Linux to reach host OS
+				ExtraHosts: []string{"host.docker.internal:host-gateway"},
 			},
 			utils.DenoRelayId,
 		); err != nil {
