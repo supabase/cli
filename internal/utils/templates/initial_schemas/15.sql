@@ -448,19 +448,15 @@ BEGIN
 
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SECURITY DEFINER;
 
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SET search_path = net;
 
     REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
     REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
 
     GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
     GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
-    GRANT EXECUTE ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
   END IF;
 END;
 $$;
@@ -639,10 +635,10 @@ DECLARE
 _parts text[];
 _filename text;
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	select _parts[array_length(_parts,1)] into _filename;
-	-- @todo return the last part instead of 2
-	return split_part(_filename, '.', 2);
+    select string_to_array(name, '/') into _parts;
+    select _parts[array_length(_parts,1)] into _filename;
+    -- @todo return the last part instead of 2
+    return split_part(_filename, '.', 2);
 END
 $$;
 
@@ -659,8 +655,8 @@ CREATE OR REPLACE FUNCTION storage.filename(name text) RETURNS text
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[array_length(_parts,1)];
+    select string_to_array(name, '/') into _parts;
+    return _parts[array_length(_parts,1)];
 END
 $$;
 
@@ -677,8 +673,8 @@ CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
 DECLARE
 _parts text[];
 BEGIN
-	select string_to_array(name, '/') into _parts;
-	return _parts[1:array_length(_parts,1)-1];
+    select string_to_array(name, '/') into _parts;
+    return _parts[1:array_length(_parts,1)-1];
 END
 $$;
 
@@ -835,7 +831,10 @@ CREATE TABLE IF NOT EXISTS _realtime.tenants (
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL,
     max_events_per_second integer DEFAULT 100 NOT NULL,
-    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying,
+    max_bytes_per_second integer DEFAULT 100000 NOT NULL,
+    max_channels_per_client integer DEFAULT 100 NOT NULL,
+    max_joins_per_second integer DEFAULT 500 NOT NULL
 );
 
 
@@ -1313,24 +1312,25 @@ INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, insert
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-06 05:02:45');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-06 05:02:45');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-30 04:09:10');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-01-30 04:09:10');
 
 
 --
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('1b4a2e9b-e69c-40dc-ba5b-337c0eed2c88', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-05 05:01:34', '2023-01-05 05:01:34', 100, 'postgres_cdc_rls');
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('bb4a1909-7f48-42b5-9814-68ebb2d065b9', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-01-30 04:09:12', '2023-01-30 04:09:12', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -2587,6 +2587,16 @@ GRANT ALL ON FUNCTION graphql.increment_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
+
+
+--
+-- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
+--
+
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
+-- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
 
 
 --
