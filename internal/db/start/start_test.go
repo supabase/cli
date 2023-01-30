@@ -109,6 +109,11 @@ func TestInitDatabase(t *testing.T) {
 }
 
 func TestStartDatabase(t *testing.T) {
+	t.Cleanup(func() {
+		utils.Containers = []string{}
+		utils.Volumes = []string{}
+	})
+
 	t.Run("initialise main branch", func(t *testing.T) {
 		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
