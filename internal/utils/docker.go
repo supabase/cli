@@ -88,12 +88,13 @@ func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader,
 	return resp.Reader, nil
 }
 
+// Used by unit tests
 // NOTE: There's a risk of data race with reads & writes from `DockerRun` and
 // reads from `DockerRemoveAll`, but since they're expected to be run on the
 // same thread, this is fine.
 var (
-	containers []string
-	volumes    []string
+	Containers []string
+	Volumes    []string
 )
 
 func WaitAll(containers []string, exec func(container string)) {
@@ -109,13 +110,13 @@ func WaitAll(containers []string, exec func(container string)) {
 }
 
 func DockerRemoveAll(ctx context.Context) {
-	WaitAll(containers, func(container string) {
+	WaitAll(Containers, func(container string) {
 		_ = Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		})
 	})
-	WaitAll(volumes, func(name string) {
+	WaitAll(Volumes, func(name string) {
 		_ = Docker.VolumeRemove(ctx, name, true)
 	})
 	_ = Docker.NetworkRemove(ctx, NetId)
@@ -270,7 +271,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		return "", err
 	}
 	// Track container id for cleanup
-	containers = append(containers, resp.ID)
+	Containers = append(Containers, resp.ID)
 	for _, bind := range hostConfig.Binds {
 		spec, err := loader.ParseVolume(bind)
 		if err != nil {
@@ -278,7 +279,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		}
 		// Track named volumes for cleanup
 		if len(spec.Source) > 0 && spec.Type == string(mount.TypeVolume) {
-			volumes = append(volumes, spec.Source)
+			Volumes = append(Volumes, spec.Source)
 		}
 	}
 	// Run container in background
