@@ -41,10 +41,6 @@ func TestStopCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		// Check branches removed
-		exists, err := afero.Exists(fsys, utils.CurrBranchPath)
-		assert.NoError(t, err)
-		assert.False(t, exists)
 	})
 
 	t.Run("throws error on invalid config", func(t *testing.T) {

@@ -81,16 +81,33 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	exists := !client.IsErrNotFound(err)
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil || exists {
+	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
+	}
+	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
+		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+	}
+	if !client.IsErrNotFound(err) {
+		return initCurrentBranch(fsys)
 	}
 	return initDatabase(ctx, fsys, w, options...)
 }
 
+func initCurrentBranch(fsys afero.Fs) error {
+	// Create _current_branch file to avoid breaking db branch commands
+	if _, err := fsys.Stat(utils.CurrBranchPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	branchDir := filepath.Dir(utils.CurrBranchPath)
+	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
+}
+
 func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
-		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+	if err := initCurrentBranch(fsys); err != nil {
+		return err
 	}
 	// Initialise globals
 	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
@@ -101,81 +118,6 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
-
-	fmt.Fprintln(w, "Restoring branches...")
-
-	// Create branch dir if missing
-	branchDir := filepath.Dir(utils.CurrBranchPath)
-	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
-		return err
-	}
-	branches, err := afero.ReadDir(fsys, branchDir)
-	if err != nil {
-		return err
-	}
-	// Ensure `_current_branch` file exists.
-	currBranch, err := utils.GetCurrentBranchFS(fsys)
-	if errors.Is(err, os.ErrNotExist) {
-		currBranch = "main"
-		if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(currBranch), 0644); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	// Restore every branch dump
-	for _, branch := range branches {
-		if !branch.IsDir() {
-			continue
-		}
-		dumpPath := filepath.Join(branchDir, branch.Name(), "dump.sql")
-		content, err := fsys.Open(dumpPath)
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, "Error restoring "+utils.Aqua(branch.Name())+": branch was not dumped.")
-			if err := fsys.RemoveAll(filepath.Dir(dumpPath)); err != nil {
-				return err
-			}
-			continue
-		} else if err != nil {
-			return err
-		}
-		defer content.Close()
-		// Restore current branch to postgres directly
-		if branch.Name() == currBranch {
-			if err := diff.BatchExecDDL(ctx, conn, content); err != nil {
-				return err
-			}
-			continue
-		}
-		// TODO: restoring non-main branch may break extensions that require postgres
-		createDb := `CREATE DATABASE "` + branch.Name() + `";`
-		if _, err := conn.Exec(ctx, createDb); err != nil {
-			return err
-		}
-		// Connect to branch database
-		branchConn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, branch.Name())
-		if err != nil {
-			return err
-		}
-		defer branchConn.Close(context.Background())
-		// Restore dump, reporting any error
-		if err := diff.BatchExecDDL(ctx, branchConn, content); err != nil {
-			return err
-		}
-	}
-	// Branch is already initialised
-	if _, err = fsys.Stat(filepath.Join(branchDir, currBranch)); !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
 	fmt.Fprintln(w, "Setting up initial schema...")
-	if err := reset.InitialiseDatabase(ctx, conn, fsys); err != nil {
-		return err
-	}
-
-	// Ensure `main` branch exists.
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return err
-	}
-	return fsys.Mkdir(filepath.Join(branchDir, currBranch), 0755)
+	return reset.InitialiseDatabase(ctx, conn, fsys)
 }
