@@ -45,11 +45,6 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 		}
 	}
 
-	// Reload PostgREST schema cache.
-	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		fmt.Fprintln(os.Stderr, "Error reloading PostgREST schema cache:", err)
-	}
-
 	branch, err := utils.GetCurrentBranchFS(fsys)
 	if err != nil {
 		// Assume we are on main branch
@@ -149,6 +144,10 @@ func RestartDatabase(ctx context.Context) {
 	// TODO: update storage-api to handle postgres restarts
 	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
+	}
+	// Reload PostgREST schema cache.
+	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
+		fmt.Fprintln(os.Stderr, "Error reloading PostgREST schema cache:", err)
 	}
 }
 

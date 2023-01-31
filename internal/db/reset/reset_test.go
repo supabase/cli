@@ -22,8 +22,6 @@ import (
 )
 
 func TestResetCommand(t *testing.T) {
-	const version = "1.41"
-
 	t.Run("throws error on missing config", func(t *testing.T) {
 		err := Run(context.Background(), afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
@@ -34,15 +32,10 @@ func TestResetCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := Run(context.Background(), fsys)
@@ -58,13 +51,8 @@ func TestResetCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Setup mock postgres
@@ -261,23 +249,17 @@ func TestRecreateDatabase(t *testing.T) {
 }
 
 func TestRestartDatabase(t *testing.T) {
-	const version = "1.41"
-
-	t.Run("restarts storage api", func(t *testing.T) {
+	t.Run("restarts affected services", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+		// Restarts storage api
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers/" + utils.DbId + "/json").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
@@ -285,9 +267,14 @@ func TestRestartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
+		// Restarts postgREST
+		utils.RestId = "test-rest"
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RestId + "/kill").
+			Reply(http.StatusOK)
 		utils.StorageId = "test-storage"
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.StorageId + "/restart").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		RestartDatabase(context.Background())
@@ -299,15 +286,10 @@ func TestRestartDatabase(t *testing.T) {
 		utils.DbId = "test-reset"
 		healthTimeout = 0 * time.Second
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
 		// Run test
 		RestartDatabase(context.Background())
