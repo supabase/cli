@@ -95,18 +95,23 @@ var (
 	}
 
 	envFilePath string
+	serveAll    bool
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
 		Short: "Serve a Function locally",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return serve.Run(ctx, args[0], envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+			slug := ""
+			if len(args) > 1 {
+				slug = args[0]
+			}
+			return serve.Run(ctx, slug, envFilePath, noVerifyJWT, importMapPath, serveAll, afero.NewOsFs())
 		},
 	}
 )
@@ -120,6 +125,7 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
+	functionsServeCmd.Flags().BoolVar(&serveAll, "all", false, "Serve all functions (caution: Experimental feature)")
 	functionsDownloadCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)

@@ -28,15 +28,16 @@ const (
 	Pg14Image = "supabase/postgres:14.1.0.89"
 	Pg15Image = "supabase/postgres:15.1.0.33"
 	// Append to ServiceImages when adding new dependencies below
-	KongImage       = "library/kong:2.8.1"
-	InbucketImage   = "inbucket/inbucket:3.0.3"
-	PostgrestImage  = "postgrest/postgrest:v10.1.1.20221215"
-	DifferImage     = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage      = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage     = "supabase/postgres-meta:v0.60.3"
-	StudioImage     = "supabase/studio:20230127-6bfd87b"
-	DenoRelayImage  = "supabase/deno-relay:v1.5.0"
-	ImageProxyImage = "darthsim/imgproxy:v3.8.0"
+	KongImage        = "library/kong:2.8.1"
+	InbucketImage    = "inbucket/inbucket:3.0.3"
+	PostgrestImage   = "postgrest/postgrest:v10.1.1.20221215"
+	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
+	MigraImage       = "djrobstep/migra:3.0.1621480950"
+	PgmetaImage      = "supabase/postgres-meta:v0.60.3"
+	StudioImage      = "supabase/studio:20230127-6bfd87b"
+	DenoRelayImage   = "supabase/deno-relay:v1.5.0"
+	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
+	EdgeRuntimeImage = "supabase/edge-runtime:latest"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.40.1"
@@ -320,6 +321,18 @@ func GetDenoPath() (string, error) {
 	}
 	denoPath := filepath.Join(home, ".supabase", denoBinName)
 	return denoPath, nil
+}
+
+func GetDenoCachePath() (string, error) {
+	if len(DenoPathOverride) > 0 {
+		return DenoPathOverride, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	cachePath := filepath.Join(home, ".supabase", "deno_cache")
+	return cachePath, nil
 }
 
 func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
