@@ -201,17 +201,21 @@ func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	}
 	// Apply migrations
 	for _, filename := range migrations {
-		fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(filename)+"...")
-		sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
-		if err != nil {
-			return err
-		}
-		defer sql.Close()
-		if err := BatchExecDDL(ctx, conn, sql); err != nil {
+		if err := migrateUp(ctx, conn, filename, fsys); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func migrateUp(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
+	fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(filename)+"...")
+	sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
+	if err != nil {
+		return err
+	}
+	defer sql.Close()
+	return BatchExecDDL(ctx, conn, sql)
 }
 
 func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
