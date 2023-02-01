@@ -108,7 +108,7 @@ var (
 				noVerifyJWT = nil
 			}
 			slug := ""
-			if len(args) > 1 {
+			if len(args) > 0 {
 				slug = args[0]
 			}
 			return serve.Run(ctx, slug, envFilePath, noVerifyJWT, importMapPath, serveAll, afero.NewOsFs())
