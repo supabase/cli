@@ -295,6 +295,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			append(env, userEnv...),
 			[]string{"start", "--dir", relayFuncDir, "-p", "8081"},
 			binds,
+			utils.DenoRelayId,
 			os.Stdout,
 			os.Stderr,
 		); err != nil {
