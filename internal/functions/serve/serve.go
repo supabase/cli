@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -279,69 +278,28 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			return err
 		}
 
-		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"}
+		binds := []string{
+			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z",
+			utils.DenoRelayId + ":/root/.cache/deno:rw,z",
+		}
 		// If a import map path is explcitly provided, mount it as a separate file
 		if importMapPath != "" {
 			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
 		}
 
-		// bind deno cache volume
-		binds = append(binds, utils.DenoRelayId+":/root/.cache/deno:rw,z")
-
-		containerID, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image:        utils.EdgeRuntimeImage,
-				Env:          append(env, userEnv...),
-				Cmd:          []string{"start", "--dir", relayFuncDir, "-p", "8081"},
-				OpenStdin:    true,
-				AttachStdin:  true,
-				AttachStderr: true,
-				AttachStdout: true,
-				Tty:          true,
-			},
-			container.HostConfig{
-				Binds: binds,
-			},
-			utils.DenoRelayId,
-		)
-		if err != nil {
-			return err
-		}
-
 		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
 
-		// TODO: pipe the OS signals to the container
-		resp, err := utils.Docker.ContainerAttach(ctx, containerID, types.ContainerAttachOptions{
-			Stream: true,
-			Stdin:  true,
-			Stdout: true,
-			Stderr: true,
-			Logs:   true,
-		})
-		if err != nil {
+		if err := utils.DockerRunOnceWithStream(
+			ctx,
+			utils.EdgeRuntimeImage,
+			append(env, userEnv...),
+			[]string{"start", "--dir", relayFuncDir, "-p", "8081"},
+			binds,
+			os.Stdout,
+			os.Stderr,
+		); err != nil {
 			return err
 		}
-
-		go func() {
-			_, _ = io.Copy(os.Stdout, resp.Reader)
-		}()
-
-		statusCh, errCh := utils.Docker.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return err
-			}
-		case <-statusCh:
-		}
-
-		go func() {
-			<-ctx.Done()
-			if ctx.Err() != nil {
-				utils.DockerRemove(utils.DenoRelayId)
-			}
-		}()
 	}
 
 	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
