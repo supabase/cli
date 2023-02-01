@@ -285,12 +285,8 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
 		}
 
-		// bind deno cache directory
-		cachePath, err := utils.GetDenoCachePath()
-		if err != nil {
-			return err
-		}
-		binds = append(binds, cachePath+":/root/.cache/deno:rw,z")
+		// bind deno cache volume
+		binds = append(binds, utils.DenoRelayId+":/root/.cache/deno:rw,z")
 
 		containerID, err := utils.DockerStart(
 			ctx,

@@ -323,18 +323,6 @@ func GetDenoPath() (string, error) {
 	return denoPath, nil
 }
 
-func GetDenoCachePath() (string, error) {
-	if len(DenoPathOverride) > 0 {
-		return DenoPathOverride, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	cachePath := filepath.Join(home, ".supabase", "deno_cache")
-	return cachePath, nil
-}
-
 func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	denoPath, err := GetDenoPath()
 	if err != nil {
