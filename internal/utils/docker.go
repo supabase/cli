@@ -302,11 +302,11 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerRunOnceWithStream(ctx, image, env, cmd, &out, stderr)
+	err := DockerRunOnceWithStream(ctx, image, env, cmd, nil, &out, stderr)
 	return out.String(), err
 }
 
-func DockerRunOnceWithStream(ctx context.Context, image string, env []string, cmd []string, stdout, stderr io.Writer) error {
+func DockerRunOnceWithStream(ctx context.Context, image string, env, cmd, binds []string, stdout, stderr io.Writer) error {
 	// Cannot rely on docker's auto remove because
 	//   1. We must inspect exit code after container stops
 	//   2. Context cancellation may happen after start
@@ -314,7 +314,11 @@ func DockerRunOnceWithStream(ctx context.Context, image string, env []string, cm
 		Image: image,
 		Env:   env,
 		Cmd:   cmd,
-	}, container.HostConfig{}, "")
+	}, container.HostConfig{
+		Binds: binds,
+		// Allows containerized functions on Linux to reach host OS
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+	}, "")
 	if err != nil {
 		return err
 	}

@@ -40,7 +40,11 @@ func ParseEnvFile(envFilePath string) ([]string, error) {
 	return env, nil
 }
 
-func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, serveAll bool, fsys afero.Fs) error {
+	if serveAll {
+		return runServeAll(ctx, envFilePath, noVerifyJWT, importMapPath, fsys)
+	}
+
 	// 1. Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -215,4 +219,90 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 
 	fmt.Println("Stopped serving " + utils.Bold(localFuncDir))
 	return nil
+}
+
+func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+	// 1. Sanity checks.
+	{
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+			return err
+		}
+		if envFilePath != "" {
+			if _, err := fsys.Stat(envFilePath); err != nil {
+				return fmt.Errorf("Failed to read env file: %w", err)
+			}
+		}
+		if importMapPath != "" {
+			// skip
+		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			importMapPath = utils.FallbackImportMapPath
+		}
+		if importMapPath != "" {
+			if _, err := fsys.Stat(importMapPath); err != nil {
+				return fmt.Errorf("Failed to read import map: %w", err)
+			}
+		}
+	}
+
+	// 2. Parse user defined env
+	userEnv, err := ParseEnvFile(envFilePath)
+	if err != nil {
+		return err
+	}
+
+	// 3. Start container
+	{
+		_ = utils.Docker.ContainerRemove(ctx, utils.DenoRelayId, types.ContainerRemoveOptions{
+			RemoveVolumes: true,
+			Force:         true,
+		})
+
+		env := []string{
+			"JWT_SECRET=" + utils.JWTSecret,
+			"SUPABASE_URL=http://" + utils.KongId + ":8000",
+			"SUPABASE_ANON_KEY=" + utils.AnonKey,
+			"SUPABASE_SERVICE_ROLE_KEY=" + utils.ServiceRoleKey,
+			"SUPABASE_DB_URL=postgresql://postgres:postgres@localhost:" + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + "/postgres",
+		}
+		verifyJWTEnv := "VERIFY_JWT=true"
+		if noVerifyJWT != nil {
+			verifyJWTEnv = "VERIFY_JWT=false"
+		}
+		env = append(env, verifyJWTEnv)
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+
+		binds := []string{
+			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z",
+			utils.DenoRelayId + ":/root/.cache/deno:rw,z",
+		}
+		// If a import map path is explcitly provided, mount it as a separate file
+		if importMapPath != "" {
+			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
+		}
+
+		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
+
+		if err := utils.DockerRunOnceWithStream(
+			ctx,
+			utils.EdgeRuntimeImage,
+			append(env, userEnv...),
+			[]string{"start", "--dir", relayFuncDir, "-p", "8081"},
+			binds,
+			os.Stdout,
+			os.Stderr,
+		); err != nil {
+			return err
+		}
+	}
+
+	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+	return nil
+
 }
