@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -289,11 +290,15 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 
 		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
 
+		verboseFlag := ""
+		if viper.GetBool("DEBUG") {
+			verboseFlag = "--verbose"
+		}
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
 			utils.EdgeRuntimeImage,
 			append(env, userEnv...),
-			[]string{"start", "--dir", relayFuncDir, "-p", "8081"},
+			[]string{"start", "--dir", relayFuncDir, "-p", "8081", verboseFlag},
 			binds,
 			utils.DenoRelayId,
 			os.Stdout,
