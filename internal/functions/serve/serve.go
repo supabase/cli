@@ -290,15 +290,15 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 
 		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
 
-		verboseFlag := ""
+		cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
 		if viper.GetBool("DEBUG") {
-			verboseFlag = "--verbose"
+			cmd = append(cmd, "--verbose")
 		}
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
 			utils.EdgeRuntimeImage,
 			append(env, userEnv...),
-			[]string{"start", "--dir", relayFuncDir, "-p", "8081", verboseFlag},
+			cmd,
 			binds,
 			utils.DenoRelayId,
 			os.Stdout,
