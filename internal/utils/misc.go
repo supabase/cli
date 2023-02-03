@@ -37,7 +37,7 @@ const (
 	StudioImage      = "supabase/studio:20230127-6bfd87b"
 	DenoRelayImage   = "supabase/deno-relay:v1.5.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.0.8"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.0.9"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.40.1"
