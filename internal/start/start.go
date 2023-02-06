@@ -175,6 +175,8 @@ EOF
 
 			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 			"GOTRUE_SMS_AUTOCONFIRM=true",
+
+			"GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=false",
 		}
 
 		for name, config := range utils.Config.Auth.External {
