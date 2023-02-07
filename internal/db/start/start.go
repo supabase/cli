@@ -45,6 +45,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		Env: []string{
 			"POSTGRES_PASSWORD=postgres",
 			"POSTGRES_HOST=/var/run/postgresql",
+			"LC_ALL=C.UTF-8",
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
