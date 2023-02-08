@@ -122,11 +122,11 @@ require (
 	github.com/yuin/goldmark v1.5.2 // indirect
 	github.com/yuin/goldmark-emoji v1.0.1 // indirect
 	golang.org/x/crypto v0.1.0 // indirect
-	golang.org/x/net v0.4.0 // indirect
+	golang.org/x/net v0.5.0 // indirect
 	golang.org/x/sys v0.5.0 // indirect
 	golang.org/x/term v0.5.0
-	golang.org/x/text v0.5.0 // indirect
-	google.golang.org/grpc v1.52.3
+	golang.org/x/text v0.6.0 // indirect
+	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
