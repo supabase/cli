@@ -46,8 +46,8 @@ func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, nil
 }
 
-func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, serveAll bool, fsys afero.Fs) error {
-	if serveAll {
+func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+	if len(slug) == 0 {
 		return runServeAll(ctx, envFilePath, noVerifyJWT, importMapPath, fsys)
 	}
 
