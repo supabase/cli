@@ -60,7 +60,7 @@ func TestServeCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), containerId)
-		apitest.MockDockerLogs(utils.Docker, containerId, "success")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 		// Run test
 		noVerifyJWT := true
 		err := Run(context.Background(), "", ".env", &noVerifyJWT, "", fsys)
