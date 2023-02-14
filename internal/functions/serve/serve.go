@@ -117,7 +117,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 			return err
 		}
 
-		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z"}
+		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z"}
 		// If a import map path is explcitly provided, mount it as a separate file
 		if importMapPath != "" {
 			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
@@ -282,7 +282,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 		}
 
 		binds := []string{
-			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":ro,z",
+			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z",
 			utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 		}
 		// If a import map path is explcitly provided, mount it as a separate file
