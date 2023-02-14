@@ -1,14 +1,28 @@
 package utils
 
 import (
+	_ "embed"
 	"testing"
+	"text/template"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
 
+var (
+	//go:embed templates/init_config.test.toml
+	testInitConfigEmbed    string
+	testInitConfigTemplate = template.Must(template.New("initConfig.test").Parse(testInitConfigEmbed))
+)
+
 func TestConfigParsing(t *testing.T) {
+	// Reset global variable
+	copy := initConfigTemplate
+	t.Cleanup(func() {
+		initConfigTemplate = copy
+	})
+
 	t.Run("classic config file", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, false))
@@ -16,20 +30,25 @@ func TestConfigParsing(t *testing.T) {
 	})
 
 	t.Run("config file with environment variables", func(t *testing.T) {
+		initConfigTemplate = testInitConfigTemplate
+		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, true))
-
+		// Run test
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
 		assert.NoError(t, LoadConfigFS(fsys))
-
+		// Check error
 		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)
 		assert.Equal(t, "this is cool", Config.Auth.External["azure"].Secret)
 	})
 
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {
+		initConfigTemplate = testInitConfigTemplate
+		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, true))
+		// Run test
 		assert.Error(t, LoadConfigFS(fsys))
 	})
 }

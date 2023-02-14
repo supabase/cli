@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -60,12 +59,8 @@ var (
 	}
 
 	//go:embed templates/init_config.toml
-	initConfigEmbed       string
-	initConfigTemplate, _ = template.New("initConfig").Parse(initConfigEmbed)
-
-	//go:embed templates/init_config.test.toml
-	testInitConfigEmbed       string
-	testInitConfigTemplate, _ = template.New("initConfig.test").Parse(testInitConfigEmbed)
+	initConfigEmbed    string
+	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -352,38 +347,32 @@ func LoadConfigFS(fsys afero.Fs) error {
 	return nil
 }
 
-func WriteConfig(fsys afero.Fs, test bool) error {
-	// Using current directory name as project id
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
+func InitConfig(projectId string, fsys afero.Fs) error {
+	// Defaults to current directory name as project id
+	if len(projectId) == 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		projectId = filepath.Base(cwd)
 	}
-	dir := filepath.Base(cwd)
-
-	var initConfigBuf bytes.Buffer
-	var tmpl *template.Template
-	if test {
-		tmpl = testInitConfigTemplate
-	} else {
-		tmpl = initConfigTemplate
-	}
-
-	if err := tmpl.Execute(
-		&initConfigBuf,
-		struct{ ProjectId string }{ProjectId: dir},
-	); err != nil {
-		return err
-	}
-
+	// Create config file
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-
-	if err := afero.WriteFile(fsys, ConfigPath, initConfigBuf.Bytes(), 0644); err != nil {
+	f, err := fsys.OpenFile(ConfigPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
 		return err
 	}
+	defer f.Close()
+	// Update from template
+	return initConfigTemplate.Execute(f, struct{ ProjectId string }{
+		ProjectId: projectId,
+	})
+}
 
-	return nil
+func WriteConfig(fsys afero.Fs, _test bool) error {
+	return InitConfig("", fsys)
 }
 
 func removeDuplicates(slice []string) (result []string) {
