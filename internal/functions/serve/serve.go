@@ -23,12 +23,17 @@ const (
 	customDockerImportMapPath = "/home/deno/import_map.json"
 )
 
-func ParseEnvFile(envFilePath string) ([]string, error) {
+func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	env := []string{}
 	if len(envFilePath) == 0 {
 		return env, nil
 	}
-	envMap, err := godotenv.Read(envFilePath)
+	f, err := fsys.Open(envFilePath)
+	if err != nil {
+		return env, err
+	}
+	defer f.Close()
+	envMap, err := godotenv.Parse(f)
 	if err != nil {
 		return env, err
 	}
@@ -81,7 +86,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 	}
 
 	// 2. Parse user defined env
-	userEnv, err := ParseEnvFile(envFilePath)
+	userEnv, err := ParseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
@@ -236,20 +241,17 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 				return fmt.Errorf("Failed to read env file: %w", err)
 			}
 		}
-		if importMapPath != "" {
-			// skip
-		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
-			importMapPath = utils.FallbackImportMapPath
-		}
-		if importMapPath != "" {
-			if _, err := fsys.Stat(importMapPath); err != nil {
-				return fmt.Errorf("Failed to read import map: %w", err)
+		if importMapPath == "" {
+			if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+				importMapPath = utils.FallbackImportMapPath
 			}
+		} else if _, err := fsys.Stat(importMapPath); err != nil {
+			return fmt.Errorf("Failed to read import map: %w", err)
 		}
 	}
 
 	// 2. Parse user defined env
-	userEnv, err := ParseEnvFile(envFilePath)
+	userEnv, err := ParseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
