@@ -29,7 +29,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
@@ -94,7 +94,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
@@ -119,7 +119,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.DeleteSecretsJSONBody{"my-secret"}).

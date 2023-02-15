@@ -57,10 +57,10 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -85,10 +85,10 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -114,11 +114,11 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -143,11 +143,11 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -281,10 +281,10 @@ verify_jwt = false
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
 				body, err := io.ReadAll(req.Body)
@@ -331,10 +331,10 @@ verify_jwt = false
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
 				body, err := io.ReadAll(req.Body)
@@ -375,10 +375,10 @@ verify_jwt = false
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/"+project+"/functions").
 			MatchParam("import_map", "true").
 			Reply(http.StatusCreated).
@@ -402,7 +402,7 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -414,7 +414,7 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
@@ -426,10 +426,10 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on create failure", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -441,10 +441,10 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on create unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
@@ -456,11 +456,11 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on update failure", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -472,11 +472,11 @@ func TestDeployFunction(t *testing.T) {
 	t.Run("throws error on update unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test

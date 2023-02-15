@@ -27,11 +27,11 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusOK)
 		// Run test
@@ -81,7 +81,7 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -101,7 +101,7 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
@@ -121,7 +121,7 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusNotFound)
 		// Run test
@@ -141,11 +141,11 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
@@ -165,11 +165,11 @@ func TestDeleteCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			ReplyError(errors.New("network error"))
 		// Run test
