@@ -199,6 +199,12 @@ func GetSupabase() *supabase.ClientWithResponses {
 	return apiClient
 }
 
+const (
+	DefaultApiHost = "https://api.supabase.com"
+	// DEPRECATED
+	DeprecatedApiHost = "https://api.supabase.io"
+)
+
 var RegionMap = map[string]string{
 	"ap-northeast-1": "Northeast Asia (Tokyo)",
 	"ap-northeast-2": "Northeast Asia (Seoul)",
@@ -218,14 +224,14 @@ var RegionMap = map[string]string{
 func GetSupabaseAPIHost() string {
 	apiHost := viper.GetString("INTERNAL_API_HOST")
 	if apiHost == "" {
-		apiHost = "https://api.supabase.io"
+		apiHost = DefaultApiHost
 	}
 	return apiHost
 }
 
 func GetSupabaseDashboardURL() string {
 	switch GetSupabaseAPIHost() {
-	case "https://api.supabase.com", "https://api.supabase.io":
+	case DefaultApiHost, DeprecatedApiHost:
 		return "https://app.supabase.com"
 	case "https://api.supabase.green":
 		return "https://app.supabase.green"
@@ -237,7 +243,7 @@ func GetSupabaseDashboardURL() string {
 func GetSupabaseDbHost(projectRef string) string {
 	// TODO: query projects api for db_host
 	switch GetSupabaseAPIHost() {
-	case "https://api.supabase.com", "https://api.supabase.io":
+	case DefaultApiHost, DeprecatedApiHost:
 		return fmt.Sprintf("db.%s.supabase.co", projectRef)
 	case "https://api.supabase.green":
 		return fmt.Sprintf("db.%s.supabase.red", projectRef)
@@ -248,7 +254,7 @@ func GetSupabaseDbHost(projectRef string) string {
 
 func GetSupabaseHost(projectRef string) string {
 	switch GetSupabaseAPIHost() {
-	case "https://api.supabase.com", "https://api.supabase.io":
+	case DefaultApiHost, DeprecatedApiHost:
 		return fmt.Sprintf("%s.supabase.co", projectRef)
 	case "https://api.supabase.green":
 		return fmt.Sprintf("%s.supabase.red", projectRef)

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
@@ -29,7 +30,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects").
 			MatchType("json").
 			JSON(params).
@@ -59,7 +60,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects").
 			MatchType("json").
 			JSON(params).
@@ -78,7 +79,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects").
 			MatchType("json").
 			JSON(params).
@@ -98,7 +99,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects").
 			MatchType("json").
 			JSON(params).

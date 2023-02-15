@@ -29,7 +29,7 @@ func TestSecretListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(200).
 			JSON(api.CreateSecretsJSONBody{
@@ -82,7 +82,7 @@ func TestSecretListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -105,7 +105,7 @@ func TestSecretListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
@@ -129,7 +129,7 @@ func TestSecretListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(200).
 			JSON(map[string]string{})

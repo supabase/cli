@@ -33,7 +33,7 @@ func TestSecretSetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.CreateSecretsJSONBody{dummy}).
@@ -64,7 +64,7 @@ func TestSecretSetCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.CreateSecretsJSONBody{dummy}).
@@ -145,7 +145,7 @@ func TestSecretSetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.CreateSecretsJSONBody{dummy}).
@@ -170,7 +170,7 @@ func TestSecretSetCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.CreateSecretsJSONBody{dummy}).

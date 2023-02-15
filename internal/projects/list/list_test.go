@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
 )
@@ -21,7 +22,7 @@ func TestProjectListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
 			JSON([]api.ProjectResponse{
@@ -51,7 +52,7 @@ func TestProjectListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -68,7 +69,7 @@ func TestProjectListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
@@ -86,7 +87,7 @@ func TestProjectListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
 			JSON(map[string]string{})

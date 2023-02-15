@@ -120,7 +120,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply("CREATE TABLE")
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
@@ -140,7 +140,7 @@ func TestLinkCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -154,7 +154,7 @@ func TestLinkCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
@@ -173,7 +173,7 @@ func TestLinkCommand(t *testing.T) {
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
@@ -205,7 +205,7 @@ func TestLinkPostgrest(t *testing.T) {
 	t.Run("ignores matching config", func(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
@@ -220,7 +220,7 @@ func TestLinkPostgrest(t *testing.T) {
 	t.Run("updates api on newer config", func(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{
@@ -244,7 +244,7 @@ func TestLinkPostgrest(t *testing.T) {
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -257,7 +257,7 @@ func TestLinkPostgrest(t *testing.T) {
 	t.Run("throws error on server unavailable", func(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})

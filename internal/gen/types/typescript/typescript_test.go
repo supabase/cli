@@ -92,7 +92,7 @@ func TestGenLinkedCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
@@ -137,7 +137,7 @@ func TestGenLinkedCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errors.New("network failure"))
 		// Run test
@@ -159,7 +159,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
@@ -188,7 +188,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		gock.New("https://api.supabase.io").
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errors.New("network failure"))
 		// Run test
