@@ -57,7 +57,7 @@ func (suite *SecretsTestSuite) TestList() {
 	require.Contains(suite.T(), suite.headers, http.Header{
 		"Authorization":   []string{fmt.Sprintf("Bearer %s", supabase.AccessToken)},
 		"Accept-Encoding": []string{"gzip"},
-		"User-Agent":      []string{"Go-http-client/1.1"},
+		"User-Agent":      []string{"SupabaseCLI/"},
 	})
 
 	contents, err := os.ReadFile(tmpfile.Name())

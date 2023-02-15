@@ -34,13 +34,10 @@ func IsExperimental(cmd *cobra.Command) bool {
 }
 
 var (
-	// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
-	version string
-
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
-		Short:   "Supabase CLI " + version,
-		Version: version,
+		Short:   "Supabase CLI " + utils.Version,
+		Version: utils.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if IsExperimental(cmd) && !viper.GetBool("experimental") {
 				return errors.New("must set the --experimental flag to run this command")

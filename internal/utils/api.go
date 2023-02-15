@@ -191,6 +191,10 @@ func GetSupabase() *supabase.ClientWithResponses {
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
 			supabase.WithRequestEditorFn(provider.Intercept),
+			supabase.WithRequestEditorFn(func(ctx context.Context, req *http.Request) error {
+				req.Header.Set("User-Agent", "SupabaseCLI/"+Version)
+				return nil
+			}),
 		)
 		if err != nil {
 			log.Fatalln(err)

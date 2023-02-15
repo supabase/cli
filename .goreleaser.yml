@@ -6,7 +6,7 @@ builds:
   - id: supabase
     binary: supabase
     ldflags:
-      - -X github.com/supabase/cli/cmd.version={{.Version}}
+      - -X github.com/supabase/cli/internal/utils.Version={{.Version}}
     targets:
       - darwin_amd64
       - darwin_arm64
