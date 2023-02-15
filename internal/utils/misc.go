@@ -23,6 +23,9 @@ import (
 	"github.com/supabase/cli/internal/utils/credentials"
 )
 
+// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+var Version string
+
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
