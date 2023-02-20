@@ -285,14 +285,17 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z",
 			utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 		}
-		// If a import map path is explcitly provided, mount it as a separate file
+		dockerImportMapPath := relayFuncDir + "/import_map.json"
 		if importMapPath != "" {
-			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
+			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
 		}
 
 		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
 
 		cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
+		if importMapPath != "" {
+			cmd = append(cmd, "--import-map", dockerImportMapPath)
+		}
 		if viper.GetBool("DEBUG") {
 			cmd = append(cmd, "--verbose")
 		}
