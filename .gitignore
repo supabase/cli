@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+/cli
 
 # Test binary, built with `go test -c`
 *.test
@@ -20,3 +21,4 @@
 # NPM
 node_modules
 package-lock.json
+
