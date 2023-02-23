@@ -38,16 +38,16 @@ const (
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.60.7"
 	StudioImage      = "supabase/studio:20230216-e731b77"
-	DenoRelayImage   = "supabase/deno-relay:v1.5.0"
+	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.0.20"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.40.1"
 	RealtimeImage = "supabase/realtime:v2.5.1"
 	StorageImage  = "supabase/storage-api:v0.26.1"
 	// Should be kept in-sync with DenoRelayImage
-	DenoVersion = "1.28.0"
+	DenoVersion = "1.30.3"
 )
 
 var ServiceImages = []string{
