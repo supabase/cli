@@ -135,6 +135,23 @@ var (
 		"supabase_functions",
 		"supabase_migrations",
 	}, SystemSchemas...)
+	ReservedRoles = []string{
+		"anon",
+		"authenticated",
+		"authenticator",
+		"dashboard_user",
+		"pgbouncer",
+		"pgsodium_keyholder",
+		"pgsodium_keyiduser",
+		"pgsodium_keymaker",
+		"postgres",
+		"service_role",
+		"supabase_admin",
+		"supabase_auth_admin",
+		"supabase_functions_admin",
+		"supabase_replication_admin",
+		"supabase_storage_admin",
+	}
 
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
