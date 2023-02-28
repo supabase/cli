@@ -16,7 +16,7 @@ import (
 )
 
 func TestSecretSetCommand(t *testing.T) {
-	dummy := api.CreateSecretBody{Name: "my-name", Value: "my-value"}
+	dummy := api.CreateSecretBody{Name: "my_name", Value: "my_value"}
 	dummyEnv := dummy.Name + "=" + dummy.Value
 
 	t.Run("Sets secret via cli args", func(t *testing.T) {
