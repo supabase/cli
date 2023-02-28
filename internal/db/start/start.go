@@ -119,6 +119,13 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
+	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
+		if err := diff.BatchExecDDL(ctx, conn, roles); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	fmt.Fprintln(w, "Setting up initial schema...")
 	return reset.InitialiseDatabase(ctx, conn, fsys)
 }

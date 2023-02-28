@@ -146,6 +146,7 @@ var (
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
+	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 )
 
 // Used by unit tests
