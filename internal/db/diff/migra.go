@@ -23,7 +23,7 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
-const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name = ANY($1) ORDER BY schema_name"
+const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
 
 var (
 	//go:embed templates/migra.sh
@@ -106,6 +106,9 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
+			// Exclude postgres temporary schemas
+			"pg_temp_%",
+			"pg_toast_temp_%",
 		}, utils.SystemSchemas...)
 	}
 	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)

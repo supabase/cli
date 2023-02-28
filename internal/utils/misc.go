@@ -114,8 +114,6 @@ var (
 		"information_schema",
 		"pg_catalog",
 		"pg_toast",
-		// "pg_temp_1",
-		// "pg_toast_temp_1",
 		// Owned by extensions
 		"cron",
 		"graphql",
