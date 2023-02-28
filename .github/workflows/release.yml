@@ -11,27 +11,29 @@ on:
 jobs:
   release:
     name: semantic-release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       new-release-published: ${{ steps.semantic-release.outputs.new_release_published }}
       new-release-version: ${{ steps.semantic-release.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v3
-
       - id: semantic-release
         uses: cycjimmy/semantic-release-action@v3
         with:
           semantic_version: 18
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   goreleaser:
     name: GoReleaser
     needs:
       - release
-    if: needs.release.outputs.new-release-published == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-20.04
+    if: needs.release.outputs.new-release-published == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
         with:
@@ -56,7 +58,31 @@ jobs:
         with:
           distribution: goreleaser
           version: ~> 1
-          args: release --rm-dist
+          args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+          BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
+          SCOOP_TOKEN: ${{ secrets.GH_PAT }}
+
+      - run: gh release edit v${{ needs.release.outputs.new-release-version }} --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish NPM
+    needs:
+      - release
+      - goreleaser
+    if: needs.release.outputs.new-release-published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "16.x"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm --git-tag-version=false version ${{ needs.release.outputs.new-release-version }}
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
