@@ -38,7 +38,7 @@ func TestServeCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "test-func", "", nil, "", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version http://localhost/v1.41/containers/supabase_deno_relay_serve/exec")
+		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

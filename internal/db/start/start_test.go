@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -128,7 +129,7 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound).
-			JSON(types.Volume{})
+			JSON(volume.Volume{})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DbImage), utils.DbId)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
@@ -174,7 +175,7 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.Volume{})
+			JSON(volume.Volume{})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DbImage), utils.DbId)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").

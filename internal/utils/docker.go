@@ -241,7 +241,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 }
 
 func DockerStop(containerID string) {
-	if err := Docker.ContainerStop(context.Background(), containerID, nil); err != nil {
+	if err := Docker.ContainerStop(context.Background(), containerID, container.StopOptions{}); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
 	}
 }
