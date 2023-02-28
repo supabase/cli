@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	version     = "1.41"
 	containerId = "test-container"
 	imageId     = "test-image"
 )
@@ -160,7 +159,7 @@ func TestRunOnce(t *testing.T) {
 		gock.New(Docker.DaemonHost()).
 			Post("/v" + Docker.ClientVersion() + "/containers/create").
 			Reply(http.StatusOK).
-			JSON(container.ContainerCreateCreatedBody{ID: containerId})
+			JSON(container.CreateResponse{ID: containerId})
 		gock.New(Docker.DaemonHost()).
 			Post("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/start").
 			Reply(http.StatusServiceUnavailable)
@@ -224,19 +223,19 @@ func TestRunOnce(t *testing.T) {
 		_, err := writer.Write([]byte("hello world"))
 		require.NoError(t, err)
 		gock.New("http:///var/run/docker.sock").
-			Get("/v"+version+"/containers/"+containerId+"/logs").
+			Get("/v"+Docker.ClientVersion()+"/containers/"+containerId+"/logs").
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Body(&body)
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers/" + containerId + "/json").
+			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
 			Reply(http.StatusServiceUnavailable)
 		gock.New(Docker.DaemonHost()).
 			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -252,12 +251,12 @@ func TestRunOnce(t *testing.T) {
 		_, err := writer.Write([]byte("hello world"))
 		require.NoError(t, err)
 		gock.New("http:///var/run/docker.sock").
-			Get("/v"+version+"/containers/"+containerId+"/logs").
+			Get("/v"+Docker.ClientVersion()+"/containers/"+containerId+"/logs").
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Body(&body)
 		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers/" + containerId + "/json").
+			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 1}})
 		gock.New(Docker.DaemonHost()).
@@ -265,7 +264,7 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "error running container: exit 1")
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
