@@ -12,7 +12,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -273,6 +275,7 @@ EOF
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
+					"RLIMIT_NOFILE=",
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",
@@ -480,6 +483,22 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 		return len(started) == 0
 	}
 	if !reset.RetryEverySecond(ctx, probe, 20*time.Second) {
+		// Print container logs for easier debugging
+		for _, container := range started {
+			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+			})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				continue
+			}
+			fmt.Fprintln(os.Stderr, container, "container logs:")
+			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			logs.Close()
+		}
 		return fmt.Errorf("%w: %v", errUnhealthy, started)
 	}
 	return nil
