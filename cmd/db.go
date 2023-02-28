@@ -97,6 +97,7 @@ var (
 	}
 
 	dataOnly bool
+	roleOnly bool
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
@@ -108,7 +109,7 @@ var (
 			}
 			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, username, dbPassword, database, host, dataOnly, fsys)
+			return dump.Run(ctx, file, username, dbPassword, database, host, dataOnly, roleOnly, fsys)
 		},
 	}
 
@@ -225,6 +226,8 @@ func init() {
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
+	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
+	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
