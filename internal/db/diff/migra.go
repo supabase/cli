@@ -106,10 +106,8 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
-			// Exclude postgres temporary schemas
-			"pg_temp_%",
-			"pg_toast_temp_%",
 		}, utils.SystemSchemas...)
+		exclude = likeEscapeSchema(exclude)
 	}
 	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
 	if err != nil {
@@ -124,6 +122,15 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 		schemas = append(schemas, name)
 	}
 	return schemas, nil
+}
+
+func likeEscapeSchema(schemas []string) (result []string) {
+	// Treat _ as literal, * as any character
+	replacer := strings.NewReplacer("_", `\_`, "*", "%")
+	for _, sch := range schemas {
+		result = append(result, replacer.Replace(sch))
+	}
+	return result
 }
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
