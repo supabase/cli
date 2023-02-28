@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -133,7 +134,7 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 func RestartDatabase(ctx context.Context) {
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
-	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, nil); err != nil {
+	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
 		return
 	}
@@ -142,7 +143,7 @@ func RestartDatabase(ctx context.Context) {
 		return
 	}
 	// TODO: update storage-api to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, nil); err != nil {
+	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, container.StopOptions{}); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
 	}
 	// Reload PostgREST schema cache.

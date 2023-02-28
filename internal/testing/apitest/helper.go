@@ -42,7 +42,7 @@ func MockDockerStart(docker *client.Client, image, containerID string) {
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/create").
 		Reply(http.StatusOK).
-		JSON(container.ContainerCreateCreatedBody{ID: containerID})
+		JSON(container.CreateResponse{ID: containerID})
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/" + containerID + "/start").
 		Reply(http.StatusAccepted)
