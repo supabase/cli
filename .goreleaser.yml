@@ -1,7 +1,4 @@
 project_name: supabase
-before:
-  hooks:
-    - go mod tidy
 builds:
   - id: supabase
     binary: supabase
@@ -15,12 +12,26 @@ builds:
       - windows_amd64
 archives:
   - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}'
+release:
+  draft: true
+  replace_existing_draft: true
+  prerelease: auto
 changelog:
-  skip: true
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
 brews:
   - tap:
       owner: supabase
       name: homebrew-tap
+      token: "{{ .Env.BREWTAP_TOKEN }}"
     commit_author:
       name: Bobbie Soedirgo
       email: bobbie@soedirgo.dev
@@ -37,6 +48,7 @@ scoop:
   bucket:
     owner: supabase
     name: scoop-bucket
+    token: "{{ .Env.SCOOP_TOKEN }}"
   commit_author:
     name: Bobbie Soedirgo
     email: bobbie@soedirgo.dev
