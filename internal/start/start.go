@@ -273,7 +273,7 @@ EOF
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
-					"RLIMIT_NOFILE=''",
+					"RLIMIT_NOFILE=",
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",
