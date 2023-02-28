@@ -108,7 +108,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{pgbouncer,realtime,_realtime,supabase_functions,supabase_migrations,pg_temp_%,pg_toast_temp_%,information_schema,pg_catalog,pg_toast,cron,graphql,graphql_public,net,pgsodium,pgsodium_masks,vault}') ORDER BY schema_name").
+		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{pgbouncer,realtime,"\\_realtime","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",vault}') ORDER BY schema_name`).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := RunMigra(context.Background(), []string{}, "", "password", fsys, conn.Intercept)

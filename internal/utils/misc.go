@@ -109,11 +109,10 @@ var (
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
-	// These schemas are ignored from schema diffs
+	// These schemas are ignored from db diff and db dump
 	SystemSchemas = []string{
 		"information_schema",
-		"pg_catalog",
-		"pg_toast",
+		"pg_*", // Wildcard pattern follows pg_dump
 		// Owned by extensions
 		"cron",
 		"graphql",
