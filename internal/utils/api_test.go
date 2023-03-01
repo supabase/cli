@@ -11,9 +11,9 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestFallbackDNS(t *testing.T) {
-	const host = "api.supabase.io"
+const host = "api.supabase.io"
 
+func TestLookupIP(t *testing.T) {
 	t.Run("resolves IPv4 with CloudFlare", func(t *testing.T) {
 		// Setup http mock
 		defer gock.OffAll()
@@ -26,9 +26,10 @@ func TestFallbackDNS(t *testing.T) {
 				{Type: dnsIPv4Type, Data: "127.0.0.1"},
 			}})
 		// Run test
-		ip := fallbackLookupIP(context.Background(), host+":443")
+		ip, err := FallbackLookupIP(context.Background(), host+":443")
 		// Validate output
-		assert.Equal(t, "127.0.0.1:443", ip)
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"127.0.0.1:443"}, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -45,14 +46,26 @@ func TestFallbackDNS(t *testing.T) {
 				{Type: dnsIPv6Type, Data: "2606:2800:220:1:248:1893:25c8:1946"},
 			}})
 		// Run test
-		ip := fallbackLookupIP(context.Background(), "api.supabase.com:443")
+		ip, err := FallbackLookupIP(context.Background(), "api.supabase.com:443")
 		// Validate output
-		assert.Equal(t, "[2606:2800:220:1:248:1893:25c8:1946]:443", ip)
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"[2606:2800:220:1:248:1893:25c8:1946]:443"}, ip)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns immediately if already resolved", func(t *testing.T) {
+		// Run test
+		ip, err := FallbackLookupIP(context.Background(), "127.0.0.1:443")
+		// Validate output
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"127.0.0.1:443"}, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("empty on malformed address", func(t *testing.T) {
-		assert.Equal(t, "", fallbackLookupIP(context.Background(), "bad?url"))
+		ip, err := FallbackLookupIP(context.Background(), "bad?url")
+		assert.ErrorContains(t, err, "missing port in address")
+		assert.Empty(t, ip)
 	})
 
 	t.Run("empty on network failure", func(t *testing.T) {
@@ -64,9 +77,10 @@ func TestFallbackDNS(t *testing.T) {
 			MatchHeader("accept", "application/dns-json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		ip := fallbackLookupIP(context.Background(), host+":443")
+		ip, err := FallbackLookupIP(context.Background(), host+":443")
 		// Validate output
-		assert.Equal(t, "", ip)
+		assert.ErrorContains(t, err, "network error")
+		assert.Empty(t, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -79,9 +93,10 @@ func TestFallbackDNS(t *testing.T) {
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		ip := fallbackLookupIP(context.Background(), host+":443")
+		ip, err := FallbackLookupIP(context.Background(), host+":443")
 		// Validate output
-		assert.Equal(t, "", ip)
+		assert.ErrorContains(t, err, "status 503")
+		assert.Empty(t, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -95,9 +110,10 @@ func TestFallbackDNS(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON("malformed")
 		// Run test
-		ip := fallbackLookupIP(context.Background(), host+":443")
+		ip, err := FallbackLookupIP(context.Background(), host+":443")
 		// Validate output
-		assert.Equal(t, "", ip)
+		assert.ErrorContains(t, err, "invalid character 'm' looking for beginning of value")
+		assert.Empty(t, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -111,12 +127,15 @@ func TestFallbackDNS(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(&dnsResponse{})
 		// Run test
-		ip := fallbackLookupIP(context.Background(), host+":443")
+		ip, err := FallbackLookupIP(context.Background(), host+":443")
 		// Validate output
-		assert.Equal(t, "", ip)
+		assert.ErrorContains(t, err, "failed to locate valid IP for api.supabase.io:443; resolves to []utils.dnsAnswer(nil)")
+		assert.Empty(t, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+}
 
+func TestResolveCNAME(t *testing.T) {
 	t.Run("resolves CNAMEs with CloudFlare", func(t *testing.T) {
 		defer gock.OffAll()
 		gock.New("https://1.1.1.1").
