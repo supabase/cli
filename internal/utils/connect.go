@@ -3,8 +3,10 @@ package utils
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -30,6 +32,12 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	//      don't benefit from per connection server side cache.
 	opts := append(options, func(cc *pgx.ConnConfig) {
 		cc.PreferSimpleProtocol = true
+		if DNSResolver.Value == DNS_OVER_HTTPS {
+			cc.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
+				address := net.JoinHostPort(host, strconv.FormatUint(uint64(cc.Port), 10))
+				return FallbackLookupIP(ctx, address)
+			}
+		}
 	})
 	conn, err := ConnectByUrl(ctx, pgUrl, opts...)
 	if !pgconn.Timeout(err) {

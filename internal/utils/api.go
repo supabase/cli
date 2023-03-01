@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -18,10 +20,20 @@ import (
 	supabase "github.com/supabase/cli/pkg/api"
 )
 
+const (
+	DNS_GO_NATIVE  = "native"
+	DNS_OVER_HTTPS = "https"
+)
+
 var (
 	clientOnce sync.Once
 	apiClient  *supabase.ClientWithResponses
 	httpClient = http.Client{Timeout: 10 * time.Second}
+
+	DNSResolver = EnumFlag{
+		Allowed: []string{DNS_GO_NATIVE, DNS_OVER_HTTPS},
+		Value:   DNS_GO_NATIVE,
+	}
 )
 
 const (
@@ -41,39 +53,50 @@ type dnsResponse struct {
 }
 
 // Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
-func fallbackLookupIP(ctx context.Context, address string) string {
+func FallbackLookupIP(ctx context.Context, address string) ([]string, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return ""
+		return nil, err
+	}
+	if net.ParseIP(host) != nil {
+		return []string{address}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://1.1.1.1/dns-query?name="+host, nil)
 	if err != nil {
-		return ""
+		return nil, err
 	}
 	req.Header.Add("accept", "application/dns-json")
 	// Sends request
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return ""
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || len(body) == 0 {
+			body = []byte(fmt.Sprintf("status %d", resp.StatusCode))
+		}
+		return nil, errors.New(string(body))
 	}
 	// Parses response
 	var data dnsResponse
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&data); err != nil {
-		return ""
+		return nil, err
 	}
 	// Look for first valid IP
+	var resolved []string
 	for _, answer := range data.Answer {
 		if answer.Type == dnsIPv4Type || answer.Type == dnsIPv6Type {
-			return net.JoinHostPort(answer.Data, port)
+			resolved = append(resolved, net.JoinHostPort(answer.Data, port))
 		}
 	}
-	return ""
+	if len(resolved) == 0 {
+		err = fmt.Errorf("failed to locate valid IP for %s; resolves to %#v", address, data.Answer)
+	}
+	return resolved, err
 }
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
@@ -178,11 +201,18 @@ func GetSupabase() *supabase.ClientWithResponses {
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
 			dialContext := t.DialContext
 			t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				if DNSResolver.Value == DNS_OVER_HTTPS {
+					ip, err := FallbackLookupIP(ctx, address)
+					if err != nil {
+						return nil, err
+					}
+					return dialContext(ctx, network, ip[0])
+				}
 				conn, err := dialContext(ctx, network, address)
 				// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
 				if err, ok := err.(net.Error); ok && err.Timeout() {
-					if ip := fallbackLookupIP(ctx, address); ip != "" {
-						return dialContext(ctx, network, ip)
+					if ip, err := FallbackLookupIP(ctx, address); err == nil {
+						return dialContext(ctx, network, ip[0])
 					}
 				}
 				return conn, err
