@@ -27,7 +27,7 @@ jobs:
     needs: pack
     strategy:
       matrix:
-        pm: [npm, yarn]
+        pm: [npm, yarn, pnpm]
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
@@ -42,5 +42,8 @@ jobs:
 
       - if: ${{ matrix.pm == 'yarn' }}
         run: yarn add -D ./supabase-1.28.0.tgz
+
+      - if: ${{ matrix.pm == 'pnpm' }}
+        run: pnpm i --save-dev ./supabase-1.28.0.tgz
 
       - run: npx supabase --version
