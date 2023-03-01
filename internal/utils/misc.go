@@ -120,6 +120,12 @@ var (
 		"net",
 		"pgsodium",
 		"pgsodium_masks",
+		"repack",
+		"tiger",
+		"tiger_data",
+		"timescaledb_*",
+		"_timescaledb_*",
+		"topology",
 		"vault",
 	}
 	InternalSchemas = append([]string{
