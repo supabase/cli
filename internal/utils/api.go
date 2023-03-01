@@ -180,7 +180,7 @@ func GetSupabase() *supabase.ClientWithResponses {
 			t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 				conn, err := dialContext(ctx, network, address)
 				// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
-				if err, ok := err.(*net.OpError); ok && err.Op == "dial" {
+				if err, ok := err.(net.Error); ok && err.Timeout() {
 					if ip := fallbackLookupIP(ctx, address); ip != "" {
 						return dialContext(ctx, network, ip)
 					}
