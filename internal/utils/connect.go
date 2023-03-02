@@ -14,13 +14,15 @@ import (
 
 // Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	// Use port 6543 for connection pooling
-	pgUrl := fmt.Sprintf(
-		"postgresql://%s@%s:6543/%s?connect_timeout=10",
-		url.UserPassword(username, password),
-		host,
-		url.PathEscape(database),
-	)
+	makeURL := func(port uint16) string {
+		return fmt.Sprintf(
+			"postgresql://%s@%s:%d/%s?connect_timeout=10",
+			url.UserPassword(username, password),
+			host,
+			port,
+			url.PathEscape(database),
+		)
+	}
 	// Simple protocol is preferred over pgx default Parse -> Bind flow because
 	//   1. Using a single command for each query reduces RTT over an Internet connection.
 	//   2. Performance gains from using the alternate binary protocol is negligible because
@@ -34,15 +36,14 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 			cc.LookupFunc = FallbackLookupIP
 		}
 	})
-	conn, err := ConnectByUrl(ctx, pgUrl, opts...)
+	// Use port 6543 for connection pooling
+	conn, err := ConnectByUrl(ctx, makeURL(6543), opts...)
 	if !pgconn.Timeout(err) {
 		return conn, err
 	}
-	// Fallback to postgres when pgbouncer is unavailable
-	config := conn.Config()
-	config.Port = 5432
-	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
-	return pgx.ConnectConfig(ctx, config)
+	// Fallback to 5432 when pgbouncer is unavailable
+	fmt.Fprintln(os.Stderr, "Retrying...", host+":5432")
+	return ConnectByUrl(ctx, makeURL(5432), opts...)
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
