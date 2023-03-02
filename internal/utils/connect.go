@@ -30,6 +30,9 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	//      don't benefit from per connection server side cache.
 	opts := append(options, func(cc *pgx.ConnConfig) {
 		cc.PreferSimpleProtocol = true
+		if DNSResolver.Value == DNS_OVER_HTTPS {
+			cc.LookupFunc = FallbackLookupIP
+		}
 	})
 	conn, err := ConnectByUrl(ctx, pgUrl, opts...)
 	if !pgconn.Timeout(err) {
