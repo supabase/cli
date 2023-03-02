@@ -53,13 +53,9 @@ type dnsResponse struct {
 }
 
 // Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
-func FallbackLookupIP(ctx context.Context, address string) ([]string, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
-	}
+func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 	if net.ParseIP(host) != nil {
-		return []string{address}, nil
+		return []string{host}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://1.1.1.1/dns-query?name="+host, nil)
@@ -90,11 +86,11 @@ func FallbackLookupIP(ctx context.Context, address string) ([]string, error) {
 	var resolved []string
 	for _, answer := range data.Answer {
 		if answer.Type == dnsIPv4Type || answer.Type == dnsIPv6Type {
-			resolved = append(resolved, net.JoinHostPort(answer.Data, port))
+			resolved = append(resolved, answer.Data)
 		}
 	}
 	if len(resolved) == 0 {
-		err = fmt.Errorf("failed to locate valid IP for %s; resolves to %#v", address, data.Answer)
+		err = fmt.Errorf("failed to locate valid IP for %s; resolves to %#v", host, data.Answer)
 	}
 	return resolved, err
 }
@@ -188,6 +184,37 @@ func WithTraceContext(ctx context.Context) context.Context {
 	return httptrace.WithClientTrace(ctx, trace)
 }
 
+type DialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+// Wraps a DialContext with DNS-over-HTTPS as fallback resolver
+func withFallbackDNS(dialContext DialContextFunc) DialContextFunc {
+	dnsOverHttps := func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ip, err := FallbackLookupIP(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		return dialContext(ctx, network, net.JoinHostPort(ip[0], port))
+	}
+	if DNSResolver.Value == DNS_OVER_HTTPS {
+		return dnsOverHttps
+	}
+	nativeWithFallback := func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialContext(ctx, network, address)
+		// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
+		if err, ok := err.(net.Error); ok && err.Timeout() {
+			if conn, err := dnsOverHttps(ctx, network, address); err == nil {
+				return conn, err
+			}
+		}
+		return conn, err
+	}
+	return nativeWithFallback
+}
+
 func GetSupabase() *supabase.ClientWithResponses {
 	clientOnce.Do(func() {
 		token, err := LoadAccessToken()
@@ -199,24 +226,7 @@ func GetSupabase() *supabase.ClientWithResponses {
 			log.Fatalln(err)
 		}
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
-			dialContext := t.DialContext
-			t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-				if DNSResolver.Value == DNS_OVER_HTTPS {
-					ip, err := FallbackLookupIP(ctx, address)
-					if err != nil {
-						return nil, err
-					}
-					return dialContext(ctx, network, ip[0])
-				}
-				conn, err := dialContext(ctx, network, address)
-				// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
-				if err, ok := err.(net.Error); ok && err.Timeout() {
-					if ip, err := FallbackLookupIP(ctx, address); err == nil {
-						return dialContext(ctx, network, ip[0])
-					}
-				}
-				return conn, err
-			}
+			t.DialContext = withFallbackDNS(t.DialContext)
 		}
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
