@@ -33,19 +33,19 @@ const (
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v10.1.1.20221215"
+	PostgrestImage   = "postgrest/postgrest:v10.1.2"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.60.7"
-	StudioImage      = "supabase/studio:20230216-e731b77"
+	StudioImage      = "supabase/studio:20230302-92e72ba"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.40.1"
+	GotrueImage   = "supabase/gotrue:v2.51.4"
 	RealtimeImage = "supabase/realtime:v2.6.0"
-	StorageImage  = "supabase/storage-api:v0.26.1"
+	StorageImage  = "supabase/storage-api:v0.29.1"
 	// Should be kept in-sync with DenoRelayImage
 	DenoVersion = "1.30.3"
 )
