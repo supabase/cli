@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -22,6 +21,14 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 	"gopkg.in/h2non/gock.v1"
 )
+
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestRunMigra(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
@@ -50,7 +57,7 @@ func TestRunMigra(t *testing.T) {
 			Query(utils.InitialSchemaPg15Sql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys, conn.Intercept)
+		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -68,19 +75,9 @@ func TestRunMigra(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", "", fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-
-	t.Run("throws error on missing project", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", "password", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Cannot find project ref. Have you run supabase link?")
 	})
 
 	t.Run("throws error on missing database", func(t *testing.T) {
@@ -94,7 +91,7 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", "", fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "supabase start is not running.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -112,7 +109,7 @@ func TestRunMigra(t *testing.T) {
 		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{pgbouncer,realtime,"\\_realtime","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}') ORDER BY schema_name`).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
-		err := RunMigra(context.Background(), []string{}, "", "password", fsys, conn.Intercept)
+		err := RunMigra(context.Background(), []string{}, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
 	})
@@ -130,42 +127,9 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "file", "password", fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
-func TestBuildTarget(t *testing.T) {
-	t.Run("builds remote url", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
-		// Run test
-		url, err := buildTargetUrl("password", fsys)
-		// Check output
-		assert.NoError(t, err)
-		assert.Equal(t, "postgresql://postgres:password@db."+project+".supabase.co:6543/postgres", url)
-	})
-
-	t.Run("builds local url", func(t *testing.T) {
-		utils.DbId = "postgres"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
-		// Run test
-		url, err := buildTargetUrl("", fsys)
-		// Check output
-		assert.NoError(t, err)
-		assert.Equal(t, "postgresql://postgres:postgres@postgres:5432/postgres", url)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -325,7 +289,7 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, "network error")
@@ -348,7 +312,7 @@ func TestDiffDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys, conn.Intercept)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
@@ -381,7 +345,7 @@ At statement 0: create schema public`)
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA")
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, "", io.Discard, fsys, conn.Intercept)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, "error diffing schema")
@@ -397,13 +361,7 @@ func TestUserSchema(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()
-	mock, err := utils.ConnectRemotePostgres(ctx, pgconn.Config{
-		Host:     "localhost",
-		Port:     5432,
-		User:     "admin",
-		Password: "pass",
-		Database: "postgres",
-	}, conn.Intercept)
+	mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 	require.NoError(t, err)
 	defer mock.Close(ctx)
 	// Run test

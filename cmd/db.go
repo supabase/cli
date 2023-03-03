@@ -83,16 +83,16 @@ var (
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if linked {
-				if err := loadLinkedProject(fsys); err != nil {
+			if linked || len(dbUrl) > 0 {
+				if err := parseDatabaseConfig(fsys); err != nil {
 					return err
 				}
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if usePgAdmin {
-				return diff.Run(ctx, schema, file, dbPassword, fsys)
+				return diff.Run(ctx, schema, file, dbConfig, fsys)
 			}
-			return diff.RunMigra(ctx, schema, file, dbPassword, fsys)
+			return diff.RunMigra(ctx, schema, file, dbConfig, fsys)
 		},
 	}
 
