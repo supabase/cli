@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -58,23 +59,30 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 		)
 		fmt.Fprintln(os.Stderr, "Connecting to", escaped)
 
-		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
-			"PG_META_DB_URL=" + escaped,
-		}, []string{
-			"node",
-			"dist/server/app.js",
-			"gen",
-			"types",
-			"typescript",
-			"--include-schemas",
-			strings.Join(coalesce(schemas, []string{"public"}), ","),
-		})
-		if err != nil {
-			return err
-		}
-
-		fmt.Print(out)
-		return nil
+		return utils.DockerRunOnceWithConfig(
+			ctx,
+			container.Config{
+				Image: utils.PgmetaImage,
+				Env: []string{
+					"PG_META_DB_URL=" + escaped,
+				},
+				Cmd: []string{
+					"node",
+					"dist/server/app.js",
+					"gen",
+					"types",
+					"typescript",
+					"--include-schemas",
+					strings.Join(coalesce(schemas, []string{"public"}), ","),
+				},
+			},
+			container.HostConfig{
+				NetworkMode: container.NetworkMode("host"),
+			},
+			"",
+			os.Stdout,
+			os.Stderr,
+		)
 	}
 
 	// only load config on `--local` or `--linked`
@@ -87,23 +95,24 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
-		out, err := utils.DockerRunOnce(ctx, utils.PgmetaImage, []string{
-			"PG_META_DB_HOST=" + utils.DbId,
-		}, []string{
-			"node",
-			"dist/server/app.js",
-			"gen",
-			"types",
-			"typescript",
-			"--include-schemas",
-			strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
-		})
-		if err != nil {
-			return err
-		}
-
-		fmt.Print(out)
-		return nil
+		return utils.DockerRunOnceWithStream(
+			ctx,
+			utils.PgmetaImage,
+			[]string{
+				"PG_META_DB_HOST=" + utils.DbId,
+			},
+			[]string{
+				"node",
+				"dist/server/app.js",
+				"gen",
+				"types",
+				"typescript",
+				"--include-schemas",
+				strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
+			},
+			os.Stdout,
+			os.Stderr,
+		)
 	}
 
 	if useLinked {
