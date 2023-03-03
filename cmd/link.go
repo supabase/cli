@@ -11,10 +11,6 @@ import (
 )
 
 var (
-	// TODO: allow switching roles on backend
-	database = "postgres"
-	username = "postgres"
-
 	linkCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "link",
@@ -29,7 +25,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return link.Run(ctx, projectRef, username, dbPassword, database, fsys)
+			return link.Run(ctx, projectRef, dbPassword, fsys)
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
 			return link.PostRun(projectRef, os.Stdout, afero.NewOsFs())
