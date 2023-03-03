@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -73,6 +75,8 @@ var (
 		},
 	}
 
+	dbConfig pgconn.Config
+
 	useMigra   bool
 	usePgAdmin bool
 	schema     []string
@@ -104,12 +108,11 @@ var (
 		Short: "Dumps data or schemas from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, username, dbPassword, database, host, dataOnly, roleOnly, fsys)
+			return dump.Run(ctx, file, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, dataOnly, roleOnly, fsys)
 		},
 	}
 
@@ -120,12 +123,11 @@ var (
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, username, dbPassword, database, host, fsys)
+			return push.Run(ctx, dryRun, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
 		},
 	}
 
@@ -137,7 +139,7 @@ var (
 				return err
 			}
 			fsys := afero.NewOsFs()
-			return loadLinkedProject(fsys)
+			return parseDatabaseConfig(fsys)
 		},
 	}
 
@@ -149,7 +151,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return changes.Run(ctx, schema, username, dbPassword, database, fsys)
+			return changes.Run(ctx, schema, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
 		},
 	}
 
@@ -159,7 +161,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, schema, username, dbPassword, database, fsys)
+			return commit.Run(ctx, schema, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
 		},
 	}
 
@@ -213,6 +215,7 @@ func init() {
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
+	dbCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
@@ -260,4 +263,22 @@ func init() {
 	// Build test command
 	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
+}
+
+func parseDatabaseConfig(fsys afero.Fs) error {
+	if len(dbUrl) > 0 {
+		conn, err := pgx.ParseConfig(dbUrl)
+		if err == nil {
+			dbConfig = conn.Config
+		}
+		return err
+	}
+	if err := loadLinkedProject(fsys); err != nil {
+		return err
+	}
+	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
+	dbConfig.User = "postgres"
+	dbConfig.Password = dbPassword
+	dbConfig.Database = "postgres"
+	return nil
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
+func Run(ctx context.Context, schema []string, username, password, database, host string, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(ctx); err != nil {
@@ -29,7 +29,7 @@ func Run(ctx context.Context, schema []string, username, password, database stri
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, schema, username, password, database, fsys)
+		return run(p, ctx, schema, username, password, database, host, fsys)
 	}); err != nil {
 		return err
 	}
@@ -38,13 +38,7 @@ func Run(ctx context.Context, schema []string, username, password, database stri
 	return nil
 }
 
-func run(p utils.Program, ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
-	projectRef, err := utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	host := utils.GetSupabaseDbHost(projectRef)
-
+func run(p utils.Program, ctx context.Context, schema []string, username, password, database, host string, fsys afero.Fs) error {
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	p.Send(utils.StatusMsg("Connecting to remote database..."))
 	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host)
