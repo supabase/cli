@@ -2,9 +2,8 @@ package changes
 
 import (
 	"context"
-	"fmt"
-	"net/url"
 
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/utils"
@@ -12,7 +11,7 @@ import (
 
 var output string
 
-func Run(ctx context.Context, schema []string, username, password, database, host string, fsys afero.Fs) error {
+func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(ctx); err != nil {
@@ -24,7 +23,7 @@ func Run(ctx context.Context, schema []string, username, password, database, hos
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, schema, username, password, database, host, fsys)
+		return run(p, ctx, schema, config, fsys)
 	}); err != nil {
 		return err
 	}
@@ -32,11 +31,11 @@ func Run(ctx context.Context, schema []string, username, password, database, hos
 	return diff.SaveDiff(output, "", fsys)
 }
 
-func run(p utils.Program, ctx context.Context, schema []string, username, password, database, host string, fsys afero.Fs) (err error) {
+func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) (err error) {
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	{
 		p.Send(utils.StatusMsg("Connecting to remote database..."))
-		conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host)
+		conn, err := utils.ConnectRemotePostgres(ctx, config)
 		if err != nil {
 			return err
 		}
@@ -51,7 +50,7 @@ func run(p utils.Program, ctx context.Context, schema []string, username, passwo
 
 	w := utils.StatusWriter{Program: p}
 	// 2. Diff remote db (source) & shadow db (target) and print it.
-	target := fmt.Sprintf("postgresql://%s@%s:6543/postgres", url.UserPassword(database, password), host)
+	target := utils.ToPostgresURL(config)
 	output, err = diff.DiffDatabase(ctx, schema, target, w, fsys)
 	return err
 }

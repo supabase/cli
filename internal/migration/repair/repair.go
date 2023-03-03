@@ -24,8 +24,8 @@ const (
 	CREATE_MIGRATION_TABLE   = CREATE_VERSION_SCHEMA + ";" + CREATE_VERSION_TABLE
 )
 
-func Run(ctx context.Context, username, password, database, host, version, status string, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+func Run(ctx context.Context, config pgconn.Config, version, status string, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
 	}

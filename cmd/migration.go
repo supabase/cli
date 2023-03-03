@@ -5,7 +5,6 @@ import (
 	"os/signal"
 
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -35,7 +34,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return list.Run(ctx, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
+			return list.Run(ctx, dbConfig, fsys)
 		},
 	}
 
@@ -65,7 +64,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return repair.Run(ctx, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, args[0], targetStatus.Value)
+			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value)
 		},
 	}
 )
@@ -109,16 +108,18 @@ func getPassword(projectRef string) string {
 
 func parseDatabaseConfig(fsys afero.Fs) error {
 	if len(dbUrl) > 0 {
-		conn, err := pgx.ParseConfig(dbUrl)
+		config, err := pgconn.ParseConfig(dbUrl)
 		if err == nil {
-			dbConfig = conn.Config
+			dbConfig = *config
 		}
 		return err
 	}
 	if err := loadLinkedProject(fsys); err != nil {
 		return err
 	}
+	// Initialise connection details for hosted project
 	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
+	dbConfig.Port = 6543
 	dbConfig.User = "postgres"
 	dbConfig.Password = dbPassword
 	dbConfig.Database = "postgres"

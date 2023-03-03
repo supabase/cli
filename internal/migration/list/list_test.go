@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -15,12 +16,13 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	user = "admin"
-	pass = "password"
-	host = "localhost"
-	db   = "postgres"
-)
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestMigrationList(t *testing.T) {
 	t.Run("lists remote migrations", func(t *testing.T) {
@@ -32,7 +34,7 @@ func TestMigrationList(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), user, pass, db, host, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -41,9 +43,9 @@ func TestMigrationList(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), user, pass, db, "0", fsys)
+		err := Run(context.Background(), pgconn.Config{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "connect: connection refused")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on local failure", func(t *testing.T) {
@@ -55,7 +57,7 @@ func TestMigrationList(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), user, pass, db, host, afero.NewReadOnlyFs(fsys), conn.Intercept)
+		err := Run(context.Background(), dbConfig, afero.NewReadOnlyFs(fsys), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -69,7 +71,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
-		versions, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
+		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"20220727064247"}, versions)
@@ -77,9 +79,9 @@ func TestRemoteMigrations(t *testing.T) {
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Run test
-		_, err := loadRemoteVersions(context.Background(), user, pass, db, "0")
+		_, err := loadRemoteVersions(context.Background(), pgconn.Config{})
 		// Check error
-		assert.ErrorContains(t, err, "connect: connection refused")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on missing schema", func(t *testing.T) {
@@ -89,7 +91,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
-		_, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
+		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
 	})
@@ -101,7 +103,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", nil)
 		// Run test
-		_, err := loadRemoteVersions(context.Background(), user, pass, db, host, conn.Intercept)
+		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "number of field descriptions must equal number of destinations, got 0 and 1")
 	})

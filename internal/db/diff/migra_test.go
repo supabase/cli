@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -396,7 +397,13 @@ func TestUserSchema(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()
-	mock, err := utils.ConnectRemotePostgres(ctx, "admin", "pass", "postgres", "localhost", conn.Intercept)
+	mock, err := utils.ConnectRemotePostgres(ctx, pgconn.Config{
+		Host:     "localhost",
+		Port:     5432,
+		User:     "admin",
+		Password: "pass",
+		Database: "postgres",
+	}, conn.Intercept)
 	require.NoError(t, err)
 	defer mock.Close(ctx)
 	// Run test

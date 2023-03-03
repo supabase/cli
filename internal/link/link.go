@@ -120,7 +120,13 @@ func sliceEqual(a, b []string) bool {
 }
 
 func linkDatabase(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+	conn, err := utils.ConnectRemotePostgres(ctx, pgconn.Config{
+		Host:     host,
+		Port:     6543,
+		User:     username,
+		Password: password,
+		Database: database,
+	}, options...)
 	if err != nil {
 		return err
 	}

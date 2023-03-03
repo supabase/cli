@@ -108,7 +108,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, dataOnly, roleOnly, fsys)
+			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, fsys)
 		},
 	}
 
@@ -123,7 +123,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
+			return push.Run(ctx, dryRun, dbConfig, fsys)
 		},
 	}
 
@@ -147,7 +147,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return changes.Run(ctx, schema, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
+			return changes.Run(ctx, schema, dbConfig, fsys)
 		},
 	}
 
@@ -157,7 +157,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return commit.Run(ctx, schema, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
+			return commit.Run(ctx, schema, dbConfig, fsys)
 		},
 	}
 

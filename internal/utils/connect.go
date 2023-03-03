@@ -20,17 +20,23 @@ func isDialError(err error) bool {
 	return ok && opErr.Op == "dial"
 }
 
-// Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	makeURL := func(port uint16) string {
-		return fmt.Sprintf(
-			"postgresql://%s@%s:%d/%s?connect_timeout=10",
-			url.UserPassword(username, password),
-			host,
-			port,
-			url.PathEscape(database),
-		)
+func ToPostgresURL(config pgconn.Config) string {
+	timeoutSecond := int64(config.ConnectTimeout.Seconds())
+	if timeoutSecond == 0 {
+		timeoutSecond = 10
 	}
+	return fmt.Sprintf(
+		"postgresql://%s@%s:%d/%s?connect_timeout=%d",
+		url.UserPassword(config.User, config.Password),
+		config.Host,
+		config.Port,
+		url.PathEscape(config.Database),
+		timeoutSecond,
+	)
+}
+
+// Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
+func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	// Simple protocol is preferred over pgx default Parse -> Bind flow because
 	//   1. Using a single command for each query reduces RTT over an Internet connection.
 	//   2. Performance gains from using the alternate binary protocol is negligible because
@@ -45,13 +51,14 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 		}
 	})
 	// Use port 6543 for connection pooling
-	conn, err := ConnectByUrl(ctx, makeURL(6543), opts...)
-	if !pgconn.Timeout(err) && !isDialError(err) {
+	conn, err := ConnectByUrl(ctx, ToPostgresURL(config), opts...)
+	if !pgconn.Timeout(err) && !isDialError(err) && !ProjectHostPattern.MatchString(config.Host) {
 		return conn, err
 	}
 	// Fallback to 5432 when pgbouncer is unavailable
-	fmt.Fprintln(os.Stderr, "Retrying...", host+":5432")
-	return ConnectByUrl(ctx, makeURL(5432), opts...)
+	config.Port = 5432
+	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
+	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
