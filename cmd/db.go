@@ -205,13 +205,13 @@ var (
 )
 
 func init() {
+	dbCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build branch command
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
 	dbBranchCmd.AddCommand(dbBranchDeleteCmd)
 	dbBranchCmd.AddCommand(dbBranchListCmd)
 	dbBranchCmd.AddCommand(dbSwitchCmd)
 	dbCmd.AddCommand(dbBranchCmd)
-	dbCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build diff command
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")

@@ -70,6 +70,7 @@ var (
 )
 
 func init() {
+	migrationCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build list command
 	listFlags := migrationListCmd.Flags()
 	listFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
