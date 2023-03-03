@@ -55,7 +55,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
 		"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
 		"DB_URL=" + config.Database,
-	}, []string{"bash", "-c", script}, nil, "", outStream, os.Stderr); err != nil {
+	}, []string{"bash", "-c", script}, outStream, os.Stderr); err != nil {
 		return errors.New("Error running pg_dump on remote database: " + err.Error())
 	}
 	if len(path) > 0 {

@@ -299,12 +299,17 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 		if viper.GetBool("DEBUG") {
 			cmd = append(cmd, "--verbose")
 		}
-		if err := utils.DockerRunOnceWithStream(
+		if err := utils.DockerRunOnceWithConfig(
 			ctx,
-			utils.EdgeRuntimeImage,
-			append(env, userEnv...),
-			cmd,
-			binds,
+			container.Config{
+				Image: utils.EdgeRuntimeImage,
+				Env:   append(env, userEnv...),
+				Cmd:   cmd,
+			},
+			container.HostConfig{
+				Binds:      binds,
+				ExtraHosts: []string{"host.docker.internal:host-gateway"},
+			},
 			utils.DenoRelayId,
 			os.Stdout,
 			os.Stderr,
