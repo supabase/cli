@@ -302,23 +302,23 @@ func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerRunOnceWithStream(ctx, image, env, cmd, nil, "", &out, stderr)
+	err := DockerRunOnceWithStream(ctx, image, env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerRunOnceWithStream(ctx context.Context, image string, env, cmd, binds []string, containerName string, stdout, stderr io.Writer) error {
-	// Cannot rely on docker's auto remove because
-	//   1. We must inspect exit code after container stops
-	//   2. Context cancellation may happen after start
-	container, err := DockerStart(ctx, container.Config{
+func DockerRunOnceWithStream(ctx context.Context, image string, env, cmd []string, stdout, stderr io.Writer) error {
+	return DockerRunOnceWithConfig(ctx, container.Config{
 		Image: image,
 		Env:   env,
 		Cmd:   cmd,
-	}, container.HostConfig{
-		Binds: binds,
-		// Allows containerized functions on Linux to reach host OS
-		ExtraHosts: []string{"host.docker.internal:host-gateway"},
-	}, containerName)
+	}, container.HostConfig{}, "", stdout, stderr)
+}
+
+func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string, stdout, stderr io.Writer) error {
+	// Cannot rely on docker's auto remove because
+	//   1. We must inspect exit code after container stops
+	//   2. Context cancellation may happen after start
+	container, err := DockerStart(ctx, config, hostConfig, containerName)
 	if err != nil {
 		return err
 	}

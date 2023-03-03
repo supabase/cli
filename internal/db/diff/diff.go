@@ -82,8 +82,6 @@ func DiffSchema(ctx context.Context, source, target string, schema []string, p u
 			utils.DifferImage,
 			nil,
 			args,
-			nil,
-			"",
 			stream.Stdout(),
 			stream.Stderr(),
 		); err != nil {
@@ -97,8 +95,6 @@ func DiffSchema(ctx context.Context, source, target string, schema []string, p u
 			utils.DifferImage,
 			nil,
 			append([]string{"--schema", s}, args...),
-			nil,
-			"",
 			stream.Stdout(),
 			stream.Stderr(),
 		); err != nil {
