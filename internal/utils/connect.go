@@ -2,7 +2,9 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 
@@ -11,6 +13,12 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
 )
+
+func isDialError(err error) bool {
+	inner := errors.Unwrap(err)
+	opErr, ok := inner.(*net.OpError)
+	return ok && opErr.Op == "dial"
+}
 
 // Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectRemotePostgres(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
@@ -38,7 +46,7 @@ func ConnectRemotePostgres(ctx context.Context, username, password, database, ho
 	})
 	// Use port 6543 for connection pooling
 	conn, err := ConnectByUrl(ctx, makeURL(6543), opts...)
-	if !pgconn.Timeout(err) {
+	if !pgconn.Timeout(err) && !isDialError(err) {
 		return conn, err
 	}
 	// Fallback to 5432 when pgbouncer is unavailable

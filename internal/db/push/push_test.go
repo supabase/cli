@@ -61,7 +61,7 @@ func TestMigrationPush(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), false, user, pass, database, "0", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
+		assert.ErrorContains(t, err, "connect: connection refused")
 	})
 
 	t.Run("throws error on remote load failure", func(t *testing.T) {
