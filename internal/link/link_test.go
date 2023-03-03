@@ -285,7 +285,7 @@ func TestLinkDatabase(t *testing.T) {
 		// Run test
 		err := linkDatabase(context.Background(), username, password, database, "0")
 		// Check error
-		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
+		assert.ErrorContains(t, err, "connect: connection refused")
 		assert.Empty(t, updatedConfig)
 	})
 

@@ -43,7 +43,7 @@ func TestMigrationList(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), user, pass, db, "0", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
+		assert.ErrorContains(t, err, "connect: connection refused")
 	})
 
 	t.Run("throws error on local failure", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Run test
 		_, err := loadRemoteVersions(context.Background(), user, pass, db, "0")
 		// Check error
-		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
+		assert.ErrorContains(t, err, "connect: connection refused")
 	})
 
 	t.Run("throws error on missing schema", func(t *testing.T) {

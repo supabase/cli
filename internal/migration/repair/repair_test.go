@@ -53,7 +53,7 @@ func TestRepairCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), user, pass, database, "0", "0", Applied)
 		// Check error
-		assert.ErrorContains(t, err, "dial error (dial tcp 0.0.0.0:6543: connect: connection refused)")
+		assert.ErrorContains(t, err, "connect: connection refused")
 	})
 
 	t.Run("throws error on insert failure", func(t *testing.T) {
