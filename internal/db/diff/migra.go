@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -41,8 +42,8 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
-		config.Host = utils.DbId
-		config.Port = 5432
+		config.Host = "localhost"
+		config.Port = uint16(utils.Config.Db.Port)
 		config.User = "postgres"
 		config.Password = "postgres"
 		config.Database = "postgres"
@@ -69,10 +70,10 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
 	var conn *pgx.Conn
-	if len(config.Password) > 0 {
-		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
+	if config.Host == "localhost" && config.Port == uint16(utils.Config.Db.Port) {
+		conn, err = utils.ConnectLocalPostgres(ctx, config.Host, uint(config.Port), config.Database, options...)
 	} else {
-		conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
 	}
 	if err != nil {
 		return schema, err
@@ -240,11 +241,24 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
-	out, err := utils.DockerRunOnce(ctx, utils.MigraImage, env, cmd)
-	if err != nil {
-		return "", errors.New("error diffing schema: " + err.Error())
+	var out, stderr bytes.Buffer
+	if err := utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.MigraImage,
+			Env:   env,
+			Cmd:   cmd,
+		},
+		container.HostConfig{
+			NetworkMode: container.NetworkMode("host"),
+		},
+		"",
+		&out,
+		&stderr,
+	); err != nil {
+		return "", errors.New("error diffing schema:\n" + stderr.String())
 	}
-	return out, nil
+	return out.String(), nil
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (string, error) {
@@ -258,7 +272,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
-	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
+	source := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)
 	target := utils.ToPostgresURL(config)
 	return DiffSchemaMigra(ctx, source, target, schema)
 }
