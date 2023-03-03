@@ -262,8 +262,10 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
 	// Create network with name
-	if err := DockerNetworkCreateIfNotExists(ctx, string(hostConfig.NetworkMode)); err != nil {
-		return "", err
+	if hostConfig.NetworkMode.IsUserDefined() {
+		if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode.NetworkName()); err != nil {
+			return "", err
+		}
 	}
 	// Create container from image
 	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, nil, nil, containerName)
