@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
@@ -92,7 +93,13 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
-		return err
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UndefinedTable {
+			return err
+		}
+		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+			return err
+		}
 	}
 	localMigrations, err := list.LoadLocalMigrations(fsys)
 	if err != nil {
