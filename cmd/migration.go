@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -22,17 +24,18 @@ var (
 		Short:   "Manage database migration scripts",
 	}
 
+	dbConfig pgconn.Config
+
 	migrationListCmd = &cobra.Command{
 		Use:   "list",
 		Short: "List local and remote migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return list.Run(ctx, username, dbPassword, database, host, fsys)
+			return list.Run(ctx, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, fsys)
 		},
 	}
 
@@ -58,12 +61,11 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return repair.Run(ctx, username, dbPassword, database, host, args[0], targetStatus.Value)
+			return repair.Run(ctx, dbConfig.User, dbConfig.Password, dbConfig.Database, dbConfig.Host, args[0], targetStatus.Value)
 		},
 	}
 )
@@ -103,4 +105,22 @@ func getPassword(projectRef string) string {
 		return password
 	}
 	return link.PromptPassword(os.Stdin)
+}
+
+func parseDatabaseConfig(fsys afero.Fs) error {
+	if len(dbUrl) > 0 {
+		conn, err := pgx.ParseConfig(dbUrl)
+		if err == nil {
+			dbConfig = conn.Config
+		}
+		return err
+	}
+	if err := loadLinkedProject(fsys); err != nil {
+		return err
+	}
+	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
+	dbConfig.User = "postgres"
+	dbConfig.Password = dbPassword
+	dbConfig.Database = "postgres"
+	return nil
 }

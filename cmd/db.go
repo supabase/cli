@@ -4,8 +4,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -74,8 +72,6 @@ var (
 			return switch_.Run(ctx, args[0], afero.NewOsFs())
 		},
 	}
-
-	dbConfig pgconn.Config
 
 	useMigra   bool
 	usePgAdmin bool
@@ -263,22 +259,4 @@ func init() {
 	// Build test command
 	dbCmd.AddCommand(dbTestCmd)
 	rootCmd.AddCommand(dbCmd)
-}
-
-func parseDatabaseConfig(fsys afero.Fs) error {
-	if len(dbUrl) > 0 {
-		conn, err := pgx.ParseConfig(dbUrl)
-		if err == nil {
-			dbConfig = conn.Config
-		}
-		return err
-	}
-	if err := loadLinkedProject(fsys); err != nil {
-		return err
-	}
-	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
-	dbConfig.User = "postgres"
-	dbConfig.Password = dbPassword
-	dbConfig.Database = "postgres"
-	return nil
 }
