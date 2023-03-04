@@ -19,15 +19,15 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "link",
 		Short:   "Link to a Supabase project",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := link.PreRun(projectRef, fsys); err != nil {
+				return err
+			}
 			dbPassword = viper.GetString("DB_PASSWORD")
 			if dbPassword == "" {
 				dbPassword = link.PromptPassword(os.Stdin)
 			}
-			return link.PreRun(projectRef, afero.NewOsFs())
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return link.Run(ctx, projectRef, username, dbPassword, database, fsys)
 		},
