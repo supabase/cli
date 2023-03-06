@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -21,7 +23,7 @@ var (
 	dumpRoleScript string
 )
 
-func Run(ctx context.Context, path, username, password, database, host string, dataOnly, roleOnly bool, fsys afero.Fs) error {
+func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly bool, fsys afero.Fs) error {
 	// Initialise output stream
 	var outStream afero.File
 	if len(path) > 0 {
@@ -47,14 +49,27 @@ func Run(ctx context.Context, path, username, password, database, host string, d
 		script = dumpSchemaScript
 	}
 	// Run script in docker
-	if err := utils.DockerRunOnceWithStream(ctx, utils.Pg15Image, []string{
-		"PGHOST=" + host,
-		"PGUSER=" + username,
-		"PGPASSWORD=" + password,
-		"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
-		"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
-		"DB_URL=" + database,
-	}, []string{"bash", "-c", script}, outStream, os.Stderr); err != nil {
+	if err := utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.Pg15Image,
+			Env: []string{
+				"PGHOST=" + config.Host,
+				"PGUSER=" + config.User,
+				"PGPASSWORD=" + config.Password,
+				"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+				"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
+				"DB_URL=" + config.Database,
+			},
+			Cmd: []string{"bash", "-c", script},
+		},
+		container.HostConfig{
+			NetworkMode: container.NetworkMode("host"),
+		},
+		"",
+		outStream,
+		os.Stderr,
+	); err != nil {
 		return errors.New("Error running pg_dump on remote database: " + err.Error())
 	}
 	if len(path) > 0 {

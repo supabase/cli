@@ -5,9 +5,10 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
@@ -17,7 +18,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
+func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
 	{
 		if err := utils.AssertDockerIsRunning(ctx); err != nil {
@@ -29,7 +30,7 @@ func Run(ctx context.Context, schema []string, username, password, database stri
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, schema, username, password, database, fsys)
+		return run(p, ctx, schema, config, fsys)
 	}); err != nil {
 		return err
 	}
@@ -38,16 +39,10 @@ func Run(ctx context.Context, schema []string, username, password, database stri
 	return nil
 }
 
-func run(p utils.Program, ctx context.Context, schema []string, username, password, database string, fsys afero.Fs) error {
-	projectRef, err := utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	host := utils.GetSupabaseDbHost(projectRef)
-
+func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	p.Send(utils.StatusMsg("Connecting to remote database..."))
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host)
+	conn, err := utils.ConnectRemotePostgres(ctx, config)
 	if err != nil {
 		return err
 	}
@@ -64,7 +59,7 @@ func run(p utils.Program, ctx context.Context, schema []string, username, passwo
 		}
 	}
 	timestamp := utils.GetCurrentTimestamp()
-	if err := fetchRemote(p, ctx, schema, timestamp, username, password, database, host, fsys); err != nil {
+	if err := fetchRemote(p, ctx, schema, timestamp, config, fsys); err != nil {
 		return err
 	}
 
@@ -73,20 +68,19 @@ func run(p utils.Program, ctx context.Context, schema []string, username, passwo
 	return err
 }
 
-func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp, username, password, database, host string, fsys afero.Fs) error {
+func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp string, config pgconn.Config, fsys afero.Fs) error {
 	path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
 	// Special case if this is the first migration
 	if migrations, err := list.LoadLocalMigrations(fsys); err != nil {
 		return err
 	} else if len(migrations) == 0 {
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
-		return dump.Run(ctx, path, username, password, database, host, false, false, fsys)
+		return dump.Run(ctx, path, config, false, false, fsys)
 	}
 
 	w := utils.StatusWriter{Program: p}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	target := fmt.Sprintf("postgresql://%s@%s:6543/postgres", url.UserPassword(database, password), host)
-	output, err := diff.DiffDatabase(ctx, schema, target, w, fsys)
+	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys)
 	if err != nil {
 		return err
 	}
@@ -99,7 +93,13 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
-		return err
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UndefinedTable {
+			return err
+		}
+		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+			return err
+		}
 	}
 	localMigrations, err := list.LoadLocalMigrations(fsys)
 	if err != nil {

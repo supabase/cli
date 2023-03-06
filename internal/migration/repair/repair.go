@@ -21,11 +21,10 @@ const (
 	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
 	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version) VALUES($1)"
 	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = $1"
-	CREATE_MIGRATION_TABLE   = CREATE_VERSION_SCHEMA + ";" + CREATE_VERSION_TABLE
 )
 
-func Run(ctx context.Context, username, password, database, host, version, status string, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+func Run(ctx context.Context, config pgconn.Config, version, status string, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
 	}
@@ -46,6 +45,14 @@ func Run(ctx context.Context, username, password, database, host, version, statu
 	}
 	fmt.Fprintln(os.Stderr, "Repaired migration history:", version, "=>", status)
 	return nil
+}
+
+func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
+	batch := pgconn.Batch{}
+	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
+	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
+	_, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
+	return err
 }
 
 func InsertVersionSQL(batch *pgconn.Batch, version string) {

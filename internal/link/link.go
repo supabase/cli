@@ -31,7 +31,7 @@ func PreRun(projectRef string, fsys afero.Fs) error {
 	return utils.LoadConfigFS(fsys)
 }
 
-func Run(ctx context.Context, projectRef, username, password, database string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check postgrest config
 	if err := linkPostgrest(ctx, projectRef); err != nil {
 		return err
@@ -39,8 +39,13 @@ func Run(ctx context.Context, projectRef, username, password, database string, f
 
 	// 2. Check database connection
 	if len(password) > 0 {
-		host := utils.GetSupabaseDbHost(projectRef)
-		if err := linkDatabase(ctx, username, password, database, host, options...); err != nil {
+		if err := linkDatabase(ctx, pgconn.Config{
+			Host:     utils.GetSupabaseDbHost(projectRef),
+			Port:     6543,
+			User:     "postgres",
+			Password: password,
+			Database: "postgres",
+		}, options...); err != nil {
 			return err
 		}
 		// Save database password
@@ -119,8 +124,8 @@ func sliceEqual(a, b []string) bool {
 	return true
 }
 
-func linkDatabase(ctx context.Context, username, password, database, host string, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -17,12 +18,13 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
-const (
-	user     = "admin"
-	pass     = "password"
-	database = "postgres"
-	host     = "localhost"
-)
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestMigrationPush(t *testing.T) {
 	t.Run("dry run", func(t *testing.T) {
@@ -36,7 +38,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), true, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -50,7 +52,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -59,9 +61,9 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, user, pass, database, "0", fsys)
+		err := Run(context.Background(), false, pgconn.Config{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "connect: connection refused")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on remote load failure", func(t *testing.T) {
@@ -73,7 +75,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
 	})
@@ -91,7 +93,7 @@ func TestMigrationPush(t *testing.T) {
 			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
-		err := Run(context.Background(), false, user, pass, database, host, fsys, conn.Intercept)
+		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
 		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)
@@ -119,7 +121,7 @@ func TestPendingMigrations(t *testing.T) {
 			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -139,7 +141,7 @@ func TestPendingMigrations(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -158,7 +160,7 @@ func TestPendingMigrations(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"0"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -179,7 +181,7 @@ func TestPendingMigrations(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"0"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -205,7 +207,7 @@ func TestPushLocal(t *testing.T) {
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -247,7 +249,7 @@ func TestPushLocal(t *testing.T) {
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, user, pass, database, host, conn.Intercept)
+		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

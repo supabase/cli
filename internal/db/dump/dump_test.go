@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,12 +14,13 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-const (
-	username = "admin"
-	password = "password"
-	database = "postgres"
-	host     = "localhost"
-)
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestPullCommand(t *testing.T) {
 	imageUrl := utils.GetRegistryImageUrl(utils.Pg15Image)
@@ -33,7 +35,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", username, password, database, host, false, false, fsys)
+		err := Run(context.Background(), "schema.sql", dbConfig, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -52,7 +54,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "", username, password, database, host, false, false, fsys)
+		err := Run(context.Background(), "", dbConfig, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -68,7 +70,7 @@ func TestPullCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "", username, password, database, host, false, false, fsys)
+		err := Run(context.Background(), "", dbConfig, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error running pg_dump on remote database: request returned Service Unavailable")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -83,7 +85,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", username, password, database, host, false, false, fsys)
+		err := Run(context.Background(), "schema.sql", dbConfig, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

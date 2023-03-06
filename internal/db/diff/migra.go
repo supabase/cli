@@ -1,12 +1,12 @@
 package diff
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,38 +30,33 @@ var (
 	diffSchemaScript string
 )
 
-func RunMigra(ctx context.Context, schema []string, file, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func RunMigra(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	// 1. Determine local or remote target
-	target, err := buildTargetUrl(password, fsys)
-	if err != nil {
-		return err
-	}
-	// 2. Load all user defined schemas
-	if len(schema) == 0 {
-		var conn *pgx.Conn
-		if len(password) > 0 {
-			options = append(options, func(cc *pgx.ConnConfig) {
-				cc.PreferSimpleProtocol = true
-			})
-			conn, err = utils.ConnectByUrl(ctx, target, options...)
-		} else {
-			conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
-		}
-		if err != nil {
+	if len(config.Password) > 0 {
+		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
+	} else {
+		fmt.Fprintln(os.Stderr, "Connecting to local database...")
+		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
-		defer conn.Close(context.Background())
-		schema, err = LoadUserSchemas(ctx, conn)
+		config.Host = "localhost"
+		config.Port = uint16(utils.Config.Db.Port)
+		config.User = "postgres"
+		config.Password = "postgres"
+		config.Database = "postgres"
+	}
+	// 1. Load all user defined schemas
+	if len(schema) == 0 {
+		schema, err = loadSchema(ctx, config, options...)
 		if err != nil {
 			return err
 		}
 	}
 	// 3. Run migra to diff schema
-	out, err := DiffDatabase(ctx, schema, target, os.Stderr, fsys, options...)
+	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, options...)
 	if err != nil {
 		return err
 	}
@@ -73,27 +68,18 @@ func RunMigra(ctx context.Context, schema []string, file, password string, fsys 
 	return SaveDiff(out, file, fsys)
 }
 
-// Builds a postgres connection string for local or remote database
-func buildTargetUrl(password string, fsys afero.Fs) (target string, err error) {
-	if len(password) > 0 {
-		ref, err := utils.LoadProjectRef(fsys)
-		if err != nil {
-			return target, err
-		}
-		target = fmt.Sprintf(
-			"postgresql://%s@%s:6543/postgres",
-			url.UserPassword("postgres", password),
-			utils.GetSupabaseDbHost(ref),
-		)
-		fmt.Fprintln(os.Stderr, "Connecting to linked project...")
+func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
+	var conn *pgx.Conn
+	if config.Host == "localhost" && config.Port == uint16(utils.Config.Db.Port) {
+		conn, err = utils.ConnectLocalPostgres(ctx, config.Host, uint(config.Port), config.Database, options...)
 	} else {
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return target, err
-		}
-		target = "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
-		fmt.Fprintln(os.Stderr, "Connecting to local database...")
+		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
 	}
-	return target, err
+	if err != nil {
+		return schema, err
+	}
+	defer conn.Close(context.Background())
+	return LoadUserSchemas(ctx, conn)
 }
 
 func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
@@ -255,14 +241,27 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
-	out, err := utils.DockerRunOnce(ctx, utils.MigraImage, env, cmd)
-	if err != nil {
-		return "", errors.New("error diffing schema: " + err.Error())
+	var out, stderr bytes.Buffer
+	if err := utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.MigraImage,
+			Env:   env,
+			Cmd:   cmd,
+		},
+		container.HostConfig{
+			NetworkMode: container.NetworkMode("host"),
+		},
+		"",
+		&out,
+		&stderr,
+	); err != nil {
+		return "", errors.New("error diffing schema:\n" + stderr.String())
 	}
-	return out, nil
+	return out.String(), nil
 }
 
-func DiffDatabase(ctx context.Context, schema []string, target string, w io.Writer, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx)
 	if err != nil {
@@ -273,6 +272,7 @@ func DiffDatabase(ctx context.Context, schema []string, target string, w io.Writ
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
-	source := "postgresql://postgres:postgres@" + shadow[:12] + ":5432/postgres"
+	source := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)
+	target := utils.ToPostgresURL(config)
 	return DiffSchemaMigra(ctx, source, target, schema)
 }
