@@ -15,8 +15,8 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "localhost",
-	Port:     5432,
+	Host:     GetSupabaseDbHost(apitest.RandomProjectRef()),
+	Port:     6543,
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
@@ -49,12 +49,11 @@ func TestConnectRemotePostgres(t *testing.T) {
 
 	t.Run("fallback to postgres port on timeout", func(t *testing.T) {
 		DNSResolver.Value = DNS_OVER_HTTPS
-		const host = "localhost"
 		// Setup http mock
 		defer gock.OffAll()
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
-			MatchParam("name", host).
+			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
 			JSON(&dnsResponse{Answer: []dnsAnswer{
@@ -62,7 +61,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 			}})
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
-			MatchParam("name", host).
+			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
 			JSON(&dnsResponse{Answer: []dnsAnswer{
@@ -71,7 +70,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		// pgx makes 2 calls to resolve ip for each connect request
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
-			MatchParam("name", host).
+			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
 			JSON(&dnsResponse{Answer: []dnsAnswer{
@@ -79,7 +78,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 			}})
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
-			MatchParam("name", host).
+			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
 			JSON(&dnsResponse{Answer: []dnsAnswer{
