@@ -98,7 +98,7 @@ var (
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
-		Short: "Serve a Function locally",
+		Short: "Serve all Functions locally",
 		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -124,7 +124,7 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().Bool("all", true, "Serve all functions (caution: Experimental feature)")
+	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions (caution: experimental feature)")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)

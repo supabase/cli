@@ -28,6 +28,12 @@ supabase-link:
     response: |
       Enter your database password:
       Finished supabase link.
+  - id: using-alternate-dns
+    name: Link using DNS-over-HTTPS resolver
+    code: supabase link --project-ref ******************** --dns-resolver https
+    response: |
+      Enter your database password:
+      Finished supabase link.
 supabase-start:
   - id: basic-usage
     name: Basic usage
@@ -98,3 +104,43 @@ supabase-status:
       DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
       SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+supabase-migration-list:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase migration list
+    response: |2
+            LOCAL      │     REMOTE     │     TIME (UTC)
+      ─────────────────┼────────────────┼──────────────────────
+                       │ 20230103054303 │ 2023-01-03 05:43:03
+                       │ 20230103093141 │ 2023-01-03 09:31:41
+        20230222032233 │                │ 2023-02-22 03:22:33
+  - id: with-db-url
+    name: Connect to self-hosted database
+    code: supabase migration list --db-url 'postgres://postgres[:percent_encoded_password]@localhost[:port]/postgres'
+    response: |2
+            LOCAL      │     REMOTE     │     TIME (UTC)
+      ─────────────────┼────────────────┼──────────────────────
+        20230103054303 │ 20230103054303 │ 2023-01-03 05:43:03
+        20230103093141 │ 20230103093141 │ 2023-01-03 09:31:41
+supabase-migration-new:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase migration new schema_test
+    response: |
+      Created new migration at supabase/migrations/20230306095710_schema_test.sql.
+  - id: pipe-stdin
+    name: With statements piped from stdin
+    code: echo "create schema if not exists test;" | supabase migration new schema_test
+    response: |
+      Created new migration at supabase/migrations/20230306095710_schema_test.sql.
+supabase-migration-repair:
+  - id: basic-usage
+    name: Mark a migration as reverted
+    code: supabase migration repair 20230103054303 --status reverted
+    response: |
+      Repaired migration history: 20230103054303 => reverted
+  - id: mark-applied
+    name: Mark a migration as applied
+    code: supabase migration repair 20230222032233 --status applied
+    response: |
+      Repaired migration history: 20230222032233 => applied
