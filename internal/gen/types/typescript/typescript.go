@@ -57,7 +57,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			config.Port,
 			url.PathEscape(config.Database),
 		)
-		fmt.Fprintln(os.Stderr, "Connecting to", escaped)
+		fmt.Fprintln(os.Stderr, "Connecting to", config.Host)
 
 		return utils.DockerRunOnceWithConfig(
 			ctx,
