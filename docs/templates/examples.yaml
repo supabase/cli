@@ -115,12 +115,12 @@ supabase-migration-list:
         20230222032233 │                │ 2023-02-22 03:22:33
   - id: with-db-url
     name: Connect to self-hosted database
-    code: supabase migration list --db-url postgres://postgres:<password>@localhost/postgres
+    code: supabase migration list --db-url 'postgres://postgres[:percent_encoded_password]@localhost[:port]/postgres'
     response: |
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
         20230103054303 │ 20230103054303 │ 2023-01-03 05:43:03
-        20230103054303 │ 20230103093141 │ 2023-01-03 09:31:41
+        20230103093141 │ 20230103093141 │ 2023-01-03 09:31:41
 supabase-migration-new:
   - id: basic-usage
     name: Basic usage
@@ -134,12 +134,12 @@ supabase-migration-new:
       Created new migration at supabase/migrations/20230306095710_schema_test.sql.
 supabase-migration-repair:
   - id: basic-usage
-    name: Basic usage
+    name: Mark a migration as reverted
     code: supabase migration repair 20230103054303 --status reverted
     response: |
-      Repaired migration history: 20230222032233 => reverted
+      Repaired migration history: 20230103054303 => reverted
   - id: mark-applied
-    name: Mark a migration as applied on remote
+    name: Mark a migration as applied
     code: supabase migration repair 20230222032233 --status applied
     response: |
       Repaired migration history: 20230222032233 => applied
