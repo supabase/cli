@@ -2,6 +2,8 @@
 
 Repairs the remote migration history table.
 
+Requires your local project to be linked to a remote database by running `supabase link`.
+
 If your local and remote migration history goes out of sync, you can repair the remote history by marking specific migrations as `--status applied` or `--status reverted`. Marking as `reverted` will delete an existing record from the migration history table while marking as `applied` will insert a new record.
 
 For example, your migration history table may look like this after running `db remote commit` for the first time.
