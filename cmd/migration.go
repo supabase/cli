@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -22,17 +23,18 @@ var (
 		Short:   "Manage database migration scripts",
 	}
 
+	dbConfig pgconn.Config
+
 	migrationListCmd = &cobra.Command{
 		Use:   "list",
 		Short: "List local and remote migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return list.Run(ctx, username, dbPassword, database, host, fsys)
+			return list.Run(ctx, dbConfig, fsys)
 		},
 	}
 
@@ -58,17 +60,17 @@ var (
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := loadLinkedProject(fsys); err != nil {
+			if err := parseDatabaseConfig(fsys); err != nil {
 				return err
 			}
-			host := utils.GetSupabaseDbHost(projectRef)
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return repair.Run(ctx, username, dbPassword, database, host, args[0], targetStatus.Value)
+			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value)
 		},
 	}
 )
 
 func init() {
+	migrationCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build list command
 	listFlags := migrationListCmd.Flags()
 	listFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
@@ -103,4 +105,24 @@ func getPassword(projectRef string) string {
 		return password
 	}
 	return link.PromptPassword(os.Stdin)
+}
+
+func parseDatabaseConfig(fsys afero.Fs) error {
+	if len(dbUrl) > 0 {
+		config, err := pgconn.ParseConfig(dbUrl)
+		if err == nil {
+			dbConfig = *config
+		}
+		return err
+	}
+	if err := loadLinkedProject(fsys); err != nil {
+		return err
+	}
+	// Initialise connection details for hosted project
+	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
+	dbConfig.Port = 6543
+	dbConfig.User = "postgres"
+	dbConfig.Password = dbPassword
+	dbConfig.Database = "postgres"
+	return nil
 }

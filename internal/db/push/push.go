@@ -20,11 +20,11 @@ var (
 	errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
 )
 
-func Run(ctx context.Context, dryRun bool, username, password, database, host string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
-	conn, err := utils.ConnectRemotePostgres(ctx, username, password, database, host, options...)
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
 	}

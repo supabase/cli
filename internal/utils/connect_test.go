@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,13 +14,21 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
+
 func TestConnectRemotePostgres(t *testing.T) {
 	t.Run("connects to remote postgres successfully", func(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), "username", "password", "database", "localhost", conn.Intercept)
+		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.NoError(t, err)
@@ -30,11 +39,12 @@ func TestConnectRemotePostgres(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		password := "pass word"
-		c, err := ConnectRemotePostgres(context.Background(), "username", password, "database", "localhost", conn.Intercept)
+		config := *dbConfig.Copy()
+		config.Password = "pass word"
+		c, err := ConnectRemotePostgres(context.Background(), config, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
-		assert.Equal(t, password, c.Config().Password)
+		assert.Equal(t, config.Password, c.Config().Password)
 	})
 
 	t.Run("fallback to postgres port on timeout", func(t *testing.T) {
@@ -79,7 +89,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), "postgres", "postgres", "postgres", host, conn.Intercept)
+		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		require.NoError(t, err)
 		defer c.Close(context.Background())

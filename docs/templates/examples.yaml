@@ -43,10 +43,11 @@ supabase-start:
       Seeding data supabase/seed.sql...
       Started supabase local development setup.
   - id: without-studio
-    name: Start containers without studio
-    code: supabase start -x studio
+    name: Start containers without studio and imgproxy
+    code: supabase start -x studio,imgproxy
     response: |
       Excluding container: supabase/studio:20221214-4eecc99
+      Excluding container: darthsim/imgproxy:v3.8.0
       Seeding data supabase/seed.sql...
       Started supabase local development setup.
   - id: ignore-health-check

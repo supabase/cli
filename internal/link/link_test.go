@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -21,12 +22,13 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-const (
-	username = "admin"
-	password = "password"
-	database = "postgres"
-	host     = "localhost"
-)
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestPreRun(t *testing.T) {
 	// Reset global variable
@@ -125,7 +127,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		// Run test
-		err := Run(context.Background(), project, username, password, database, fsys, conn.Intercept)
+		err := Run(context.Background(), project, dbConfig.Password, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -144,7 +146,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, username, password, database, fsys)
+		err := Run(context.Background(), project, dbConfig.Password, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -159,7 +161,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		// Run test
-		err := Run(context.Background(), project, username, password, database, fsys, func(cc *pgx.ConnConfig) {
+		err := Run(context.Background(), project, dbConfig.Password, fsys, func(cc *pgx.ConnConfig) {
 			cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
 				return nil, errors.New("hostname resolving error")
 			}
@@ -178,7 +180,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		// Run test
-		err := Run(context.Background(), project, username, "", database, fsys)
+		err := Run(context.Background(), project, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -283,9 +285,9 @@ func TestLinkDatabase(t *testing.T) {
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Run test
-		err := linkDatabase(context.Background(), username, password, database, "0")
+		err := linkDatabase(context.Background(), pgconn.Config{})
 		// Check error
-		assert.ErrorContains(t, err, "connect: connection refused")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 		assert.Empty(t, updatedConfig)
 	})
 
@@ -300,7 +302,7 @@ func TestLinkDatabase(t *testing.T) {
 			Query(repair.CREATE_VERSION_TABLE).
 			Reply("CREATE TABLE")
 		// Run test
-		err := linkDatabase(context.Background(), username, password, database, host, conn.Intercept)
+		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, updatedConfig)
@@ -319,7 +321,7 @@ func TestLinkDatabase(t *testing.T) {
 			Query(repair.CREATE_VERSION_TABLE).
 			Reply("CREATE TABLE")
 		// Run test
-		err := linkDatabase(context.Background(), username, password, database, host, conn.Intercept)
+		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		utils.Config.Db.MajorVersion = 15
@@ -338,7 +340,7 @@ func TestLinkDatabase(t *testing.T) {
 			Query(repair.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
-		err := linkDatabase(context.Background(), username, password, database, host, conn.Intercept)
+		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})
