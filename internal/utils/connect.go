@@ -52,7 +52,10 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 	})
 	// Use port 6543 for connection pooling
 	conn, err := ConnectByUrl(ctx, ToPostgresURL(config), opts...)
-	if !pgconn.Timeout(err) && !isDialError(err) && !ProjectHostPattern.MatchString(config.Host) {
+	if !pgconn.Timeout(err) && !isDialError(err) {
+		return conn, err
+	}
+	if !ProjectHostPattern.MatchString(config.Host) || config.Port != 6543 {
 		return conn, err
 	}
 	// Fallback to 5432 when pgbouncer is unavailable

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
@@ -46,7 +47,8 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	}
 
 	// Passing in script string means command line args must be set manually, ie. "$@"
-	args := "set -- " + dstPath + "/" + utils.DbTestsDir + ";"
+	testsPath := path.Join(dstPath, filepath.Dir(utils.DbTestsDir), filepath.Base(utils.DbTestsDir))
+	args := "set -- " + testsPath + ";"
 	// Requires unix path inside container
 	cmd := []string{"/bin/bash", "-c", args + testScript}
 	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
