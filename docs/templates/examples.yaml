@@ -108,7 +108,7 @@ supabase-migration-list:
   - id: basic-usage
     name: Basic usage
     code: supabase migration list
-    response: |
+    response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
                        │ 20230103054303 │ 2023-01-03 05:43:03
@@ -117,7 +117,7 @@ supabase-migration-list:
   - id: with-db-url
     name: Connect to self-hosted database
     code: supabase migration list --db-url 'postgres://postgres[:percent_encoded_password]@localhost[:port]/postgres'
-    response: |
+    response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
         20230103054303 │ 20230103054303 │ 2023-01-03 05:43:03
