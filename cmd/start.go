@@ -25,8 +25,8 @@ var (
 
 func init() {
 	flags := startCmd.Flags()
-	names := strings.Join(allowedContainers, ", ")
-	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. Multiple excludes should be comma seperated, without spaces, such as `-x studio,imgproxy`. ["+names+"]")
+	names := strings.Join(allowedContainers, ",")
+	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
 	rootCmd.AddCommand(startCmd)
 }
