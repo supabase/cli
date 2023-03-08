@@ -45,7 +45,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		Env: []string{
 			"POSTGRES_PASSWORD=postgres",
 			"POSTGRES_HOST=/var/run/postgresql",
-			"LC_ALL=C.UTF-8",
+			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
@@ -74,10 +74,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
-		Binds: []string{
-			utils.DbId + ":/var/lib/postgresql/data",
-			"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro",
-		},
+		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
+		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
 	}
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
