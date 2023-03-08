@@ -122,7 +122,11 @@ func likeEscapeSchema(schemas []string) (result []string) {
 func CreateShadowDatabase(ctx context.Context) (string, error) {
 	config := container.Config{
 		Image: utils.DbImage,
-		Env:   []string{"POSTGRES_PASSWORD=postgres"},
+		Env: []string{
+			"POSTGRES_PASSWORD=postgres",
+			"POSTGRES_HOST=/var/run/postgresql",
+			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
+		},
 	}
 	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
@@ -134,7 +138,7 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		Binds:        []string{"/dev/null:/docker-entrypoint-initdb.d/migrate.sh:ro"},
+		Tmpfs:        map[string]string{"/docker-entrypoint-initdb.d": ""},
 		AutoRemove:   true,
 	}
 	return utils.DockerStart(ctx, config, hostConfig, "")
