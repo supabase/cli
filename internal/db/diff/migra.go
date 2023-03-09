@@ -168,6 +168,13 @@ func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*
 	if err := BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
+	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
+		if err := BatchExecDDL(ctx, conn, roles); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 		return err
 	}
