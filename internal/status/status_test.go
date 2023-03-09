@@ -32,6 +32,7 @@ func TestStatusCommand(t *testing.T) {
 			"storage_imgproxy_",
 			"supabase_pg_meta_",
 			"supabase_studio_",
+			"supabase_analytics_",
 		}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()

@@ -70,3 +70,8 @@ redirect_uri = ""
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
 # or any other third-party OIDC providers.
 url = ""
+
+[analytics]
+gcp_project_id = ""
+gcp_project_number = 12345
+gcp_service_account = ""

@@ -419,7 +419,7 @@ EOF
 		started = append(started, utils.PgmetaId)
 	}
 
-	// Start Studio.
+	// Start Logflare.
 	if !isContainerExcluded(utils.StudioImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
@@ -451,6 +451,39 @@ EOF
 		}
 		started = append(started, utils.StudioId)
 	}
+
+
+	// Start Logflare
+	if !isContainerExcluded(utils.LogflareImage, excluded) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.LogflareImage,
+				Env: []string{
+					"PHX_URL_PORT=4002",
+					"DB_HOST=" + utils.DbId,
+					"DB_PORT=5432",
+					"DB_USER=postgres",
+					"DB_PASSWORD=postgres",
+					"DB_NAME=postgres",
+				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4002"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
+			},
+			container.HostConfig{
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.LogflareId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.LogflareId)
+	}
+
 
 	return waitForServiceReady(ctx, started)
 }

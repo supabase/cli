@@ -29,6 +29,7 @@ var (
 	PgmetaId    string
 	StudioId    string
 	DenoRelayId string
+	LogflareId string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -86,6 +87,7 @@ type (
 		Storage   storage             `toml:"storage"`
 		Auth      auth                `toml:"auth"`
 		Functions map[string]function `toml:"functions"`
+		Logflare  logflare            `toml:"logflare"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -145,6 +147,12 @@ type (
 		ImportMap string `toml:"import_map"`
 	}
 
+	logflare struct {
+		GcpProjectId     string `toml:"gcp_project_id"`
+		GcpProjectNumber uint `toml:"gcp_project_number"`
+		GcpServiceAccount string `toml:"gcp_service_account"`
+	}
+
 	// TODO
 	// scripts struct {
 	// 	BeforeMigrations string `toml:"before_migrations"`
@@ -185,6 +193,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
 			StudioId = "supabase_studio_" + Config.ProjectId
 			DenoRelayId = "supabase_deno_relay_" + Config.ProjectId
+			LogflareId = "supabase_analytics_" + Config.ProjectId
 		}
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")

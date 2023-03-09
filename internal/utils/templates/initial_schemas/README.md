@@ -6,7 +6,7 @@ The initial schema for PG12 is not available because the latest image (`supabase
 
 # Why use the pg_dump output instead of running the `init.sql` directly?
 
-Because Realtime, GoTrue, and Storage have their own migrations, and these need to be included in the initial schema for e.g. `supabase db reset` to work.
+Because Realtime, GoTrue, Logflare, and Storage have their own migrations, and these need to be included in the initial schema for e.g. `supabase db reset` to work.
 
 # How to Generate Initial Schemas
 
@@ -84,6 +84,19 @@ services:
       PGRST_JWT_SECRET: a
       FILE_SIZE_LIMIT: a
       STORAGE_BACKEND: a
+  
+  analytics:
+    container_name: supabase-analytics
+    image: supabase/logflare:1.0.0
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      DB_DATABASE: analytics
+      DB_HOSTNAME: db
+      DB_PORT: 5432
+      DB_PASSWORD: postgres
+      DB_USERNAME: postgres
 ```
 
 - Copy `/internal/utils/templates/globals.sql` to `./globals.sql`

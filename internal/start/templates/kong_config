@@ -113,6 +113,14 @@ services:
         strip_path: true
         paths:
           - /functions/v1/
+  - name: analytics-v1
+    _comment: "Analytics: /analytics/v1/* -> http://analytics:4002/*"
+    url: http://supabase_analytics_{{ .ProjectId }}:4002/
+    routes:
+      - name: analytics-v1-all
+        strip_path: true
+        paths:
+          - /analytics/v1/
 consumers:
   - username: anon
     keyauth_credentials:
