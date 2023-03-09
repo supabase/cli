@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbles v0.15.0
 	github.com/charmbracelet/bubbletea v0.23.2
 	github.com/charmbracelet/glamour v0.6.0
-	github.com/charmbracelet/lipgloss v0.6.0
+	github.com/charmbracelet/lipgloss v0.7.0
 	github.com/deepmap/oapi-codegen v1.12.4
 	github.com/docker/cli v23.0.1+incompatible
 	github.com/docker/docker v23.0.1+incompatible
@@ -28,7 +28,7 @@ require (
 	github.com/alessio/shellescape v1.4.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aymanbagabas/go-osc52 v1.2.1 // indirect
+	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bytedance/sonic v1.8.0 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/danieljoos/wincred v1.1.2 // indirect
@@ -113,7 +113,7 @@ require (
 	github.com/moby/term v0.0.0-20220808134915-39b0c02b01ae // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/muesli/ansi v0.0.0-20211031195517-c9f0611b6c70 // indirect
-	github.com/muesli/termenv v0.14.0 // indirect
+	github.com/muesli/termenv v0.15.0 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799 // indirect
