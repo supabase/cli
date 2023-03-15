@@ -127,7 +127,6 @@ func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
 }
 
 func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool) error {
-	var deployedFuncId string
 	{
 		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
 		if err != nil {
@@ -170,7 +169,6 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 			if resp.JSON201 == nil {
 				return errors.New("Failed to create a new Function on the Supabase project: " + string(resp.Body))
 			}
-			deployedFuncId = resp.JSON201.Id
 		case http.StatusOK: // Function already exists, so do a PATCH
 			var resp *api.UpdateFunctionResponse
 			var err error
@@ -191,7 +189,6 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 			if resp.JSON200 == nil {
 				return errors.New("Failed to update an existing Function's body on the Supabase project: " + string(resp.Body))
 			}
-			deployedFuncId = resp.JSON200.Id
 		default:
 			return errors.New("Unexpected error deploying Function: " + string(resp.Body))
 		}
@@ -199,7 +196,7 @@ func deployFunction(ctx context.Context, projectRef, slug string, functionBody i
 
 	fmt.Println("Deployed Function " + utils.Aqua(slug) + " on project " + utils.Aqua(projectRef))
 
-	url := fmt.Sprintf("%s/project/%v/functions/%v/details", utils.GetSupabaseDashboardURL(), projectRef, deployedFuncId)
+	url := fmt.Sprintf("%s/project/%v/functions/%v/details", utils.GetSupabaseDashboardURL(), projectRef, slug)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 
 	return nil
