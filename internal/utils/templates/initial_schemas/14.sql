@@ -62,6 +62,20 @@ CREATE SCHEMA IF NOT EXISTS graphql_public;
 ALTER SCHEMA graphql_public OWNER TO supabase_admin;
 
 --
+-- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+
+
+--
+-- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_net IS 'Async HTTP';
+
+
+--
 -- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: pgbouncer
 --
 
@@ -119,6 +133,15 @@ CREATE SCHEMA IF NOT EXISTS storage;
 
 
 ALTER SCHEMA storage OWNER TO supabase_admin;
+
+--
+-- Name: supabase_functions; Type: SCHEMA; Schema: -; Owner: supabase_admin
+--
+
+CREATE SCHEMA IF NOT EXISTS supabase_functions;
+
+
+ALTER SCHEMA supabase_functions OWNER TO supabase_admin;
 
 --
 -- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
@@ -444,32 +467,19 @@ BEGIN
     WHERE ext.extname = 'pg_net'
   )
   THEN
-    IF NOT EXISTS (
-      SELECT 1
-      FROM pg_roles
-      WHERE rolname = 'supabase_functions_admin'
-    )
-    THEN
-      CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION;
-    END IF;
-
     GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
 
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SECURITY DEFINER;
 
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SET search_path = net;
 
     REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
     REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
 
     GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
     GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
-    GRANT EXECUTE ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
   END IF;
 END;
 $$;
@@ -799,6 +809,89 @@ $$;
 
 ALTER FUNCTION storage.update_updated_at_column() OWNER TO supabase_storage_admin;
 
+--
+-- Name: http_request(); Type: FUNCTION; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE OR REPLACE FUNCTION supabase_functions.http_request() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'supabase_functions'
+    AS $$
+  DECLARE
+    request_id bigint;
+    payload jsonb;
+    url text := TG_ARGV[0]::text;
+    method text := TG_ARGV[1]::text;
+    headers jsonb DEFAULT '{}'::jsonb;
+    params jsonb DEFAULT '{}'::jsonb;
+    timeout_ms integer DEFAULT 1000;
+  BEGIN
+    IF url IS NULL OR url = 'null' THEN
+      RAISE EXCEPTION 'url argument is missing';
+    END IF;
+
+    IF method IS NULL OR method = 'null' THEN
+      RAISE EXCEPTION 'method argument is missing';
+    END IF;
+
+    IF TG_ARGV[2] IS NULL OR TG_ARGV[2] = 'null' THEN
+      headers = '{"Content-Type": "application/json"}'::jsonb;
+    ELSE
+      headers = TG_ARGV[2]::jsonb;
+    END IF;
+
+    IF TG_ARGV[3] IS NULL OR TG_ARGV[3] = 'null' THEN
+      params = '{}'::jsonb;
+    ELSE
+      params = TG_ARGV[3]::jsonb;
+    END IF;
+
+    IF TG_ARGV[4] IS NULL OR TG_ARGV[4] = 'null' THEN
+      timeout_ms = 1000;
+    ELSE
+      timeout_ms = TG_ARGV[4]::integer;
+    END IF;
+
+    CASE
+      WHEN method = 'GET' THEN
+        SELECT http_get INTO request_id FROM net.http_get(
+          url,
+          params,
+          headers,
+          timeout_ms
+        );
+      WHEN method = 'POST' THEN
+        payload = jsonb_build_object(
+          'old_record', OLD,
+          'record', NEW,
+          'type', TG_OP,
+          'table', TG_TABLE_NAME,
+          'schema', TG_TABLE_SCHEMA
+        );
+
+        SELECT http_post INTO request_id FROM net.http_post(
+          url,
+          payload,
+          params,
+          headers,
+          timeout_ms
+        );
+      ELSE
+        RAISE EXCEPTION 'method argument % is invalid', method;
+    END CASE;
+
+    INSERT INTO supabase_functions.hooks
+      (hook_table_id, hook_name, request_id)
+    VALUES
+      (TG_RELID, TG_NAME, request_id);
+
+    RETURN NEW;
+  END
+$$;
+
+
+ALTER FUNCTION supabase_functions.http_request() OWNER TO supabase_functions_admin;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -844,7 +937,10 @@ CREATE TABLE IF NOT EXISTS _realtime.tenants (
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL,
     max_events_per_second integer DEFAULT 100 NOT NULL,
-    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying,
+    max_bytes_per_second integer DEFAULT 100000 NOT NULL,
+    max_channels_per_client integer DEFAULT 100 NOT NULL,
+    max_joins_per_second integer DEFAULT 500 NOT NULL
 );
 
 
@@ -1223,9 +1319,9 @@ CREATE TABLE IF NOT EXISTS auth.users (
     is_super_admin boolean,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    phone character varying(15) DEFAULT NULL::character varying,
+    phone text DEFAULT NULL::character varying,
     phone_confirmed_at timestamp with time zone,
-    phone_change character varying(15) DEFAULT ''::character varying,
+    phone_change text DEFAULT ''::character varying,
     phone_change_token character varying(255) DEFAULT ''::character varying,
     phone_change_sent_at timestamp with time zone,
     confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED,
@@ -1235,6 +1331,7 @@ CREATE TABLE IF NOT EXISTS auth.users (
     reauthentication_token character varying(255) DEFAULT ''::character varying,
     reauthentication_sent_at timestamp with time zone,
     is_sso_user boolean DEFAULT false NOT NULL,
+    deleted_at timestamp with time zone,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1265,7 +1362,10 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
     owner uuid,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
-    public boolean DEFAULT false
+    public boolean DEFAULT false,
+    avif_autodetection boolean DEFAULT false,
+    file_size_limit bigint,
+    allowed_mime_types text[]
 );
 
 
@@ -1305,6 +1405,61 @@ CREATE TABLE IF NOT EXISTS storage.objects (
 ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
 
 --
+-- Name: hooks; Type: TABLE; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE TABLE IF NOT EXISTS supabase_functions.hooks (
+    id bigint NOT NULL,
+    hook_table_id integer NOT NULL,
+    hook_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id bigint
+);
+
+
+ALTER TABLE supabase_functions.hooks OWNER TO supabase_functions_admin;
+
+--
+-- Name: TABLE hooks; Type: COMMENT; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+COMMENT ON TABLE supabase_functions.hooks IS 'Supabase Functions Hooks: Audit trail for triggered hooks.';
+
+
+--
+-- Name: hooks_id_seq; Type: SEQUENCE; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE SEQUENCE IF NOT EXISTS supabase_functions.hooks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE supabase_functions.hooks_id_seq OWNER TO supabase_functions_admin;
+
+--
+-- Name: hooks_id_seq; Type: SEQUENCE OWNED BY; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+ALTER SEQUENCE supabase_functions.hooks_id_seq OWNED BY supabase_functions.hooks.id;
+
+
+--
+-- Name: migrations; Type: TABLE; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE TABLE IF NOT EXISTS supabase_functions.migrations (
+    version text NOT NULL,
+    inserted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE supabase_functions.migrations OWNER TO supabase_functions_admin;
+
+--
 -- Name: refresh_tokens id; Type: DEFAULT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1312,34 +1467,42 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
+-- Name: hooks id; Type: DEFAULT; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('supabase_functions.hooks_id_seq'::regclass);
+
+
+--
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('20f62b3b-8906-49e4-8806-1e4c743afd79', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-09 06:53:33', '2023-01-09 06:53:33');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('fa4a0cad-df34-478d-aecc-d6811b3d2b39', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-03-16 02:25:37', '2023-03-16 02:25:37');
 
 
 --
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-09 06:53:30');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-09 06:53:30');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-09 06:53:30');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-09 06:53:31');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-09 06:53:31');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-03-16 02:25:36');
 
 
 --
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('6b5dd60f-7ded-4bf4-8692-24bbbe92caa4', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-09 06:53:33', '2023-01-09 06:53:33', 100, 'postgres_cdc_rls');
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('1fc8e2aa-9bb2-40c1-aefd-cd012c1e444d', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-03-16 02:25:37', '2023-03-16 02:25:37', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -1438,6 +1601,9 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221208132122');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195500');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195800');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230116124310');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230116124412');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230131181311');
 
 
 --
@@ -1474,17 +1640,20 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2022-11-09 15:18:04.857739');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2022-11-09 15:18:04.8635');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2022-11-09 15:18:04.867172');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2022-11-09 15:18:04.884924');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2022-11-09 15:18:04.888136');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2022-11-09 15:18:04.891994');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2022-11-09 15:18:04.895884');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2022-11-09 15:18:04.898973');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-11-09 15:18:04.902504');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-11-09 15:18:04.905764');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-11-09 15:18:04.909316');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2023-03-16 02:25:37.548482');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2023-03-16 02:25:37.55595');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2023-03-16 02:25:37.560258');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2023-03-16 02:25:37.594153');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2023-03-16 02:25:37.599194');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2023-03-16 02:25:37.604658');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2023-03-16 02:25:37.609563');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2023-03-16 02:25:37.615929');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2023-03-16 02:25:37.620171');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2023-03-16 02:25:37.624484');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2023-03-16 02:25:37.629534');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-03-16 02:25:37.634022');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-03-16 02:25:37.639132');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-03-16 02:25:37.643598');
 
 
 --
@@ -1494,10 +1663,31 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 
 
 --
+-- Data for Name: hooks; Type: TABLE DATA; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+
+
+--
+-- Data for Name: migrations; Type: TABLE DATA; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('initial', '2023-03-16 02:25:30.966697+00');
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('20210809183423_update_grants', '2023-03-16 02:25:30.966697+00');
+
+
+--
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
+
+
+--
+-- Name: hooks_id_seq; Type: SEQUENCE SET; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+SELECT pg_catalog.setval('supabase_functions.hooks_id_seq', 1, false);
 
 
 --
@@ -1698,6 +1888,22 @@ ALTER TABLE ONLY storage.migrations
 
 ALTER TABLE ONLY storage.objects
     ADD CONSTRAINT objects_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hooks hooks_pkey; Type: CONSTRAINT; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+ALTER TABLE ONLY supabase_functions.hooks
+    ADD CONSTRAINT hooks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: migrations migrations_pkey; Type: CONSTRAINT; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+ALTER TABLE ONLY supabase_functions.migrations
+    ADD CONSTRAINT migrations_pkey PRIMARY KEY (version);
 
 
 --
@@ -1932,6 +2138,20 @@ CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_patter
 
 
 --
+-- Name: supabase_functions_hooks_h_table_id_h_name_idx; Type: INDEX; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE INDEX supabase_functions_hooks_h_table_id_h_name_idx ON supabase_functions.hooks USING btree (hook_table_id, hook_name);
+
+
+--
+-- Name: supabase_functions_hooks_request_id_idx; Type: INDEX; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+CREATE INDEX supabase_functions_hooks_request_id_idx ON supabase_functions.hooks USING btree (request_id);
+
+
+--
 -- Name: objects update_objects_updated_at; Type: TRIGGER; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -2102,6 +2322,16 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 
 
 --
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+--
+
+GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
+GRANT USAGE ON SCHEMA net TO anon;
+GRANT USAGE ON SCHEMA net TO authenticated;
+GRANT USAGE ON SCHEMA net TO service_role;
+
+
+--
 -- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
 --
 
@@ -2129,6 +2359,17 @@ GRANT USAGE ON SCHEMA storage TO authenticated;
 GRANT USAGE ON SCHEMA storage TO service_role;
 GRANT ALL ON SCHEMA storage TO supabase_storage_admin;
 GRANT ALL ON SCHEMA storage TO dashboard_user;
+
+
+--
+-- Name: SCHEMA supabase_functions; Type: ACL; Schema: -; Owner: supabase_admin
+--
+
+GRANT USAGE ON SCHEMA supabase_functions TO postgres;
+GRANT USAGE ON SCHEMA supabase_functions TO anon;
+GRANT USAGE ON SCHEMA supabase_functions TO authenticated;
+GRANT USAGE ON SCHEMA supabase_functions TO service_role;
+GRANT ALL ON SCHEMA supabase_functions TO supabase_functions_admin;
 
 
 --
@@ -2620,6 +2861,42 @@ GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[
 
 
 --
+-- Name: FUNCTION http_collect_response(request_id bigint, async boolean); Type: ACL; Schema: net; Owner: supabase_admin
+--
+
+REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO postgres;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO anon;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO authenticated;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO service_role;
+
+
+--
+-- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+--
+
+REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
+GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
+GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
+GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
+GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
+
+
+--
+-- Name: FUNCTION http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+--
+
+REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
+GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
+GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
+GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
+GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
+
+
+--
 -- Name: FUNCTION get_auth(p_usename text); Type: ACL; Schema: pgbouncer; Owner: postgres
 --
 
@@ -2665,6 +2942,17 @@ GRANT ALL ON FUNCTION storage.foldername(name text) TO authenticated;
 GRANT ALL ON FUNCTION storage.foldername(name text) TO service_role;
 GRANT ALL ON FUNCTION storage.foldername(name text) TO dashboard_user;
 GRANT ALL ON FUNCTION storage.foldername(name text) TO postgres;
+
+
+--
+-- Name: FUNCTION http_request(); Type: ACL; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO postgres;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO anon;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO authenticated;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO service_role;
 
 
 --
@@ -2846,6 +3134,36 @@ GRANT ALL ON TABLE storage.objects TO anon;
 GRANT ALL ON TABLE storage.objects TO authenticated;
 GRANT ALL ON TABLE storage.objects TO service_role;
 GRANT ALL ON TABLE storage.objects TO postgres;
+
+
+--
+-- Name: TABLE hooks; Type: ACL; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+GRANT ALL ON TABLE supabase_functions.hooks TO postgres;
+GRANT ALL ON TABLE supabase_functions.hooks TO anon;
+GRANT ALL ON TABLE supabase_functions.hooks TO authenticated;
+GRANT ALL ON TABLE supabase_functions.hooks TO service_role;
+
+
+--
+-- Name: SEQUENCE hooks_id_seq; Type: ACL; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO postgres;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO anon;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO service_role;
+
+
+--
+-- Name: TABLE migrations; Type: ACL; Schema: supabase_functions; Owner: supabase_functions_admin
+--
+
+GRANT ALL ON TABLE supabase_functions.migrations TO postgres;
+GRANT ALL ON TABLE supabase_functions.migrations TO anon;
+GRANT ALL ON TABLE supabase_functions.migrations TO authenticated;
+GRANT ALL ON TABLE supabase_functions.migrations TO service_role;
 
 
 --
@@ -3058,6 +3376,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: supabase_functions; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: supabase_functions; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: supabase_functions; Owner: supabase_admin
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO service_role;
 
 
 --
