@@ -55,6 +55,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 			Image: utils.Pg15Image,
 			Env: []string{
 				"PGHOST=" + config.Host,
+				fmt.Sprintf("PGPORT=%d", config.Port),
 				"PGUSER=" + config.User,
 				"PGPASSWORD=" + config.Password,
 				"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
