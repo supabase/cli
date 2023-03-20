@@ -38,15 +38,26 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	}
 	// Load the requested script
 	var script string
+	var excludedSchemas []string
 	if dataOnly {
 		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
 		script = dumpDataScript
+		// We want to dump user data in auth, storage, etc. for migrating to new project
+		excludedSchemas = append([]string{
+			"extensions",
+			"pgbouncer",
+			"realtime",
+			"_realtime"},
+			utils.SystemSchemas...,
+		)
 	} else if roleOnly {
 		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
 		script = dumpRoleScript
+		excludedSchemas = utils.InternalSchemas
 	} else {
 		fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
 		script = dumpSchemaScript
+		excludedSchemas = utils.InternalSchemas
 	}
 	// Run script in docker
 	if err := utils.DockerRunOnceWithConfig(
@@ -58,7 +69,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 				fmt.Sprintf("PGPORT=%d", config.Port),
 				"PGUSER=" + config.User,
 				"PGPASSWORD=" + config.Password,
-				"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|"),
+				"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|"),
 				"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
 				"DB_URL=" + config.Database,
 			},
