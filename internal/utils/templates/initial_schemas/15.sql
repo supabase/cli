@@ -3631,9 +3631,17 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 
 ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 
+
+
+
+ALTER SYSTEM SET wal_level = 'logical';
+create schema if not exists analytics;
+
+
 --
 -- PostgreSQL database dump complete
 --
 
 DROP EXTENSION pg_graphql; CREATE EXTENSION pg_graphql WITH SCHEMA graphql;
 RESET ALL;
+

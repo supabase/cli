@@ -180,7 +180,7 @@ func GetRegistryAuth() string {
 }
 
 // Defaults to Supabase public ECR for faster image pull
-const defaultRegistry = "public.ecr.aws"
+const defaultRegistry = "docker.io"
 
 func getRegistry() string {
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")

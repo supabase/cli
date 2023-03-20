@@ -87,7 +87,7 @@ type (
 		Storage   storage             `toml:"storage"`
 		Auth      auth                `toml:"auth"`
 		Functions map[string]function `toml:"functions"`
-		Logflare  logflare            `toml:"logflare"`
+		Analytics  analytics            `toml:"analytics"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -147,10 +147,9 @@ type (
 		ImportMap string `toml:"import_map"`
 	}
 
-	logflare struct {
+	analytics struct {
 		GcpProjectId     	string `toml:"gcp_project_id"`
 		GcpProjectNumber 	string `toml:"gcp_project_number"`
-		GcpServiceAccount 	string `toml:"gcp_service_account"`
 		GcpJwtPath 			string `toml:"gcp_jwt_path"`
 	}
 

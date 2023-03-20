@@ -107,6 +107,10 @@ services:
 -- 00-initial-schema.sql
 --
 
+-- Set up logflare
+ALTER SYSTEM SET wal_level = 'logical';
+create schema if not exists analytics;
+
 -- Set up realtime
 -- create publication supabase_realtime; -- defaults to empty publication
 create publication supabase_realtime;
