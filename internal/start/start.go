@@ -419,7 +419,7 @@ EOF
 		started = append(started, utils.PgmetaId)
 	}
 
-	// Start Logflare.
+	// Start Studio.
 	if !isContainerExcluded(utils.StudioImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
@@ -461,11 +461,19 @@ EOF
 				Image: utils.LogflareImage,
 				Env: []string{
 					"PHX_URL_PORT=4002",
-					"DB_HOST=" + utils.DbId,
+					"DB_HOSTNAME=" + utils.DbId,
 					"DB_PORT=5432",
+					"DB_DATABASE=postgres",
 					"DB_USER=postgres",
 					"DB_PASSWORD=postgres",
 					"DB_NAME=postgres",
+					"LOGFLARE_SINGLE_TENANT=true",
+					"LOGFLARE_SUPABASE_MODE=true",
+					"LOGFLARE_API_KEY=api-key",
+					"GOOGLE_DATASET_ID_APPEND=_dev",
+					"GOOGLE_PROJECT_ID=" + utils.Config.Logflare.GcpProjectId,
+					"GOOGLE_PROJECT_NUMBER=" +  utils.Config.Logflare.GcpProjectNumber,
+					"GOOGLE_SERVICE_ACCOUNT="  + utils.Config.Logflare.GcpServiceAccount,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4002"},
@@ -475,6 +483,7 @@ EOF
 				},
 			},
 			container.HostConfig{
+				Binds:         []string{"${PWD}/" + utils.Config.Logflare.GcpJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.LogflareId,

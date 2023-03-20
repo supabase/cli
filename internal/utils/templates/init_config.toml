@@ -73,5 +73,6 @@ url = ""
 
 [analytics]
 gcp_project_id = ""
-gcp_project_number = 12345
+gcp_project_number = ""
 gcp_service_account = ""
+gcp_jwt_path = ""

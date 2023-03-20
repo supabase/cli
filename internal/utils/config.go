@@ -148,9 +148,10 @@ type (
 	}
 
 	logflare struct {
-		GcpProjectId     string `toml:"gcp_project_id"`
-		GcpProjectNumber uint `toml:"gcp_project_number"`
-		GcpServiceAccount string `toml:"gcp_service_account"`
+		GcpProjectId     	string `toml:"gcp_project_id"`
+		GcpProjectNumber 	string `toml:"gcp_project_number"`
+		GcpServiceAccount 	string `toml:"gcp_service_account"`
+		GcpJwtPath 			string `toml:"gcp_jwt_path"`
 	}
 
 	// TODO
