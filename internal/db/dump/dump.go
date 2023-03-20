@@ -53,7 +53,6 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	} else if roleOnly {
 		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
 		script = dumpRoleScript
-		excludedSchemas = utils.InternalSchemas
 	} else {
 		fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
 		script = dumpSchemaScript
