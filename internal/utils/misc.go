@@ -150,8 +150,21 @@ var (
 		"supabase_admin",
 		"supabase_auth_admin",
 		"supabase_functions_admin",
+		"supabase_read_only_user",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
+		// Managed by extensions
+		"pgsodium_keyholder",
+		"pgsodium_keyiduser",
+		"pgsodium_keymaker",
+	}
+	AllowedConfigs = []string{
+		// Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
+		"pgaudit.*",
+		"pgrst.*",
+		"session_replication_role",
+		"statement_timeout",
+		"track_io_timing",
 	}
 
 	SupabaseDirPath       = "supabase"

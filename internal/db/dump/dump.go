@@ -71,6 +71,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 				"PGPASSWORD=" + config.Password,
 				"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|"),
 				"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
+				"ALLOWED_CONFIGS=" + strings.Join(utils.AllowedConfigs, "|"),
 				"DB_URL=" + config.Database,
 			},
 			Cmd: []string{"bash", "-c", script},
