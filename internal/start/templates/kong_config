@@ -114,9 +114,8 @@ services:
         paths:
           - /functions/v1/
 consumers:
-  - username: anon
+{{range $key, $val := .ApiKeys}}
+  - username: {{$key}}
     keyauth_credentials:
-      - key: {{ .AnonKey }}
-  - username: service_role
-    keyauth_credentials:
-      - key: {{ .ServiceRoleKey }}
+      - key: {{$val}}
+{{end}}

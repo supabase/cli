@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -57,12 +58,36 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	return nil
 }
 
+type kongConfig struct {
+	ProjectId string
+	ApiKeys   map[string]string
+}
+
 var (
-	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+	customRoleKey      = regexp.MustCompile(`^SUPABASE_AUTH_(.*)_KEY$`)
 )
+
+func NewKongConfig() kongConfig {
+	config := kongConfig{
+		ProjectId: utils.Config.ProjectId,
+		ApiKeys: map[string]string{
+			"anon":         utils.Config.Auth.AnonKey,
+			"service_role": utils.Config.Auth.ServiceRoleKey,
+		},
+	}
+	for _, kv := range os.Environ() {
+		apikey := strings.Split(kv, "=")
+		match := customRoleKey.FindStringSubmatch(apikey[0])
+		if len(match) == 2 {
+			role := strings.ToLower(match[1])
+			config.ApiKeys[role] = apikey[1]
+		}
+	}
+	return config
+}
 
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
@@ -101,11 +126,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	// Start Kong.
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
-			ProjectId:      utils.Config.ProjectId,
-			AnonKey:        utils.Config.Auth.AnonKey,
-			ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
-		}); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, NewKongConfig()); err != nil {
 			return err
 		}
 
