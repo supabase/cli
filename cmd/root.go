@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -50,7 +49,6 @@ var (
 			} else {
 				utils.CmdSuggestion = "Try rerunning the command with --debug to troubleshoot the error."
 			}
-			// Set workdir
 			workdir := viper.GetString("WORKDIR")
 			if workdir == "" {
 				var err error
@@ -74,19 +72,16 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(func() {
-		// Allow overriding config with automatic env
+		// Allow overriding config object with automatic env
+		// Ref: https://github.com/spf13/viper/issues/761
 		envKeysMap := map[string]interface{}{}
-		if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 			Result:               &envKeysMap,
 			IgnoreUntaggedFields: true,
-		}); err != nil {
-			log.Fatalln(err)
-		} else if err := dec.Decode(utils.Config); err != nil {
-			log.Fatalln(err)
-		}
-		if err := viper.MergeConfigMap(envKeysMap); err != nil {
-			log.Fatalln(err)
-		}
+		})
+		cobra.CheckErr(err)
+		cobra.CheckErr(dec.Decode(utils.Config))
+		cobra.CheckErr(viper.MergeConfigMap(envKeysMap))
 		viper.SetEnvPrefix("SUPABASE")
 		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 		viper.AutomaticEnv()
