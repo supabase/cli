@@ -267,6 +267,9 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 		&out,
 		&stderr,
 	); err != nil {
+		if stderr.Len() == 0 {
+			return "", err
+		}
 		return "", errors.New("error diffing schema:\n" + stderr.String())
 	}
 	return out.String(), nil
