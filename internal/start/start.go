@@ -91,6 +91,11 @@ func NewKongConfig() kongConfig {
 	return config
 }
 
+var (
+	vectorConfigEmbed    string
+	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
+)
+
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
@@ -521,6 +526,36 @@ EOF
 			return err
 		}
 		started = append(started, utils.LogflareId)
+	}
+
+	// Start vector
+	if enableLogs == true && !isContainerExcluded(utils.VectorImage, excluded) {
+		var vectorConfigBuf bytes.Buffer
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
+			ProjectId: utils.Config.ProjectId,
+		}); err != nil {
+			return err
+		}
+
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.VectorImage,
+				Env:   []string{},
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && /usr/local/bin/vector
+` + vectorConfigBuf.String() + `
+EOF
+`},
+			},
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.VectorId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.VectorId)
 	}
 
 	return waitForServiceReady(ctx, started)
