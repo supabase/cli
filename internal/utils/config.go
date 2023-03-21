@@ -124,6 +124,10 @@ type (
 		EnableSignup           *bool    `toml:"enable_signup"`
 		Email                  email    `toml:"email"`
 		External               map[string]provider
+		// Custom secrets can be injected from .env file
+		JwtSecret      string `toml:"-"`
+		AnonKey        string `toml:"-"`
+		ServiceRoleKey string `toml:"-"`
 	}
 
 	email struct {
@@ -235,6 +239,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Auth.JwtExpiry == 0 {
 			Config.Auth.JwtExpiry = 3600
+		}
+		if Config.Auth.JwtSecret == "" {
+			Config.Auth.JwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
+		}
+		if Config.Auth.AnonKey == "" {
+			Config.Auth.AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+		}
+		if Config.Auth.ServiceRoleKey == "" {
+			Config.Auth.ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 		}
 		if Config.Auth.EnableSignup == nil {
 			x := true

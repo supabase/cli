@@ -48,6 +48,7 @@ var (
 			} else {
 				utils.CmdSuggestion = "Try rerunning the command with --debug to troubleshoot the error."
 			}
+			// Set workdir
 			workdir := viper.GetString("WORKDIR")
 			if workdir == "" {
 				var err error
@@ -55,10 +56,19 @@ var (
 					return err
 				}
 			}
-			changeDirectoryError := os.Chdir(workdir)
-			envFile := fmt.Sprintf("%s/.env", workdir)
-			utils.LoadEnvVars(envFile)
-			return changeDirectoryError
+			if err := os.Chdir(workdir); err != nil {
+				return err
+			}
+			// Load secrets
+			f, err := os.Open(".env")
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
+				return err
+			}
+			defer f.Close()
+			return viper.Unmarshal(&utils.Config)
 		},
 	}
 )

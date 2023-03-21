@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/credentials"
 )
 
@@ -74,7 +73,7 @@ func ShortContainerImageName(imageName string) string {
 	return matches[1]
 }
 
-var (
+const (
 	// https://dba.stackexchange.com/a/11895
 	// Args: dbname
 	TerminateDbSqlFmt = `
@@ -83,25 +82,8 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AnonKey        = ""
-	ServiceRoleKey = ""
 	AccessTokenKey = "access-token"
-	JWTSecret      = ""
 )
-
-func LoadEnvVars(envFile string) {
-	viper.SetConfigFile(envFile)
-	viper.ReadInConfig()
-	viper.SetDefault("SUPABASE_AUTH_JWT_SECRET", "super-secret-jwt-token-with-at-least-32-characters-long")
-	viper.SetDefault("SUPABASE_AUTH_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU")
-	viper.SetDefault("SUPABASE_AUTH_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0")
-	var configJwt = viper.GetString("SUPABASE_AUTH_JWT_SECRET")
-	var anonKey = viper.GetString("SUPABASE_AUTH_ANON_KEY")
-	var serviceKey = viper.GetString("SUPABASE_AUTH_SERVICE_ROLE_KEY")
-	JWTSecret = configJwt
-	AnonKey = anonKey
-	ServiceRoleKey = serviceKey
-}
 
 var (
 	CmdSuggestion string

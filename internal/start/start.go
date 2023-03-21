@@ -103,8 +103,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
 			ProjectId:      utils.Config.ProjectId,
-			AnonKey:        utils.AnonKey,
-			ServiceRoleKey: utils.ServiceRoleKey,
+			AnonKey:        utils.Config.Auth.AnonKey,
+			ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
 		}); err != nil {
 			return err
 		}
@@ -159,7 +159,7 @@ EOF
 			"GOTRUE_JWT_AUD=authenticated",
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=" + utils.JWTSecret,
+			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -268,7 +268,7 @@ EOF
 					"DB_NAME=postgres",
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=supabaserealtime",
-					"API_JWT_SECRET=" + utils.JWTSecret,
+					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"FLY_ALLOC_ID=abc123",
 					"FLY_APP_NAME=realtime",
 					"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
@@ -309,7 +309,7 @@ EOF
 					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					"PGRST_DB_ANON_ROLE=anon",
-					"PGRST_JWT_SECRET=" + utils.JWTSecret,
+					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
 				// PostgREST does not expose a shell for health check
 			},
@@ -330,10 +330,10 @@ EOF
 			container.Config{
 				Image: utils.StorageImage,
 				Env: []string{
-					"ANON_KEY=" + utils.AnonKey,
-					"SERVICE_KEY=" + utils.ServiceRoleKey,
+					"ANON_KEY=" + utils.Config.Auth.AnonKey,
+					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"POSTGREST_URL=http://" + utils.RestId + ":3000",
-					"PGRST_JWT_SECRET=" + utils.JWTSecret,
+					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
@@ -431,8 +431,8 @@ EOF
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
-					"SUPABASE_ANON_KEY=" + utils.AnonKey,
-					"SUPABASE_SERVICE_KEY=" + utils.ServiceRoleKey,
+					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
+					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
