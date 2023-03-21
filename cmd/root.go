@@ -3,9 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -56,19 +58,7 @@ var (
 					return err
 				}
 			}
-			if err := os.Chdir(workdir); err != nil {
-				return err
-			}
-			// Load secrets
-			f, err := os.Open(".env")
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					return nil
-				}
-				return err
-			}
-			defer f.Close()
-			return viper.Unmarshal(&utils.Config)
+			return os.Chdir(workdir)
 		},
 	}
 )
@@ -84,8 +74,21 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(func() {
+		// Allow overriding config with automatic env
+		envKeysMap := map[string]interface{}{}
+		if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			Result:               &envKeysMap,
+			IgnoreUntaggedFields: true,
+		}); err != nil {
+			log.Fatalln(err)
+		} else if err := dec.Decode(utils.Config); err != nil {
+			log.Fatalln(err)
+		}
+		if err := viper.MergeConfigMap(envKeysMap); err != nil {
+			log.Fatalln(err)
+		}
 		viper.SetEnvPrefix("SUPABASE")
-		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 		viper.AutomaticEnv()
 	})
 

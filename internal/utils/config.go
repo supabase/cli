@@ -11,7 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
+	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -84,7 +86,7 @@ type (
 		Studio    studio              `toml:"studio"`
 		Inbucket  inbucket            `toml:"inbucket"`
 		Storage   storage             `toml:"storage"`
-		Auth      auth                `toml:"auth"`
+		Auth      auth                `toml:"auth" mapstructure:"auth"`
 		Functions map[string]function `toml:"functions"`
 		// TODO
 		// Scripts   scripts
@@ -125,9 +127,9 @@ type (
 		Email                  email    `toml:"email"`
 		External               map[string]provider
 		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"-"`
-		AnonKey        string `toml:"-"`
-		ServiceRoleKey string `toml:"-"`
+		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
+		AnonKey        string `toml:"-" mapstructure:"anon_key"`
+		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
 	}
 
 	email struct {
@@ -169,6 +171,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			cwd = "current directory"
 		}
 		return fmt.Errorf("cannot read config in %s: %w", cwd, err)
+	}
+	// Load secrets from .env file
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := viper.Unmarshal(&Config); err != nil {
+		return err
 	}
 
 	// Process decoded TOML.
