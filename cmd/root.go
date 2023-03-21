@@ -3,9 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -55,7 +57,13 @@ var (
 					return err
 				}
 			}
-			return os.Chdir(workdir)
+			changeDirectoryError := os.Chdir(workdir)
+
+			err := godotenv.Load(".env")
+			if err != nil {
+				log.Println("Error loading .env file. Values will be defaulted")
+			}
+			return changeDirectoryError
 		},
 	}
 )

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils/credentials"
 )
@@ -76,11 +74,6 @@ func ShortContainerImageName(imageName string) string {
 }
 
 func getEnvValueOrDefault(key string, defaultValue string) string {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Println("Error loading .env file. Values will be defaulted")
-		return defaultValue
-	}
 	var value = os.Getenv(key)
 	if value != "" {
 		return value
@@ -97,10 +90,10 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AnonKey        = getEnvValueOrDefault("ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0")
-	ServiceRoleKey = getEnvValueOrDefault("SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU")
+	AnonKey        = getEnvValueOrDefault("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0")
+	ServiceRoleKey = getEnvValueOrDefault("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU")
 	AccessTokenKey = "access-token"
-	JWTSecret      = getEnvValueOrDefault("JWT_SECRET", "super-secret-jwt-token-with-at-least-32-characters-long")
+	JWTSecret      = getEnvValueOrDefault("SUPABASE_JWT_SECRET", "super-secret-jwt-token-with-at-least-32-characters-long")
 )
 
 var (
