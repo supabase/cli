@@ -11,7 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
+	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -84,7 +86,7 @@ type (
 		Studio    studio              `toml:"studio"`
 		Inbucket  inbucket            `toml:"inbucket"`
 		Storage   storage             `toml:"storage"`
-		Auth      auth                `toml:"auth"`
+		Auth      auth                `toml:"auth" mapstructure:"auth"`
 		Functions map[string]function `toml:"functions"`
 		// TODO
 		// Scripts   scripts
@@ -124,6 +126,10 @@ type (
 		EnableSignup           *bool    `toml:"enable_signup"`
 		Email                  email    `toml:"email"`
 		External               map[string]provider
+		// Custom secrets can be injected from .env file
+		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
+		AnonKey        string `toml:"-" mapstructure:"anon_key"`
+		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
 	}
 
 	email struct {
@@ -165,6 +171,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			cwd = "current directory"
 		}
 		return fmt.Errorf("cannot read config in %s: %w", cwd, err)
+	}
+	// Load secrets from .env file
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := viper.Unmarshal(&Config); err != nil {
+		return err
 	}
 
 	// Process decoded TOML.
@@ -235,6 +248,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Auth.JwtExpiry == 0 {
 			Config.Auth.JwtExpiry = 3600
+		}
+		if Config.Auth.JwtSecret == "" {
+			Config.Auth.JwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
+		}
+		if Config.Auth.AnonKey == "" {
+			Config.Auth.AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+		}
+		if Config.Auth.ServiceRoleKey == "" {
+			Config.Auth.ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 		}
 		if Config.Auth.EnableSignup == nil {
 			x := true

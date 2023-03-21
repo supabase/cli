@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -71,8 +72,18 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(func() {
+		// Allow overriding config object with automatic env
+		// Ref: https://github.com/spf13/viper/issues/761
+		envKeysMap := map[string]interface{}{}
+		dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			Result:               &envKeysMap,
+			IgnoreUntaggedFields: true,
+		})
+		cobra.CheckErr(err)
+		cobra.CheckErr(dec.Decode(utils.Config))
+		cobra.CheckErr(viper.MergeConfigMap(envKeysMap))
 		viper.SetEnvPrefix("SUPABASE")
-		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 		viper.AutomaticEnv()
 	})
 
