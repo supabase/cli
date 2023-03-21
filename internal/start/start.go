@@ -64,7 +64,6 @@ type kongConfig struct {
 }
 
 var (
-	// TODO: Unhardcode keys
 	//go:embed templates/kong_config
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
