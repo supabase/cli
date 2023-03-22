@@ -486,6 +486,7 @@ EOF
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
+
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
 		if _, err := utils.DockerStart(
