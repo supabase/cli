@@ -32,6 +32,7 @@ var (
 	StudioId    string
 	DenoRelayId string
 	LogflareId  string
+	VectorId    string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql

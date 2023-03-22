@@ -41,6 +41,7 @@ const (
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.7"
+	VectorImage      = "timberio/vector"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.51.4"
