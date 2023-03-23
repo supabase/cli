@@ -12,19 +12,9 @@ import (
 )
 
 var (
-	override []string
-	names    status.CustomName
-	output   = utils.EnumFlag{
-		Allowed: []string{
-			status.OutputEnv,
-			status.OutputJson,
-			status.OutputPretty,
-			status.OutputToml,
-			status.OutputYaml,
-		},
-		Value: status.OutputPretty,
-	}
-
+	override  []string
+	names     status.CustomName
+	output    = utils.OutputFlag(true /* allow env output */)
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "status",
