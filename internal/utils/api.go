@@ -263,6 +263,7 @@ var RegionMap = map[string]string{
 	"sa-east-1":      "South America (São Paulo)",
 	"us-east-1":      "East US (North Virginia)",
 	"us-west-1":      "West US (North California)",
+	"us-west-2":      "West US (Oregon)",
 }
 
 func GetSupabaseAPIHost() string {
