@@ -48,13 +48,13 @@ func TestStatusCommand(t *testing.T) {
 				}})
 		}
 		// Run test
-		assert.NoError(t, Run(context.Background(), CustomName{}, OutputPretty, fsys))
+		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys))
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), CustomName{}, OutputPretty, afero.NewMemMapFs())
+		err := Run(context.Background(), CustomName{}, utils.OutputPretty, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -63,7 +63,7 @@ func TestStatusCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
 	})
@@ -79,7 +79,7 @@ func TestStatusCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), CustomName{}, OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -153,7 +153,7 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs env var", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputEnv, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputEnv, &stdout, exclude...))
 		// Check error
 		assert.Equal(t, "DB_URL=\"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
 	})
@@ -161,15 +161,15 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs json object", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputJson, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputJson, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "{\"DB_URL\":\"postgresql://postgres:postgres@localhost:0/postgres\"}\n", stdout.String())
+		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@localhost:0/postgres\"\n}\n", stdout.String())
 	})
 
 	t.Run("outputs yaml properties", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputYaml, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputYaml, &stdout, exclude...))
 		// Check error
 		assert.Equal(t, "DB_URL: postgresql://postgres:postgres@localhost:0/postgres\n", stdout.String())
 	})
@@ -177,7 +177,7 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs toml fields", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, OutputToml, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputToml, &stdout, exclude...))
 		// Check error
 		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
 	})

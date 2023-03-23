@@ -1828,6 +1828,8 @@ components:
     SamlDescriptor:
       type: object
       properties:
+        entity_id:
+          type: string
         metadata_url:
           type: string
         metadata_xml:

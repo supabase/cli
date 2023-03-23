@@ -2,27 +2,15 @@ package status
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"reflect"
 
-	"github.com/BurntSushi/toml"
 	"github.com/docker/docker/client"
-	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/yaml.v3"
-)
-
-const (
-	OutputEnv    = "env"
-	OutputJson   = "json"
-	OutputPretty = "pretty"
-	OutputToml   = "toml"
-	OutputYaml   = "yaml"
 )
 
 type CustomName struct {
@@ -91,7 +79,7 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
 	}
-	if format == OutputPretty {
+	if format == utils.OutputPretty {
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
 		PrettyPrint(os.Stdout, stopped...)
 		return nil
@@ -145,22 +133,8 @@ func isPostgRESTHealthy(ctx context.Context) bool {
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {
 	values := names.toValues(exclude...)
-	switch format {
-	case OutputEnv:
-		var out string
-		out, err = godotenv.Marshal(values)
-		fmt.Fprintln(w, out)
-	case OutputJson:
-		enc := json.NewEncoder(w)
-		err = enc.Encode(values)
-	case OutputYaml:
-		enc := yaml.NewEncoder(w)
-		err = enc.Encode(values)
-	case OutputToml:
-		enc := toml.NewEncoder(w)
-		err = enc.Encode(values)
-	}
-	return err
+
+	return utils.EncodeOutput(format, w, values)
 }
 
 func PrettyPrint(w io.Writer, exclude ...string) {
