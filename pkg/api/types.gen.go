@@ -17,19 +17,89 @@ const (
 
 // Defines values for CreateProjectBodyRegion.
 const (
+	Ams          CreateProjectBodyRegion = "ams"
 	ApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
 	ApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
 	ApSouth1     CreateProjectBodyRegion = "ap-south-1"
 	ApSoutheast1 CreateProjectBodyRegion = "ap-southeast-1"
 	ApSoutheast2 CreateProjectBodyRegion = "ap-southeast-2"
+	Arn          CreateProjectBodyRegion = "arn"
+	Bog          CreateProjectBodyRegion = "bog"
+	Bos          CreateProjectBodyRegion = "bos"
 	CaCentral1   CreateProjectBodyRegion = "ca-central-1"
+	Cdg          CreateProjectBodyRegion = "cdg"
+	Den          CreateProjectBodyRegion = "den"
+	Dfw          CreateProjectBodyRegion = "dfw"
 	EuCentral1   CreateProjectBodyRegion = "eu-central-1"
 	EuWest1      CreateProjectBodyRegion = "eu-west-1"
 	EuWest2      CreateProjectBodyRegion = "eu-west-2"
 	EuWest3      CreateProjectBodyRegion = "eu-west-3"
+	Ewr          CreateProjectBodyRegion = "ewr"
+	Fra          CreateProjectBodyRegion = "fra"
+	Gdl          CreateProjectBodyRegion = "gdl"
+	Gig          CreateProjectBodyRegion = "gig"
+	Gru          CreateProjectBodyRegion = "gru"
+	Hkg          CreateProjectBodyRegion = "hkg"
+	Iad          CreateProjectBodyRegion = "iad"
+	Jnb          CreateProjectBodyRegion = "jnb"
+	Lax          CreateProjectBodyRegion = "lax"
+	Lhr          CreateProjectBodyRegion = "lhr"
+	Maa          CreateProjectBodyRegion = "maa"
+	Mad          CreateProjectBodyRegion = "mad"
+	Mia          CreateProjectBodyRegion = "mia"
+	Nrt          CreateProjectBodyRegion = "nrt"
+	Ord          CreateProjectBodyRegion = "ord"
+	Otp          CreateProjectBodyRegion = "otp"
+	Qro          CreateProjectBodyRegion = "qro"
 	SaEast1      CreateProjectBodyRegion = "sa-east-1"
+	Scl          CreateProjectBodyRegion = "scl"
+	Sea          CreateProjectBodyRegion = "sea"
+	Sin          CreateProjectBodyRegion = "sin"
+	Sjc          CreateProjectBodyRegion = "sjc"
+	Syd          CreateProjectBodyRegion = "syd"
 	UsEast1      CreateProjectBodyRegion = "us-east-1"
 	UsWest1      CreateProjectBodyRegion = "us-west-1"
+	UsWest2      CreateProjectBodyRegion = "us-west-2"
+	Waw          CreateProjectBodyRegion = "waw"
+	Yul          CreateProjectBodyRegion = "yul"
+	Yyz          CreateProjectBodyRegion = "yyz"
+)
+
+// Defines values for CreateProviderBodyType.
+const (
+	Saml CreateProviderBodyType = "saml"
+)
+
+// Defines values for DatabaseUpgradeStatusError.
+const (
+	N1UpgradedInstanceLaunchFailed                 DatabaseUpgradeStatusError = "1_upgraded_instance_launch_failed"
+	N2VolumeDetachchmentFromUpgradedInstanceFailed DatabaseUpgradeStatusError = "2_volume_detachchment_from_upgraded_instance_failed"
+	N3VolumeAttachmentToOriginalInstanceFailed     DatabaseUpgradeStatusError = "3_volume_attachment_to_original_instance_failed"
+	N4DataUpgradeInitiationFailed                  DatabaseUpgradeStatusError = "4_data_upgrade_initiation_failed"
+	N5DataUpgradeCompletionFailed                  DatabaseUpgradeStatusError = "5_data_upgrade_completion_failed"
+	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
+	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
+	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusError = "8_upgrade_completion_failed"
+)
+
+// Defines values for DatabaseUpgradeStatusProgress.
+const (
+	N1Started                            DatabaseUpgradeStatusProgress = "1_started"
+	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
+	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
+	N4AttachedVolumeToOriginalInstance   DatabaseUpgradeStatusProgress = "4_attached_volume_to_original_instance"
+	N5InitiatedDataUpgrade               DatabaseUpgradeStatusProgress = "5_initiated_data_upgrade"
+	N6CompletedDataUpgrade               DatabaseUpgradeStatusProgress = "6_completed_data_upgrade"
+	N7DetachedVolumeFromOriginalInstance DatabaseUpgradeStatusProgress = "7_detached_volume_from_original_instance"
+	N8AttachedVolumeToUpgradedInstance   DatabaseUpgradeStatusProgress = "8_attached_volume_to_upgraded_instance"
+	N9CompletedUpgrade                   DatabaseUpgradeStatusProgress = "9_completed_upgrade"
+)
+
+// Defines values for DatabaseUpgradeStatusStatus.
+const (
+	N0 DatabaseUpgradeStatusStatus = 0
+	N1 DatabaseUpgradeStatusStatus = 1
+	N2 DatabaseUpgradeStatusStatus = 2
 )
 
 // Defines values for FunctionResponseStatus.
@@ -79,6 +149,18 @@ type ActivateVanitySubdomainResponse struct {
 	CustomDomain string `json:"custom_domain"`
 }
 
+// AttributeMapping defines model for AttributeMapping.
+type AttributeMapping struct {
+	Keys map[string]AttributeValue `json:"keys"`
+}
+
+// AttributeValue defines model for AttributeValue.
+type AttributeValue struct {
+	Default *map[string]interface{} `json:"default,omitempty"`
+	Name    *string                 `json:"name,omitempty"`
+	Names   *[]string               `json:"names,omitempty"`
+}
+
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
 	Body      string `json:"body"`
@@ -108,6 +190,29 @@ type CreateProjectBodyPlan string
 // CreateProjectBodyRegion defines model for CreateProjectBody.Region.
 type CreateProjectBodyRegion string
 
+// CreateProviderBody defines model for CreateProviderBody.
+type CreateProviderBody struct {
+	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
+	Domains          *[]string         `json:"domains,omitempty"`
+	MetadataUrl      *string           `json:"metadata_url,omitempty"`
+	MetadataXml      *string           `json:"metadata_xml,omitempty"`
+
+	// Type What type of provider will be created
+	Type CreateProviderBodyType `json:"type"`
+}
+
+// CreateProviderBodyType What type of provider will be created
+type CreateProviderBodyType string
+
+// CreateProviderResponse defines model for CreateProviderResponse.
+type CreateProviderResponse struct {
+	CreatedAt *string         `json:"created_at,omitempty"`
+	Domains   *[]Domain       `json:"domains,omitempty"`
+	Id        string          `json:"id"`
+	Saml      *SamlDescriptor `json:"saml,omitempty"`
+	UpdatedAt *string         `json:"updated_at,omitempty"`
+}
+
 // CreateSecretBody defines model for CreateSecretBody.
 type CreateSecretBody struct {
 	Name  string `json:"name"`
@@ -118,6 +223,46 @@ type CreateSecretBody struct {
 type DatabaseResponse struct {
 	Host    string `json:"host"`
 	Version string `json:"version"`
+}
+
+// DatabaseUpgradeStatus defines model for DatabaseUpgradeStatus.
+type DatabaseUpgradeStatus struct {
+	Error         *DatabaseUpgradeStatusError    `json:"error,omitempty"`
+	InitiatedAt   string                         `json:"initiated_at"`
+	Progress      *DatabaseUpgradeStatusProgress `json:"progress,omitempty"`
+	Status        DatabaseUpgradeStatusStatus    `json:"status"`
+	TargetVersion float32                        `json:"target_version"`
+}
+
+// DatabaseUpgradeStatusError defines model for DatabaseUpgradeStatus.Error.
+type DatabaseUpgradeStatusError string
+
+// DatabaseUpgradeStatusProgress defines model for DatabaseUpgradeStatus.Progress.
+type DatabaseUpgradeStatusProgress string
+
+// DatabaseUpgradeStatusStatus defines model for DatabaseUpgradeStatus.Status.
+type DatabaseUpgradeStatusStatus float32
+
+// DatabaseUpgradeStatusResponse defines model for DatabaseUpgradeStatusResponse.
+type DatabaseUpgradeStatusResponse struct {
+	DatabaseUpgradeStatus *DatabaseUpgradeStatus `json:"databaseUpgradeStatus"`
+}
+
+// DeleteProviderResponse defines model for DeleteProviderResponse.
+type DeleteProviderResponse struct {
+	CreatedAt *string         `json:"created_at,omitempty"`
+	Domains   *[]Domain       `json:"domains,omitempty"`
+	Id        string          `json:"id"`
+	Saml      *SamlDescriptor `json:"saml,omitempty"`
+	UpdatedAt *string         `json:"updated_at,omitempty"`
+}
+
+// Domain defines model for Domain.
+type Domain struct {
+	CreatedAt *string `json:"created_at,omitempty"`
+	Domain    *string `json:"domain,omitempty"`
+	Id        string  `json:"id"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
 // FunctionResponse defines model for FunctionResponse.
@@ -138,7 +283,6 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	Body      *string                    `json:"body,omitempty"`
 	CreatedAt float32                    `json:"created_at"`
 	Id        string                     `json:"id"`
 	ImportMap *bool                      `json:"import_map,omitempty"`
@@ -152,6 +296,20 @@ type FunctionSlugResponse struct {
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
 type FunctionSlugResponseStatus string
+
+// GetProviderResponse defines model for GetProviderResponse.
+type GetProviderResponse struct {
+	CreatedAt *string         `json:"created_at,omitempty"`
+	Domains   *[]Domain       `json:"domains,omitempty"`
+	Id        string          `json:"id"`
+	Saml      *SamlDescriptor `json:"saml,omitempty"`
+	UpdatedAt *string         `json:"updated_at,omitempty"`
+}
+
+// ListProvidersResponse defines model for ListProvidersResponse.
+type ListProvidersResponse struct {
+	Items []Provider `json:"items"`
+}
 
 // NetworkBanResponse defines model for NetworkBanResponse.
 type NetworkBanResponse struct {
@@ -167,6 +325,7 @@ type NetworkRestrictionsRequest struct {
 type NetworkRestrictionsResponse struct {
 	Config      NetworkRestrictionsRequest             `json:"config"`
 	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
+	OldConfig   *NetworkRestrictionsRequest            `json:"old_config,omitempty"`
 	Status      NetworkRestrictionsResponseStatus      `json:"status"`
 }
 
@@ -204,9 +363,48 @@ type ProjectResponse struct {
 	Region         string            `json:"region"`
 }
 
+// ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
+type ProjectUpgradeEligibilityResponse struct {
+	CurrentAppVersion          string           `json:"current_app_version"`
+	Eligible                   bool             `json:"eligible"`
+	LatestAppVersion           string           `json:"latest_app_version"`
+	PotentialBreakingChanges   []string         `json:"potential_breaking_changes"`
+	RequiresManualIntervention *string          `json:"requires_manual_intervention"`
+	TargetUpgradeVersions      []ProjectVersion `json:"target_upgrade_versions"`
+}
+
+// ProjectVersion defines model for ProjectVersion.
+type ProjectVersion struct {
+	AppVersion      string  `json:"app_version"`
+	PostgresVersion float32 `json:"postgres_version"`
+}
+
+// Provider defines model for Provider.
+type Provider struct {
+	CreatedAt *string         `json:"created_at,omitempty"`
+	Domains   *[]Domain       `json:"domains,omitempty"`
+	Id        string          `json:"id"`
+	Saml      *SamlDescriptor `json:"saml,omitempty"`
+	UpdatedAt *string         `json:"updated_at,omitempty"`
+}
+
+// ReadOnlyStatusResponse defines model for ReadOnlyStatusResponse.
+type ReadOnlyStatusResponse struct {
+	Enabled             bool   `json:"enabled"`
+	OverrideActiveUntil string `json:"override_active_until"`
+	OverrideEnabled     bool   `json:"override_enabled"`
+}
+
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
 	Ipv4Addresses []string `json:"ipv4_addresses"`
+}
+
+// SamlDescriptor defines model for SamlDescriptor.
+type SamlDescriptor struct {
+	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
+	MetadataUrl      *string           `json:"metadata_url,omitempty"`
+	MetadataXml      *string           `json:"metadata_xml,omitempty"`
 }
 
 // SecretResponse defines model for SecretResponse.
@@ -275,6 +473,28 @@ type UpdatePostgrestConfigBody struct {
 	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
+// UpdateProviderBody defines model for UpdateProviderBody.
+type UpdateProviderBody struct {
+	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
+	Domains          *[]string         `json:"domains,omitempty"`
+	MetadataUrl      *string           `json:"metadata_url,omitempty"`
+	MetadataXml      *string           `json:"metadata_xml,omitempty"`
+}
+
+// UpdateProviderResponse defines model for UpdateProviderResponse.
+type UpdateProviderResponse struct {
+	CreatedAt *string         `json:"created_at,omitempty"`
+	Domains   *[]Domain       `json:"domains,omitempty"`
+	Id        string          `json:"id"`
+	Saml      *SamlDescriptor `json:"saml,omitempty"`
+	UpdatedAt *string         `json:"updated_at,omitempty"`
+}
+
+// UpgradeDatabaseBody defines model for UpgradeDatabaseBody.
+type UpgradeDatabaseBody struct {
+	TargetVersion float32 `json:"target_version"`
+}
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -322,6 +542,12 @@ type CreateOrganizationJSONRequestBody = CreateOrganizationBody
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectBody
 
+// CreateProviderForProjectJSONRequestBody defines body for CreateProviderForProject for application/json ContentType.
+type CreateProviderForProjectJSONRequestBody = CreateProviderBody
+
+// UpdateProviderByIdJSONRequestBody defines body for UpdateProviderById for application/json ContentType.
+type UpdateProviderByIdJSONRequestBody = UpdateProviderBody
+
 // CreateCustomHostnameConfigJSONRequestBody defines body for CreateCustomHostnameConfig for application/json ContentType.
 type CreateCustomHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
 
@@ -351,6 +577,9 @@ type CreateSecretsJSONRequestBody = CreateSecretsJSONBody
 
 // UpdateSslEnforcementConfigJSONRequestBody defines body for UpdateSslEnforcementConfig for application/json ContentType.
 type UpdateSslEnforcementConfigJSONRequestBody = SslEnforcementRequest
+
+// UpgradeProjectJSONRequestBody defines body for UpgradeProject for application/json ContentType.
+type UpgradeProjectJSONRequestBody = UpgradeDatabaseBody
 
 // ActivateVanitySubdomainPleaseJSONRequestBody defines body for ActivateVanitySubdomainPlease for application/json ContentType.
 type ActivateVanitySubdomainPleaseJSONRequestBody = VanitySubdomainBody
