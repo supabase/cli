@@ -105,6 +105,25 @@ type ClientInterface interface {
 
 	CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListProviders request
+	ListProviders(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateProvider request with any body
+	CreateProviderWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateProvider(ctx context.Context, ref string, body CreateProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveProviderById request
+	RemoveProviderById(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProviderById request
+	GetProviderById(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateProviderById request with any body
+	UpdateProviderByIdWithBody(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateProviderById(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RemoveCustomHostnameConfig request
 	RemoveCustomHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -176,6 +195,12 @@ type ClientInterface interface {
 
 	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetReadOnlyModeStatus request
+	GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TemporarilyDisableReadonlyMode request
+	TemporarilyDisableReadonlyMode(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -199,6 +224,17 @@ type ClientInterface interface {
 
 	// GetTypescriptTypes request
 	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpgradeProject request with any body
+	UpgradeProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpgradeProject(ctx context.Context, ref string, body UpgradeProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpgradeEligibilityInformation request
+	UpgradeEligibilityInformation(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUpgradeStatus request
+	GetUpgradeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveVanitySubdomainConfig request
 	RemoveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -279,6 +315,90 @@ func (c *Client) CreateProjectWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListProviders(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProvidersRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateProviderWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProviderRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateProvider(ctx context.Context, ref string, body CreateProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProviderRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveProviderById(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveProviderByIdRequest(c.Server, ref, providerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetProviderById(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProviderByIdRequest(c.Server, ref, providerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateProviderByIdWithBody(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateProviderByIdRequestWithBody(c.Server, ref, providerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateProviderById(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateProviderByIdRequest(c.Server, ref, providerId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -601,6 +721,30 @@ func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body Upd
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReadOnlyModeStatusRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TemporarilyDisableReadonlyMode(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTemporarilyDisableReadonlyModeRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) DeleteSecretsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSecretsRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
@@ -699,6 +843,54 @@ func (c *Client) UpdateSslEnforcementConfig(ctx context.Context, ref string, bod
 
 func (c *Client) GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTypescriptTypesRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpgradeProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpgradeProjectRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpgradeProject(ctx context.Context, ref string, body UpgradeProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpgradeProjectRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpgradeEligibilityInformation(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpgradeEligibilityInformationRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetUpgradeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUpgradeStatusRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -906,6 +1098,223 @@ func NewCreateProjectRequestWithBody(server string, contentType string, body io.
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListProvidersRequest generates requests for ListProviders
+func NewListProvidersRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/sso/providers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateProviderRequest calls the generic CreateProvider builder with application/json body
+func NewCreateProviderRequest(server string, ref string, body CreateProviderJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateProviderRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCreateProviderRequestWithBody generates requests for CreateProvider with any type of body
+func NewCreateProviderRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/sso/providers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveProviderByIdRequest generates requests for RemoveProviderById
+func NewRemoveProviderByIdRequest(server string, ref string, providerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "provider_id", runtime.ParamLocationPath, providerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/sso/providers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetProviderByIdRequest generates requests for GetProviderById
+func NewGetProviderByIdRequest(server string, ref string, providerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "provider_id", runtime.ParamLocationPath, providerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/sso/providers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateProviderByIdRequest calls the generic UpdateProviderById builder with application/json body
+func NewUpdateProviderByIdRequest(server string, ref string, providerId string, body UpdateProviderByIdJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateProviderByIdRequestWithBody(server, ref, providerId, "application/json", bodyReader)
+}
+
+// NewUpdateProviderByIdRequestWithBody generates requests for UpdateProviderById with any type of body
+func NewUpdateProviderByIdRequestWithBody(server string, ref string, providerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "provider_id", runtime.ParamLocationPath, providerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/sso/providers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -1171,25 +1580,9 @@ func NewCreateFunctionRequestWithBody(server string, ref string, params *CreateF
 
 	queryValues := queryURL.Query()
 
-	if params.Slug != nil {
+	if params.ImportMap != nil {
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
-		}
-
-	}
-
-	if params.Name != nil {
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -1219,9 +1612,25 @@ func NewCreateFunctionRequestWithBody(server string, ref string, params *CreateF
 
 	}
 
-	if params.ImportMap != nil {
+	if params.Name != nil {
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	if params.Slug != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -1375,25 +1784,9 @@ func NewUpdateFunctionRequestWithBody(server string, ref string, functionSlug st
 
 	queryValues := queryURL.Query()
 
-	if params.Slug != nil {
+	if params.ImportMap != nil {
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
-		}
-
-	}
-
-	if params.Name != nil {
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -1423,9 +1816,9 @@ func NewUpdateFunctionRequestWithBody(server string, ref string, functionSlug st
 
 	}
 
-	if params.ImportMap != nil {
+	if params.Name != nil {
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -1816,6 +2209,74 @@ func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentT
 	return req, nil
 }
 
+// NewGetReadOnlyModeStatusRequest generates requests for GetReadOnlyModeStatus
+func NewGetReadOnlyModeStatusRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/readonly", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewTemporarilyDisableReadonlyModeRequest generates requests for TemporarilyDisableReadonlyMode
+func NewTemporarilyDisableReadonlyModeRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/readonly/temporary-disable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteSecretsRequest calls the generic DeleteSecrets builder with application/json body
 func NewDeleteSecretsRequest(server string, ref string, body DeleteSecretsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2079,6 +2540,121 @@ func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescri
 	return req, nil
 }
 
+// NewUpgradeProjectRequest calls the generic UpgradeProject builder with application/json body
+func NewUpgradeProjectRequest(server string, ref string, body UpgradeProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpgradeProjectRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewUpgradeProjectRequestWithBody generates requests for UpgradeProject with any type of body
+func NewUpgradeProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/upgrade", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpgradeEligibilityInformationRequest generates requests for UpgradeEligibilityInformation
+func NewUpgradeEligibilityInformationRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/upgrade/eligibility", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUpgradeStatusRequest generates requests for GetUpgradeStatus
+func NewGetUpgradeStatusRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/upgrade/status", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRemoveVanitySubdomainConfigRequest generates requests for RemoveVanitySubdomainConfig
 func NewRemoveVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -2300,6 +2876,25 @@ type ClientWithResponsesInterface interface {
 
 	CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
 
+	// ListProviders request
+	ListProvidersWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListProvidersResponse, error)
+
+	// CreateProvider request with any body
+	CreateProviderWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProviderResponse, error)
+
+	CreateProviderWithResponse(ctx context.Context, ref string, body CreateProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProviderResponse, error)
+
+	// RemoveProviderById request
+	RemoveProviderByIdWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*RemoveProviderByIdResponse, error)
+
+	// GetProviderById request
+	GetProviderByIdWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*GetProviderByIdResponse, error)
+
+	// UpdateProviderById request with any body
+	UpdateProviderByIdWithBodyWithResponse(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error)
+
+	UpdateProviderByIdWithResponse(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error)
+
 	// RemoveCustomHostnameConfig request
 	RemoveCustomHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveCustomHostnameConfigResponse, error)
 
@@ -2371,6 +2966,12 @@ type ClientWithResponsesInterface interface {
 
 	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
+	// GetReadOnlyModeStatus request
+	GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error)
+
+	// TemporarilyDisableReadonlyMode request
+	TemporarilyDisableReadonlyModeWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*TemporarilyDisableReadonlyModeResponse, error)
+
 	// DeleteSecrets request with any body
 	DeleteSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteSecretsResponse, error)
 
@@ -2395,6 +2996,17 @@ type ClientWithResponsesInterface interface {
 	// GetTypescriptTypes request
 	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
 
+	// UpgradeProject request with any body
+	UpgradeProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpgradeProjectResponse, error)
+
+	UpgradeProjectWithResponse(ctx context.Context, ref string, body UpgradeProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*UpgradeProjectResponse, error)
+
+	// UpgradeEligibilityInformation request
+	UpgradeEligibilityInformationWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*UpgradeEligibilityInformationResponse, error)
+
+	// GetUpgradeStatus request
+	GetUpgradeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetUpgradeStatusResponse, error)
+
 	// RemoveVanitySubdomainConfig request
 	RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error)
 
@@ -2415,7 +3027,6 @@ type ClientWithResponsesInterface interface {
 type GetOrganizationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]OrganizationResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2437,7 +3048,6 @@ func (r GetOrganizationsResponse) StatusCode() int {
 type CreateOrganizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *OrganizationResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2459,7 +3069,6 @@ func (r CreateOrganizationResponse) StatusCode() int {
 type GetProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2481,7 +3090,6 @@ func (r GetProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2494,6 +3102,111 @@ func (r CreateProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListProvidersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r ListProvidersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListProvidersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateProviderResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateProviderResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateProviderResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RemoveProviderByIdResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveProviderByIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveProviderByIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetProviderByIdResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetProviderByIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetProviderByIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateProviderByIdResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateProviderByIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateProviderByIdResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2524,7 +3237,6 @@ func (r RemoveCustomHostnameConfigResponse) StatusCode() int {
 type GetCustomHostnameConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *UpdateCustomHostnameResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2546,7 +3258,6 @@ func (r GetCustomHostnameConfigResponse) StatusCode() int {
 type ActivateResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2568,7 +3279,6 @@ func (r ActivateResponse) StatusCode() int {
 type CreateCustomHostnameConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2590,7 +3300,6 @@ func (r CreateCustomHostnameConfigResponse) StatusCode() int {
 type ReverifyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2612,7 +3321,6 @@ func (r ReverifyResponse) StatusCode() int {
 type GetFunctionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2634,7 +3342,6 @@ func (r GetFunctionsResponse) StatusCode() int {
 type CreateFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2677,7 +3384,6 @@ func (r DeleteFunctionResponse) StatusCode() int {
 type GetFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *FunctionSlugResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2699,7 +3405,6 @@ func (r GetFunctionResponse) StatusCode() int {
 type UpdateFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2763,7 +3468,6 @@ func (r RemoveNetworkBanResponse) StatusCode() int {
 type GetNetworkBansResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *NetworkBanResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2785,7 +3489,6 @@ func (r GetNetworkBansResponse) StatusCode() int {
 type GetNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *NetworkRestrictionsResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2807,7 +3510,6 @@ func (r GetNetworkRestrictionsResponse) StatusCode() int {
 type ApplyNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *NetworkRestrictionsResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2829,7 +3531,6 @@ func (r ApplyNetworkRestrictionsResponse) StatusCode() int {
 type GetConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2851,7 +3552,6 @@ func (r GetConfigResponse) StatusCode() int {
 type UpdateConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PgsodiumConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2873,7 +3573,6 @@ func (r UpdateConfigResponse) StatusCode() int {
 type GetPostgRESTConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgrestConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2895,7 +3594,6 @@ func (r GetPostgRESTConfigResponse) StatusCode() int {
 type UpdatePostgRESTConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgrestConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2914,10 +3612,51 @@ func (r UpdatePostgRESTConfigResponse) StatusCode() int {
 	return 0
 }
 
+type GetReadOnlyModeStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReadOnlyModeStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReadOnlyModeStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type TemporarilyDisableReadonlyModeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r TemporarilyDisableReadonlyModeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TemporarilyDisableReadonlyModeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type DeleteSecretsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
 }
 
 // Status returns HTTPResponse.Status
@@ -2939,7 +3678,6 @@ func (r DeleteSecretsResponse) StatusCode() int {
 type GetSecretsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]SecretResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -2982,7 +3720,6 @@ func (r CreateSecretsResponse) StatusCode() int {
 type GetSslEnforcementConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SslEnforcementResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3004,7 +3741,6 @@ func (r GetSslEnforcementConfigResponse) StatusCode() int {
 type UpdateSslEnforcementConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SslEnforcementResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3026,7 +3762,6 @@ func (r UpdateSslEnforcementConfigResponse) StatusCode() int {
 type GetTypescriptTypesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *TypescriptResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3039,6 +3774,69 @@ func (r GetTypescriptTypesResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetTypescriptTypesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpgradeProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r UpgradeProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpgradeProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpgradeEligibilityInformationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r UpgradeEligibilityInformationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpgradeEligibilityInformationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetUpgradeStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUpgradeStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUpgradeStatusResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3069,7 +3867,6 @@ func (r RemoveVanitySubdomainConfigResponse) StatusCode() int {
 type GetVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *VanitySubdomainConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3091,7 +3888,6 @@ func (r GetVanitySubdomainConfigResponse) StatusCode() int {
 type ActivateVanitySubdomainPleaseResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ActivateVanitySubdomainResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3113,7 +3909,6 @@ func (r ActivateVanitySubdomainPleaseResponse) StatusCode() int {
 type CheckVanitySubdomainAvailabilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *SubdomainAvailabilityResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -3182,6 +3977,67 @@ func (c *ClientWithResponses) CreateProjectWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseCreateProjectResponse(rsp)
+}
+
+// ListProvidersWithResponse request returning *ListProvidersResponse
+func (c *ClientWithResponses) ListProvidersWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListProvidersResponse, error) {
+	rsp, err := c.ListProviders(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProvidersResponse(rsp)
+}
+
+// CreateProviderWithBodyWithResponse request with arbitrary body returning *CreateProviderResponse
+func (c *ClientWithResponses) CreateProviderWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProviderResponse, error) {
+	rsp, err := c.CreateProviderWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProviderResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateProviderWithResponse(ctx context.Context, ref string, body CreateProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProviderResponse, error) {
+	rsp, err := c.CreateProvider(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProviderResponse(rsp)
+}
+
+// RemoveProviderByIdWithResponse request returning *RemoveProviderByIdResponse
+func (c *ClientWithResponses) RemoveProviderByIdWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*RemoveProviderByIdResponse, error) {
+	rsp, err := c.RemoveProviderById(ctx, ref, providerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveProviderByIdResponse(rsp)
+}
+
+// GetProviderByIdWithResponse request returning *GetProviderByIdResponse
+func (c *ClientWithResponses) GetProviderByIdWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*GetProviderByIdResponse, error) {
+	rsp, err := c.GetProviderById(ctx, ref, providerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProviderByIdResponse(rsp)
+}
+
+// UpdateProviderByIdWithBodyWithResponse request with arbitrary body returning *UpdateProviderByIdResponse
+func (c *ClientWithResponses) UpdateProviderByIdWithBodyWithResponse(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error) {
+	rsp, err := c.UpdateProviderByIdWithBody(ctx, ref, providerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateProviderByIdResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateProviderByIdWithResponse(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error) {
+	rsp, err := c.UpdateProviderById(ctx, ref, providerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateProviderByIdResponse(rsp)
 }
 
 // RemoveCustomHostnameConfigWithResponse request returning *RemoveCustomHostnameConfigResponse
@@ -3411,6 +4267,24 @@ func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Cont
 	return ParseUpdatePostgRESTConfigResponse(rsp)
 }
 
+// GetReadOnlyModeStatusWithResponse request returning *GetReadOnlyModeStatusResponse
+func (c *ClientWithResponses) GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error) {
+	rsp, err := c.GetReadOnlyModeStatus(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReadOnlyModeStatusResponse(rsp)
+}
+
+// TemporarilyDisableReadonlyModeWithResponse request returning *TemporarilyDisableReadonlyModeResponse
+func (c *ClientWithResponses) TemporarilyDisableReadonlyModeWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*TemporarilyDisableReadonlyModeResponse, error) {
+	rsp, err := c.TemporarilyDisableReadonlyMode(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTemporarilyDisableReadonlyModeResponse(rsp)
+}
+
 // DeleteSecretsWithBodyWithResponse request with arbitrary body returning *DeleteSecretsResponse
 func (c *ClientWithResponses) DeleteSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteSecretsResponse, error) {
 	rsp, err := c.DeleteSecretsWithBody(ctx, ref, contentType, body, reqEditors...)
@@ -3489,6 +4363,41 @@ func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context
 	return ParseGetTypescriptTypesResponse(rsp)
 }
 
+// UpgradeProjectWithBodyWithResponse request with arbitrary body returning *UpgradeProjectResponse
+func (c *ClientWithResponses) UpgradeProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpgradeProjectResponse, error) {
+	rsp, err := c.UpgradeProjectWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpgradeProjectResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpgradeProjectWithResponse(ctx context.Context, ref string, body UpgradeProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*UpgradeProjectResponse, error) {
+	rsp, err := c.UpgradeProject(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpgradeProjectResponse(rsp)
+}
+
+// UpgradeEligibilityInformationWithResponse request returning *UpgradeEligibilityInformationResponse
+func (c *ClientWithResponses) UpgradeEligibilityInformationWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*UpgradeEligibilityInformationResponse, error) {
+	rsp, err := c.UpgradeEligibilityInformation(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpgradeEligibilityInformationResponse(rsp)
+}
+
+// GetUpgradeStatusWithResponse request returning *GetUpgradeStatusResponse
+func (c *ClientWithResponses) GetUpgradeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetUpgradeStatusResponse, error) {
+	rsp, err := c.GetUpgradeStatus(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUpgradeStatusResponse(rsp)
+}
+
 // RemoveVanitySubdomainConfigWithResponse request returning *RemoveVanitySubdomainConfigResponse
 func (c *ClientWithResponses) RemoveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*RemoveVanitySubdomainConfigResponse, error) {
 	rsp, err := c.RemoveVanitySubdomainConfig(ctx, ref, reqEditors...)
@@ -3554,16 +4463,6 @@ func ParseGetOrganizationsResponse(rsp *http.Response) (*GetOrganizationsRespons
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []OrganizationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3578,16 +4477,6 @@ func ParseCreateOrganizationResponse(rsp *http.Response) (*CreateOrganizationRes
 	response := &CreateOrganizationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest OrganizationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil
@@ -3606,16 +4495,6 @@ func ParseGetProjectsResponse(rsp *http.Response) (*GetProjectsResponse, error) 
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []ProjectResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3632,14 +4511,84 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ProjectResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
+	return response, nil
+}
 
+// ParseListProvidersResponse parses an HTTP response from a ListProvidersWithResponse call
+func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListProvidersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseCreateProviderResponse parses an HTTP response from a CreateProviderWithResponse call
+func ParseCreateProviderResponse(rsp *http.Response) (*CreateProviderResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateProviderResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseRemoveProviderByIdResponse parses an HTTP response from a RemoveProviderByIdWithResponse call
+func ParseRemoveProviderByIdResponse(rsp *http.Response) (*RemoveProviderByIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveProviderByIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetProviderByIdResponse parses an HTTP response from a GetProviderByIdWithResponse call
+func ParseGetProviderByIdResponse(rsp *http.Response) (*GetProviderByIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetProviderByIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseUpdateProviderByIdResponse parses an HTTP response from a UpdateProviderByIdWithResponse call
+func ParseUpdateProviderByIdResponse(rsp *http.Response) (*UpdateProviderByIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateProviderByIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -3674,16 +4623,6 @@ func ParseGetCustomHostnameConfigResponse(rsp *http.Response) (*GetCustomHostnam
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdateCustomHostnameResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3698,16 +4637,6 @@ func ParseActivateResponse(rsp *http.Response) (*ActivateResponse, error) {
 	response := &ActivateResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil
@@ -3726,16 +4655,6 @@ func ParseCreateCustomHostnameConfigResponse(rsp *http.Response) (*CreateCustomH
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3750,16 +4669,6 @@ func ParseReverifyResponse(rsp *http.Response) (*ReverifyResponse, error) {
 	response := &ReverifyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil
@@ -3778,16 +4687,6 @@ func ParseGetFunctionsResponse(rsp *http.Response) (*GetFunctionsResponse, error
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []FunctionResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3802,16 +4701,6 @@ func ParseCreateFunctionResponse(rsp *http.Response) (*CreateFunctionResponse, e
 	response := &CreateFunctionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FunctionResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil
@@ -3846,16 +4735,6 @@ func ParseGetFunctionResponse(rsp *http.Response) (*GetFunctionResponse, error) 
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FunctionSlugResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3870,16 +4749,6 @@ func ParseUpdateFunctionResponse(rsp *http.Response) (*UpdateFunctionResponse, e
 	response := &UpdateFunctionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FunctionResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -3930,16 +4799,6 @@ func ParseGetNetworkBansResponse(rsp *http.Response) (*GetNetworkBansResponse, e
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest NetworkBanResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -3954,16 +4813,6 @@ func ParseGetNetworkRestrictionsResponse(rsp *http.Response) (*GetNetworkRestric
 	response := &GetNetworkRestrictionsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NetworkRestrictionsResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -3982,16 +4831,6 @@ func ParseApplyNetworkRestrictionsResponse(rsp *http.Response) (*ApplyNetworkRes
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest NetworkRestrictionsResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4006,16 +4845,6 @@ func ParseGetConfigResponse(rsp *http.Response) (*GetConfigResponse, error) {
 	response := &GetConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PgsodiumConfigResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -4034,16 +4863,6 @@ func ParseUpdateConfigResponse(rsp *http.Response) (*UpdateConfigResponse, error
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PgsodiumConfigResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4058,16 +4877,6 @@ func ParseGetPostgRESTConfigResponse(rsp *http.Response) (*GetPostgRESTConfigRes
 	response := &GetPostgRESTConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgrestConfigResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -4086,14 +4895,36 @@ func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTCon
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgrestConfigResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
+	return response, nil
+}
 
+// ParseGetReadOnlyModeStatusResponse parses an HTTP response from a GetReadOnlyModeStatusWithResponse call
+func ParseGetReadOnlyModeStatusResponse(rsp *http.Response) (*GetReadOnlyModeStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReadOnlyModeStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseTemporarilyDisableReadonlyModeResponse parses an HTTP response from a TemporarilyDisableReadonlyModeWithResponse call
+func ParseTemporarilyDisableReadonlyModeResponse(rsp *http.Response) (*TemporarilyDisableReadonlyModeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TemporarilyDisableReadonlyModeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -4112,16 +4943,6 @@ func ParseDeleteSecretsResponse(rsp *http.Response) (*DeleteSecretsResponse, err
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4136,16 +4957,6 @@ func ParseGetSecretsResponse(rsp *http.Response) (*GetSecretsResponse, error) {
 	response := &GetSecretsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []SecretResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -4180,16 +4991,6 @@ func ParseGetSslEnforcementConfigResponse(rsp *http.Response) (*GetSslEnforcemen
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SslEnforcementResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4204,16 +5005,6 @@ func ParseUpdateSslEnforcementConfigResponse(rsp *http.Response) (*UpdateSslEnfo
 	response := &UpdateSslEnforcementConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SslEnforcementResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil
@@ -4232,14 +5023,52 @@ func ParseGetTypescriptTypesResponse(rsp *http.Response) (*GetTypescriptTypesRes
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest TypescriptResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
+	return response, nil
+}
 
+// ParseUpgradeProjectResponse parses an HTTP response from a UpgradeProjectWithResponse call
+func ParseUpgradeProjectResponse(rsp *http.Response) (*UpgradeProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpgradeProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseUpgradeEligibilityInformationResponse parses an HTTP response from a UpgradeEligibilityInformationWithResponse call
+func ParseUpgradeEligibilityInformationResponse(rsp *http.Response) (*UpgradeEligibilityInformationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpgradeEligibilityInformationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetUpgradeStatusResponse parses an HTTP response from a GetUpgradeStatusWithResponse call
+func ParseGetUpgradeStatusResponse(rsp *http.Response) (*GetUpgradeStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUpgradeStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -4274,16 +5103,6 @@ func ParseGetVanitySubdomainConfigResponse(rsp *http.Response) (*GetVanitySubdom
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest VanitySubdomainConfigResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4300,16 +5119,6 @@ func ParseActivateVanitySubdomainPleaseResponse(rsp *http.Response) (*ActivateVa
 		HTTPResponse: rsp,
 	}
 
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ActivateVanitySubdomainResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	}
-
 	return response, nil
 }
 
@@ -4324,16 +5133,6 @@ func ParseCheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*CheckVa
 	response := &CheckVanitySubdomainAvailabilityResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest SubdomainAvailabilityResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil

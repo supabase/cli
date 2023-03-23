@@ -9,12 +9,6 @@ paths:
       responses:
         '200':
           description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ProjectResponse'
       tags: &ref_0
         - projects
       security: &ref_1
@@ -32,10 +26,6 @@ paths:
       responses:
         '201':
           description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectResponse'
       tags: *ref_0
       security: *ref_1
   /v1/organizations:
@@ -45,14 +35,6 @@ paths:
       description: Returns a list of organizations that you currently belong to.
       parameters: []
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/OrganizationResponse'
         '500':
           description: Unexpected error listing organizations
       tags: &ref_2
@@ -70,12 +52,6 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateOrganizationBody'
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrganizationResponse'
         '500':
           description: Unexpected error creating an organization
       tags: *ref_2
@@ -91,30 +67,27 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
-        - name: slug
-          required: false
-          in: query
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-        - name: name
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: verify_jwt
-          required: false
-          in: query
-          schema:
-            type: boolean
         - name: import_map
           required: false
           in: query
           schema:
             type: boolean
+        - name: verify_jwt
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: name
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: slug
+          required: false
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -123,12 +96,6 @@ paths:
               $ref: '#/components/schemas/CreateFunctionBody'
           application/vnd.denoland.eszip: *ref_4
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionResponse'
         '403':
           description: ''
         '500':
@@ -149,18 +116,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FunctionResponse'
         '403':
           description: ''
         '500':
@@ -178,23 +135,14 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionSlugResponse'
         '403':
           description: ''
         '500':
@@ -215,37 +163,28 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
             type: string
-        - name: slug
-          required: false
-          in: query
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-        - name: name
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: verify_jwt
-          required: false
-          in: query
-          schema:
-            type: boolean
         - name: import_map
           required: false
           in: query
           schema:
             type: boolean
+        - name: verify_jwt
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: name
+          required: false
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -254,12 +193,6 @@ paths:
               $ref: '#/components/schemas/UpdateFunctionBody'
           application/vnd.denoland.eszip: *ref_7
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionResponse'
         '403':
           description: ''
         '500':
@@ -276,19 +209,14 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        '200':
-          description: ''
         '403':
           description: ''
         '500':
@@ -306,19 +234,14 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        '200':
-          description: ''
         '403':
           description: ''
         '500':
@@ -335,16 +258,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
         '403':
           description: ''
         '500':
@@ -362,12 +277,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
         '403':
           description: ''
         '500':
@@ -384,8 +295,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -394,12 +303,6 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateCustomHostnameBody'
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
         '403':
           description: ''
         '500':
@@ -418,16 +321,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
         '403':
           description: ''
         '500':
@@ -444,16 +339,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
         '403':
           description: ''
         '500':
@@ -470,16 +357,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkBanResponse'
         '403':
           description: ''
         '500':
@@ -498,8 +377,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -508,8 +385,6 @@ paths:
             schema:
               $ref: '#/components/schemas/RemoveNetworkBanRequest'
       responses:
-        '200':
-          description: ''
         '403':
           description: ''
         '500':
@@ -526,16 +401,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkRestrictionsResponse'
         '403':
           description: ''
         '500':
@@ -554,8 +421,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -564,12 +429,6 @@ paths:
             schema:
               $ref: '#/components/schemas/NetworkRestrictionsRequest'
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkRestrictionsResponse'
         '403':
           description: ''
         '500':
@@ -586,16 +445,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PgsodiumConfigResponse'
         '403':
           description: ''
         '500':
@@ -615,8 +466,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -625,12 +474,6 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdatePgsodiumConfigBody'
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PgsodiumConfigResponse'
         '403':
           description: ''
         '500':
@@ -647,16 +490,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PostgrestConfigResponse'
         '403':
           description: ''
         '500':
@@ -674,8 +509,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -684,12 +517,6 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdatePostgrestConfigBody'
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PostgrestConfigResponse'
         '403':
           description: ''
         '500':
@@ -707,18 +534,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/SecretResponse'
         '403':
           description: ''
         '500':
@@ -739,8 +556,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -751,8 +566,6 @@ paths:
               items:
                 $ref: '#/components/schemas/CreateSecretBody'
       responses:
-        '201':
-          description: ''
         '403':
           description: ''
         '500':
@@ -769,8 +582,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -781,12 +592,6 @@ paths:
               items:
                 type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
         '403':
           description: ''
         '500':
@@ -803,16 +608,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SslEnforcementResponse'
         '403':
           description: ''
         '500':
@@ -830,8 +627,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -840,12 +635,6 @@ paths:
             schema:
               $ref: '#/components/schemas/SslEnforcementRequest'
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SslEnforcementResponse'
         '403':
           description: ''
         '500':
@@ -858,27 +647,18 @@ paths:
       summary: Generate TypeScript types
       description: Returns the TypeScript types of your schema for use with supabase-js.
       parameters:
-        - name: included_schemas
-          required: false
-          in: query
-          schema:
-            default: public
-            type: string
         - name: ref
           required: true
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
+            type: string
+        - name: included_schemas
+          required: false
+          in: query
+          schema:
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TypescriptResponse'
         '403':
           description: ''
         '500':
@@ -899,16 +679,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VanitySubdomainConfigResponse'
         '403':
           description: ''
         '500':
@@ -926,12 +698,8 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       responses:
-        '200':
-          description: ''
         '403':
           description: ''
         '500':
@@ -948,8 +716,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -958,12 +724,6 @@ paths:
             schema:
               $ref: '#/components/schemas/VanitySubdomainBody'
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SubdomainAvailabilityResponse'
         '403':
           description: ''
         '500':
@@ -980,8 +740,6 @@ paths:
           in: path
           description: Project ref
           schema:
-            minLength: 20
-            maxLength: 20
             type: string
       requestBody:
         required: true
@@ -990,18 +748,214 @@ paths:
             schema:
               $ref: '#/components/schemas/VanitySubdomainBody'
       responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActivateVanitySubdomainResponse'
         '403':
           description: ''
         '500':
           description: Failed to activate project vanity subdomain configuration
       tags: *ref_24
       security: *ref_25
+  /v1/projects/{ref}/upgrade:
+    post:
+      operationId: upgradeProject
+      summary: Upgrades the project's Postgres version
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpgradeDatabaseBody'
+      responses:
+        '403':
+          description: ''
+        '500':
+          description: Failed to initiate project upgrade
+      tags: &ref_26
+        - database version upgrade (beta)
+      security: &ref_27
+        - bearer: []
+  /v1/projects/{ref}/upgrade/eligibility:
+    get:
+      operationId: upgradeEligibilityInformation
+      summary: Returns the project's eligibility for upgrades
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      responses:
+        '403':
+          description: ''
+        '500':
+          description: Failed to determine project upgrade eligibility
+      tags: *ref_26
+      security: *ref_27
+  /v1/projects/{ref}/upgrade/status:
+    get:
+      operationId: getUpgradeStatus
+      summary: Gets the latest status of the project's upgrade
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      responses:
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project upgrade status
+      tags: *ref_26
+      security: *ref_27
+  /v1/projects/{ref}/readonly:
+    get:
+      operationId: getReadOnlyModeStatus
+      summary: Returns project's readonly mode status
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      responses:
+        '500':
+          description: Failed to get project readonly mode status
+      tags: &ref_28
+        - database readonly mode
+      security: &ref_29
+        - bearer: []
+  /v1/projects/{ref}/readonly/temporary-disable:
+    post:
+      operationId: temporarilyDisableReadonlyMode
+      summary: Disables project's readonly mode for the next 15 minutes
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      responses:
+        '500':
+          description: Failed to disable project's readonly mode
+      tags: *ref_28
+      security: *ref_29
+  /v1/projects/{ref}/config/auth/sso/providers/{provider_id}:
+    get:
+      operationId: getProviderById
+      summary: Gets a SSO provider by its UUID
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+        - name: provider_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '403':
+          description: ''
+      tags: &ref_30
+        - sso
+      security: &ref_31
+        - bearer: []
+    put:
+      operationId: updateProviderById
+      summary: Updates a SSO provider by its UUID
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+        - name: provider_id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProviderBody'
+      responses:
+        '403':
+          description: ''
+      tags: *ref_30
+      security: *ref_31
+    delete:
+      operationId: removeProviderById
+      summary: Removes a SSO provider by its UUID
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+        - name: provider_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '403':
+          description: ''
+      tags: *ref_30
+      security: *ref_31
+  /v1/projects/{ref}/config/auth/sso/providers:
+    post:
+      operationId: createProvider
+      summary: Creates a new SSO provider
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProviderBody'
+      responses:
+        '403':
+          description: ''
+      tags: *ref_30
+      security: *ref_31
+    get:
+      operationId: listProviders
+      summary: Lists all SSO providers
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            type: string
+      responses:
+        '403':
+          description: ''
+      tags: *ref_30
+      security: *ref_31
 info:
   title: Supabase API (v1)
   description: ''
@@ -1020,98 +974,17 @@ components:
       bearerFormat: JWT
       type: http
   schemas:
-    DatabaseResponse:
-      type: object
-      properties:
-        host:
-          type: string
-        version:
-          type: string
-      required:
-        - host
-        - version
-    ProjectResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        organization_id:
-          type: string
-        name:
-          type: string
-        region:
-          type: string
-        created_at:
-          type: string
-        database:
-          $ref: '#/components/schemas/DatabaseResponse'
-      required:
-        - id
-        - organization_id
-        - name
-        - region
-        - created_at
     CreateProjectBody:
       type: object
-      properties:
-        db_pass:
-          type: string
-        name:
-          type: string
-        organization_id:
-          type: string
-        plan:
-          type: string
-          enum:
-            - free
-            - pro
-        region:
-          type: string
-          enum:
-            - us-east-1
-            - us-west-1
-            - ap-southeast-1
-            - ap-northeast-1
-            - ap-northeast-2
-            - ap-southeast-2
-            - eu-west-1
-            - eu-west-2
-            - eu-west-3
-            - eu-central-1
-            - ca-central-1
-            - ap-south-1
-            - sa-east-1
-        kps_enabled:
-          type: boolean
-      required:
-        - db_pass
-        - name
-        - organization_id
-        - plan
-        - region
-    OrganizationResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-      required:
-        - id
-        - name
+      properties: {}
     CreateOrganizationBody:
       type: object
-      properties:
-        name:
-          type: string
-      required:
-        - name
+      properties: {}
     CreateFunctionBody:
       type: object
       properties:
         slug:
           type: string
-          pattern: /^[A-Za-z0-9_-]+$/
         name:
           type: string
         body:
@@ -1122,71 +995,6 @@ components:
         - slug
         - name
         - body
-    FunctionResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        status:
-          enum: &ref_26
-            - ACTIVE
-            - REMOVED
-            - THROTTLED
-          type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
-        verify_jwt:
-          type: boolean
-        import_map:
-          type: boolean
-      required:
-        - id
-        - slug
-        - name
-        - status
-        - version
-        - created_at
-        - updated_at
-    FunctionSlugResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        status:
-          enum: *ref_26
-          type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
-        verify_jwt:
-          type: boolean
-        import_map:
-          type: boolean
-        body:
-          type: string
-      required:
-        - id
-        - slug
-        - name
-        - status
-        - version
-        - created_at
-        - updated_at
     UpdateFunctionBody:
       type: object
       properties:
@@ -1196,199 +1004,47 @@ components:
           type: string
         verify_jwt:
           type: boolean
-    UpdateCustomHostnameResponse:
-      type: object
-      properties:
-        status:
-          enum:
-            - 1_not_started
-            - 2_initiated
-            - 3_challenge_verified
-            - 4_origin_setup_completed
-            - 5_services_reconfigured
-          type: string
-        custom_hostname:
-          type: string
-        data:
-          type: object
-      required:
-        - status
-        - custom_hostname
-        - data
     UpdateCustomHostnameBody:
       type: object
-      properties:
-        custom_hostname:
-          type: string
-      required:
-        - custom_hostname
-    NetworkBanResponse:
-      type: object
-      properties:
-        banned_ipv4_addresses:
-          type: array
-          items:
-            type: string
-      required:
-        - banned_ipv4_addresses
+      properties: {}
     RemoveNetworkBanRequest:
       type: object
-      properties:
-        ipv4_addresses:
-          type: array
-          items:
-            type: string
-      required:
-        - ipv4_addresses
+      properties: {}
     NetworkRestrictionsRequest:
       type: object
-      properties:
-        dbAllowedCidrs:
-          type: array
-          items:
-            type: string
-      required:
-        - dbAllowedCidrs
-    NetworkRestrictionsResponse:
-      type: object
-      properties:
-        entitlement:
-          enum:
-            - disallowed
-            - allowed
-          type: string
-        config:
-          $ref: '#/components/schemas/NetworkRestrictionsRequest'
-        status:
-          enum:
-            - stored
-            - applied
-          type: string
-      required:
-        - entitlement
-        - config
-        - status
-    PgsodiumConfigResponse:
-      type: object
-      properties:
-        root_key:
-          type: string
-      required:
-        - root_key
+      properties: {}
     UpdatePgsodiumConfigBody:
       type: object
-      properties:
-        root_key:
-          type: string
-      required:
-        - root_key
-    PostgrestConfigResponse:
-      type: object
-      properties:
-        max_rows:
-          type: integer
-        db_schema:
-          type: string
-        db_extra_search_path:
-          type: string
-      required:
-        - max_rows
-        - db_schema
-        - db_extra_search_path
+      properties: {}
     UpdatePostgrestConfigBody:
       type: object
       properties:
         max_rows:
           type: integer
-          minimum: 0
-          maximum: 1000000
-        db_extra_search_path:
-          type: string
-        db_schema:
-          type: string
-    SecretResponse:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
       required:
-        - name
-        - value
+        - max_rows
     CreateSecretBody:
       type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-          pattern: /^(?!SUPABASE_).*/
-      required:
-        - name
-        - value
-    SslEnforcements:
-      type: object
-      properties:
-        database:
-          type: boolean
-      required:
-        - database
-    SslEnforcementResponse:
-      type: object
-      properties:
-        currentConfig:
-          $ref: '#/components/schemas/SslEnforcements'
-        appliedSuccessfully:
-          type: boolean
-      required:
-        - currentConfig
-        - appliedSuccessfully
+      properties: {}
     SslEnforcementRequest:
       type: object
-      properties:
-        requestedConfig:
-          $ref: '#/components/schemas/SslEnforcements'
-      required:
-        - requestedConfig
-    TypescriptResponse:
-      type: object
-      properties:
-        types:
-          type: string
-      required:
-        - types
-    VanitySubdomainConfigResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          enum:
-            - not-used
-            - custom-domain-used
-            - active
-        custom_domain:
-          type: string
-      required:
-        - status
+      properties: {}
     VanitySubdomainBody:
       type: object
-      properties:
-        vanity_subdomain:
-          type: string
-      required:
-        - vanity_subdomain
-    SubdomainAvailabilityResponse:
+      properties: {}
+    UpgradeDatabaseBody:
+      type: object
+      properties: {}
+    UpdateProviderBody:
+      type: object
+      properties: {}
+    CreateProviderBody:
       type: object
       properties:
-        available:
-          type: boolean
-      required:
-        - available
-    ActivateVanitySubdomainResponse:
-      type: object
-      properties:
-        custom_domain:
+        type:
           type: string
+          description: What type of provider will be created
+          enum:
+            - saml
       required:
-        - custom_domain
+        - type

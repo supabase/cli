@@ -9,75 +9,10 @@ const (
 	BearerScopes       = "bearer.Scopes"
 )
 
-// Defines values for CreateProjectBodyPlan.
+// Defines values for CreateProviderBodyType.
 const (
-	Free CreateProjectBodyPlan = "free"
-	Pro  CreateProjectBodyPlan = "pro"
+	Saml CreateProviderBodyType = "saml"
 )
-
-// Defines values for CreateProjectBodyRegion.
-const (
-	ApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
-	ApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
-	ApSouth1     CreateProjectBodyRegion = "ap-south-1"
-	ApSoutheast1 CreateProjectBodyRegion = "ap-southeast-1"
-	ApSoutheast2 CreateProjectBodyRegion = "ap-southeast-2"
-	CaCentral1   CreateProjectBodyRegion = "ca-central-1"
-	EuCentral1   CreateProjectBodyRegion = "eu-central-1"
-	EuWest1      CreateProjectBodyRegion = "eu-west-1"
-	EuWest2      CreateProjectBodyRegion = "eu-west-2"
-	EuWest3      CreateProjectBodyRegion = "eu-west-3"
-	SaEast1      CreateProjectBodyRegion = "sa-east-1"
-	UsEast1      CreateProjectBodyRegion = "us-east-1"
-	UsWest1      CreateProjectBodyRegion = "us-west-1"
-)
-
-// Defines values for FunctionResponseStatus.
-const (
-	FunctionResponseStatusACTIVE    FunctionResponseStatus = "ACTIVE"
-	FunctionResponseStatusREMOVED   FunctionResponseStatus = "REMOVED"
-	FunctionResponseStatusTHROTTLED FunctionResponseStatus = "THROTTLED"
-)
-
-// Defines values for FunctionSlugResponseStatus.
-const (
-	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
-	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
-	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
-)
-
-// Defines values for NetworkRestrictionsResponseEntitlement.
-const (
-	Allowed    NetworkRestrictionsResponseEntitlement = "allowed"
-	Disallowed NetworkRestrictionsResponseEntitlement = "disallowed"
-)
-
-// Defines values for NetworkRestrictionsResponseStatus.
-const (
-	Applied NetworkRestrictionsResponseStatus = "applied"
-	Stored  NetworkRestrictionsResponseStatus = "stored"
-)
-
-// Defines values for UpdateCustomHostnameResponseStatus.
-const (
-	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
-	N2Initiated            UpdateCustomHostnameResponseStatus = "2_initiated"
-	N3ChallengeVerified    UpdateCustomHostnameResponseStatus = "3_challenge_verified"
-	N4OriginSetupCompleted UpdateCustomHostnameResponseStatus = "4_origin_setup_completed"
-	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
-)
-
-// Defines values for VanitySubdomainConfigResponseStatus.
-const (
-	Active           VanitySubdomainConfigResponseStatus = "active"
-	CustomDomainUsed VanitySubdomainConfigResponseStatus = "custom-domain-used"
-	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
-)
-
-// ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
-type ActivateVanitySubdomainResponse struct {
-	CustomDomain string `json:"custom_domain"`
-}
 
 // CreateFunctionBody defines model for CreateFunctionBody.
 type CreateFunctionBody struct {
@@ -88,173 +23,34 @@ type CreateFunctionBody struct {
 }
 
 // CreateOrganizationBody defines model for CreateOrganizationBody.
-type CreateOrganizationBody struct {
-	Name string `json:"name"`
-}
+type CreateOrganizationBody = map[string]interface{}
 
 // CreateProjectBody defines model for CreateProjectBody.
-type CreateProjectBody struct {
-	DbPass         string                  `json:"db_pass"`
-	KpsEnabled     *bool                   `json:"kps_enabled,omitempty"`
-	Name           string                  `json:"name"`
-	OrganizationId string                  `json:"organization_id"`
-	Plan           CreateProjectBodyPlan   `json:"plan"`
-	Region         CreateProjectBodyRegion `json:"region"`
+type CreateProjectBody = map[string]interface{}
+
+// CreateProviderBody defines model for CreateProviderBody.
+type CreateProviderBody struct {
+	// Type What type of provider will be created
+	Type CreateProviderBodyType `json:"type"`
 }
 
-// CreateProjectBodyPlan defines model for CreateProjectBody.Plan.
-type CreateProjectBodyPlan string
-
-// CreateProjectBodyRegion defines model for CreateProjectBody.Region.
-type CreateProjectBodyRegion string
+// CreateProviderBodyType What type of provider will be created
+type CreateProviderBodyType string
 
 // CreateSecretBody defines model for CreateSecretBody.
-type CreateSecretBody struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// DatabaseResponse defines model for DatabaseResponse.
-type DatabaseResponse struct {
-	Host    string `json:"host"`
-	Version string `json:"version"`
-}
-
-// FunctionResponse defines model for FunctionResponse.
-type FunctionResponse struct {
-	CreatedAt float32                `json:"created_at"`
-	Id        string                 `json:"id"`
-	ImportMap *bool                  `json:"import_map,omitempty"`
-	Name      string                 `json:"name"`
-	Slug      string                 `json:"slug"`
-	Status    FunctionResponseStatus `json:"status"`
-	UpdatedAt float32                `json:"updated_at"`
-	VerifyJwt *bool                  `json:"verify_jwt,omitempty"`
-	Version   float32                `json:"version"`
-}
-
-// FunctionResponseStatus defines model for FunctionResponse.Status.
-type FunctionResponseStatus string
-
-// FunctionSlugResponse defines model for FunctionSlugResponse.
-type FunctionSlugResponse struct {
-	Body      *string                    `json:"body,omitempty"`
-	CreatedAt float32                    `json:"created_at"`
-	Id        string                     `json:"id"`
-	ImportMap *bool                      `json:"import_map,omitempty"`
-	Name      string                     `json:"name"`
-	Slug      string                     `json:"slug"`
-	Status    FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt float32                    `json:"updated_at"`
-	VerifyJwt *bool                      `json:"verify_jwt,omitempty"`
-	Version   float32                    `json:"version"`
-}
-
-// FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
-type FunctionSlugResponseStatus string
-
-// NetworkBanResponse defines model for NetworkBanResponse.
-type NetworkBanResponse struct {
-	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
-}
+type CreateSecretBody = map[string]interface{}
 
 // NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
-type NetworkRestrictionsRequest struct {
-	DbAllowedCidrs []string `json:"dbAllowedCidrs"`
-}
-
-// NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
-type NetworkRestrictionsResponse struct {
-	Config      NetworkRestrictionsRequest             `json:"config"`
-	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
-	Status      NetworkRestrictionsResponseStatus      `json:"status"`
-}
-
-// NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
-type NetworkRestrictionsResponseEntitlement string
-
-// NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
-type NetworkRestrictionsResponseStatus string
-
-// OrganizationResponse defines model for OrganizationResponse.
-type OrganizationResponse struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
-type PgsodiumConfigResponse struct {
-	RootKey string `json:"root_key"`
-}
-
-// PostgrestConfigResponse defines model for PostgrestConfigResponse.
-type PostgrestConfigResponse struct {
-	DbExtraSearchPath string `json:"db_extra_search_path"`
-	DbSchema          string `json:"db_schema"`
-	MaxRows           int    `json:"max_rows"`
-}
-
-// ProjectResponse defines model for ProjectResponse.
-type ProjectResponse struct {
-	CreatedAt      string            `json:"created_at"`
-	Database       *DatabaseResponse `json:"database,omitempty"`
-	Id             string            `json:"id"`
-	Name           string            `json:"name"`
-	OrganizationId string            `json:"organization_id"`
-	Region         string            `json:"region"`
-}
+type NetworkRestrictionsRequest = map[string]interface{}
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
-type RemoveNetworkBanRequest struct {
-	Ipv4Addresses []string `json:"ipv4_addresses"`
-}
-
-// SecretResponse defines model for SecretResponse.
-type SecretResponse struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
+type RemoveNetworkBanRequest = map[string]interface{}
 
 // SslEnforcementRequest defines model for SslEnforcementRequest.
-type SslEnforcementRequest struct {
-	RequestedConfig SslEnforcements `json:"requestedConfig"`
-}
-
-// SslEnforcementResponse defines model for SslEnforcementResponse.
-type SslEnforcementResponse struct {
-	AppliedSuccessfully bool            `json:"appliedSuccessfully"`
-	CurrentConfig       SslEnforcements `json:"currentConfig"`
-}
-
-// SslEnforcements defines model for SslEnforcements.
-type SslEnforcements struct {
-	Database bool `json:"database"`
-}
-
-// SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
-type SubdomainAvailabilityResponse struct {
-	Available bool `json:"available"`
-}
-
-// TypescriptResponse defines model for TypescriptResponse.
-type TypescriptResponse struct {
-	Types string `json:"types"`
-}
+type SslEnforcementRequest = map[string]interface{}
 
 // UpdateCustomHostnameBody defines model for UpdateCustomHostnameBody.
-type UpdateCustomHostnameBody struct {
-	CustomHostname string `json:"custom_hostname"`
-}
-
-// UpdateCustomHostnameResponse defines model for UpdateCustomHostnameResponse.
-type UpdateCustomHostnameResponse struct {
-	CustomHostname string                             `json:"custom_hostname"`
-	Data           map[string]interface{}             `json:"data"`
-	Status         UpdateCustomHostnameResponseStatus `json:"status"`
-}
-
-// UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
-type UpdateCustomHostnameResponseStatus string
+type UpdateCustomHostnameBody = map[string]interface{}
 
 // UpdateFunctionBody defines model for UpdateFunctionBody.
 type UpdateFunctionBody struct {
@@ -264,45 +60,35 @@ type UpdateFunctionBody struct {
 }
 
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
-type UpdatePgsodiumConfigBody struct {
-	RootKey string `json:"root_key"`
-}
+type UpdatePgsodiumConfigBody = map[string]interface{}
 
 // UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
 type UpdatePostgrestConfigBody struct {
-	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
-	DbSchema          *string `json:"db_schema,omitempty"`
-	MaxRows           *int    `json:"max_rows,omitempty"`
+	MaxRows int `json:"max_rows"`
 }
+
+// UpdateProviderBody defines model for UpdateProviderBody.
+type UpdateProviderBody = map[string]interface{}
+
+// UpgradeDatabaseBody defines model for UpgradeDatabaseBody.
+type UpgradeDatabaseBody = map[string]interface{}
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
-type VanitySubdomainBody struct {
-	VanitySubdomain string `json:"vanity_subdomain"`
-}
-
-// VanitySubdomainConfigResponse defines model for VanitySubdomainConfigResponse.
-type VanitySubdomainConfigResponse struct {
-	CustomDomain *string                             `json:"custom_domain,omitempty"`
-	Status       VanitySubdomainConfigResponseStatus `json:"status"`
-}
-
-// VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
-type VanitySubdomainConfigResponseStatus string
+type VanitySubdomainBody = map[string]interface{}
 
 // CreateFunctionParams defines parameters for CreateFunction.
 type CreateFunctionParams struct {
-	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name      *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
 	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	Name      *string `form:"name,omitempty" json:"name,omitempty"`
+	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
 }
 
 // UpdateFunctionParams defines parameters for UpdateFunction.
 type UpdateFunctionParams struct {
-	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name      *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
 	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	Name      *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
 // DeleteSecretsJSONBody defines parameters for DeleteSecrets.
@@ -321,6 +107,12 @@ type CreateOrganizationJSONRequestBody = CreateOrganizationBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectBody
+
+// CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
+type CreateProviderJSONRequestBody = CreateProviderBody
+
+// UpdateProviderByIdJSONRequestBody defines body for UpdateProviderById for application/json ContentType.
+type UpdateProviderByIdJSONRequestBody = UpdateProviderBody
 
 // CreateCustomHostnameConfigJSONRequestBody defines body for CreateCustomHostnameConfig for application/json ContentType.
 type CreateCustomHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
@@ -351,6 +143,9 @@ type CreateSecretsJSONRequestBody = CreateSecretsJSONBody
 
 // UpdateSslEnforcementConfigJSONRequestBody defines body for UpdateSslEnforcementConfig for application/json ContentType.
 type UpdateSslEnforcementConfigJSONRequestBody = SslEnforcementRequest
+
+// UpgradeProjectJSONRequestBody defines body for UpgradeProject for application/json ContentType.
+type UpgradeProjectJSONRequestBody = UpgradeDatabaseBody
 
 // ActivateVanitySubdomainPleaseJSONRequestBody defines body for ActivateVanitySubdomainPlease for application/json ContentType.
 type ActivateVanitySubdomainPleaseJSONRequestBody = VanitySubdomainBody
