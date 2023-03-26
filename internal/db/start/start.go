@@ -2,13 +2,13 @@ package start
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -20,6 +20,9 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
+
+//go:embed templates/schema.sql
+var initialSchema string
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
@@ -53,6 +56,10 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 			Timeout:  2 * time.Second,
 			Retries:  10,
 		},
+		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && docker-entrypoint.sh postgres -D /etc/postgresql
+` + initialSchema + `
+EOF
+`},
 	}
 	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
@@ -66,9 +73,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
-		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
 	})
-
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
@@ -117,9 +122,6 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
-		return err
-	}
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
 		if err := diff.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err

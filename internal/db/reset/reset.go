@@ -64,13 +64,13 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 	}
 	defer conn.Close(context.Background())
 	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+		return err
+	}
 	return InitialiseDatabase(ctx, conn, fsys)
 }
 
 func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
 	if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	if _, err := conn.Exec(ctx, drop); err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, "CREATE DATABASE postgres;")
+	_, err = conn.Exec(ctx, "CREATE DATABASE postgres WITH OWNER postgres;")
 	return err
 }
 
