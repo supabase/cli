@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
-	"path/filepath"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -453,52 +453,49 @@ EOF
 		started = append(started, utils.StudioId)
 	}
 
-
 	// Start Logflare
 	if !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
-		
-		hostJwtPath := filepath.Join(workdir,utils.Config.Analytics.GcpJwtPath)
+		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Hostname: "127.0.0.1",
-				Image: utils.LogflareImage,
+				Image:    utils.LogflareImage,
 				Env: []string{
 					"PHX_URL_PORT=4002",
 					"DB_DATABASE=postgres",
 					"DB_HOSTNAME=" + utils.DbId,
 					"DB_PORT=5432",
-					"DB_USERNAME=postgres",
+					"DB_USERNAME=supabase_admin",
 					"DB_PASSWORD=postgres",
 					"LOGFLARE_SINGLE_TENANT=true",
 					"LOGFLARE_SUPABASE_MODE=true",
 					"LOGFLARE_API_KEY=api-key",
 					"GOOGLE_DATASET_ID_APPEND=_dev",
 					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-					"GOOGLE_PROJECT_NUMBER=" +  utils.Config.Analytics.GcpProjectNumber,
+					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "curl", "-sSf","--head", "-o","/dev/null", "http://localhost:4002/"},
+					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
-					StartPeriod: 50 * time.Second,
 				},
+				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
 				Binds:         []string{jwtPath},
+				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: "54327"}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.LogflareId,
 		); err != nil {
-
 			return err
 		}
 		started = append(started, utils.LogflareId)
 	}
-
 
 	return waitForServiceReady(ctx, started)
 }
