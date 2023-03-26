@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -64,14 +64,14 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 	}
 	defer conn.Close(context.Background())
 	fmt.Fprintln(os.Stderr, "Initialising schema...")
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 		return err
 	}
 	return InitialiseDatabase(ctx, conn, fsys)
 }
 
 func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
+	if err := apply.MigrateDatabase(ctx, conn, fsys); err != nil {
 		return err
 	}
 	return SeedDatabase(ctx, conn, fsys)
