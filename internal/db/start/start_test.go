@@ -19,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -90,20 +89,15 @@ func TestInitDatabase(t *testing.T) {
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		sql := "create role postgres"
+		afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
-		require.NoError(t, err)
-		for _, line := range globals {
-			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-			if len(trim) > 0 {
-				conn.Query(trim)
-			}
-		}
-		conn.ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
+		conn.Query(sql).
+			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
 		// Run test
-		err = initDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := initDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
@@ -120,7 +114,6 @@ func TestStartDatabase(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.Config.Db.Port = 5432
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -143,17 +136,8 @@ func TestStartDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
-		require.NoError(t, err)
-		for _, line := range globals {
-			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-			if len(trim) > 0 {
-				conn.Query(trim)
-			}
-		}
-		conn.Query(utils.InitialSchemaSql).Reply("CREATE SCHEMA")
 		// Run test
-		err = StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

@@ -178,14 +178,8 @@ func TestDatabaseStart(t *testing.T) {
 		utils.LogflareId = "test-logflare"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.LogflareImage), utils.LogflareId)
 		// Setup mock postgres
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaSql = "create schema private"
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA")
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
