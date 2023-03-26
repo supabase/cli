@@ -57,7 +57,8 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 }
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.Port)
+	conn, err := utils.ConnectByUrl(ctx, url, options...)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,8 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 // Recreate postgres database by connecting to template1
 func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/template1?connect_timeout=2", utils.Config.Db.Port)
+	conn, err := utils.ConnectByUrl(ctx, url, options...)
 	if err != nil {
 		return err
 	}
