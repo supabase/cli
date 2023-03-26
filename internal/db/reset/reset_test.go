@@ -191,7 +191,7 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
 			Reply("DROP DATABASE").
-			Query("CREATE DATABASE postgres;").
+			Query("CREATE DATABASE postgres WITH OWNER postgres;").
 			Reply("CREATE DATABASE")
 		// Run test
 		assert.NoError(t, RecreateDatabase(context.Background(), conn.Intercept))
