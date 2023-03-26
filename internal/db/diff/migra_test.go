@@ -18,7 +18,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -186,40 +185,6 @@ func TestApplyMigrations(t *testing.T) {
 		err := ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: relation \"test\" already exists (SQLSTATE 42P07)\nAt statement 0: create table test")
-	})
-}
-
-func TestMigrateDatabase(t *testing.T) {
-	t.Run("ignores empty local directory", func(t *testing.T) {
-		assert.NoError(t, MigrateDatabase(context.Background(), nil, afero.NewMemMapFs()))
-	})
-
-	t.Run("ignores outdated migrations", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup initial migration
-		name := "20211208000000_init.sql"
-		path := filepath.Join(utils.MigrationsDir, name)
-		query := "create table test"
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
-		// Run test
-		err := MigrateDatabase(context.Background(), nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on failture to scan token", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup initial migration
-		name := "20220727064247_create_table.sql"
-		path := filepath.Join(utils.MigrationsDir, name)
-		query := "BEGIN; " + strings.Repeat("a", parser.MaxScannerCapacity)
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
-		// Run test
-		err := MigrateDatabase(context.Background(), nil, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "bufio.Scanner: token too long\nAfter statement 1: BEGIN;")
 	})
 }
 

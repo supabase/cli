@@ -16,8 +16,8 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -42,7 +42,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	return err
 }
 
-func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+func NewContainerConfig() container.Config {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
@@ -68,6 +68,11 @@ EOF
 			"-c", `search_path="$user",public,extensions`,
 		}
 	}
+	return config
+}
+
+func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	config := NewContainerConfig()
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
 	hostConfig := WithSyslogConfig(container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
@@ -123,7 +128,7 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	}
 	defer conn.Close(context.Background())
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := diff.BatchExecDDL(ctx, conn, roles); err != nil {
+		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
