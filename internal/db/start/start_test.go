@@ -86,6 +86,7 @@ func TestInitDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on exec failure", func(t *testing.T) {
+		utils.Config.Db.MajorVersion = 15
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
