@@ -69,7 +69,7 @@ var (
 				// TODO: fetch and validate Metadata
 				params.MetadataUrl = &ssoMetadataURL
 			} else {
-				return errors.New("--metadata-file or --metadata-xml must be provided")
+				return errors.New("--metadata-file or --metadata-url must be provided")
 			}
 
 			if ssoAttributeMappingFile != "" {
