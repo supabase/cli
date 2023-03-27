@@ -137,8 +137,6 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	// Retry until connected, cancelled, or timeout
 	for t := now; t.Before(expiry); t = <-ticker.C {
 		conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.ShadowPort, "postgres", options...)
-		// url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.ShadowPort)
-		// conn, err = utils.ConnectByUrl(ctx, url, options...)
 		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
 			break
 		}

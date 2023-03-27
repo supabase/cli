@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -79,6 +80,9 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
 	})
+	if utils.Config.Db.MajorVersion <= 14 {
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
+	}
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
@@ -126,6 +130,11 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	if err != nil {
 		return err
 	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+			return err
+		}
+	}
 	defer conn.Close(context.Background())
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
 		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
@@ -133,6 +142,11 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintln(w, "Setting up initial schema...")
 	return reset.InitialiseDatabase(ctx, conn, fsys)
