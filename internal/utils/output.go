@@ -70,6 +70,4 @@ func EncodeOutput(format string, w io.Writer, value any) error {
 	default:
 		return fmt.Errorf("Unsupported output encoding %q", format)
 	}
-
-	return nil
 }
