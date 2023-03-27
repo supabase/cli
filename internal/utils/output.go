@@ -18,26 +18,14 @@ const (
 	OutputYaml   = "yaml"
 )
 
-func OutputFlag(allowEnv bool) EnumFlag {
-	var allowed []string
-
-	if allowEnv {
-		allowed = append(allowed, OutputEnv)
-	}
-
-	allowed = append(
-		allowed,
-		OutputJson,
+var (
+	OutputDefaultAllowed = []string{
 		OutputPretty,
+		OutputJson,
 		OutputToml,
 		OutputYaml,
-	)
-
-	return EnumFlag{
-		Allowed: allowed,
-		Value:   OutputPretty,
 	}
-}
+)
 
 func EncodeOutput(format string, w io.Writer, value any) error {
 	switch format {

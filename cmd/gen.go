@@ -22,23 +22,23 @@ var (
 		Short: "Generate types from Postgres schema",
 	}
 
-	local        bool
-	linked       bool
-	genProjectId string
-	dbUrl        string
-	schemas      []string
+	local     bool
+	linked    bool
+	projectId string
+	dbUrl     string
+	schemas   []string
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
 		Short: "Generate types for TypeScript",
 		Long:  "Generate types for TypeScript. Must specify one of --local, --linked, --project-id, or --db-url",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !local && !linked && genProjectId == "" && dbUrl == "" {
+			if !local && !linked && projectId == "" && dbUrl == "" {
 				return errors.New("Must specify one of --local, --linked, --project-id, or --db-url")
 			}
 
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return typescript.Run(ctx, local, linked, genProjectId, dbUrl, schemas, afero.NewOsFs())
+			return typescript.Run(ctx, local, linked, projectId, dbUrl, schemas, afero.NewOsFs())
 		},
 		Example: `  supabase gen types typescript --local
   supabase gen types typescript --linked
@@ -51,7 +51,7 @@ func init() {
 	genFlags := genTypesTypescriptCmd.Flags()
 	genFlags.BoolVar(&local, "local", false, "Generate types from the local dev database.")
 	genFlags.BoolVar(&linked, "linked", false, "Generate types from the linked project.")
-	genFlags.StringVar(&genProjectId, "project-id", "", "Generate types from a project ID.")
+	genFlags.StringVar(&projectId, "project-id", "", "Generate types from a project ID.")
 	genFlags.StringVar(&dbUrl, "db-url", "", "Generate types from a database url.")
 	genFlags.StringArrayVar(&schemas, "schema", []string{}, "Schemas to generate types for.")
 	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")

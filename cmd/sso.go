@@ -55,7 +55,10 @@ var (
 	ssoDomains              []string
 	ssoAddDomains           []string
 	ssoRemoveDomains        []string
-	ssoOutput               = utils.OutputFlag(false /* allow env output */)
+	ssoOutput               = utils.EnumFlag{
+		Allowed: utils.OutputDefaultAllowed,
+		Value:   utils.OutputPretty,
+	}
 
 	ssoAddCmd = &cobra.Command{
 		Use:     "add <type = saml> [flags]",
