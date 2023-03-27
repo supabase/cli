@@ -96,6 +96,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
+	enableLogs := len(utils.Config.Analytics.GcpProjectId) > 0 && len(utils.Config.Analytics.GcpProjectNumber) > 0 
 
 	// Pull images.
 	{
@@ -458,6 +459,7 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=api-key",
 					fmt.Sprintf("LOGFLARE_URL=http://%v:%v", utils.LogflareId, utils.Config.Analytics.Port),
+					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", enableLogs),
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
@@ -478,7 +480,7 @@ EOF
 	}
 
 	// Start Logflare
-	if len(utils.Config.Analytics.GcpProjectId) > 0 && len(utils.Config.Analytics.GcpProjectNumber) > 0 && !isContainerExcluded(utils.LogflareImage, excluded) {
+	if enableLogs == true && !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
