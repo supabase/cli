@@ -168,3 +168,41 @@ func SingleMarkdown(provider api.Provider) error {
 	fmt.Print(out)
 	return nil
 }
+
+func InfoMarkdown(ref string) error {
+	markdownTable := []string{
+		"|PROPERTY|VALUE|",
+		"|-|-|",
+	}
+
+	markdownTable = append(markdownTable, fmt.Sprintf(
+		"|Single sign-on URL (ACS URL) |`%s`|",
+		fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/acs", ref),
+	))
+
+	markdownTable = append(markdownTable, fmt.Sprintf(
+		"|Audience URI (SP Entity ID)|`%s`|",
+		fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/metadata", ref),
+	))
+
+	markdownTable = append(markdownTable, fmt.Sprintf(
+		"|Default Relaystate|`%s`|",
+		fmt.Sprintf("https://%s.supabase.co", ref),
+	))
+
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(-1),
+	)
+	if err != nil {
+		return err
+	}
+
+	out, err := r.Render(strings.Join(markdownTable, "\n"))
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(out)
+	return nil
+}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/supabase/cli/internal/sso/create"
 	"github.com/supabase/cli/internal/sso/get"
+	"github.com/supabase/cli/internal/sso/info"
 	"github.com/supabase/cli/internal/sso/list"
 	"github.com/supabase/cli/internal/sso/remove"
 	"github.com/supabase/cli/internal/sso/update"
@@ -169,6 +170,18 @@ var (
 			return list.Run(cmd.Context(), ssoProjectRef, ssoOutput.Value)
 		},
 	}
+
+	ssoInfoCmd = &cobra.Command{
+		Use:     "info",
+		Short:   "Returns the SAML SSO settings required for the identity provider",
+		Example: `  supabase sso info --project-ref b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8`,
+		PreRun: func(cmd *cobra.Command, args []string) {
+			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return info.Run(cmd.Context(), ssoProjectRef, ssoOutput.Value)
+		},
+	}
 )
 
 func init() {
@@ -211,11 +224,16 @@ func init() {
 	ssoListFlags.VarP(&ssoOutput, "output", "o", "Output format")
 	ssoListFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to list identity providers.")
 
+	ssoInfoFlags := ssoInfoCmd.Flags()
+	ssoInfoFlags.VarP(&ssoOutput, "output", "o", "Output format")
+	ssoInfoFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to show project SAML SSO settings.")
+
 	ssoCmd.AddCommand(ssoAddCmd)
 	ssoCmd.AddCommand(ssoRemoveCmd)
 	ssoCmd.AddCommand(ssoUpdateCmd)
 	ssoCmd.AddCommand(ssoShowCmd)
 	ssoCmd.AddCommand(ssoListCmd)
+	ssoCmd.AddCommand(ssoInfoCmd)
 
 	rootCmd.AddCommand(ssoCmd)
 }
