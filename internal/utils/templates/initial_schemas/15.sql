@@ -467,19 +467,19 @@ BEGIN
     WHERE ext.extname = 'pg_net'
   )
   THEN
-    GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres;
+    GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SECURITY DEFINER;
+
     ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
     ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
-    ALTER function net.http_collect_response(request_id bigint, async boolean) SET search_path = net;
+
     REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
     REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
-    GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres;
-    GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres;
-    GRANT EXECUTE ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin, postgres;
+
+    GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+    GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
   END IF;
 END;
 $$;
@@ -2365,6 +2365,9 @@ GRANT ALL ON SCHEMA storage TO dashboard_user;
 --
 
 GRANT USAGE ON SCHEMA supabase_functions TO postgres;
+GRANT USAGE ON SCHEMA supabase_functions TO anon;
+GRANT USAGE ON SCHEMA supabase_functions TO authenticated;
+GRANT USAGE ON SCHEMA supabase_functions TO service_role;
 GRANT ALL ON SCHEMA supabase_functions TO supabase_functions_admin;
 
 
@@ -2983,15 +2986,6 @@ GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION http_collect_response(request_id bigint, async boolean); Type: ACL; Schema: net; Owner: supabase_admin
---
-
-REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
-GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO postgres;
-
-
---
 -- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
 --
 
@@ -3083,6 +3077,9 @@ GRANT ALL ON FUNCTION storage.foldername(name text) TO postgres;
 
 REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
 GRANT ALL ON FUNCTION supabase_functions.http_request() TO postgres;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO anon;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO authenticated;
+GRANT ALL ON FUNCTION supabase_functions.http_request() TO service_role;
 
 
 --
@@ -3285,6 +3282,9 @@ GRANT ALL ON TABLE storage.objects TO postgres;
 --
 
 GRANT ALL ON TABLE supabase_functions.hooks TO postgres;
+GRANT ALL ON TABLE supabase_functions.hooks TO anon;
+GRANT ALL ON TABLE supabase_functions.hooks TO authenticated;
+GRANT ALL ON TABLE supabase_functions.hooks TO service_role;
 
 
 --
@@ -3292,6 +3292,9 @@ GRANT ALL ON TABLE supabase_functions.hooks TO postgres;
 --
 
 GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO postgres;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO anon;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO service_role;
 
 
 --
@@ -3299,6 +3302,9 @@ GRANT ALL ON SEQUENCE supabase_functions.hooks_id_seq TO postgres;
 --
 
 GRANT ALL ON TABLE supabase_functions.migrations TO postgres;
+GRANT ALL ON TABLE supabase_functions.migrations TO anon;
+GRANT ALL ON TABLE supabase_functions.migrations TO authenticated;
+GRANT ALL ON TABLE supabase_functions.migrations TO service_role;
 
 
 --
@@ -3560,6 +3566,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES  TO service_role;
 
 
 --
@@ -3567,6 +3576,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GR
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS  TO service_role;
 
 
 --
@@ -3574,6 +3586,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GR
 --
 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA supabase_functions GRANT ALL ON TABLES  TO service_role;
 
 
 --

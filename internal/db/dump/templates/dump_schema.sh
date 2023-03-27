@@ -13,9 +13,6 @@ set -euo pipefail
 #   - do not alter superuser role "supabase_admin"
 #   - do not include ACL changes on internal schemas
 #   - do not include RLS policies on cron extension schema
-#
-# TODO:
-#   - support pg_dumpall --roles-only
 pg_dump \
     --schema-only \
     --quote-all-identifier \

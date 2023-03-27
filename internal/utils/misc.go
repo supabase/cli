@@ -40,7 +40,7 @@ const (
 	StudioImage      = "supabase/studio:20230216-e731b77"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.1"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.7"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.51.4"
@@ -84,9 +84,6 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-	ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
-	JWTSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
 	AccessTokenKey = "access-token"
 )
 
@@ -153,8 +150,21 @@ var (
 		"supabase_admin",
 		"supabase_auth_admin",
 		"supabase_functions_admin",
+		"supabase_read_only_user",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
+		// Managed by extensions
+		"pgsodium_keyholder",
+		"pgsodium_keyiduser",
+		"pgsodium_keymaker",
+	}
+	AllowedConfigs = []string{
+		// Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
+		"pgaudit.*",
+		"pgrst.*",
+		"session_replication_role",
+		"statement_timeout",
+		"track_io_timing",
 	}
 
 	SupabaseDirPath       = "supabase"

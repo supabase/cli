@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -99,7 +98,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 		})
 
 		env := []string{
-			"JWT_SECRET=" + utils.JWTSecret,
+			"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 			"DENO_ORIGIN=http://localhost:8000",
 		}
 		verifyJWTEnv := "VERIFY_JWT=true"
@@ -182,9 +181,9 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 
 		env := []string{
 			"SUPABASE_URL=http://" + utils.KongId + ":8000",
-			"SUPABASE_ANON_KEY=" + utils.AnonKey,
-			"SUPABASE_SERVICE_ROLE_KEY=" + utils.ServiceRoleKey,
-			"SUPABASE_DB_URL=postgresql://postgres:postgres@localhost:" + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + "/postgres",
+			"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
+			"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+			"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 		}
 
 		denoRunCmd := []string{"deno", "run", "--no-check=remote", "--allow-all", "--watch", "--no-clear-screen", "--no-npm"}
@@ -264,11 +263,11 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 		})
 
 		env := []string{
-			"JWT_SECRET=" + utils.JWTSecret,
+			"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 			"SUPABASE_URL=http://" + utils.KongId + ":8000",
-			"SUPABASE_ANON_KEY=" + utils.AnonKey,
-			"SUPABASE_SERVICE_ROLE_KEY=" + utils.ServiceRoleKey,
-			"SUPABASE_DB_URL=postgresql://postgres:postgres@localhost:" + strconv.FormatUint(uint64(utils.Config.Db.Port), 10) + "/postgres",
+			"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
+			"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+			"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 		}
 		verifyJWTEnv := "VERIFY_JWT=true"
 		if noVerifyJWT != nil {

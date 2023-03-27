@@ -46,9 +46,9 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
 	}
 	if !sliceContains(exclude, utils.GotrueId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.GotrueImage)) {
-		values[c.JWTSecret] = utils.JWTSecret
-		values[c.AnonKey] = utils.AnonKey
-		values[c.ServiceRoleKey] = utils.ServiceRoleKey
+		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
+		values[c.AnonKey] = utils.Config.Auth.AnonKey
+		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
 	if !sliceContains(exclude, utils.InbucketId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Inbucket.Port)
@@ -139,7 +139,7 @@ func isPostgRESTHealthy(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	req.Header.Add("apikey", utils.AnonKey)
+	req.Header.Add("apikey", utils.Config.Auth.AnonKey)
 	resp, err := http.DefaultClient.Do(req)
 	return err == nil && resp.StatusCode == http.StatusOK
 }
