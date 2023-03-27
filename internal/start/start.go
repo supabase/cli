@@ -467,7 +467,7 @@ EOF
 					"DB_DATABASE=postgres",
 					"DB_HOSTNAME=" + utils.DbId,
 					"DB_PORT=5432",
-					"DB_SCHEMA=analytics",
+					"DB_SCHEMA=_analytics",
 					"DB_USERNAME=supabase_admin",
 					"DB_PASSWORD=postgres",
 					"LOGFLARE_SINGLE_TENANT=true",

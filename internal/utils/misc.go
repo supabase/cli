@@ -46,7 +46,7 @@ const (
 	GotrueImage   = "supabase/gotrue:v2.51.4"
 	RealtimeImage = "supabase/realtime:v2.6.0"
 	StorageImage  = "supabase/storage-api:v0.29.1"
-	LogflareImage  = "supabase/logflare:1.0.0"
+	LogflareImage = "supabase/logflare:1.0.0"
 	// Should be kept in-sync with DenoRelayImage
 	DenoVersion = "1.30.3"
 )
@@ -138,7 +138,7 @@ var (
 		"realtime",
 		"_realtime",
 		"storage",
-		"analytics",
+		"_analytics",
 		"supabase_functions",
 		"supabase_migrations",
 	}, SystemSchemas...)

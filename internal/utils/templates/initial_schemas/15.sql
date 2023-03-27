@@ -26,6 +26,15 @@ CREATE SCHEMA IF NOT EXISTS _realtime;
 ALTER SCHEMA _realtime OWNER TO postgres;
 
 --
+-- Name: _analytics; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA IF NOT EXISTS _analytics;
+
+
+ALTER SCHEMA _analytics OWNER TO postgres;
+
+--
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 
@@ -3630,13 +3639,6 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 
 
 ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
-
-
-
-
-ALTER SYSTEM SET wal_level = 'logical';
-create schema if not exists analytics;
-
 
 --
 -- PostgreSQL database dump complete
