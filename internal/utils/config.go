@@ -29,7 +29,7 @@ var (
 	PgmetaId    string
 	StudioId    string
 	DenoRelayId string
-	LogflareId string
+	LogflareId  string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -87,7 +87,7 @@ type (
 		Storage   storage             `toml:"storage"`
 		Auth      auth                `toml:"auth"`
 		Functions map[string]function `toml:"functions"`
-		Analytics  analytics            `toml:"analytics"`
+		Analytics analytics           `toml:"analytics"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -148,9 +148,10 @@ type (
 	}
 
 	analytics struct {
-		GcpProjectId     	string `toml:"gcp_project_id"`
-		GcpProjectNumber 	string `toml:"gcp_project_number"`
-		GcpJwtPath 			string `toml:"gcp_jwt_path"`
+		Port             uint16 `toml:"port"`
+		GcpProjectId     string `toml:"gcp_project_id"`
+		GcpProjectNumber string `toml:"gcp_project_number"`
+		GcpJwtPath       string `toml:"gcp_jwt_path"`
 	}
 
 	// TODO
@@ -350,6 +351,18 @@ func LoadConfigFS(fsys afero.Fs) error {
 		Config.Functions[name] = function{
 			VerifyJWT: verifyJWT,
 			ImportMap: functionConfig.ImportMap,
+		}
+	}
+
+	if len(Config.Analytics.GcpProjectId) > 0 {
+		if Config.Analytics.Port == 0 {
+			Config.Analytics.Port = 54327
+		}
+		if len(Config.Analytics.GcpProjectNumber) == 0 {
+			return errors.New("Missing required field in config: analytics.gcp_project_number")
+		}
+		if len(Config.Analytics.GcpJwtPath) == 0 {
+			Config.Analytics.GcpJwtPath = "supabase/gcloud.json"
 		}
 	}
 

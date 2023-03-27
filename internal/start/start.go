@@ -454,7 +454,7 @@ EOF
 	}
 
 	// Start Logflare
-	if !isContainerExcluded(utils.LogflareImage, excluded) {
+	if len(utils.Config.Analytics.GcpProjectId) > 0 && !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
@@ -478,7 +478,7 @@ EOF
 					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "curl", "-sSfL","--head", "-o","/dev/null", "http://localhost:4000/health"},
+					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
@@ -487,8 +487,7 @@ EOF
 			},
 			container.HostConfig{
 				Binds:         []string{jwtPath},
-				// temporary binding for testing
-				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: "54328"}}},
+				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.LogflareId,

@@ -72,6 +72,7 @@ redirect_uri = ""
 url = ""
 
 [analytics]
+port = 54327
 gcp_project_id = ""
 gcp_project_number = ""
 gcp_jwt_path = "supabase/gcloud.json"
