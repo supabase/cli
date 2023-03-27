@@ -90,7 +90,7 @@ func TestInitDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		sql := "create role postgres"
-		afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644)
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
