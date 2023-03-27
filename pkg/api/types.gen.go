@@ -404,6 +404,7 @@ type RemoveNetworkBanRequest struct {
 type SamlDescriptor struct {
 	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
 	EntityId         string            `json:"entity_id"`
+	Id               string            `json:"id"`
 	MetadataUrl      *string           `json:"metadata_url,omitempty"`
 	MetadataXml      *string           `json:"metadata_xml,omitempty"`
 }
