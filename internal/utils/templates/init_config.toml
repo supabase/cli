@@ -73,6 +73,8 @@ url = ""
 
 [analytics]
 port = 54327
+# Setup BigQuery project to enable log viewer in local development stack.
+# See: https://logflare.app/guides/bigquery-setup
 gcp_project_id = ""
 gcp_project_number = ""
 gcp_jwt_path = "supabase/gcloud.json"
