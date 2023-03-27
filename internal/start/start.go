@@ -476,7 +476,7 @@ EOF
 	}
 
 	// Start Logflare
-	if len(utils.Config.Analytics.GcpProjectId) > 0 && !isContainerExcluded(utils.LogflareImage, excluded) {
+	if len(utils.Config.Analytics.GcpProjectId) > 0 && len(utils.Config.Analytics.GcpProjectNumber) > 0 && !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
