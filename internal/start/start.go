@@ -456,6 +456,8 @@ EOF
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+					"LOGFLARE_API_KEY=api-key",
+					fmt.Sprintf("LOGFLARE_URL=http://%v:%v", utils.LogflareId, utils.Config.Analytics.Port),
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
