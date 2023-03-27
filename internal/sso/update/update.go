@@ -3,6 +3,8 @@ package update
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/supabase/cli/internal/sso/internal/render"
@@ -17,6 +19,10 @@ func Run(ctx context.Context, ref, providerId string, params api.UpdateProviderB
 	}
 
 	if getResp.JSON200 == nil {
+		if getResp.StatusCode() == http.StatusNotFound {
+			return fmt.Errorf("An identity provider with ID %q could not be found.", providerId)
+		}
+
 		return errors.New("unexpected error fetching identity provider: " + string(getResp.Body))
 	}
 

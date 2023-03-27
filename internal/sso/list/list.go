@@ -3,6 +3,7 @@ package list
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 
 	"github.com/supabase/cli/internal/sso/internal/render"
@@ -16,6 +17,10 @@ func Run(ctx context.Context, ref, format string) error {
 	}
 
 	if resp.JSON200 == nil {
+		if resp.StatusCode() == http.StatusNotFound {
+			return errors.New("Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.")
+		}
+
 		return errors.New("unexpected error fetching identity provider: " + string(resp.Body))
 	}
 
