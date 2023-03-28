@@ -29,7 +29,8 @@ var (
 		Use:     "sso",
 		Short:   "Manage Single Sign-On (SSO) authentication for projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			cmd.SetContext(ctx)
 
 			fsys := afero.NewOsFs()
 			if err := PromptProjectRef(fsys, cmd); err != nil {
