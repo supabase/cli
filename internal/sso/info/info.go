@@ -16,9 +16,9 @@ func Run(ctx context.Context, ref string, format string) error {
 
 	default:
 		return utils.EncodeOutput(format, os.Stdout, map[string]interface{}{
-			"Single sign-on URL (ACS URL)": fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/acs", ref),
-			"Audience URI (SP Entity ID)":  fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/metadata", ref),
-			"Default Relaystate":           fmt.Sprintf("https://%s.supabase.co", ref),
+			"acs_url":    fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/acs", ref),
+			"entity_id":  fmt.Sprintf("https://%s.supabase.co/auth/v1/sso/saml/metadata", ref),
+			"relaystate": fmt.Sprintf("https://%s.supabase.co", ref),
 		})
 	}
 }
