@@ -29,6 +29,9 @@ var (
 		Use:     "sso",
 		Short:   "Manage Single Sign-On (SSO) authentication for projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			cmd.SetContext(ctx)
 
