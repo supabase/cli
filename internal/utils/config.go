@@ -154,6 +154,7 @@ type (
 	}
 
 	analytics struct {
+		Enabled          bool   `toml:"enabled"`
 		Port             uint16 `toml:"port"`
 		GcpProjectId     string `toml:"gcp_project_id"`
 		GcpProjectNumber string `toml:"gcp_project_number"`
@@ -376,9 +377,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 	}
 
-	if len(Config.Analytics.GcpProjectId) > 0 {
+	if Config.Analytics.Enabled {
 		if Config.Analytics.Port == 0 {
 			Config.Analytics.Port = 54327
+		}
+		if len(Config.Analytics.GcpProjectId) == 0 {
+			return errors.New("Missing required field in config: analytics.gcp_project_id")
 		}
 		if len(Config.Analytics.GcpProjectNumber) == 0 {
 			return errors.New("Missing required field in config: analytics.gcp_project_number")
