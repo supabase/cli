@@ -21,7 +21,7 @@ func Run(ctx context.Context, ref, format string) error {
 			return errors.New("Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.")
 		}
 
-		return errors.New("unexpected error fetching identity provider: " + string(resp.Body))
+		return errors.New("unexpected error listing identity providers: " + string(resp.Body))
 	}
 
 	switch format {

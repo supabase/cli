@@ -1,14 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -20,7 +16,6 @@ import (
 	"github.com/supabase/cli/internal/sso/remove"
 	"github.com/supabase/cli/internal/sso/update"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 var (
@@ -50,6 +45,7 @@ var (
 
 	ssoMetadataFile         string
 	ssoMetadataURL          string
+	ssoSkipURLValidation    bool
 	ssoMetadata             bool
 	ssoAttributeMappingFile string
 	ssoDomains              []string
@@ -64,46 +60,22 @@ var (
 		Use:     "add <type = saml> [flags]",
 		Short:   "Add a new SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso add saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml`,
+		Example: `  supabase sso add saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml --domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var params api.CreateProviderForProjectJSONRequestBody
-
-			switch strings.ToLower(args[0]) {
-			case "saml":
-				params.Type = api.Saml
-
-			default:
-				return errors.New("type must be saml")
+			if strings.ToLower(args[0]) != "saml" {
+				return errors.New("Identity provider type must be \"saml\"")
 			}
 
-			fsys := afero.NewOsFs()
+			return create.Run(cmd.Context(), create.RunParams{
+				ProjectRef: projectRef,
+				Format:     ssoOutput.Value,
 
-			if ssoMetadataFile != "" {
-				data, err := readMetadataFile(fsys, ssoMetadataFile)
-				if err != nil {
-					return err
-				}
-
-				params.MetadataXml = &data
-			} else if ssoMetadataURL != "" {
-				// TODO: fetch and validate Metadata
-				params.MetadataUrl = &ssoMetadataURL
-			} else {
-				return errors.New("--metadata-file or --metadata-url must be provided")
-			}
-
-			if ssoAttributeMappingFile != "" {
-				mapping, err := readAttributeMappingFile(fsys, ssoAttributeMappingFile)
-				if err != nil {
-					return err
-				}
-
-				params.AttributeMapping = mapping
-			}
-
-			params.Domains = &ssoDomains
-
-			return create.Run(cmd.Context(), projectRef, params, ssoOutput.Value)
+				MetadataFile:      ssoMetadataFile,
+				MetadataURL:       ssoMetadataURL,
+				SkipURLValidation: ssoSkipURLValidation,
+				AttributeMapping:  ssoAttributeMappingFile,
+				Domains:           ssoDomains,
+			})
 		},
 	}
 
@@ -123,34 +95,19 @@ var (
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domain example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var params api.UpdateProviderByIdJSONRequestBody
+			return update.Run(cmd.Context(), update.RunParams{
+				ProjectRef: projectRef,
+				ProviderID: args[0],
+				Format:     ssoOutput.Value,
 
-			fsys := afero.NewOsFs()
-
-			if ssoMetadataFile != "" {
-				data, err := readMetadataFile(fsys, ssoMetadataFile)
-				if err != nil {
-					return err
-				}
-
-				params.MetadataXml = &data
-			} else if ssoMetadataURL != "" {
-				// TODO: fetch and validate Metadata
-				params.MetadataUrl = &ssoMetadataURL
-			}
-
-			if ssoAttributeMappingFile != "" {
-				mapping, err := readAttributeMappingFile(fsys, ssoAttributeMappingFile)
-				if err != nil {
-					return err
-				}
-
-				params.AttributeMapping = mapping
-			}
-
-			params.Domains = &ssoDomains
-
-			return update.Run(cmd.Context(), projectRef, args[0], params, ssoAddDomains, ssoRemoveDomains, ssoOutput.Value)
+				MetadataFile:      ssoMetadataFile,
+				MetadataURL:       ssoMetadataURL,
+				SkipURLValidation: ssoSkipURLValidation,
+				AttributeMapping:  ssoAttributeMappingFile,
+				Domains:           ssoDomains,
+				AddDomains:        ssoAddDomains,
+				RemoveDomains:     ssoRemoveDomains,
+			})
 		},
 	}
 
@@ -195,6 +152,7 @@ func init() {
 	ssoAddFlags.StringSliceVar(&ssoDomains, "domains", nil, "Comma separated list of email domains to associate with the added identity provider.")
 	ssoAddFlags.StringVar(&ssoMetadataFile, "metadata-file", "", "File containing a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoAddFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
+	ssoAddFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoAddFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
 	ssoAddCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("metadata-file", "xml"))
@@ -212,6 +170,7 @@ func init() {
 	ssoUpdateFlags.StringSliceVar(&ssoRemoveDomains, "remove-domains", []string{}, "Remove this comma separated list of email domains from the identity provider.")
 	ssoUpdateFlags.StringVar(&ssoMetadataFile, "metadata-file", "", "File containing a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoUpdateFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
+	ssoUpdateFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoUpdateFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "add-domains")
@@ -240,42 +199,4 @@ func init() {
 	ssoCmd.AddCommand(ssoInfoCmd)
 
 	rootCmd.AddCommand(ssoCmd)
-}
-
-func readMetadataFile(fsys afero.Fs, path string) (string, error) {
-	file, err := fsys.Open(path)
-	if err != nil {
-		return "", err
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return "", err
-	}
-
-	if !utf8.Valid(data) {
-		return "", fmt.Errorf("SAML Metadata XML at %q is not UTF-8 encoded: %w", path, err)
-	}
-
-	return string(data), nil
-}
-
-func readAttributeMappingFile(fsys afero.Fs, path string) (*api.AttributeMapping, error) {
-	file, err := fsys.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	var mapping *api.AttributeMapping
-
-	if err := json.Unmarshal(data, mapping); err != nil {
-		return nil, err
-	}
-
-	return mapping, nil
 }

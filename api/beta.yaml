@@ -1831,7 +1831,11 @@ components:
           items:
             type: string
         default:
-          type: object
+          oneOf:
+            - type: object
+            - type: number
+            - type: string
+            - type: boolean
     AttributeMapping:
       type: object
       properties:
