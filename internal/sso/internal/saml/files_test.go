@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestReadAttributeMappingFile(t *testing.T) {
@@ -18,7 +19,7 @@ func TestReadAttributeMappingFile(t *testing.T) {
 
 	t.Run("open file that is not valid JSON", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
-		afero.WriteFile(fs, "/not-valid-json", []byte("not-valid-JSON"), 0755)
+		assert.NoError(t, afero.WriteFile(fs, "/not-valid-json", []byte("not-valid-JSON"), 0755))
 
 		_, err := ReadAttributeMappingFile(fs, "/not-valid-json")
 		if err == nil {
@@ -28,7 +29,7 @@ func TestReadAttributeMappingFile(t *testing.T) {
 
 	t.Run("open valid file", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
-		afero.WriteFile(fs, "/valid-json", []byte(`{"keys":{"abc":{"names":["x","y","z"],"default":2,"name":"k"}}}`), 0755)
+		assert.NoError(t, afero.WriteFile(fs, "/valid-json", []byte(`{"keys":{"abc":{"names":["x","y","z"],"default":2,"name":"k"}}}`), 0755))
 
 		_, err := ReadAttributeMappingFile(fs, "/valid-json")
 		if err != nil {
