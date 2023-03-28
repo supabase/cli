@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
 	"unicode/utf8"
 
@@ -26,9 +28,22 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "sso",
 		Short:   "Manage Single Sign-On (SSO) authentication for projects",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			signal.NotifyContext(cmd.Context(), os.Interrupt)
+
+			fsys := afero.NewOsFs()
+			if err := PromptProjectRef(fsys, cmd); err != nil {
+				return err
+			}
+
+			// Validate project ref
+			if !utils.ProjectRefPattern.MatchString(projectRef) {
+				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+			}
+			return nil
+		},
 	}
 
-	ssoProjectRef           string
 	ssoMetadataFile         string
 	ssoMetadataURL          string
 	ssoMetadata             bool
@@ -42,10 +57,7 @@ var (
 		Use:     "add <type = saml> [flags]",
 		Short:   "Add a new SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso add saml --project-ref abcdefghijklmn --metadata-file ~/SAMLMetadata.xml`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso add saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var params api.CreateProviderForProjectJSONRequestBody
 
@@ -84,7 +96,7 @@ var (
 
 			params.Domains = &ssoDomains
 
-			return create.Run(cmd.Context(), ssoProjectRef, params, ssoOutput.Value)
+			return create.Run(cmd.Context(), projectRef, params, ssoOutput.Value)
 		},
 	}
 
@@ -92,12 +104,9 @@ var (
 		Use:     "remove <provider-id> [flags]",
 		Short:   "Remove an existing SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref abcdefghijklmn`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return remove.Run(cmd.Context(), ssoProjectRef, args[0], ssoOutput.Value)
+			return remove.Run(cmd.Context(), projectRef, args[0], ssoOutput.Value)
 		},
 	}
 
@@ -105,10 +114,7 @@ var (
 		Use:     "update <provider-id> [flags]",
 		Short:   "Update information about an SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref abcdefghijklmn --add-domain example.com`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domain example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var params api.UpdateProviderByIdJSONRequestBody
 
@@ -137,7 +143,7 @@ var (
 
 			params.Domains = &ssoDomains
 
-			return update.Run(cmd.Context(), ssoProjectRef, args[0], params, ssoAddDomains, ssoRemoveDomains, ssoOutput.Value)
+			return update.Run(cmd.Context(), projectRef, args[0], params, ssoAddDomains, ssoRemoveDomains, ssoOutput.Value)
 		},
 	}
 
@@ -145,41 +151,32 @@ var (
 		Use:     "show <provider-id> [flags]",
 		Short:   "Show information about an SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref abcdefghijklmn`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format := ssoOutput.Value
 			if ssoMetadata {
 				format = "metadata"
 			}
 
-			return get.Run(cmd.Context(), ssoProjectRef, args[0], format)
+			return get.Run(cmd.Context(), projectRef, args[0], format)
 		},
 	}
 
 	ssoListCmd = &cobra.Command{
 		Use:     "list",
 		Short:   "List all SSO identity providers for a project",
-		Example: `  supabase sso list --project-ref b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso list --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), ssoProjectRef, ssoOutput.Value)
+			return list.Run(cmd.Context(), projectRef, ssoOutput.Value)
 		},
 	}
 
 	ssoInfoCmd = &cobra.Command{
 		Use:     "info",
 		Short:   "Returns the SAML SSO settings required for the identity provider",
-		Example: `  supabase sso info --project-ref b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			cobra.CheckErr(cmd.MarkFlagRequired("project-ref"))
-		},
+		Example: `  supabase sso info --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return info.Run(cmd.Context(), ssoProjectRef, ssoOutput.Value)
+			return info.Run(cmd.Context(), projectRef, ssoOutput.Value)
 		},
 	}
 )
@@ -187,7 +184,7 @@ var (
 func init() {
 	ssoAddFlags := ssoAddCmd.Flags()
 	ssoAddFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoAddFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to add this identity provider.")
+	ssoAddFlags.StringVar(&projectRef, "project-ref", "", "Project on which to add this identity provider.")
 	ssoAddFlags.StringSliceVar(&ssoDomains, "domains", nil, "Comma separated list of email domains to associate with the added identity provider.")
 	ssoAddFlags.StringVar(&ssoMetadataFile, "metadata-file", "", "File containing a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoAddFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
@@ -198,11 +195,11 @@ func init() {
 
 	ssoRemoveFlags := ssoRemoveCmd.Flags()
 	ssoRemoveFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoRemoveFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to remove this identity provider.")
+	ssoRemoveFlags.StringVar(&projectRef, "project-ref", "", "Project on which to remove this identity provider.")
 
 	ssoUpdateFlags := ssoUpdateCmd.Flags()
 	ssoUpdateFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoUpdateFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to update this identity provider.")
+	ssoUpdateFlags.StringVar(&projectRef, "project-ref", "", "Project on which to update this identity provider.")
 	ssoUpdateFlags.StringSliceVar(&ssoDomains, "domains", []string{}, "Replace domains with this comma separated list of email domains.")
 	ssoUpdateFlags.StringSliceVar(&ssoAddDomains, "add-domains", []string{}, "Add this comma separated list of email domains to the identity provider.")
 	ssoUpdateFlags.StringSliceVar(&ssoRemoveDomains, "remove-domains", []string{}, "Remove this comma separated list of email domains from the identity provider.")
@@ -217,16 +214,16 @@ func init() {
 
 	ssoShowFlags := ssoShowCmd.Flags()
 	ssoShowFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoShowFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to get this identity provider.")
+	ssoShowFlags.StringVar(&projectRef, "project-ref", "", "Project on which to get this identity provider.")
 	ssoShowFlags.BoolVar(&ssoMetadata, "metadata", false, "Show SAML 2.0 XML Metadata only")
 
 	ssoListFlags := ssoListCmd.Flags()
 	ssoListFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoListFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to list identity providers.")
+	ssoListFlags.StringVar(&projectRef, "project-ref", "", "Project on which to list identity providers.")
 
 	ssoInfoFlags := ssoInfoCmd.Flags()
 	ssoInfoFlags.VarP(&ssoOutput, "output", "o", "Output format")
-	ssoInfoFlags.StringVar(&ssoProjectRef, "project-ref", "", "Project on which to show project SAML SSO settings.")
+	ssoInfoFlags.StringVar(&projectRef, "project-ref", "", "Project on which to show project SAML SSO settings.")
 
 	ssoCmd.AddCommand(ssoAddCmd)
 	ssoCmd.AddCommand(ssoRemoveCmd)
