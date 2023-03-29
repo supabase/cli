@@ -498,6 +498,7 @@ EOF
 					"LOGFLARE_SINGLE_TENANT=true",
 					"LOGFLARE_SUPABASE_MODE=true",
 					"LOGFLARE_API_KEY=api-key",
+					"LOGFLARE_LOG_LEVEL=warn",
 					"GOOGLE_DATASET_ID_APPEND=_default",
 					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
 					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
