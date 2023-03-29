@@ -12,7 +12,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
   try {
     await Deno.lstat(funcDirPath);
   } catch (e) {
-    console.error(`Error: Cannot access "${funcDirPath}". Check if directory exists or has read permissions.`);
+    console.error(`Error: Cannot access "${funcDirPath}". Check if directory exists and has read permissions.`);
     Deno.exit(1);
   }
 
