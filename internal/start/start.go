@@ -530,7 +530,7 @@ EOF
 	}
 
 	// Start vector
-	if enableLogs == true && !isContainerExcluded(utils.VectorImage, excluded) {
+	if utils.Config.Analytics.Enabled == true && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
 			ProjectId: utils.Config.ProjectId,
@@ -541,12 +541,9 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.VectorImage,
-				Env:   []string{},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && /usr/local/bin/vector
-` + vectorConfigBuf.String() + `
-EOF
-`},
+				Image:      utils.VectorImage,
+				Env:        []string{},
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && /usr/local/bin/vector` + vectorConfigBuf.String() + `EOF`},
 			},
 			container.HostConfig{
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
