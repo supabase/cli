@@ -524,6 +524,10 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
+func GetDenoAuthTokensEnv() string {
+	return "DENO_AUTH_TOKENS="+os.Getenv("DENO_AUTH_TOKENS")
+}
+
 func LoadAccessToken() (string, error) {
 	return LoadAccessTokenFS(afero.NewOsFs())
 }
