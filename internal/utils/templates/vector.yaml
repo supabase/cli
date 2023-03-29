@@ -1,121 +1,109 @@
-data_dir: /var/lib/vector
+api:
+    enabled: true
+    address: "0.0.0.0:9001"
+
 sources:
-  gotrue_journald:
-    type: journald
-    current_boot_only: true
-    include_units:
-      - gotrue.service
-  postgrest_journald:
-    type: journald
-    current_boot_only: true
-    include_units:
-      - postgrest.service
+    docker_syslog:
+        type: "syslog"
+        address: "0.0.0.0:9000"
+        mode: "tcp"
+        path: "/tmp/socket"
+
 transforms:
-  filter_postgrest_stats:
-    type: filter
-    inputs:
-      - postgrest_journald
-    condition: >-
-      !starts_with!(.message, "+") && !starts_with!(.message, "INFO:") && !contains!(.message, "Admin server listening")
+    router:
+        type: route
+        inputs:
+            - docker_syslog
+        route:
+            studio: '.appname == "studio"'
+            kong: '.appname == "kong"'
+            auth: '.appname == "auth"'
+            rest: '.appname == "rest"'
+            realtime: '.appname == "realtime"'
+            storage: '.appname == "storage"'
+            meta: '.appname == "meta"'
+            db: '.appname == "db"'
+    auth_logs:
+        type: remap
+        inputs:
+            - router.auth
+        source: |-
+            .message = parse_json!(.message)
+            .event_message = .message.msg
+            .metadata.level = .message.level
+            .metadata.timestamp = .message.time
+            .metadata.app = .appname
+            .metadata.ip = .source_ip
+            del(.message)
+            del(.procid)
+            del(.severity)
+            del(.source_id)
+            del(.source_type)
+            del(.timestamp)
+            del(.facility)
+            del(.host)
+            del(.id)
+            del(.appname)
 
-  gotrue_to_object:
-    inputs:
-      - gotrue_journald
-    type: remap
-    source: |2-
-                .project = "project_ref"
-
-                .parsed, err = parse_json(.message)
-                if err == null {
-                  .metadata = .parsed
-                  .metadata.msg = .parsed.msg
-                  .timestamp = del(.metadata.time)
-                }
-                del(.parsed)
-                .metadata.host = del(.host)
-
-                del(.source_type)
-                del(.PRIORITY)
-                del(.SYSLOG_FACILITY)
-                del(.SYSLOG_IDENTIFIER)
-                del(._BOOT_ID)
-                del(._CAP_EFFECTIVE)
-                del(._CMDLINE)
-                del(._COMM)
-                del(._EXE)
-                del(._GID)
-                del(._MACHINE_ID)
-                del(._PID)
-                del(._SELINUX_CONTEXT)
-                del(._STREAM_ID)
-                del(._SYSTEMD_CGROUP)
-                del(._SYSTEMD_INVOCATION_ID)
-                del(._SYSTEMD_SLICE)
-                del(._SYSTEMD_UNIT)
-                del(._TRANSPORT)
-                del(._UID)
-                del(.__MONOTONIC_TIMESTAMP)
-                del(.__REALTIME_TIMESTAMP)
-  postgrest_to_object:
-    inputs:
-      - filter_postgrest_stats
-    type: remap
-    source: |2-
-                .project = "project_ref"
-
-                # removes timestamp embedded in log since Vector already sends it
-                .message = replace!(.message, r'^\d+/\w+/\d+:\d+:\d+:\d+\s\+\d+:\s', "")
-                .metadata.host = del(.host)
-                del(.source_type)
-                del(.PRIORITY)
-                del(.SYSLOG_FACILITY)
-                del(.SYSLOG_IDENTIFIER)
-                del(._BOOT_ID)
-                del(._CAP_EFFECTIVE)
-                del(._CMDLINE)
-                del(._COMM)
-                del(._EXE)
-                del(._GID)
-                del(._MACHINE_ID)
-                del(._PID)
-                del(._SELINUX_CONTEXT)
-                del(._STREAM_ID)
-                del(._SYSTEMD_CGROUP)
-                del(._SYSTEMD_INVOCATION_ID)
-                del(._SYSTEMD_SLICE)
-                del(._SYSTEMD_UNIT)
-                del(._TRANSPORT)
-                del(._UID)
-                del(.__MONOTONIC_TIMESTAMP)
-                del(.__REALTIME_TIMESTAMP)
-          
 sinks:
-  http_gotrue:
-    type: http
-    inputs:
-      - gotrue_to_object
-    encoding:
-      codec: json
-    compression: none
-    uri: >-
-      https://api.logflare.app/logs?api_key=logflare_api_key&source=logflare_source
-  http_postgrest:
-    type: http
-    inputs:
-      - postgrest_to_object
-    encoding:
-      codec: json
-    compression: none
-    uri: >-
-      https://api.logflare.app/logs?api_key=logflare_api_key&source=logflare_postgrest_source
+    logflare_auth:
+        type: "http"
+        inputs:
+            - auth_logs
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=gotrue.logs.prod&api_key=gd9tDpgiCVJe"
 
-tests:
-  - name: Test for the gotrue to object transform
-    inputs:
-      - insert_at: gotrue_to_object
-        type: raw
-        value: >-
-          time="2021-12-04T07:38:06Z" level=info msg="GoTrue API started on:
-          localhost:9999" _SYSTEMD_UNIT="gotrue.service"
-    outputs:
-      - extract_from: gotrue_to_object
+    logflare_realtime:
+        type: "http"
+        inputs:
+            - router.realtime
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=realtime.logs.prod&api_key=gd9tDpgiCVJe"
+    logflare_rest:
+        type: "http"
+        inputs:
+            - router.rest
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=postgREST.logs.prod&api_key=gd9tDpgiCVJe"
+    logflare_db:
+        type: "http"
+        inputs:
+            - router.db
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=postgres.logs&api_key=gd9tDpgiCVJe"
+    logflare_storage:
+        type: "http"
+        inputs:
+            - router.storage
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=storage.logs.prod.2&api_key=gd9tDpgiCVJe"
+    logflare_kong:
+        type: "http"
+        inputs:
+            - router.kong
+        encoding:
+            codec: "json"
+        method: "post"
+        request:
+            retry_max_duration_secs: 10
+        uri: "http://logs:4000/api/logs?source_name=cloudflare.logs.prod&api_key=gd9tDpgiCVJe"

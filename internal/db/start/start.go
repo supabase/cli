@@ -77,6 +77,11 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
 		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
 	}
+
+	if utils.Config.Analytics.Enabled == true {
+		hostConfig.LogConfig = container.LogConfig{Type: "syslog", Config: map[string]string{"syslog-address": "tcp://localhost:8000", "tag": "db"}}
+	}
+
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
