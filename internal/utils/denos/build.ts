@@ -9,6 +9,13 @@ const virtualBasePath = "file:///src/";
 
 async function buildAndWrite(p: string, importMapPath: string) {
   const funcDirPath = path.dirname(p);
+  try {
+    await Deno.lstat(funcDirPath);
+  } catch (e) {
+    console.error(`Error: Cannot access "${funcDirPath}". Check if directory exists or has read permissions.`);
+    Deno.exit(1);
+  }
+
   const entrypoint = new URL("index.ts", virtualBasePath).href;
 
   const eszip = await build([entrypoint], async (specifier: string) => {
@@ -64,3 +71,4 @@ async function buildAndWrite(p: string, importMapPath: string) {
 }
 
 buildAndWrite(Deno.args[0], Deno.args[1]);
+
