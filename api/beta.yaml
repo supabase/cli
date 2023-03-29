@@ -1130,6 +1130,65 @@ paths:
           description: Failed to disable project's readonly mode
       tags: *ref_28
       security: *ref_29
+  /v1/projects/{ref}/config/auth/sso/providers:
+    post:
+      operationId: createProviderForProject
+      summary: Creates a new SSO provider
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProviderBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateProviderResponse'
+        '403':
+          description: ''
+        '404':
+          description: SAML 2.0 support is not enabled for this project
+      tags: &ref_30
+        - sso
+      security: &ref_31
+        - bearer: []
+    get:
+      operationId: listAllProviders
+      summary: Lists all SSO providers
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListProvidersResponse'
+        '403':
+          description: ''
+        '404':
+          description: SAML 2.0 support is not enabled for this project
+      tags: *ref_30
+      security: *ref_31
   /v1/projects/{ref}/config/auth/sso/providers/{provider_id}:
     get:
       operationId: getProviderById
@@ -1157,10 +1216,12 @@ paths:
                 $ref: '#/components/schemas/GetProviderResponse'
         '403':
           description: ''
-      tags: &ref_30
-        - sso
-      security: &ref_31
-        - bearer: []
+        '404':
+          description: >-
+            Either SAML 2.0 was not enabled for this project, or the provider
+            does not exist
+      tags: *ref_30
+      security: *ref_31
     put:
       operationId: updateProviderById
       summary: Updates a SSO provider by its UUID
@@ -1193,6 +1254,10 @@ paths:
                 $ref: '#/components/schemas/UpdateProviderResponse'
         '403':
           description: ''
+        '404':
+          description: >-
+            Either SAML 2.0 was not enabled for this project, or the provider
+            does not exist
       tags: *ref_30
       security: *ref_31
     delete:
@@ -1221,59 +1286,10 @@ paths:
                 $ref: '#/components/schemas/DeleteProviderResponse'
         '403':
           description: ''
-      tags: *ref_30
-      security: *ref_31
-  /v1/projects/{ref}/config/auth/sso/providers:
-    post:
-      operationId: createProviderForProject
-      summary: Creates a new SSO provider
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateProviderBody'
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreateProviderResponse'
-        '403':
-          description: ''
-      tags: *ref_30
-      security: *ref_31
-    get:
-      operationId: listAllProviders
-      summary: Lists all SSO providers
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListProvidersResponse'
-        '403':
-          description: ''
+        '404':
+          description: >-
+            Either SAML 2.0 was not enabled for this project, or the provider
+            does not exist
       tags: *ref_30
       security: *ref_31
 info:
@@ -1815,7 +1831,11 @@ components:
           items:
             type: string
         default:
-          type: object
+          oneOf:
+            - type: object
+            - type: number
+            - type: string
+            - type: boolean
     AttributeMapping:
       type: object
       properties:
@@ -1825,15 +1845,42 @@ components:
             $ref: '#/components/schemas/AttributeValue'
       required:
         - keys
+    CreateProviderBody:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - saml
+          description: What type of provider will be created
+        metadata_xml:
+          type: string
+        metadata_url:
+          type: string
+        domains:
+          type: array
+          items:
+            type: string
+        attribute_mapping:
+          $ref: '#/components/schemas/AttributeMapping'
+      required:
+        - type
     SamlDescriptor:
       type: object
       properties:
+        id:
+          type: string
+        entity_id:
+          type: string
         metadata_url:
           type: string
         metadata_xml:
           type: string
         attribute_mapping:
           $ref: '#/components/schemas/AttributeMapping'
+      required:
+        - id
+        - entity_id
     Domain:
       type: object
       properties:
@@ -1847,6 +1894,49 @@ components:
           type: string
       required:
         - id
+    CreateProviderResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        saml:
+          $ref: '#/components/schemas/SamlDescriptor'
+        domains:
+          type: array
+          items:
+            $ref: '#/components/schemas/Domain'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+    Provider:
+      type: object
+      properties:
+        id:
+          type: string
+        saml:
+          $ref: '#/components/schemas/SamlDescriptor'
+        domains:
+          type: array
+          items:
+            $ref: '#/components/schemas/Domain'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - id
+    ListProvidersResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Provider'
+      required:
+        - items
     GetProviderResponse:
       type: object
       properties:
@@ -1911,66 +2001,3 @@ components:
           type: string
       required:
         - id
-    CreateProviderBody:
-      type: object
-      properties:
-        type:
-          type: string
-          enum:
-            - saml
-          description: What type of provider will be created
-        metadata_xml:
-          type: string
-        metadata_url:
-          type: string
-        domains:
-          type: array
-          items:
-            type: string
-        attribute_mapping:
-          $ref: '#/components/schemas/AttributeMapping'
-      required:
-        - type
-    CreateProviderResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        saml:
-          $ref: '#/components/schemas/SamlDescriptor'
-        domains:
-          type: array
-          items:
-            $ref: '#/components/schemas/Domain'
-        created_at:
-          type: string
-        updated_at:
-          type: string
-      required:
-        - id
-    Provider:
-      type: object
-      properties:
-        id:
-          type: string
-        saml:
-          $ref: '#/components/schemas/SamlDescriptor'
-        domains:
-          type: array
-          items:
-            $ref: '#/components/schemas/Domain'
-        created_at:
-          type: string
-        updated_at:
-          type: string
-      required:
-        - id
-    ListProvidersResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Provider'
-      required:
-        - items
