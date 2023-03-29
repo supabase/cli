@@ -27,7 +27,7 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 	}
 
 	switch format {
-	case "metadata":
+	case utils.OutputMetadata:
 		_, err := fmt.Println(*resp.JSON200.Saml.MetadataXml)
 		return err
 

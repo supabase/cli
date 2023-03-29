@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -43,6 +43,10 @@ var (
 		},
 	}
 
+	ssoProviderType = utils.EnumFlag{
+		Allowed: []string{"saml"},
+		// intentionally no default value so users have to specify --type saml explicitly
+	}
 	ssoMetadataFile         string
 	ssoMetadataURL          string
 	ssoSkipURLValidation    bool
@@ -57,15 +61,10 @@ var (
 	}
 
 	ssoAddCmd = &cobra.Command{
-		Use:     "add <type = saml> [flags]",
+		Use:     "add",
 		Short:   "Add a new SSO identity provider",
-		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso add saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml --domains example.com`,
+		Example: `  supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml --domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.ToLower(args[0]) != "saml" {
-				return errors.New("Identity provider type must be \"saml\"")
-			}
-
 			return create.Run(cmd.Context(), create.RunParams{
 				ProjectRef: projectRef,
 				Format:     ssoOutput.Value,
@@ -80,21 +79,29 @@ var (
 	}
 
 	ssoRemoveCmd = &cobra.Command{
-		Use:     "remove <provider-id> [flags]",
+		Use:     "remove <provider-id>",
 		Short:   "Remove an existing SSO identity provider",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !utils.UUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+			}
+
 			return remove.Run(cmd.Context(), projectRef, args[0], ssoOutput.Value)
 		},
 	}
 
 	ssoUpdateCmd = &cobra.Command{
-		Use:     "update <provider-id> [flags]",
+		Use:     "update <provider-id>",
 		Short:   "Update information about an SSO identity provider",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domain example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !utils.UUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+			}
+
 			return update.Run(cmd.Context(), update.RunParams{
 				ProjectRef: projectRef,
 				ProviderID: args[0],
@@ -112,14 +119,18 @@ var (
 	}
 
 	ssoShowCmd = &cobra.Command{
-		Use:     "show <provider-id> [flags]",
+		Use:     "show <provider-id>",
 		Short:   "Show information about an SSO identity provider",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !utils.UUIDPattern.MatchString(args[0]) {
+				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+			}
+
 			format := ssoOutput.Value
 			if ssoMetadata {
-				format = "metadata"
+				format = utils.OutputMetadata
 			}
 
 			return get.Run(cmd.Context(), projectRef, args[0], format)
@@ -147,6 +158,7 @@ var (
 
 func init() {
 	ssoAddFlags := ssoAddCmd.Flags()
+	ssoAddFlags.VarP(&ssoProviderType, "type", "t", "Type of identity provider (according to supported protocol).")
 	ssoAddFlags.VarP(&ssoOutput, "output", "o", "Output format")
 	ssoAddFlags.StringVar(&projectRef, "project-ref", "", "Project on which to add this identity provider.")
 	ssoAddFlags.StringSliceVar(&ssoDomains, "domains", nil, "Comma separated list of email domains to associate with the added identity provider.")

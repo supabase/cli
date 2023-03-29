@@ -16,6 +16,9 @@ const (
 	OutputPretty = "pretty"
 	OutputToml   = "toml"
 	OutputYaml   = "yaml"
+
+	// OutputMetadata is used with certain SSO commands only.
+	OutputMetadata = "metadata"
 )
 
 var (
