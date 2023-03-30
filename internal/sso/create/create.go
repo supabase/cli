@@ -31,6 +31,7 @@ type RunParams struct {
 
 func Run(ctx context.Context, params RunParams) error {
 	var body api.CreateProviderForProjectJSONRequestBody
+	body.Type = api.CreateProviderBodyType(params.Type)
 
 	if params.MetadataFile != "" {
 		data, err := saml.ReadMetadataFile(Fs, params.MetadataFile)
