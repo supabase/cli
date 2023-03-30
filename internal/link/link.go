@@ -156,7 +156,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func PromptPassword(stdin *os.File) string {
-	fmt.Fprint(os.Stderr, "Enter your database password: ")
+	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
 	bytepw, err := term.ReadPassword(int(stdin.Fd()))
 	fmt.Println()
 	if err != nil {

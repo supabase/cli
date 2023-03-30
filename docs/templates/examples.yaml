@@ -20,19 +20,19 @@ supabase-link:
     name: Basic usage
     code: supabase link --project-ref ********************
     response: |
-      Enter your database password: ********
+      Enter your database password (or leave blank to skip): ********
       Finished supabase link.
   - id: without-password
     name: Link without database password
     code: supabase link --project-ref ******************** <<< ""
     response: |
-      Enter your database password:
+      Enter your database password (or leave blank to skip):
       Finished supabase link.
   - id: using-alternate-dns
     name: Link using DNS-over-HTTPS resolver
     code: supabase link --project-ref ******************** --dns-resolver https
     response: |
-      Enter your database password:
+      Enter your database password (or leave blank to skip):
       Finished supabase link.
 supabase-start:
   - id: basic-usage
