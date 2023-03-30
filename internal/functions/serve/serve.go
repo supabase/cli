@@ -110,7 +110,6 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 			verifyJWTEnv = "VERIFY_JWT=false"
 		}
 		env = append(env, verifyJWTEnv)
-		env = append(env, utils.GetDenoAuthTokensEnv())
 
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -173,7 +172,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 	}
 
 	fmt.Println("Starting " + utils.Bold(localFuncDir))
-	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, append(userEnv, utils.GetDenoAuthTokensEnv()), denoCacheCmd); err != nil {
+	if _, err := utils.DockerExecOnce(ctx, utils.DenoRelayId, userEnv, denoCacheCmd); err != nil {
 		return err
 	}
 
@@ -275,7 +274,6 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			verifyJWTEnv = "VERIFY_JWT=false"
 		}
 		env = append(env, verifyJWTEnv)
-		env = append(env, utils.GetDenoAuthTokensEnv())
 
 		cwd, err := os.Getwd()
 		if err != nil {

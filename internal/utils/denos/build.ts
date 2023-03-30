@@ -119,6 +119,7 @@ function findMatchingDenoAuthToken(
 }
 
 // Adapted from https://github.com/denoland/eszip/blob/b7043bf0b7938f8d91216e1541d4bd4fb8819a3d/lib/loader.ts
+// TODO: Upstream the change.
 
 interface LoadResponseModule {
   /** A module with code has been loaded. */
