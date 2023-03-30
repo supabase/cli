@@ -166,8 +166,8 @@ func init() {
 	ssoAddFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoAddFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoAddFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
-	ssoAddCmd.MarkFlagRequired("type")
 	ssoAddCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
+	cobra.CheckErr(ssoAddCmd.MarkFlagRequired("type"))
 	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("metadata-file", "xml"))
 	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("attribute-mapping-file", "json"))
 
