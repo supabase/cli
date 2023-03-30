@@ -57,14 +57,14 @@ func TestValidateMetadataURL(t *testing.T) {
 
 	t.Run("with HTTP URL", func(t *testing.T) {
 		err := ValidateMetadataURL(context.TODO(), "http://example.com")
-		if err == nil || err.Error() != "Only HTTPS Metadata URLs are supported." {
+		if err == nil || err.Error() != "only HTTPS Metadata URLs are supported" {
 			t.Fatalf("unexpected error %v", err)
 		}
 	})
 
 	t.Run("with HTTP URL", func(t *testing.T) {
 		err := ValidateMetadataURL(context.TODO(), "http://example.com")
-		if err == nil || err.Error() != "Only HTTPS Metadata URLs are supported." {
+		if err == nil || err.Error() != "only HTTPS Metadata URLs are supported" {
 			t.Fatalf("unexpected error %v", err)
 		}
 	})
