@@ -161,7 +161,12 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/9000"},
+					Test: []string{"CMD",
+						"wget",
+						"--no-verbose",
+						"--tries=1",
+						"--spider",
+						"http://localhost:9001/health"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
