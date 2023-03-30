@@ -74,7 +74,7 @@ func Run(ctx context.Context, params RunParams) error {
 		body.AttributeMapping = data
 	}
 
-	if params.Domains != nil {
+	if len(params.Domains) != 0 {
 		body.Domains = &params.Domains
 	} else if params.AddDomains != nil || params.RemoveDomains != nil {
 		domainsSet := make(map[string]bool)
@@ -95,7 +95,7 @@ func Run(ctx context.Context, params RunParams) error {
 			domainsSet[addDomain] = true
 		}
 
-		var domains []string
+		domains := make([]string, 0)
 		for domain := range domainsSet {
 			domains = append(domains, domain)
 		}
