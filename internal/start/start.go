@@ -266,7 +266,7 @@ EOF
 			start.WithSyslogConfig(container.HostConfig{
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}, utils.KongId),
+			}),
 			utils.KongId,
 		); err != nil {
 			return err
@@ -354,7 +354,7 @@ EOF
 			},
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}, utils.GotrueId),
+			}),
 			utils.GotrueId,
 		); err != nil {
 			return err
@@ -424,7 +424,7 @@ EOF
 			},
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}, utils.RealtimeId),
+			}),
 			utils.RealtimeId,
 		); err != nil {
 			return err
@@ -449,7 +449,7 @@ EOF
 			},
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}, utils.RestId),
+			}),
 			utils.RestId,
 		); err != nil {
 			return err
@@ -489,7 +489,7 @@ EOF
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":/var/lib/storage"},
-			}, utils.StorageId),
+			}),
 			utils.StorageId,
 		); err != nil {
 			return err

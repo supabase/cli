@@ -76,7 +76,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
 		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
-	}, utils.DbId)
+	})
 
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
@@ -93,12 +93,12 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	return initDatabase(ctx, fsys, w, options...)
 }
 
-func WithSyslogConfig(hostConfig container.HostConfig, tag string) container.HostConfig {
+func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
 	if utils.Config.Analytics.Enabled {
 		hostConfig.LogConfig.Type = "syslog"
 		hostConfig.LogConfig.Config = map[string]string{
 			"syslog-address": fmt.Sprintf("tcp://localhost:%d", utils.Config.Analytics.VectorPort),
-			"tag":            tag,
+			"tag":            "{{.Name}}",
 		}
 	}
 	return hostConfig
