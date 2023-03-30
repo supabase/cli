@@ -148,7 +148,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		}); err != nil {
 			return err
 		}
-
+		p.Send(utils.StatusMsg("Starting syslog driver..."))
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
