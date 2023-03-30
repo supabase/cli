@@ -69,8 +69,8 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 		return err
 	}
 
-	if strings.ToLower(parsed.Scheme) != "https:" {
-		return errors.New("Only HTTPS Metadata URLs are supported.")
+	if strings.ToLower(parsed.Scheme) != "https" {
+		return errors.New("only HTTPS Metadata URLs are supported")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
@@ -87,7 +87,7 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Received HTTP %v when fetching metatada at %q.", resp.Status, metadataURL)
+		return fmt.Errorf("received HTTP %v when fetching metatada at %q", resp.Status, metadataURL)
 	}
 
 	data, err := io.ReadAll(resp.Body)

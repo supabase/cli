@@ -186,7 +186,7 @@ func InfoMarkdown(ref string) error {
 	))
 
 	markdownTable = append(markdownTable, fmt.Sprintf(
-		"|Default Relaystate|`%s`|",
+		"|Default Relay State|`%s`|",
 		fmt.Sprintf("https://%s.supabase.co", ref),
 	))
 

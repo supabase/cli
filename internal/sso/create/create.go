@@ -21,6 +21,7 @@ type RunParams struct {
 	ProjectRef string
 	Format     string
 
+	Type              string
 	Domains           []string
 	MetadataFile      string
 	MetadataURL       string
@@ -41,7 +42,7 @@ func Run(ctx context.Context, params RunParams) error {
 	} else if params.MetadataURL != "" {
 		if !params.SkipURLValidation {
 			if err := saml.ValidateMetadataURL(ctx, params.MetadataURL); err != nil {
-				return fmt.Errorf("%w Use --skip-url-validation to suppress this error.", err)
+				return fmt.Errorf("%w Use --skip-url-validation to suppress this error", err)
 			}
 		}
 
@@ -68,7 +69,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	if resp.JSON201 == nil {
 		if resp.StatusCode() == http.StatusNotFound {
-			return errors.New("Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.")
+			return errors.New("SAML 2.0 support is not enabled for this project. Please enable it through the dashboard")
 		}
 
 		return errors.New("Unexpected error adding identity provider: " + string(resp.Body))

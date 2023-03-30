@@ -37,7 +37,7 @@ var (
 
 			// Validate project ref
 			if !utils.ProjectRefPattern.MatchString(projectRef) {
-				return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+				return errors.New("invalid project ref format. Must be like `abcdefghijklmnopqrst`")
 			}
 			return nil
 		},
@@ -85,7 +85,7 @@ var (
 		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			return remove.Run(cmd.Context(), projectRef, args[0], ssoOutput.Value)
@@ -96,10 +96,10 @@ var (
 		Use:     "update <provider-id>",
 		Short:   "Update information about an SSO identity provider",
 		Args:    cobra.ExactArgs(1),
-		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domain example.com`,
+		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			return update.Run(cmd.Context(), update.RunParams{
@@ -125,7 +125,7 @@ var (
 		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("Identity provider ID %q is not a UUID.", args[0])
+				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			format := ssoOutput.Value
