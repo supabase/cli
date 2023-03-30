@@ -160,7 +160,7 @@ func PromptPassword(stdin *os.File) string {
 	return promptPassword(stdin)
 }
 
-func PromptSkipPassword(stdin *os.File) string {
+func PromptPasswordAllowBlank(stdin *os.File) string {
 	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
 	return promptPassword(stdin)
 }
