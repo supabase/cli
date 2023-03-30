@@ -319,5 +319,4 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 
 	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
 	return nil
-
 }
