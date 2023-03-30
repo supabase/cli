@@ -91,6 +91,17 @@ func NewKongConfig() kongConfig {
 	return config
 }
 
+type vectorConfig struct {
+	ApiKey     string
+	LogflareId string
+	KongId     string
+	GotrueId   string
+	RestId     string
+	RealtimeId string
+	StorageId  string
+	DbId       string
+}
+
 var (
 	//go:embed templates/vector.yaml
 	vectorConfigEmbed    string
@@ -125,9 +136,15 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	// Start vector
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, struct{ ProjectId, ApiKey string }{
-			ProjectId: utils.Config.ProjectId,
-			ApiKey:    utils.Config.Analytics.ApiKey,
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+			ApiKey:     utils.Config.Analytics.ApiKey,
+			LogflareId: utils.LogflareId,
+			KongId:     utils.KongId,
+			GotrueId:   utils.GotrueId,
+			RestId:     utils.RestId,
+			RealtimeId: utils.RealtimeId,
+			StorageId:  utils.StorageId,
+			DbId:       utils.DbId,
 		}); err != nil {
 			return err
 		}
@@ -173,6 +190,52 @@ EOF
 	p.Send(utils.StatusMsg("Starting containers..."))
 	var started []string
 
+	// Start Logflare
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
+		workdir, _ := utils.GetProjectRoot(fsys)
+
+		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
+		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Hostname: "127.0.0.1",
+				Image:    utils.LogflareImage,
+				Env: []string{
+					"DB_DATABASE=postgres",
+					"DB_HOSTNAME=" + utils.DbId,
+					"DB_PORT=5432",
+					"DB_SCHEMA=_analytics",
+					"DB_USERNAME=supabase_admin",
+					"DB_PASSWORD=postgres",
+					"LOGFLARE_SINGLE_TENANT=true",
+					"LOGFLARE_SUPABASE_MODE=true",
+					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					"LOGFLARE_LOG_LEVEL=warn",
+					"GOOGLE_DATASET_ID_APPEND=_default",
+					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
+					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
+				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
+				ExposedPorts: nat.PortSet{"4000/tcp": {}},
+			},
+			container.HostConfig{
+				Binds:         []string{jwtPath},
+				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.LogflareId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.LogflareId)
+	}
+
 	// Start Kong.
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
@@ -200,10 +263,10 @@ EOF
 EOF
 `},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}, utils.KongId),
 			utils.KongId,
 		); err != nil {
 			return err
@@ -289,9 +352,9 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}, utils.GotrueId),
 			utils.GotrueId,
 		); err != nil {
 			return err
@@ -359,9 +422,9 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}, utils.RealtimeId),
 			utils.RealtimeId,
 		); err != nil {
 			return err
@@ -384,9 +447,9 @@ EOF
 				},
 				// PostgREST does not expose a shell for health check
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}, utils.RestId),
 			utils.RestId,
 		); err != nil {
 			return err
@@ -423,10 +486,10 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":/var/lib/storage"},
-			},
+			}, utils.StorageId),
 			utils.StorageId,
 		); err != nil {
 			return err
@@ -524,52 +587,6 @@ EOF
 			return err
 		}
 		started = append(started, utils.StudioId)
-	}
-
-	// Start Logflare
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
-		workdir, _ := utils.GetProjectRoot(fsys)
-
-		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
-		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Hostname: "127.0.0.1",
-				Image:    utils.LogflareImage,
-				Env: []string{
-					"DB_DATABASE=postgres",
-					"DB_HOSTNAME=" + utils.DbId,
-					"DB_PORT=5432",
-					"DB_SCHEMA=_analytics",
-					"DB_USERNAME=supabase_admin",
-					"DB_PASSWORD=postgres",
-					"LOGFLARE_SINGLE_TENANT=true",
-					"LOGFLARE_SUPABASE_MODE=true",
-					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
-					"LOGFLARE_LOG_LEVEL=warn",
-					"GOOGLE_DATASET_ID_APPEND=_default",
-					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
-				},
-				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
-					Interval: 2 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  10,
-				},
-				ExposedPorts: nat.PortSet{"4000/tcp": {}},
-			},
-			container.HostConfig{
-				Binds:         []string{jwtPath},
-				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			utils.LogflareId,
-		); err != nil {
-			return err
-		}
-		started = append(started, utils.LogflareId)
 	}
 
 	return waitForServiceReady(ctx, started)
