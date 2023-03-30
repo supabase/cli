@@ -95,7 +95,7 @@ func Run(ctx context.Context, params RunParams) error {
 			domainsSet[addDomain] = true
 		}
 
-		var domains []string
+		domains := make([]string, 0)
 		for domain := range domainsSet {
 			domains = append(domains, domain)
 		}
