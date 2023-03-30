@@ -92,6 +92,7 @@ func NewKongConfig() kongConfig {
 }
 
 var (
+	//go:embed templates/vector.yaml
 	vectorConfigEmbed    string
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
@@ -118,6 +119,48 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			if err := utils.DockerPullImageIfNotCached(ctx, image); err != nil {
 				return err
 			}
+		}
+	}
+
+	// Start vector
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+		var vectorConfigBuf bytes.Buffer
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, struct{ ProjectId, ApiKey string }{
+			ProjectId: utils.Config.ProjectId,
+			ApiKey:    utils.Config.Analytics.ApiKey,
+		}); err != nil {
+			return err
+		}
+
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.VectorImage,
+				Env: []string{
+					"VECTOR_CONFIG=/etc/vector/vector.yaml",
+				},
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+` + vectorConfigBuf.String() + `
+EOF
+`},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/9000"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
+				ExposedPorts: nat.PortSet{"9000/tcp": {}},
+			},
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.VectorId,
+		); err != nil {
+			return err
+		}
+		if err := waitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+			return err
 		}
 	}
 
@@ -461,7 +504,7 @@ EOF
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"LOGFLARE_API_KEY=api-key",
+					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:%v", utils.LogflareId, utils.Config.Analytics.Port),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 				},
@@ -503,7 +546,7 @@ EOF
 					"DB_PASSWORD=postgres",
 					"LOGFLARE_SINGLE_TENANT=true",
 					"LOGFLARE_SUPABASE_MODE=true",
-					"LOGFLARE_API_KEY=api-key",
+					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
 					"LOGFLARE_LOG_LEVEL=warn",
 					"GOOGLE_DATASET_ID_APPEND=_default",
 					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
@@ -527,33 +570,6 @@ EOF
 			return err
 		}
 		started = append(started, utils.LogflareId)
-	}
-
-	// Start vector
-	if utils.Config.Analytics.Enabled == true && !isContainerExcluded(utils.VectorImage, excluded) {
-		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, struct{ ProjectId, AnonKey, ServiceRoleKey string }{
-			ProjectId: utils.Config.ProjectId,
-		}); err != nil {
-			return err
-		}
-
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image:      utils.VectorImage,
-				Env:        []string{},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && /usr/local/bin/vector` + vectorConfigBuf.String() + `EOF`},
-			},
-			container.HostConfig{
-				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			utils.VectorId,
-		); err != nil {
-			return err
-		}
-		started = append(started, utils.VectorId)
 	}
 
 	return waitForServiceReady(ctx, started)

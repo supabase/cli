@@ -157,9 +157,11 @@ type (
 	analytics struct {
 		Enabled          bool   `toml:"enabled"`
 		Port             uint16 `toml:"port"`
+		VectorPort       uint16 `toml:"vector_port"`
 		GcpProjectId     string `toml:"gcp_project_id"`
 		GcpProjectNumber string `toml:"gcp_project_number"`
 		GcpJwtPath       string `toml:"gcp_jwt_path"`
+		ApiKey           string `toml:"-" mapstructure:"api_key"`
 	}
 
 	// TODO
@@ -210,6 +212,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			StudioId = "supabase_studio_" + Config.ProjectId
 			DenoRelayId = "supabase_deno_relay_" + Config.ProjectId
 			LogflareId = "supabase_analytics_" + Config.ProjectId
+			VectorId = "supabase_vector_" + Config.ProjectId
 		}
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
@@ -382,6 +385,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Analytics.Port == 0 {
 			Config.Analytics.Port = 54327
 		}
+		if Config.Analytics.VectorPort == 0 {
+			Config.Analytics.VectorPort = 54328
+		}
 		if len(Config.Analytics.GcpProjectId) == 0 {
 			return errors.New("Missing required field in config: analytics.gcp_project_id")
 		}
@@ -390,6 +396,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if len(Config.Analytics.GcpJwtPath) == 0 {
 			Config.Analytics.GcpJwtPath = "supabase/gcloud.json"
+		}
+		if len(Config.Analytics.ApiKey) == 0 {
+			Config.Analytics.ApiKey = "api-key"
 		}
 	}
 

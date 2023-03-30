@@ -78,8 +78,14 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
 	}
 
-	if utils.Config.Analytics.Enabled == true {
-		hostConfig.LogConfig = container.LogConfig{Type: "syslog", Config: map[string]string{"syslog-address": "tcp://localhost:8000", "tag": "db"}}
+	if utils.Config.Analytics.Enabled {
+		hostConfig.LogConfig = container.LogConfig{
+			Type: "syslog",
+			Config: map[string]string{
+				"syslog-address": fmt.Sprintf("tcp://localhost:%d", utils.Config.Analytics.VectorPort),
+				"tag":            "db",
+			},
+		}
 	}
 
 	fmt.Fprintln(w, "Starting database...")
