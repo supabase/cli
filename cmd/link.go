@@ -22,7 +22,7 @@ var (
 			}
 			dbPassword = viper.GetString("DB_PASSWORD")
 			if dbPassword == "" {
-				dbPassword = link.PromptPassword(os.Stdin)
+				dbPassword = link.PromptSkipPassword(os.Stdin)
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return link.Run(ctx, projectRef, dbPassword, fsys)
