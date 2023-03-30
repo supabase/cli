@@ -12,6 +12,7 @@ require (
 	github.com/docker/cli v23.0.2+incompatible
 	github.com/docker/docker v23.0.2+incompatible
 	github.com/docker/go-connections v0.4.0
+	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/jackc/pgx/v4 v4.18.1
 	github.com/joho/godotenv v1.5.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
@@ -41,7 +42,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.11.2 // indirect
-	github.com/go-xmlfmt/xmlfmt v1.1.2 // indirect
 	github.com/goccy/go-json v0.10.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
@@ -138,5 +138,5 @@ require (
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0
 )
