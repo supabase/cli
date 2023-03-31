@@ -24,3 +24,4 @@ package-lock.json
 
 # Initialised by cli for local testing
 supabase/
+gcloud.json

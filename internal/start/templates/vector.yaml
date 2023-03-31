@@ -56,7 +56,6 @@ transforms:
     source: |-
       .event_message = .message
       .metadata.level = .severity
-      .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
       .metadata.project = "default"
