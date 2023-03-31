@@ -31,11 +31,6 @@ jobs:
         if: github.ref != 'refs/heads/main'
         with:
           ref: main
-      - uses: actions/setup-go@v4
-        if: github.ref != 'refs/heads/main'
-        with:
-          go-version-file: go.mod
-          cache: true
       - id: curr
         if: github.ref != 'refs/heads/main'
         run: |
