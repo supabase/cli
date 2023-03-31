@@ -192,9 +192,7 @@ EOF
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Starting containers..."))
 	var started []string
-
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
 		workdir, _ := utils.GetProjectRoot(fsys)
@@ -241,10 +239,19 @@ EOF
 		); err != nil {
 			return err
 		}
+		startTime := time.Now()
+		timeout := 30 * time.Second
+		// TODO: logflare needs more time to initialise after passing health check
+		_ = reset.RetryEverySecond(ctx, func() bool {
+			progress := time.Since(startTime).Seconds() / timeout.Seconds() * 100
+			p.Send(utils.StatusMsg(fmt.Sprintf("Initialising logflare... %d%%", int(progress))))
+			return false
+		}, timeout)
 		started = append(started, utils.LogflareId)
 	}
 
 	// Start Kong.
+	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, NewKongConfig()); err != nil {
