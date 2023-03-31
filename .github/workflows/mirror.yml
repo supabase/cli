@@ -26,14 +26,12 @@ jobs:
       - id: list
         run: |
           echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
-      # Get current list of dependencies
-      - uses: actions/checkout@v3
-        if: github.ref != 'refs/heads/main'
-        with:
-          ref: main
       - id: curr
+        name: List main branch dependencies
         if: github.ref != 'refs/heads/main'
         run: |
+          git fetch origin main
+          git checkout main
           echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
 
   mirror:
