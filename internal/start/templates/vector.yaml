@@ -38,6 +38,7 @@ transforms:
       .metadata.timestamp = .message.time
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
@@ -58,6 +59,7 @@ transforms:
       .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
@@ -78,6 +80,7 @@ transforms:
       .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
@@ -98,6 +101,7 @@ transforms:
       .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
@@ -118,6 +122,7 @@ transforms:
       .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
@@ -138,6 +143,7 @@ transforms:
       .metadata.timestamp = .timestamp
       .metadata.app = .appname
       .metadata.ip = .source_ip
+      .metadata.project = "default"
       del(.message)
       del(.procid)
       del(.severity)
