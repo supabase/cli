@@ -10,10 +10,16 @@ sources:
         path: "/tmp/socket"
 
 transforms:
+    project_logs:
+        type: remap
+        inputs:
+            - docker_syslog
+        source: |-
+            .project = "default"
     router:
         type: route
         inputs:
-            - docker_syslog
+            - project_logs
         route:
             kong: '.appname == "{{ .KongId }}"'
             auth: '.appname == "{{ .GotrueId }}"'
