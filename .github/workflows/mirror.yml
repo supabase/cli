@@ -1,7 +1,7 @@
 name: Mirror Image
 # We mirror upstream container images like Migra, imgproxy, etc. because these
 # are usually only available on certain image registry and not others (e.g. only
-# not Docker Hub and not on ghcr.io or AWS ECR).
+# on Docker Hub and not on ghcr.io or AWS ECR).
 #
 # For container images that we control, we usually publish to Docker Hub,
 # ghcr.io, and AWS ECR.
@@ -13,7 +13,7 @@ on:
   # updated image version, which would fail because the image hasn't been
   # mirrored yet. It's a catch-22!
   #
-  # TODO: Make the test run *after* we mirror images (if needed).
+  # TODO: Make the cli start test run *after* we mirror images (if needed).
   pull_request_review:
     types:
       - submitted
