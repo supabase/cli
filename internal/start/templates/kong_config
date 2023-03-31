@@ -113,6 +113,14 @@ services:
         strip_path: true
         paths:
           - /functions/v1/
+  - name: analytics-v1
+    _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
+    url: http://supabase_analytics_{{ .ProjectId }}:4000/
+    routes:
+      - name: analytics-v1-all
+        strip_path: true
+        paths:
+          - /analytics/v1/
 consumers:
 {{range $key, $val := .ApiKeys}}
   - username: {{$key}}
