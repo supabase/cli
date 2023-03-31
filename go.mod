@@ -9,9 +9,10 @@ require (
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/charmbracelet/lipgloss v0.7.1
 	github.com/deepmap/oapi-codegen v1.12.4
-	github.com/docker/cli v23.0.1+incompatible
-	github.com/docker/docker v23.0.1+incompatible
+	github.com/docker/cli v23.0.2+incompatible
+	github.com/docker/docker v23.0.2+incompatible
 	github.com/docker/go-connections v0.4.0
+	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/jackc/pgx/v4 v4.18.1
 	github.com/joho/godotenv v1.5.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
@@ -137,5 +138,5 @@ require (
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0
 )

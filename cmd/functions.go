@@ -72,7 +72,7 @@ var (
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
-			if err := PromptProjectRef(fsys); err != nil {
+			if err := PromptProjectRef(fsys, cmd); err != nil {
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -145,7 +145,9 @@ func PromptLogin(fsys afero.Fs) error {
 	}
 }
 
-func PromptProjectRef(fsys afero.Fs) error {
+// PromptProjectRef prompts for the project ref if there is no project ref provided
+// or if there is no linked project
+func PromptProjectRef(fsys afero.Fs, cmd *cobra.Command) error {
 	if len(projectRef) > 0 {
 		return nil
 	} else if err := utils.AssertIsLinkedFS(fsys); err == nil {
@@ -156,7 +158,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
-			return errors.New("Cancelled " + utils.Aqua("supabase functions deploy") + ".")
+			return errors.New("Cancelled " + utils.Aqua(cmd.UseLine()) + ".")
 		}
 
 		projectRef = strings.TrimSpace(scanner.Text())
