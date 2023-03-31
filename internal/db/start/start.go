@@ -130,12 +130,12 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	if err != nil {
 		return err
 	}
+	defer conn.Close(context.Background())
 	if utils.Config.Db.MajorVersion <= 14 {
 		if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 			return err
 		}
 	}
-	defer conn.Close(context.Background())
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
 		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
