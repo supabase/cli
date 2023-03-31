@@ -65,7 +65,9 @@ var ServiceImages = []string{
 	PgmetaImage,
 	StudioImage,
 	DenoRelayImage,
+	EdgeRuntimeImage,
 	LogflareImage,
+	VectorImage,
 }
 
 func ShortContainerImageName(imageName string) string {
