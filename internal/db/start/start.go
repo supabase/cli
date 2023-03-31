@@ -57,15 +57,6 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
 			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// One log file per hour, 24 hours retention
-			"-c", "log_destination=csvlog",
-			"-c", "logging_collector=on",
-			"-c", "log_directory=/var/log/postgresql",
-			"-c", "log_filename=server_%H00_UTC.log",
-			"-c", "log_file_mode=0640",
-			"-c", "log_rotation_age=60",
-			"-c", "log_rotation_size=0",
-			"-c", "log_truncate_on_rotation=on",
 			// Ref: https://postgrespro.com/list/thread-id/2448092
 			"-c", `search_path="$user",public,extensions`,
 		}
