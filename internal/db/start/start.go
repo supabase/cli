@@ -62,12 +62,13 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		}
 	}
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
-	hostConfig := container.HostConfig{
+	hostConfig := WithSyslogConfig(container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
 		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
-	}
+	})
+
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
@@ -81,6 +82,17 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		return initCurrentBranch(fsys)
 	}
 	return initDatabase(ctx, fsys, w, options...)
+}
+
+func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
+	if utils.Config.Analytics.Enabled {
+		hostConfig.LogConfig.Type = "syslog"
+		hostConfig.LogConfig.Config = map[string]string{
+			"syslog-address": fmt.Sprintf("tcp://localhost:%d", utils.Config.Analytics.VectorPort),
+			"tag":            "{{.Name}}",
+		}
+	}
+	return hostConfig
 }
 
 func initCurrentBranch(fsys afero.Fs) error {

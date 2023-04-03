@@ -31,6 +31,8 @@ var (
 	PgmetaId    string
 	StudioId    string
 	DenoRelayId string
+	LogflareId  string
+	VectorId    string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -88,6 +90,7 @@ type (
 		Storage   storage             `toml:"storage"`
 		Auth      auth                `toml:"auth" mapstructure:"auth"`
 		Functions map[string]function `toml:"functions"`
+		Analytics analytics           `toml:"analytics"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -151,6 +154,16 @@ type (
 		ImportMap string `toml:"import_map"`
 	}
 
+	analytics struct {
+		Enabled          bool   `toml:"enabled"`
+		Port             uint16 `toml:"port"`
+		VectorPort       uint16 `toml:"vector_port"`
+		GcpProjectId     string `toml:"gcp_project_id"`
+		GcpProjectNumber string `toml:"gcp_project_number"`
+		GcpJwtPath       string `toml:"gcp_jwt_path"`
+		ApiKey           string `toml:"-" mapstructure:"api_key"`
+	}
+
 	// TODO
 	// scripts struct {
 	// 	BeforeMigrations string `toml:"before_migrations"`
@@ -198,6 +211,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
 			StudioId = "supabase_studio_" + Config.ProjectId
 			DenoRelayId = "supabase_deno_relay_" + Config.ProjectId
+			LogflareId = "supabase_analytics_" + Config.ProjectId
+			VectorId = "supabase_vector_" + Config.ProjectId
 		}
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
@@ -363,6 +378,27 @@ func LoadConfigFS(fsys afero.Fs) error {
 		Config.Functions[name] = function{
 			VerifyJWT: verifyJWT,
 			ImportMap: functionConfig.ImportMap,
+		}
+	}
+
+	if Config.Analytics.Enabled {
+		if Config.Analytics.Port == 0 {
+			Config.Analytics.Port = 54327
+		}
+		if Config.Analytics.VectorPort == 0 {
+			Config.Analytics.VectorPort = 54328
+		}
+		if len(Config.Analytics.GcpProjectId) == 0 {
+			return errors.New("Missing required field in config: analytics.gcp_project_id")
+		}
+		if len(Config.Analytics.GcpProjectNumber) == 0 {
+			return errors.New("Missing required field in config: analytics.gcp_project_number")
+		}
+		if len(Config.Analytics.GcpJwtPath) == 0 {
+			Config.Analytics.GcpJwtPath = "supabase/gcloud.json"
+		}
+		if len(Config.Analytics.ApiKey) == 0 {
+			Config.Analytics.ApiKey = "api-key"
 		}
 	}
 

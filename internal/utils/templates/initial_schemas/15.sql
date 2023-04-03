@@ -26,6 +26,15 @@ CREATE SCHEMA IF NOT EXISTS _realtime;
 ALTER SCHEMA _realtime OWNER TO postgres;
 
 --
+-- Name: _analytics; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA IF NOT EXISTS _analytics;
+
+
+ALTER SCHEMA _analytics OWNER TO postgres;
+
+--
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
 --
 

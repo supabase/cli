@@ -74,6 +74,7 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 		utils.ImgProxyId,
 		utils.PgmetaId,
 		utils.StudioId,
+		utils.LogflareId,
 	}
 	stopped := checkServiceHealth(ctx, services, os.Stderr)
 	if len(stopped) > 0 {

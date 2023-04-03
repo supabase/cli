@@ -175,6 +175,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgmetaImage), utils.PgmetaId)
 		utils.StudioId = "test-studio"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StudioImage), utils.StudioId)
+		utils.LogflareId = "test-logflare"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.LogflareImage), utils.LogflareId)
 		// Setup mock postgres
 		utils.GlobalsSql = "create schema public"
 		utils.InitialSchemaSql = "create schema private"
@@ -187,7 +189,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
-			utils.StorageId, utils.ImgProxyId, utils.PgmetaId, utils.StudioId,
+			utils.StorageId, utils.ImgProxyId, utils.PgmetaId, utils.StudioId, utils.LogflareId,
 		}
 		for _, container := range started {
 			gock.New(utils.Docker.DaemonHost()).

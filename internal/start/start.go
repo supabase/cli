@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -90,6 +91,23 @@ func NewKongConfig() kongConfig {
 	return config
 }
 
+type vectorConfig struct {
+	ApiKey     string
+	LogflareId string
+	KongId     string
+	GotrueId   string
+	RestId     string
+	RealtimeId string
+	StorageId  string
+	DbId       string
+}
+
+var (
+	//go:embed templates/vector.yaml
+	vectorConfigEmbed    string
+	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
+)
+
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
@@ -115,16 +133,126 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		}
 	}
 
+	// Start vector
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+		var vectorConfigBuf bytes.Buffer
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+			ApiKey:     utils.Config.Analytics.ApiKey,
+			LogflareId: utils.LogflareId,
+			KongId:     utils.KongId,
+			GotrueId:   utils.GotrueId,
+			RestId:     utils.RestId,
+			RealtimeId: utils.RealtimeId,
+			StorageId:  utils.StorageId,
+			DbId:       utils.DbId,
+		}); err != nil {
+			return err
+		}
+		p.Send(utils.StatusMsg("Starting syslog driver..."))
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.VectorImage,
+				Env: []string{
+					"VECTOR_CONFIG=/etc/vector/vector.yaml",
+				},
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+` + vectorConfigBuf.String() + `
+EOF
+`},
+				Healthcheck: &container.HealthConfig{
+					Test: []string{"CMD",
+						"wget",
+						"--no-verbose",
+						"--tries=1",
+						"--spider",
+						"http://localhost:9001/health"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
+				ExposedPorts: nat.PortSet{"9000/tcp": {}},
+			},
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.VectorId,
+		); err != nil {
+			return err
+		}
+		if err := waitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+			return err
+		}
+	}
+
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
 		return err
 	}
 
-	p.Send(utils.StatusMsg("Starting containers..."))
 	var started []string
+	// Start Logflare
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
+		workdir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Hostname: "127.0.0.1",
+				Image:    utils.LogflareImage,
+				Env: []string{
+					"DB_DATABASE=postgres",
+					"DB_HOSTNAME=" + utils.DbId,
+					"DB_PORT=5432",
+					"DB_SCHEMA=_analytics",
+					"DB_USERNAME=supabase_admin",
+					"DB_PASSWORD=postgres",
+					"LOGFLARE_MIN_CLUSTER_SIZE=1",
+					"LOGFLARE_SINGLE_TENANT=true",
+					"LOGFLARE_SUPABASE_MODE=true",
+					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					"LOGFLARE_LOG_LEVEL=warn",
+					// This is hardcoded in studio frontend
+					"GOOGLE_DATASET_ID_APPEND=_prod",
+					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
+					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
+				},
+				Healthcheck: &container.HealthConfig{
+					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
+					Interval:    2 * time.Second,
+					Timeout:     2 * time.Second,
+					Retries:     10,
+					StartPeriod: 10 * time.Second,
+				},
+				ExposedPorts: nat.PortSet{"4000/tcp": {}},
+			},
+			container.HostConfig{
+				Binds:         []string{hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"},
+				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.LogflareId,
+		); err != nil {
+			return err
+		}
+		startTime := time.Now()
+		timeout := 30 * time.Second
+		// TODO: logflare needs more time to initialise after passing health check
+		_ = reset.RetryEverySecond(ctx, func() bool {
+			progress := time.Since(startTime).Seconds() / timeout.Seconds() * 100
+			p.Send(utils.StatusMsg(fmt.Sprintf("Initialising logflare... %d%%", int(progress))))
+			return false
+		}, timeout)
+		started = append(started, utils.LogflareId)
+	}
 
 	// Start Kong.
+	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, NewKongConfig()); err != nil {
@@ -151,10 +279,10 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 EOF
 `},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}),
 			utils.KongId,
 		); err != nil {
 			return err
@@ -240,9 +368,9 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}),
 			utils.GotrueId,
 		); err != nil {
 			return err
@@ -310,9 +438,9 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}),
 			utils.RealtimeId,
 		); err != nil {
 			return err
@@ -335,9 +463,9 @@ EOF
 				},
 				// PostgREST does not expose a shell for health check
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
+			}),
 			utils.RestId,
 		); err != nil {
 			return err
@@ -374,10 +502,10 @@ EOF
 					Retries:  10,
 				},
 			},
-			container.HostConfig{
+			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":/var/lib/storage"},
-			},
+			}),
 			utils.StorageId,
 		); err != nil {
 			return err
@@ -455,6 +583,9 @@ EOF
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
+					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
