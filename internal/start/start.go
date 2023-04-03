@@ -195,10 +195,11 @@ EOF
 	var started []string
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
-		workdir, _ := utils.GetProjectRoot(fsys)
-
+		workdir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
-		jwtPath := hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -231,7 +232,7 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         []string{jwtPath},
+				Binds:         []string{hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"},
 				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
