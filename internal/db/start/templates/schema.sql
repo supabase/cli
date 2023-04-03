@@ -9,6 +9,9 @@ ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
 create schema if not exists _realtime;
 alter schema _realtime owner to postgres;
 
+create schema if not exists _analytics;
+alter schema _analytics owner to postgres;
+
 BEGIN;
 
 -- Create pg_net extension
