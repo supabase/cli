@@ -92,10 +92,13 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
-	if !client.IsErrNotFound(err) {
-		return initCurrentBranch(fsys)
+	// Initialise if we are on PG14 and there's no existing db volume
+	if client.IsErrNotFound(err) && utils.Config.Db.MajorVersion <= 14 {
+		if err := initDatabase(ctx, w, options...); err != nil {
+			return err
+		}
 	}
-	return initDatabase(ctx, fsys, w, options...)
+	return initCurrentBranch(fsys)
 }
 
 func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
@@ -121,21 +124,27 @@ func initCurrentBranch(fsys afero.Fs) error {
 	return afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
 }
 
-func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	if err := initCurrentBranch(fsys); err != nil {
-		return err
-	}
+func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	// Initialise globals
 	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if utils.Config.Db.MajorVersion <= 14 {
-		if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
-			return err
-		}
+	fmt.Fprintln(w, "Setting up initial schema...")
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+		return err
 	}
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+}
+
+func SetupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	fmt.Fprintln(w, "Setting up local schema...")
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
 		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
@@ -143,11 +152,5 @@ func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...fu
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if utils.Config.Db.MajorVersion <= 14 {
-		if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-			return err
-		}
-	}
-	fmt.Fprintln(w, "Setting up initial schema...")
 	return reset.InitialiseDatabase(ctx, conn, fsys)
 }
