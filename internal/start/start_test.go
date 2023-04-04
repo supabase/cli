@@ -229,6 +229,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
+		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusOK).
@@ -243,11 +244,14 @@ func TestDatabaseStart(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, context.Background(), fsys, exclude)
+			return run(p, context.Background(), fsys, exclude, conn.Intercept)
 		})
 		// Check error
 		assert.NoError(t, err)
