@@ -46,12 +46,12 @@ func (m *OpenErrorFs) OpenFile(name string, flag int, perm os.FileMode) (afero.F
 	return m.MemMapFs.OpenFile(name, flag, perm)
 }
 
-func TestInitDatabase(t *testing.T) {
+func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -61,7 +61,7 @@ func TestInitDatabase(t *testing.T) {
 		fsys := &StatErrorFs{DenyPath: utils.CurrBranchPath}
 		// Setup mock docker
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
@@ -70,35 +70,31 @@ func TestInitDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &OpenErrorFs{DenyPath: utils.CurrBranchPath}
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
+}
 
+func TestInitDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port")
 	})
 
 	t.Run("throws error on exec failure", func(t *testing.T) {
-		utils.Config.Db.MajorVersion = 15
 		utils.Config.Db.Port = 5432
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		sql := "create role postgres"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644))
+		utils.GlobalsSql = "create role postgres"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(sql).
+		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := initDatabase(context.Background(), io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
@@ -134,11 +130,8 @@ func TestStartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := StartDatabase(context.Background(), fsys, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

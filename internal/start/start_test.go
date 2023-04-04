@@ -145,6 +145,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
+		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound)

@@ -19,6 +19,8 @@ import (
 	"github.com/supabase/cli/internal/utils/parser"
 )
 
+const SET_POSTGRES_ROLE = "SET ROLE postgres;"
+
 var (
 	healthTimeout = 5 * time.Second
 )
@@ -65,6 +67,9 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 	defer conn.Close(context.Background())
 	fmt.Fprintln(os.Stderr, "Initialising schema...")
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, SET_POSTGRES_ROLE); err != nil {
 		return err
 	}
 	return InitialiseDatabase(ctx, conn, fsys)
