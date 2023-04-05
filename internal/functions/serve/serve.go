@@ -252,7 +252,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Load default values
-	if envFilePath != "" {
+	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
 			envFilePath = utils.FallbackEnvFilePath
 		}
