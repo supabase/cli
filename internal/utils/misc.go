@@ -64,7 +64,7 @@ var ServiceImages = []string{
 	MigraImage,
 	PgmetaImage,
 	StudioImage,
-	DenoRelayImage,
+	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
 }
