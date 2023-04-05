@@ -43,7 +43,25 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	return err
 }
 
+func GetPgCommand() string {
+	cmd := []string{"postgres", "-D", "/etc/postgresql"}
+
+	if utils.Config.Db.MajorVersion >= 14 {
+		extraOpts := []string{
+			"-c", "config_file=/etc/postgresql/postgresql.conf",
+			// Ref: https://postgrespro.com/list/thread-id/2448092
+			"-c", `search_path=\"$user\",public,extensions`,
+		}
+
+		cmd = append(cmd, extraOpts...)
+	}
+
+	return strings.Join(cmd, " ")
+}
+
 func NewContainerConfig() container.Config {
+	pgCommand := GetPgCommand()
+
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
@@ -57,18 +75,12 @@ func NewContainerConfig() container.Config {
 			Timeout:  2 * time.Second,
 			Retries:  10,
 		},
-		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && docker-entrypoint.sh postgres -D /etc/postgresql
+		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && docker-entrypoint.sh ` + pgCommand + `
 ` + initialSchema + `
 EOF
 `},
 	}
-	if utils.Config.Db.MajorVersion >= 14 {
-		config.Cmd = []string{"postgres",
-			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// Ref: https://postgrespro.com/list/thread-id/2448092
-			"-c", `search_path="$user",public,extensions`,
-		}
-	}
+
 	return config
 }
 
