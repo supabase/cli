@@ -236,9 +236,11 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 			return err
 		}
 		if envFilePath != "" {
-			if _, err := fsys.Stat(envFilePath); err != nil {
-				return fmt.Errorf("Failed to read env file: %w", err)
+			if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
+				envFilePath = utils.FallbackEnvFilePath
 			}
+		} else if _, err := fsys.Stat(envFilePath); err != nil {
+			return fmt.Errorf("Failed to read env file: %w", err)
 		}
 		if importMapPath == "" {
 			if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
