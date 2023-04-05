@@ -14,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -312,10 +313,10 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			Env:   append(env, userEnv...),
 			Cmd:   cmd,
 		},
-		container.HostConfig{
+		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
-		},
+		}),
 		utils.DenoRelayId,
 	)
 	return err
