@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -534,6 +535,14 @@ EOF
 			return err
 		}
 		started = append(started, utils.ImgProxyId)
+	}
+
+	// Start all functions.
+	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+		if err := serve.ServeFunctions(ctx, "", nil, "", fsys); err != nil {
+			return err
+		}
+		started = append(started, utils.DenoRelayId)
 	}
 
 	// Start pg-meta.
