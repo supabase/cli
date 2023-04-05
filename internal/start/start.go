@@ -634,7 +634,7 @@ func waitForServiceReady(ctx context.Context, started []string) error {
 		started = unhealthy
 		return len(started) == 0
 	}
-	if !reset.RetryEverySecond(ctx, probe, 20*time.Second) {
+	if !reset.RetryEverySecond(ctx, probe, 30*time.Second) {
 		// Print container logs for easier debugging
 		for _, container := range started {
 			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
