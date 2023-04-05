@@ -85,6 +85,7 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
 		exclude = append([]string{
+			"_analytics",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
