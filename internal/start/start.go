@@ -240,15 +240,9 @@ EOF
 		); err != nil {
 			return err
 		}
-		startTime := time.Now()
-		timeout := 30 * time.Second
-		// TODO: logflare needs more time to initialise after passing health check
-		_ = reset.RetryEverySecond(ctx, func() bool {
-			progress := time.Since(startTime).Seconds() / timeout.Seconds() * 100
-			p.Send(utils.StatusMsg(fmt.Sprintf("Initialising logflare... %d%%", int(progress))))
-			return false
-		}, timeout)
-		started = append(started, utils.LogflareId)
+		if err := waitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
+			return err
+		}
 	}
 
 	// Start Kong.
