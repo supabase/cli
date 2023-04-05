@@ -81,6 +81,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
 	})
 	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = []string{"docker-entrypoint.sh"}
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	fmt.Fprintln(w, "Starting database...")
