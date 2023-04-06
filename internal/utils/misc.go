@@ -37,15 +37,17 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.62.0"
-	StudioImage      = "supabase/studio:20230216-e731b77"
+	StudioImage      = "supabase/studio:20230330-99fed3d"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.1.7"
+	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.51.4"
-	RealtimeImage = "supabase/realtime:v2.6.0"
+	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.29.1"
+	LogflareImage = "supabase/logflare:1.0.2"
 	// Should be kept in-sync with DenoRelayImage
 	DenoVersion = "1.30.3"
 )
@@ -62,7 +64,9 @@ var ServiceImages = []string{
 	MigraImage,
 	PgmetaImage,
 	StudioImage,
-	DenoRelayImage,
+	EdgeRuntimeImage,
+	LogflareImage,
+	VectorImage,
 }
 
 func ShortContainerImageName(imageName string) string {
@@ -134,6 +138,7 @@ var (
 		"realtime",
 		"_realtime",
 		"storage",
+		"_analytics",
 		"supabase_functions",
 		"supabase_migrations",
 	}, SystemSchemas...)
@@ -173,6 +178,7 @@ var (
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
+	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")

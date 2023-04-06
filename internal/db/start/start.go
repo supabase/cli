@@ -2,6 +2,7 @@ package start
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -16,10 +17,13 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 )
+
+//go:embed templates/schema.sql
+var initialSchema string
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
@@ -39,7 +43,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	return err
 }
 
-func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+func NewContainerConfig() container.Config {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
@@ -53,29 +57,32 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 			Timeout:  2 * time.Second,
 			Retries:  10,
 		},
+		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && docker-entrypoint.sh postgres -D /etc/postgresql
+` + initialSchema + `
+EOF
+`},
 	}
 	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
 			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// One log file per hour, 24 hours retention
-			"-c", "log_destination=csvlog",
-			"-c", "logging_collector=on",
-			"-c", "log_directory=/var/log/postgresql",
-			"-c", "log_filename=server_%H00_UTC.log",
-			"-c", "log_file_mode=0640",
-			"-c", "log_rotation_age=60",
-			"-c", "log_rotation_size=0",
-			"-c", "log_truncate_on_rotation=on",
 			// Ref: https://postgrespro.com/list/thread-id/2448092
 			"-c", `search_path="$user",public,extensions`,
 		}
 	}
+	return config
+}
+
+func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	config := NewContainerConfig()
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
-	hostConfig := container.HostConfig{
+	hostConfig := WithSyslogConfig(container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
-		Tmpfs:         map[string]string{"/docker-entrypoint-initdb.d": ""},
+	})
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = []string{"docker-entrypoint.sh"}
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
@@ -86,10 +93,24 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
-	if !client.IsErrNotFound(err) {
-		return initCurrentBranch(fsys)
+	// Initialise if we are on PG14 and there's no existing db volume
+	if client.IsErrNotFound(err) && utils.Config.Db.MajorVersion <= 14 {
+		if err := initDatabase(ctx, w, options...); err != nil {
+			return err
+		}
 	}
-	return initDatabase(ctx, fsys, w, options...)
+	return initCurrentBranch(fsys)
+}
+
+func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
+	if utils.Config.Analytics.Enabled {
+		hostConfig.LogConfig.Type = "syslog"
+		hostConfig.LogConfig.Config = map[string]string{
+			"syslog-address": fmt.Sprintf("tcp://localhost:%d", utils.Config.Analytics.VectorPort),
+			"tag":            "{{.Name}}",
+		}
+	}
+	return hostConfig
 }
 
 func initCurrentBranch(fsys afero.Fs) error {
@@ -104,26 +125,33 @@ func initCurrentBranch(fsys afero.Fs) error {
 	return afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
 }
 
-func initDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	if err := initCurrentBranch(fsys); err != nil {
-		return err
-	}
+func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	// Initialise globals
 	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+	fmt.Fprintln(w, "Setting up initial schema...")
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+}
+
+func SetupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	fmt.Fprintln(w, "Setting up local schema...")
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := diff.BatchExecDDL(ctx, conn, roles); err != nil {
+		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	fmt.Fprintln(w, "Setting up initial schema...")
 	return reset.InitialiseDatabase(ctx, conn, fsys)
 }

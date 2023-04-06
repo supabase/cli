@@ -19,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -47,12 +46,12 @@ func (m *OpenErrorFs) OpenFile(name string, flag int, perm os.FileMode) (afero.F
 	return m.MemMapFs.OpenFile(name, flag, perm)
 }
 
-func TestInitDatabase(t *testing.T) {
+func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -62,7 +61,7 @@ func TestInitDatabase(t *testing.T) {
 		fsys := &StatErrorFs{DenyPath: utils.CurrBranchPath}
 		// Setup mock docker
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
@@ -71,39 +70,31 @@ func TestInitDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &OpenErrorFs{DenyPath: utils.CurrBranchPath}
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initCurrentBranch(fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
+}
 
+func TestInitDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
 		// Run test
-		err := initDatabase(context.Background(), fsys, io.Discard)
+		err := initDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port")
 	})
 
 	t.Run("throws error on exec failure", func(t *testing.T) {
 		utils.Config.Db.Port = 5432
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		utils.GlobalsSql = "create role postgres"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
-		require.NoError(t, err)
-		for _, line := range globals {
-			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-			if len(trim) > 0 {
-				conn.Query(trim)
-			}
-		}
-		conn.ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
 		// Run test
-		err = initDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := initDatabase(context.Background(), io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
@@ -120,7 +111,6 @@ func TestStartDatabase(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.Config.Db.Port = 5432
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -140,20 +130,8 @@ func TestStartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		globals, err := parser.SplitAndTrim(strings.NewReader(utils.GlobalsSql))
-		require.NoError(t, err)
-		for _, line := range globals {
-			trim := strings.TrimSpace(strings.TrimRight(line, ";"))
-			if len(trim) > 0 {
-				conn.Query(trim)
-			}
-		}
-		conn.Query(utils.InitialSchemaSql).Reply("CREATE SCHEMA")
 		// Run test
-		err = StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := StartDatabase(context.Background(), fsys, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,9 +17,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 )
 
 const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
@@ -86,6 +85,7 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
 		exclude = append([]string{
+			"_analytics",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
@@ -120,21 +120,8 @@ func likeEscapeSchema(schemas []string) (result []string) {
 }
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
-	config := container.Config{
-		Image: utils.DbImage,
-		Env: []string{
-			"POSTGRES_PASSWORD=postgres",
-			"POSTGRES_HOST=/var/run/postgresql",
-			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
-		},
-	}
-	if utils.Config.Db.MajorVersion >= 14 {
-		config.Cmd = []string{"postgres",
-			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// Ref: https://postgrespro.com/list/thread-id/2448092
-			"-c", `search_path="$user",public,extensions`,
-		}
-	}
+	config := start.NewContainerConfig()
+	config.Entrypoint = []string{"docker-entrypoint.sh"}
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
@@ -165,20 +152,20 @@ func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := BatchExecDDL(ctx, conn, roles); err != nil {
+		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 		return err
 	}
-	return MigrateDatabase(ctx, conn, fsys)
+	return apply.MigrateDatabase(ctx, conn, fsys)
 }
 
 // Applies local migration scripts to a database.
@@ -198,52 +185,7 @@ func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...
 		return err
 	}
 	defer conn.Close(context.Background())
-	return MigrateDatabase(ctx, conn, fsys)
-}
-
-func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	migrations, err := list.LoadLocalMigrations(fsys)
-	if err != nil {
-		return err
-	}
-	// Apply migrations
-	for _, filename := range migrations {
-		if err := migrateUp(ctx, conn, filename, fsys); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func migrateUp(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(filename)+"...")
-	sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
-	if err != nil {
-		return err
-	}
-	defer sql.Close()
-	return BatchExecDDL(ctx, conn, sql)
-}
-
-func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
-	lines, err := parser.SplitAndTrim(sql)
-	if err != nil {
-		return err
-	}
-	// Batch migration commands, without using statement cache
-	batch := pgconn.Batch{}
-	for _, line := range lines {
-		batch.ExecParams(line, nil, nil, nil, nil)
-	}
-	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		i := len(result)
-		var stat string
-		if i < len(lines) {
-			stat = lines[i]
-		}
-		return fmt.Errorf("%v\nAt statement %d: %s", err, i, utils.Aqua(stat))
-	}
-	return nil
+	return apply.MigrateDatabase(ctx, conn, fsys)
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.

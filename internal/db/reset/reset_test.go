@@ -78,7 +78,9 @@ func TestResetDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query(SET_POSTGRES_ROLE).
+			Reply("SET ROLE")
 		// Run test
 		assert.NoError(t, resetDatabase(context.Background(), fsys, conn.Intercept))
 	})
@@ -122,6 +124,8 @@ func TestResetDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA").
+			Query(SET_POSTGRES_ROLE).
+			Reply("SET ROLE").
 			Query(sql).
 			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
 		// Run test
@@ -191,7 +195,7 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
 			Reply("DROP DATABASE").
-			Query("CREATE DATABASE postgres;").
+			Query("CREATE DATABASE postgres WITH OWNER postgres;").
 			Reply("CREATE DATABASE")
 		// Run test
 		assert.NoError(t, RecreateDatabase(context.Background(), conn.Intercept))

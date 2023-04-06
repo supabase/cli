@@ -35,8 +35,9 @@ jobs:
 
       - uses: actions/setup-go@v4
         with:
-          # Linter requires no cache
           go-version-file: go.mod
+          # Linter requires no cache
+          cache: false
 
       - uses: golangci/golangci-lint-action@v3
         with:

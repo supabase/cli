@@ -145,6 +145,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
+		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound)
@@ -171,23 +172,22 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.ImageProxyImage), utils.ImgProxyId)
 		utils.DifferId = "test-differ"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
+		utils.DenoRelayId = "test-edge-runtime"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), utils.DenoRelayId)
 		utils.PgmetaId = "test-pgmeta"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgmetaImage), utils.PgmetaId)
 		utils.StudioId = "test-studio"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StudioImage), utils.StudioId)
+		utils.LogflareId = "test-logflare"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.LogflareImage), utils.LogflareId)
 		// Setup mock postgres
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaSql = "create schema private"
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA")
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
-			utils.StorageId, utils.ImgProxyId, utils.PgmetaId, utils.StudioId,
+			utils.StorageId, utils.ImgProxyId, utils.DenoRelayId, utils.PgmetaId, utils.StudioId,
+			utils.LogflareId,
 		}
 		for _, container := range started {
 			gock.New(utils.Docker.DaemonHost()).
@@ -232,6 +232,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.Config.Db.Port = 54322
+		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusOK).
@@ -246,11 +247,14 @@ func TestDatabaseStart(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, context.Background(), fsys, exclude)
+			return run(p, context.Background(), fsys, exclude, conn.Intercept)
 		})
 		// Check error
 		assert.NoError(t, err)

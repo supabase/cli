@@ -1,13 +1,35 @@
 name: Mirror Image
+# We mirror upstream container images like Migra, imgproxy, etc. because these
+# are usually only available on certain image registry and not others (e.g. only
+# on Docker Hub and not on ghcr.io or AWS ECR).
+#
+# For container images that we control, we usually publish to Docker Hub,
+# ghcr.io, and AWS ECR.
 
 on:
+  # We can't trigger the mirror job on PR merge because certain tests would fail
+  # until we mirror some images. E.g. a PR to update the imgproxy image version
+  # would fail, because there is a test that creates a container from the
+  # updated image version, which would fail because the image hasn't been
+  # mirrored yet. It's a catch-22!
+  #
+  # TODO: Make the cli start test run *after* we mirror images (if needed).
+  pull_request_review:
+    types:
+      - submitted
+    paths:
+      - ".github/workflows/mirror.yml"
+      - "internal/utils/misc.go"
+      - "tools/listdep/**"
   workflow_dispatch:
 
 jobs:
   setup:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.review.state == 'approved' }}
     outputs:
       tags: ${{ steps.list.outputs.tags }}
+      curr: ${{ steps.curr.outputs.tags }}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
@@ -17,11 +39,19 @@ jobs:
       - id: list
         run: |
           echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
+      - id: curr
+        name: List main branch dependencies
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git fetch origin main
+          git checkout main
+          echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
 
   mirror:
     runs-on: ubuntu-latest
     needs:
       - setup
+    if: ${{ needs.setup.outputs.tags != needs.setup.outputs.curr }}
     strategy:
       matrix:
         src: ${{ fromJson(needs.setup.outputs.tags) }}

@@ -13,11 +13,13 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
+
+const SET_POSTGRES_ROLE = "SET ROLE postgres;"
 
 var (
 	healthTimeout = 5 * time.Second
@@ -57,20 +59,24 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 }
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.Port)
+	conn, err := utils.ConnectByUrl(ctx, url, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
 	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, SET_POSTGRES_ROLE); err != nil {
+		return err
+	}
 	return InitialiseDatabase(ctx, conn, fsys)
 }
 
 func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	if err := diff.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	if err := diff.MigrateDatabase(ctx, conn, fsys); err != nil {
+	if err := apply.MigrateDatabase(ctx, conn, fsys); err != nil {
 		return err
 	}
 	return SeedDatabase(ctx, conn, fsys)
@@ -78,7 +84,8 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 // Recreate postgres database by connecting to template1
 func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/template1?connect_timeout=2", utils.Config.Db.Port)
+	conn, err := utils.ConnectByUrl(ctx, url, options...)
 	if err != nil {
 		return err
 	}
@@ -90,7 +97,7 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	if _, err := conn.Exec(ctx, drop); err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, "CREATE DATABASE postgres;")
+	_, err = conn.Exec(ctx, "CREATE DATABASE postgres WITH OWNER postgres;")
 	return err
 }
 
