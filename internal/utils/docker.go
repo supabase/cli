@@ -325,6 +325,10 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 		return err
 	}
 	defer DockerRemove(container)
+	return DockerStreamLogs(ctx, container, stdout, stderr)
+}
+
+func DockerStreamLogs(ctx context.Context, container string, stdout, stderr io.Writer) error {
 	// Stream logs
 	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
 		ShowStdout: true,

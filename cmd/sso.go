@@ -63,7 +63,7 @@ var (
 	ssoAddCmd = &cobra.Command{
 		Use:     "add",
 		Short:   "Add a new SSO identity provider",
-		Example: `  supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-file ~/SAMLMetadata.xml --domains example.com`,
+		Example: `  supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-url 'https://...' --domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return create.Run(cmd.Context(), create.RunParams{
 				ProjectRef:        projectRef,
