@@ -62,7 +62,7 @@ func NewContainerConfig() container.Config {
 EOF
 `},
 	}
-	if utils.Config.Db.MajorVersion >= 13 {
+	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
 			"-c", "config_file=/etc/postgresql/postgresql.conf",
 			// Ref: https://postgrespro.com/list/thread-id/2448092
