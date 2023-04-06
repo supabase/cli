@@ -85,6 +85,7 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
 		exclude = append([]string{
+			"_analytics",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
@@ -120,6 +121,7 @@ func likeEscapeSchema(schemas []string) (result []string) {
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
 	config := start.NewContainerConfig()
+	config.Entrypoint = []string{"docker-entrypoint.sh"}
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},

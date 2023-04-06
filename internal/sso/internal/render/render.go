@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -26,6 +27,15 @@ func formatMetadataSource(provider api.Provider) string {
 	}
 
 	return source
+}
+
+func formatAttributeMapping(attributeMapping *api.AttributeMapping) (string, error) {
+	data, err := json.MarshalIndent(attributeMapping, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
 }
 
 func formatTimestamp(timestamp *string) string {
@@ -146,6 +156,15 @@ func SingleMarkdown(provider api.Provider) error {
 		"|UPDATED AT (UTC)|`%s`|",
 		formatTimestamp(provider.CreatedAt),
 	))
+
+	if provider.Saml != nil && provider.Saml.AttributeMapping != nil && len(provider.Saml.AttributeMapping.Keys) > 0 {
+		attributeMapping, err := formatAttributeMapping(provider.Saml.AttributeMapping)
+		if err != nil {
+			return err
+		}
+
+		markdownTable = append(markdownTable, "", "## Attribute Mapping", "```json", attributeMapping, "```")
+	}
 
 	if provider.Saml != nil && provider.Saml.MetadataXml != nil && *provider.Saml.MetadataXml != "" {
 		prettyXML := xmlfmt.FormatXML(*provider.Saml.MetadataXml, "  ", "  ")

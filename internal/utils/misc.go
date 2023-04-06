@@ -64,7 +64,7 @@ var ServiceImages = []string{
 	MigraImage,
 	PgmetaImage,
 	StudioImage,
-	DenoRelayImage,
+	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
 }
@@ -178,6 +178,7 @@ var (
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
+	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")

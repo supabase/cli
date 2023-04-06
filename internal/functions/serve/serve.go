@@ -14,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -228,95 +229,95 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 
 func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
-		if envFilePath != "" {
-			if _, err := fsys.Stat(envFilePath); err != nil {
-				return fmt.Errorf("Failed to read env file: %w", err)
-			}
-		}
-		if importMapPath == "" {
-			if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
-				importMapPath = utils.FallbackImportMapPath
-			}
-		} else if _, err := fsys.Stat(importMapPath); err != nil {
-			return fmt.Errorf("Failed to read import map: %w", err)
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
 	}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
+	}
+	// 2. Remove existing container.
+	_ = utils.Docker.ContainerRemove(ctx, utils.DenoRelayId, types.ContainerRemoveOptions{
+		RemoveVolumes: true,
+		Force:         true,
+	})
+	// 3. Serve and log to console
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, fsys); err != nil {
+		return err
+	}
+	if err := utils.DockerStreamLogs(ctx, utils.DenoRelayId, os.Stdout, os.Stderr); err != nil {
+		return err
+	}
+	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+	return nil
+}
 
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+	// 1. Load default values
+	if envFilePath == "" {
+		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
+			envFilePath = utils.FallbackEnvFilePath
+		}
+	} else if _, err := fsys.Stat(envFilePath); err != nil {
+		return fmt.Errorf("Failed to read env file: %w", err)
+	}
+	if importMapPath == "" {
+		if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			importMapPath = utils.FallbackImportMapPath
+		}
+	} else if _, err := fsys.Stat(importMapPath); err != nil {
+		return fmt.Errorf("Failed to read import map: %w", err)
+	}
 	// 2. Parse user defined env
 	userEnv, err := ParseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
-
-	// 3. Start container
-	{
-		_ = utils.Docker.ContainerRemove(ctx, utils.DenoRelayId, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		})
-
-		env := []string{
-			"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-			"SUPABASE_URL=http://" + utils.KongId + ":8000",
-			"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
-			"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-			"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
-		}
-		verifyJWTEnv := "VERIFY_JWT=true"
-		if noVerifyJWT != nil {
-			verifyJWTEnv = "VERIFY_JWT=false"
-		}
-		env = append(env, verifyJWTEnv)
-
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
-		binds := []string{
-			filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z",
-			utils.DenoRelayId + ":/root/.cache/deno:rw,z",
-		}
-		dockerImportMapPath := relayFuncDir + "/import_map.json"
-		if importMapPath != "" {
-			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
-		}
-
-		fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
-
-		cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
-		if importMapPath != "" {
-			cmd = append(cmd, "--import-map", dockerImportMapPath)
-		}
-		if viper.GetBool("DEBUG") {
-			cmd = append(cmd, "--verbose")
-		}
-		if err := utils.DockerRunOnceWithConfig(
-			ctx,
-			container.Config{
-				Image: utils.EdgeRuntimeImage,
-				Env:   append(env, userEnv...),
-				Cmd:   cmd,
-			},
-			container.HostConfig{
-				Binds:      binds,
-				ExtraHosts: []string{"host.docker.internal:host-gateway"},
-			},
-			utils.DenoRelayId,
-			os.Stdout,
-			os.Stderr,
-		); err != nil {
-			return err
-		}
+	env := []string{
+		"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		"SUPABASE_URL=http://" + utils.KongId + ":8000",
+		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
 	}
-
-	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
-	return nil
+	verifyJWTEnv := "VERIFY_JWT=true"
+	if noVerifyJWT != nil {
+		verifyJWTEnv = "VERIFY_JWT=false"
+	}
+	env = append(env, verifyJWTEnv)
+	// 3. Parse custom import map
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	binds := []string{
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z",
+		utils.DenoRelayId + ":/root/.cache/deno:rw,z",
+	}
+	dockerImportMapPath := relayFuncDir + "/import_map.json"
+	if importMapPath != "" {
+		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
+	}
+	// 4. Start container
+	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
+	cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
+	if importMapPath != "" {
+		cmd = append(cmd, "--import-map", dockerImportMapPath)
+	}
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
+	}
+	_, err = utils.DockerStart(
+		ctx,
+		container.Config{
+			Image: utils.EdgeRuntimeImage,
+			Env:   append(env, userEnv...),
+			Cmd:   cmd,
+		},
+		start.WithSyslogConfig(container.HostConfig{
+			Binds:      binds,
+			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		}),
+		utils.DenoRelayId,
+	)
+	return err
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -92,14 +93,15 @@ func NewKongConfig() kongConfig {
 }
 
 type vectorConfig struct {
-	ApiKey     string
-	LogflareId string
-	KongId     string
-	GotrueId   string
-	RestId     string
-	RealtimeId string
-	StorageId  string
-	DbId       string
+	ApiKey      string
+	LogflareId  string
+	KongId      string
+	GotrueId    string
+	RestId      string
+	RealtimeId  string
+	StorageId   string
+	DenoRelayId string
+	DbId        string
 }
 
 var (
@@ -137,14 +139,15 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:     utils.Config.Analytics.ApiKey,
-			LogflareId: utils.LogflareId,
-			KongId:     utils.KongId,
-			GotrueId:   utils.GotrueId,
-			RestId:     utils.RestId,
-			RealtimeId: utils.RealtimeId,
-			StorageId:  utils.StorageId,
-			DbId:       utils.DbId,
+			ApiKey:      utils.Config.Analytics.ApiKey,
+			LogflareId:  utils.LogflareId,
+			KongId:      utils.KongId,
+			GotrueId:    utils.GotrueId,
+			RestId:      utils.RestId,
+			RealtimeId:  utils.RealtimeId,
+			StorageId:   utils.StorageId,
+			DenoRelayId: utils.DenoRelayId,
+			DbId:        utils.DbId,
 		}); err != nil {
 			return err
 		}
@@ -534,6 +537,14 @@ EOF
 			return err
 		}
 		started = append(started, utils.ImgProxyId)
+	}
+
+	// Start all functions.
+	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+		if err := serve.ServeFunctions(ctx, "", nil, "", fsys); err != nil {
+			return err
+		}
+		started = append(started, utils.DenoRelayId)
 	}
 
 	// Start pg-meta.
