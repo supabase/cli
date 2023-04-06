@@ -407,7 +407,7 @@ EOF
 					"PORT=4000",
 					"DB_HOST=" + utils.DbId,
 					"DB_PORT=5432",
-					"DB_USER=postgres",
+					"DB_USER=supabase_admin",
 					"DB_PASSWORD=postgres",
 					"DB_NAME=postgres",
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
