@@ -46,7 +46,7 @@ const (
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.51.4"
 	RealtimeImage = "supabase/realtime:v2.10.1"
-	StorageImage  = "supabase/storage-api:v0.34.0"
+	StorageImage  = "supabase/storage-api:v0.35.1"
 	LogflareImage = "supabase/logflare:1.0.2"
 	// Should be kept in-sync with DenoRelayImage
 	DenoVersion = "1.30.3"
