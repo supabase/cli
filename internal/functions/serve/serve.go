@@ -1,9 +1,12 @@
 package serve
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +24,17 @@ import (
 const (
 	relayFuncDir              = "/home/deno/functions"
 	customDockerImportMapPath = "/home/deno/import_map.json"
+)
+
+type mainFuncVars struct {
+	FuncDir       string
+	ImportMapPath string
+}
+
+var (
+	//go:embed templates/main.ts
+	mainFuncEmbed    string
+	mainFuncTemplate = template.Must(template.New("mainFunc").Parse(mainFuncEmbed))
 )
 
 func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
@@ -297,9 +311,26 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if importMapPath != "" {
 		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
 	}
+
+	var mainFuncImportMapPath = ""
+	if importMapPath != "" {
+		mainFuncImportMapPath = dockerImportMapPath
+	}
+	var mainFuncBuf bytes.Buffer
+	if err := mainFuncTemplate.Execute(&mainFuncBuf, mainFuncVars{
+		FuncDir:       relayFuncDir,
+		ImportMapPath: mainFuncImportMapPath,
+	}); err != nil {
+		return err
+	}
+
 	// 4. Start container
 	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
-	cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
+	cmd := []string{"start", "--main-service", relayFuncDir, "-p", "8081"}
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && edge-runtime start --main-service /home/deno/main -p 8081
+` + mainFuncBuf.String() + `
+EOF
+`}
 	if importMapPath != "" {
 		cmd = append(cmd, "--import-map", dockerImportMapPath)
 	}
@@ -309,9 +340,9 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
-			Image: utils.EdgeRuntimeImage,
-			Env:   append(env, userEnv...),
-			Cmd:   cmd,
+			Image:      utils.EdgeRuntimeImage,
+			Env:        append(env, userEnv...),
+			Entrypoint: entrypoint,
 		},
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
