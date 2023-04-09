@@ -326,17 +326,18 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 
 	// 4. Start container
 	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
-	cmd := []string{"start", "--main-service", relayFuncDir, "-p", "8081"}
-	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && edge-runtime start --main-service /home/deno/main -p 8081
+	cmd := "edge-runtime start --main-service /home/deno/main -p 8081"
+	if importMapPath != "" {
+		cmd = cmd + " --import-map " + dockerImportMapPath
+	}
+	if viper.GetBool("DEBUG") {
+		cmd = cmd + " --verbose"
+	}
+
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmd + `
 ` + mainFuncBuf.String() + `
 EOF
 `}
-	if importMapPath != "" {
-		cmd = append(cmd, "--import-map", dockerImportMapPath)
-	}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
-	}
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
