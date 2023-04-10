@@ -70,7 +70,7 @@ serve(async (req: Request) => {
   const noModuleCache = false;
   const importMapPath = "{{ .ImportMapPath }}";
   const envVarsObj = Deno.env.toObject();
-  const envVars = Object.keys(envVarsObj).map(k => [k, envVarsObj[k]]);
+  const envVars = Object.entries(envVarsObj);
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
