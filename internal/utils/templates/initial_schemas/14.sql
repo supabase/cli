@@ -657,6 +657,25 @@ $$;
 ALTER FUNCTION pgbouncer.get_auth(p_usename text) OWNER TO postgres;
 
 --
+-- Name: can_insert_object(text, text, uuid, jsonb); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE OR REPLACE FUNCTION storage.can_insert_object(bucketid text, name text, owner uuid, metadata jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  INSERT INTO "storage"."objects" ("bucket_id", "name", "owner", "metadata") VALUES (bucketid, name, owner, metadata);
+  -- hack to rollback the successful insert
+  RAISE sqlstate 'PT200' using
+  message = 'ROLLBACK',
+  detail = 'rollback successful insert';
+END
+$$;
+
+
+ALTER FUNCTION storage.can_insert_object(bucketid text, name text, owner uuid, metadata jsonb) OWNER TO supabase_storage_admin;
+
+--
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -1407,7 +1426,8 @@ CREATE TABLE IF NOT EXISTS storage.objects (
     updated_at timestamp with time zone DEFAULT now(),
     last_accessed_at timestamp with time zone DEFAULT now(),
     metadata jsonb,
-    path_tokens text[] GENERATED ALWAYS AS (string_to_array(name, '/'::text)) STORED
+    path_tokens text[] GENERATED ALWAYS AS (string_to_array(name, '/'::text)) STORED,
+    version text
 );
 
 
@@ -1663,6 +1683,8 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-tr
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-03-16 02:25:37.634022');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-03-16 02:25:37.639132');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-03-16 02:25:37.643598');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 09:18:55.232202');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 09:18:55.239444');
 
 
 --

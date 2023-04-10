@@ -594,6 +594,25 @@ $$;
 ALTER FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) OWNER TO supabase_admin;
 
 --
+-- Name: can_insert_object(text, text, uuid, jsonb); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
+--
+
+CREATE OR REPLACE FUNCTION storage.can_insert_object(bucketid text, name text, owner uuid, metadata jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  INSERT INTO "storage"."objects" ("bucket_id", "name", "owner", "metadata") VALUES (bucketid, name, owner, metadata);
+  -- hack to rollback the successful insert
+  RAISE sqlstate 'PT200' using
+  message = 'ROLLBACK',
+  detail = 'rollback successful insert';
+END
+$$;
+
+
+ALTER FUNCTION storage.can_insert_object(bucketid text, name text, owner uuid, metadata jsonb) OWNER TO supabase_storage_admin;
+
+--
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: supabase_storage_admin
 --
 
@@ -800,7 +819,10 @@ CREATE TABLE IF NOT EXISTS _realtime.tenants (
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL,
     max_events_per_second integer DEFAULT 100 NOT NULL,
-    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying
+    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying,
+    max_bytes_per_second integer DEFAULT 100000 NOT NULL,
+    max_channels_per_client integer DEFAULT 100 NOT NULL,
+    max_joins_per_second integer DEFAULT 500 NOT NULL
 );
 
 
@@ -1179,9 +1201,9 @@ CREATE TABLE IF NOT EXISTS auth.users (
     is_super_admin boolean,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    phone character varying(15) DEFAULT NULL::character varying,
+    phone text DEFAULT NULL::character varying,
     phone_confirmed_at timestamp with time zone,
-    phone_change character varying(15) DEFAULT ''::character varying,
+    phone_change text DEFAULT ''::character varying,
     phone_change_token character varying(255) DEFAULT ''::character varying,
     phone_change_sent_at timestamp with time zone,
     confirmed_at timestamp with time zone GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)) STORED,
@@ -1191,6 +1213,7 @@ CREATE TABLE IF NOT EXISTS auth.users (
     reauthentication_token character varying(255) DEFAULT ''::character varying,
     reauthentication_sent_at timestamp with time zone,
     is_sso_user boolean DEFAULT false NOT NULL,
+    deleted_at timestamp with time zone,
     CONSTRAINT users_email_change_confirm_status_check CHECK (((email_change_confirm_status >= 0) AND (email_change_confirm_status <= 2)))
 );
 
@@ -1221,7 +1244,10 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
     owner uuid,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
-    public boolean DEFAULT false
+    public boolean DEFAULT false,
+    avif_autodetection boolean DEFAULT false,
+    file_size_limit bigint,
+    allowed_mime_types text[]
 );
 
 
@@ -1254,7 +1280,8 @@ CREATE TABLE IF NOT EXISTS storage.objects (
     updated_at timestamp with time zone DEFAULT now(),
     last_accessed_at timestamp with time zone DEFAULT now(),
     metadata jsonb,
-    path_tokens text[] GENERATED ALWAYS AS (string_to_array(name, '/'::text)) STORED
+    path_tokens text[] GENERATED ALWAYS AS (string_to_array(name, '/'::text)) STORED,
+    version text
 );
 
 
@@ -1289,13 +1316,14 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202208181
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-09 07:15:13');
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-09 07:15:13');
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-09 07:15:13');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-04-06 09:25:28');
 
 
 --
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default) VALUES ('af55a147-351d-4faf-85a2-278bb6a4e225', 'realtime-dev', 'realtime-dev', 'cor19x6wYudqK/HY8tKJOBoA0KD/zxM/SxxkI1zPOvSCs67x4q75+0yV07SWdm0T', 200, '2023-01-09 07:15:15', '2023-01-09 07:15:15', 100, 'postgres_cdc_rls');
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('95b9b85f-b2f6-4b9a-83df-53631cfcab85', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-06 09:25:30', '2023-04-06 09:25:30', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -1394,6 +1422,9 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221208132122');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195500');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195800');
 INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230116124310');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230116124412');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230131181311');
 
 
 --
@@ -1441,6 +1472,11 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-pub
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2022-04-14 09:52:39.781062');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2022-08-23 04:48:07.728336');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2022-08-23 04:48:07.736527');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-04-06 09:25:29.356743');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-04-06 09:25:29.390303');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-04-06 09:25:29.402124');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 09:25:29.426206');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 09:25:29.439561');
 
 
 --
@@ -2850,7 +2886,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 ALTER EVENT TRIGGER issue_graphql_placeholder OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+-- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
 --
 
 CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
@@ -2872,7 +2908,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 ALTER EVENT TRIGGER issue_pg_graphql_access OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+-- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
 --
 
 CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
