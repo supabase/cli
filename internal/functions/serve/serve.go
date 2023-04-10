@@ -257,6 +257,8 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 	return nil
 }
 
+// TODO: Support per-function config before we default to using edge-runtime for
+// serving individual functions.
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
