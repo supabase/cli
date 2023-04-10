@@ -1,12 +1,10 @@
 package serve
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
-	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,15 +24,9 @@ const (
 	customDockerImportMapPath = "/home/deno/import_map.json"
 )
 
-type mainFuncVars struct {
-	FuncDir       string
-	ImportMapPath string
-}
-
 var (
 	//go:embed templates/main.ts
-	mainFuncEmbed    string
-	mainFuncTemplate = template.Must(template.New("mainFunc").Parse(mainFuncEmbed))
+	mainFuncEmbed string
 )
 
 func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
@@ -292,6 +284,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
+		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + relayFuncDir,
+		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 	}
 	verifyJWTEnv := "VERIFY_JWT=true"
 	if noVerifyJWT != nil {
@@ -310,24 +304,11 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	dockerImportMapPath := relayFuncDir + "/import_map.json"
 	if importMapPath != "" {
 		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
-	}
-
-	var mainFuncBuf bytes.Buffer
-	{
-		mainFuncImportMapPath := ""
-		if importMapPath != "" {
-			mainFuncImportMapPath = dockerImportMapPath
-		}
-		if err := mainFuncTemplate.Execute(&mainFuncBuf, mainFuncVars{
-			FuncDir:       relayFuncDir,
-			ImportMapPath: mainFuncImportMapPath,
-		}); err != nil {
-			return err
-		}
+		env = append(env, "SUPABASE_INTERNAL_IMPORT_MAP_PATH="+dockerImportMapPath)
 	}
 
 	// 4. Start container
-	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
+	fmt.Println("Setting up Edge Functions runtime...")
 
 	var cmdString string
 	{
@@ -342,7 +323,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 
 	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
-` + mainFuncBuf.String() + `
+` + mainFuncEmbed + `
 EOF
 `}
 	_, err = utils.DockerStart(
