@@ -57,6 +57,7 @@ func (suite *StatusTestSuite) TestStatus() {
 	contents, err := os.ReadFile(tmpfile.Name())
 	require.NoError(suite.T(), err)
 	require.Contains(suite.T(), string(contents), "API URL: http://localhost:54321")
+	require.Contains(suite.T(), string(contents), "GraphQL URL: http://localhost:54321/graphql/v1")
 	require.Contains(suite.T(), string(contents), "DB URL: postgresql://postgres:postgres@localhost:54322/postgres")
 	require.Contains(suite.T(), string(contents), "Studio URL: http://localhost:54323")
 	require.Contains(suite.T(), string(contents), "Inbucket URL: http://localhost:54324")
