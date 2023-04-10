@@ -312,29 +312,36 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
 	}
 
-	var mainFuncImportMapPath = ""
-	if importMapPath != "" {
-		mainFuncImportMapPath = dockerImportMapPath
-	}
 	var mainFuncBuf bytes.Buffer
-	if err := mainFuncTemplate.Execute(&mainFuncBuf, mainFuncVars{
-		FuncDir:       relayFuncDir,
-		ImportMapPath: mainFuncImportMapPath,
-	}); err != nil {
-		return err
+	{
+		mainFuncImportMapPath := ""
+		if importMapPath != "" {
+			mainFuncImportMapPath = dockerImportMapPath
+		}
+		if err := mainFuncTemplate.Execute(&mainFuncBuf, mainFuncVars{
+			FuncDir:       relayFuncDir,
+			ImportMapPath: mainFuncImportMapPath,
+		}); err != nil {
+			return err
+		}
 	}
 
 	// 4. Start container
 	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
-	cmd := "edge-runtime start --main-service /home/deno/main -p 8081"
-	if importMapPath != "" {
-		cmd = cmd + " --import-map " + dockerImportMapPath
-	}
-	if viper.GetBool("DEBUG") {
-		cmd = cmd + " --verbose"
+
+	var cmdString string
+	{
+		cmd := []string{"edge-runtime", "start", "--main-service", "/home/deno/main", "-p", "8081"}
+		if importMapPath != "" {
+			cmd = append(cmd, "--import-map", dockerImportMapPath)
+		}
+		if viper.GetBool("DEBUG") {
+			cmd = append(cmd, "--verbose")
+		}
+		cmdString = strings.Join(cmd, " ")
 	}
 
-	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmd + `
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
 ` + mainFuncBuf.String() + `
 EOF
 `}
