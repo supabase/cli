@@ -15,7 +15,7 @@ import (
 
 type CustomName struct {
 	ApiURL         string `env:"api.url,default=API_URL"`
-	GraphqlURL     string
+	GraphqlURL     string `env:"api.graphql_url,default=GRAPHQL_URL"`
 	DbURL          string `env:"db.url,default=DB_URL"`
 	StudioURL      string `env:"studio.url,default=STUDIO_URL"`
 	InbucketURL    string `env:"inbucket.url,default=INBUCKET_URL"`
