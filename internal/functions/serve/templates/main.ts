@@ -80,7 +80,7 @@ serve(async (req: Request) => {
       importMapPath: importMapPath && importMapPath.length ? importMapPath : null,
       envVars
     });
-    return worker.fetch(req);
+    return await worker.fetch(req);
   } catch (e) {
     console.error(e);
     const error = { msg: e.toString() }
