@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,11 @@ import (
 const (
 	relayFuncDir              = "/home/deno/functions"
 	customDockerImportMapPath = "/home/deno/import_map.json"
+)
+
+var (
+	//go:embed templates/main.ts
+	mainFuncEmbed string
 )
 
 func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
@@ -251,6 +257,8 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 	return nil
 }
 
+// TODO: Support per-function config before we default to using edge-runtime for
+// serving individual functions.
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
@@ -278,6 +286,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
+		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + relayFuncDir,
+		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 	}
 	verifyJWTEnv := "VERIFY_JWT=true"
 	if noVerifyJWT != nil {
@@ -296,22 +306,34 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	dockerImportMapPath := relayFuncDir + "/import_map.json"
 	if importMapPath != "" {
 		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
+		env = append(env, "SUPABASE_INTERNAL_IMPORT_MAP_PATH="+dockerImportMapPath)
 	}
+
 	// 4. Start container
-	fmt.Println("Serving " + utils.Bold(utils.FunctionsDir))
-	cmd := []string{"start", "--dir", relayFuncDir, "-p", "8081"}
-	if importMapPath != "" {
-		cmd = append(cmd, "--import-map", dockerImportMapPath)
+	fmt.Println("Setting up Edge Functions runtime...")
+
+	var cmdString string
+	{
+		cmd := []string{"edge-runtime", "start", "--main-service", "/home/deno/main", "-p", "8081"}
+		if importMapPath != "" {
+			cmd = append(cmd, "--import-map", dockerImportMapPath)
+		}
+		if viper.GetBool("DEBUG") {
+			cmd = append(cmd, "--verbose")
+		}
+		cmdString = strings.Join(cmd, " ")
 	}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
-	}
+
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
+` + mainFuncEmbed + `
+EOF
+`}
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
-			Image: utils.EdgeRuntimeImage,
-			Env:   append(env, userEnv...),
-			Cmd:   cmd,
+			Image:      utils.EdgeRuntimeImage,
+			Env:        append(env, userEnv...),
+			Entrypoint: entrypoint,
 		},
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
