@@ -1,13 +1,49 @@
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import * as jose from "https://deno.land/x/jose@v4.13.1/index.ts";
 
-const JWT_SECRET = Deno.env.get("JWT_SECRET")!;
-const VERIFY_JWT = Deno.env.get("VERIFY_JWT") === "true";
+const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
 // OS stuff - we don't want to expose these to the functions.
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const FUNCTIONS_PATH = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_PATH")!;
-const IMPORT_MAP_PATH = Deno.env.get("SUPABASE_INTERNAL_IMPORT_MAP_PATH");
+const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
+
+interface FunctionConfig {
+  importMapPath: string;
+  verifyJWT: boolean;
+}
+
+const functionsConfig: Record<
+  string,
+  FunctionConfig
+> = (() => {
+  const functionsConfig = {} as Record<string, FunctionConfig>;
+
+  Object.entries(Deno.env.toObject()).forEach(([name, value]) => {
+    const matches = name.match(
+      /^SUPABASE_INTERNAL_(IMPORT_MAP_PATH|VERIFY_JWT)_(.+)$/,
+    );
+    if (!matches) {
+      // skip
+    } else if (matches[1] === "IMPORT_MAP_PATH") {
+      const functionName = matches[2];
+      functionsConfig[functionName] ??= {} as FunctionConfig;
+      functionsConfig[functionName].importMapPath = value;
+    } else if (matches[1] === "VERIFY_JWT") {
+      const functionName = matches[2];
+      functionsConfig[functionName] ??= {} as FunctionConfig;
+      functionsConfig[functionName].verifyJWT = value === "true";
+    }
+  });
+
+  if (DEBUG) {
+    console.log("Functions config:", JSON.stringify(functionsConfig, null, 2));
+  }
+
+  return functionsConfig;
+})();
+
+const workerCache = {} as Record<string, { fetch: typeof fetch }>;
 
 function getAuthToken(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -34,7 +70,16 @@ async function verifyJWT(jwt: string): Promise<boolean> {
 }
 
 serve(async (req: Request) => {
-  if (req.method !== "OPTIONS" && VERIFY_JWT) {
+  const url = new URL(req.url);
+  const { pathname } = url;
+  const pathParts = pathname.split("/");
+  const functionName = pathParts[1];
+
+  if (!functionName || !(functionName in functionsConfig)) {
+    return new Response("Function not found", { status: 404 });
+  }
+
+  if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
     try {
       const token = getAuthToken(req);
       const isValidJWT = await verifyJWT(token);
@@ -54,21 +99,8 @@ serve(async (req: Request) => {
     }
   }
 
-  const url = new URL(req.url);
-  const { pathname } = url;
-  const pathParts = pathname.split("/");
-  const serviceName = pathParts[1];
-
-  if (!serviceName || serviceName === "") {
-    const error = { msg: "missing function name in request" };
-    return new Response(
-      JSON.stringify(error),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  const servicePath = `${FUNCTIONS_PATH}/${serviceName}`;
-  console.error(`serving the request with ${servicePath}`);
+  const functionPath = `${FUNCTIONS_PATH}/${functionName}`;
+  console.error(`serving the request with ${functionPath}`);
 
   const memoryLimitMb = 150;
   const workerTimeoutMs = 1 * 60 * 1000;
@@ -79,14 +111,20 @@ serve(async (req: Request) => {
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
   try {
+    if (functionName in workerCache) {
+      return await workerCache[functionName].fetch(req);
+    }
+
     const worker = await EdgeRuntime.userWorkers.create({
-      servicePath,
+      servicePath: functionPath,
       memoryLimitMb,
       workerTimeoutMs,
       noModuleCache,
-      importMapPath: IMPORT_MAP_PATH,
+      // TODO: verify that this is configurable per-function
+      importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
     });
+    workerCache[functionName] = worker;
     return await worker.fetch(req);
   } catch (e) {
     console.error(e);

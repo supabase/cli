@@ -30,6 +30,7 @@ var (
 	DifferId    string
 	PgmetaId    string
 	StudioId    string
+	// TODO: Rename to EdgeRuntimeId once we deprecate the relay.
 	DenoRelayId string
 	LogflareId  string
 	VectorId    string
