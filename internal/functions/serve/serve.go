@@ -298,50 +298,12 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		fallbackImportMapString = string(fallbackImportMapBytes)
 	}
 
-	// Set up per-function configs
-	// Modifies binds, env
-	// TODO: extract to a function? tests?
-	{
-		if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
-			return err
-		}
-		functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
-		if err != nil {
-			return err
-		}
-		for _, function := range functions {
-			if !function.IsDir() {
-				continue
-			}
-
-			functionName := function.Name()
-			if !utils.FuncSlugPattern.MatchString(functionName) {
-				continue
-			}
-
-			// CLI flags take priority over config.toml.
-
-			dockerImportMapPath := dockerFallbackImportMapPath
-			if importMapPath != "" {
-				dockerImportMapPath = dockerFlagImportMapPath
-			} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
-				dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
-				binds = append(binds, filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
-			}
-
-			verifyJWT := true
-			if noVerifyJWT != nil {
-				verifyJWT = !*noVerifyJWT
-			} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.VerifyJWT != nil {
-				verifyJWT = *functionConfig.VerifyJWT
-			}
-
-			env = append(
-				env,
-				fmt.Sprintf("SUPABASE_INTERNAL_IMPORT_MAP_PATH_%s=%s", functionName, dockerImportMapPath),
-				fmt.Sprintf("SUPABASE_INTERNAL_VERIFY_JWT_%s=%t", functionName, verifyJWT),
-			)
-		}
+	if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
+		return err
+	}
+	binds, env, err = populatePerFunctionConfigs(binds, env, importMapPath, noVerifyJWT, fsys)
+	if err != nil {
+		return err
 	}
 
 	// 4. Start container
@@ -399,4 +361,51 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 		env = append(env, name+"="+value)
 	}
 	return env, nil
+}
+
+func populatePerFunctionConfigs(binds, env []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, []string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, function := range functions {
+		if !function.IsDir() {
+			continue
+		}
+
+		functionName := function.Name()
+		if !utils.FuncSlugPattern.MatchString(functionName) {
+			continue
+		}
+
+		// CLI flags take priority over config.toml.
+
+		dockerImportMapPath := dockerFallbackImportMapPath
+		if importMapPath != "" {
+			dockerImportMapPath = dockerFlagImportMapPath
+		} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
+			dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
+			binds = append(binds, filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
+		}
+
+		verifyJWT := true
+		if noVerifyJWT != nil {
+			verifyJWT = !*noVerifyJWT
+		} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.VerifyJWT != nil {
+			verifyJWT = *functionConfig.VerifyJWT
+		}
+
+		env = append(
+			env,
+			fmt.Sprintf("SUPABASE_INTERNAL_IMPORT_MAP_PATH_%s=%s", functionName, dockerImportMapPath),
+			fmt.Sprintf("SUPABASE_INTERNAL_VERIFY_JWT_%s=%t", functionName, verifyJWT),
+		)
+	}
+
+	return binds, env, nil
 }
