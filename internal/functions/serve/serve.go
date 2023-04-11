@@ -52,13 +52,19 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 				return fmt.Errorf("Failed to read env file: %w", err)
 			}
 		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
 		if importMapPath != "" {
-			// skip
+			if !filepath.IsAbs(importMapPath) {
+				importMapPath = filepath.Join(cwd, importMapPath)
+			}
 		} else if functionConfig, ok := utils.Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
 			if filepath.IsAbs(functionConfig.ImportMap) {
 				importMapPath = functionConfig.ImportMap
 			} else {
-				importMapPath = filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)
+				importMapPath = filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
 			}
 		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
 			importMapPath = utils.FallbackImportMapPath
@@ -105,7 +111,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z"}
 		// If a import map path is explcitly provided, mount it as a separate file
 		if importMapPath != "" {
-			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerFlagImportMapPath+":ro,z")
+			binds = append(binds, importMapPath+":"+dockerFlagImportMapPath+":ro,z")
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -236,8 +242,6 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 	return nil
 }
 
-// TODO: Support per-function config before we default to using edge-runtime for
-// serving individual functions.
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
@@ -247,10 +251,17 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	} else if _, err := fsys.Stat(envFilePath); err != nil {
 		return fmt.Errorf("Failed to read env file: %w", err)
 	}
-	if importMapPath == "" {
-		// skip
-	} else if _, err := fsys.Stat(importMapPath); err != nil {
-		return fmt.Errorf("Failed to read import map: %w", err)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if importMapPath != "" {
+		if !filepath.IsAbs(importMapPath) {
+			importMapPath = filepath.Join(cwd, importMapPath)
+		}
+		if _, err := fsys.Stat(importMapPath); err != nil {
+			return fmt.Errorf("Failed to read import map: %w", err)
+		}
 	}
 	// 2. Parse user defined env
 	userEnv, err := parseEnvFile(envFilePath, fsys)
@@ -270,16 +281,12 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
 	}
 	// 3. Parse custom import map
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
 	binds := []string{
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z",
 		utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 	}
 	if importMapPath != "" {
-		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerFlagImportMapPath+":ro,z")
+		binds = append(binds, importMapPath+":"+dockerFlagImportMapPath+":ro,z")
 	}
 
 	fallbackImportMapString := `{"imports":{}}`
@@ -314,13 +321,12 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 
 			// CLI flags take priority over config.toml.
 
-			// TODO: what happens on absolute paths?
 			dockerImportMapPath := dockerFallbackImportMapPath
 			if importMapPath != "" {
 				dockerImportMapPath = dockerFlagImportMapPath
 			} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
 				dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
-				binds = append(binds, filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
+				binds = append(binds, filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
 			}
 
 			verifyJWT := true

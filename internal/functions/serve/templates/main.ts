@@ -120,7 +120,6 @@ serve(async (req: Request) => {
       memoryLimitMb,
       workerTimeoutMs,
       noModuleCache,
-      // TODO: verify that this is configurable per-function
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
     });
