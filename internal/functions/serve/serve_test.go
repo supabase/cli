@@ -126,6 +126,7 @@ func TestServeCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", ".env", nil, "import_map.json", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "open import_map.json: file does not exist")
+		assert.ErrorContains(t, err, "Failed to read import map")
+		assert.ErrorContains(t, err, "file does not exist")
 	})
 }
