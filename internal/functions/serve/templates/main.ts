@@ -13,10 +13,7 @@ interface FunctionConfig {
   verifyJWT: boolean;
 }
 
-const functionsConfig: Record<
-  string,
-  FunctionConfig
-> = (() => {
+const functionsConfig: Record<string, FunctionConfig> = (() => {
   const functionsConfig = {} as Record<string, FunctionConfig>;
 
   Object.entries(Deno.env.toObject()).forEach(([name, value]) => {
@@ -99,8 +96,8 @@ serve(async (req: Request) => {
     }
   }
 
-  const functionPath = `${FUNCTIONS_PATH}/${functionName}`;
-  console.error(`serving the request with ${functionPath}`);
+  const servicePath = `${FUNCTIONS_PATH}/${functionName}`;
+  console.error(`serving the request with ${servicePath}`);
 
   const memoryLimitMb = 150;
   const workerTimeoutMs = 1 * 60 * 1000;
@@ -116,7 +113,7 @@ serve(async (req: Request) => {
     }
 
     const worker = await EdgeRuntime.userWorkers.create({
-      servicePath: functionPath,
+      servicePath,
       memoryLimitMb,
       workerTimeoutMs,
       noModuleCache,
