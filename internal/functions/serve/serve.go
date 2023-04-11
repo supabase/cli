@@ -20,37 +20,16 @@ import (
 )
 
 const (
-	relayFuncDir              = "/home/deno/functions"
-	customDockerImportMapPath = "/home/deno/import_map.json"
+	dockerFuncDirPath = "/home/deno/functions"
+	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
+	dockerFlagImportMapPath     = "/home/deno/flag_import_map.json"
+	dockerFallbackImportMapPath = "/home/deno/fallback_import_map.json"
 )
 
 var (
 	//go:embed templates/main.ts
 	mainFuncEmbed string
 )
-
-func ParseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
-	env := []string{}
-	if len(envFilePath) == 0 {
-		return env, nil
-	}
-	f, err := fsys.Open(envFilePath)
-	if err != nil {
-		return env, err
-	}
-	defer f.Close()
-	envMap, err := godotenv.Parse(f)
-	if err != nil {
-		return env, err
-	}
-	for name, value := range envMap {
-		if strings.HasPrefix(name, "SUPABASE_") {
-			return env, errors.New("Invalid env name: " + name + ". Env names cannot start with SUPABASE_.")
-		}
-		env = append(env, name+"="+value)
-	}
-	return env, nil
-}
 
 func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	if len(slug) == 0 {
@@ -92,7 +71,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 	}
 
 	// 2. Parse user defined env
-	userEnv, err := ParseEnvFile(envFilePath, fsys)
+	userEnv, err := parseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
@@ -123,10 +102,10 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 			return err
 		}
 
-		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z"}
+		binds := []string{filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z"}
 		// If a import map path is explcitly provided, mount it as a separate file
 		if importMapPath != "" {
-			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+customDockerImportMapPath+":ro,z")
+			binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerFlagImportMapPath+":ro,z")
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -158,12 +137,12 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 
 	// We assume the image is always Linux, so path separator must always be `/`.
 	// We can't use filepath.Join because it uses the path separator for the host system, which is `\` for Windows.
-	dockerFuncPath := relayFuncDir + "/" + slug + "/index.ts"
-	dockerImportMapPath := relayFuncDir + "/" + slug + "/import_map.json"
+	dockerFuncPath := dockerFuncDirPath + "/" + slug + "/index.ts"
+	dockerImportMapPath := dockerFuncDirPath + "/" + slug + "/import_map.json"
 
 	if importMapPath != "" {
 		localImportMapPath = importMapPath
-		dockerImportMapPath = customDockerImportMapPath
+		dockerImportMapPath = dockerFlagImportMapPath
 	}
 
 	denoCacheCmd := []string{"deno", "cache"}
@@ -269,44 +248,94 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return fmt.Errorf("Failed to read env file: %w", err)
 	}
 	if importMapPath == "" {
-		if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
-			importMapPath = utils.FallbackImportMapPath
-		}
+		// skip
 	} else if _, err := fsys.Stat(importMapPath); err != nil {
 		return fmt.Errorf("Failed to read import map: %w", err)
 	}
 	// 2. Parse user defined env
-	userEnv, err := ParseEnvFile(envFilePath, fsys)
+	userEnv, err := parseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
 	env := []string{
-		"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		"SUPABASE_URL=http://" + utils.KongId + ":8000",
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
-		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + relayFuncDir,
+		"SUPABASE_INTERNAL_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
+		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + dockerFuncDirPath,
 	}
-	verifyJWTEnv := "VERIFY_JWT=true"
-	if noVerifyJWT != nil {
-		verifyJWTEnv = "VERIFY_JWT=false"
+	if viper.GetBool("DEBUG") {
+		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
 	}
-	env = append(env, verifyJWTEnv)
 	// 3. Parse custom import map
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 	binds := []string{
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + relayFuncDir + ":rw,z",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z",
 		utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 	}
-	dockerImportMapPath := relayFuncDir + "/import_map.json"
 	if importMapPath != "" {
-		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerImportMapPath+":ro,z")
-		env = append(env, "SUPABASE_INTERNAL_IMPORT_MAP_PATH="+dockerImportMapPath)
+		binds = append(binds, filepath.Join(cwd, importMapPath)+":"+dockerFlagImportMapPath+":ro,z")
+	}
+
+	fallbackImportMapString := `{"imports":{}}`
+	if fallbackImportMapBytes, err := afero.ReadFile(fsys, utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
+		// skip
+	} else if err != nil {
+		return fmt.Errorf("Failed to read fallback import map: %w", err)
+	} else {
+		fallbackImportMapString = string(fallbackImportMapBytes)
+	}
+
+	// Set up per-function configs
+	// Modifies binds, env
+	// TODO: extract to a function? tests?
+	{
+		if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
+			return err
+		}
+		functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
+		if err != nil {
+			return err
+		}
+		for _, function := range functions {
+			if !function.IsDir() {
+				continue
+			}
+
+			functionName := function.Name()
+			if !utils.FuncSlugPattern.MatchString(functionName) {
+				continue
+			}
+
+			// CLI flags take priority over config.toml.
+
+			// TODO: what happens on absolute paths?
+			dockerImportMapPath := dockerFallbackImportMapPath
+			if importMapPath != "" {
+				dockerImportMapPath = dockerFlagImportMapPath
+			} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
+				dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
+				binds = append(binds, filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
+			}
+
+			verifyJWT := true
+			if noVerifyJWT != nil {
+				verifyJWT = !*noVerifyJWT
+			} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.VerifyJWT != nil {
+				verifyJWT = *functionConfig.VerifyJWT
+			}
+
+			env = append(
+				env,
+				fmt.Sprintf("SUPABASE_INTERNAL_IMPORT_MAP_PATH_%s=%s", functionName, dockerImportMapPath),
+				fmt.Sprintf("SUPABASE_INTERNAL_VERIFY_JWT_%s=%t", functionName, verifyJWT),
+			)
+		}
 	}
 
 	// 4. Start container
@@ -315,17 +344,16 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	var cmdString string
 	{
 		cmd := []string{"edge-runtime", "start", "--main-service", "/home/deno/main", "-p", "8081"}
-		if importMapPath != "" {
-			cmd = append(cmd, "--import-map", dockerImportMapPath)
-		}
 		if viper.GetBool("DEBUG") {
 			cmd = append(cmd, "--verbose")
 		}
 		cmdString = strings.Join(cmd, " ")
 	}
 
-	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && cat <<'EOF' > /home/deno/fallback_import_map.json && ` + cmdString + `
 ` + mainFuncEmbed + `
+EOF
+` + fallbackImportMapString + `
 EOF
 `}
 	_, err = utils.DockerStart(
@@ -342,4 +370,27 @@ EOF
 		utils.DenoRelayId,
 	)
 	return err
+}
+
+func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
+	env := []string{}
+	if len(envFilePath) == 0 {
+		return env, nil
+	}
+	f, err := fsys.Open(envFilePath)
+	if err != nil {
+		return env, err
+	}
+	defer f.Close()
+	envMap, err := godotenv.Parse(f)
+	if err != nil {
+		return env, err
+	}
+	for name, value := range envMap {
+		if strings.HasPrefix(name, "SUPABASE_") {
+			return env, errors.New("Invalid env name: " + name + ". Env names cannot start with SUPABASE_.")
+		}
+		env = append(env, name+"="+value)
+	}
+	return env, nil
 }
