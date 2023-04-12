@@ -7,6 +7,9 @@ const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const FUNCTIONS_PATH = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_PATH")!;
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
+const FUNCTIONS_CONFIG_STRING = Deno.env.get(
+  "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
+)!;
 
 interface FunctionConfig {
   importMapPath: string;
@@ -14,30 +17,20 @@ interface FunctionConfig {
 }
 
 const functionsConfig: Record<string, FunctionConfig> = (() => {
-  const functionsConfig = {} as Record<string, FunctionConfig>;
+  try {
+    const functionsConfig = JSON.parse(FUNCTIONS_CONFIG_STRING);
 
-  Object.entries(Deno.env.toObject()).forEach(([name, value]) => {
-    const matches = name.match(
-      /^SUPABASE_INTERNAL_(IMPORT_MAP_PATH|VERIFY_JWT)_(.+)$/,
-    );
-    if (!matches) {
-      // skip
-    } else if (matches[1] === "IMPORT_MAP_PATH") {
-      const functionName = matches[2];
-      functionsConfig[functionName] ??= {} as FunctionConfig;
-      functionsConfig[functionName].importMapPath = value;
-    } else if (matches[1] === "VERIFY_JWT") {
-      const functionName = matches[2];
-      functionsConfig[functionName] ??= {} as FunctionConfig;
-      functionsConfig[functionName].verifyJWT = value === "true";
+    if (DEBUG) {
+      console.log(
+        "Functions config:",
+        JSON.stringify(functionsConfig, null, 2),
+      );
     }
-  });
 
-  if (DEBUG) {
-    console.log("Functions config:", JSON.stringify(functionsConfig, null, 2));
+    return functionsConfig;
+  } catch (cause) {
+    throw new Error("Failed to parse functions config", { cause });
   }
-
-  return functionsConfig;
 })();
 
 const workerCache = {} as Record<string, { fetch: typeof fetch }>;

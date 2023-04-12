@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -301,10 +302,11 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
 		return err
 	}
-	binds, env, err = populatePerFunctionConfigs(binds, env, importMapPath, noVerifyJWT, fsys)
+	binds, functionsConfigString, err := populatePerFunctionConfigs(binds, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
+	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 
 	// 4. Start container
 	fmt.Println("Setting up Edge Functions runtime...")
@@ -363,15 +365,22 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, nil
 }
 
-func populatePerFunctionConfigs(binds, env []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, []string, error) {
+func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+	type functionConfig struct {
+		ImportMapPath string `json:"importMapPath"`
+		VerifyJWT     bool   `json:"verifyJWT"`
+	}
+
+	functionsConfig := map[string]functionConfig{}
+
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
 
 	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
 	for _, function := range functions {
 		if !function.IsDir() {
@@ -400,12 +409,16 @@ func populatePerFunctionConfigs(binds, env []string, importMapPath string, noVer
 			verifyJWT = *functionConfig.VerifyJWT
 		}
 
-		env = append(
-			env,
-			fmt.Sprintf("SUPABASE_INTERNAL_IMPORT_MAP_PATH_%s=%s", functionName, dockerImportMapPath),
-			fmt.Sprintf("SUPABASE_INTERNAL_VERIFY_JWT_%s=%t", functionName, verifyJWT),
-		)
+		functionsConfig[functionName] = functionConfig{
+			ImportMapPath: dockerImportMapPath,
+			VerifyJWT:     verifyJWT,
+		}
 	}
 
-	return binds, env, nil
+	functionsConfigBytes, err := json.Marshal(functionsConfig)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return binds, string(functionsConfigBytes), nil
 }
