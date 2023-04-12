@@ -33,8 +33,6 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
-const workerCache = {} as Record<string, { fetch: typeof fetch }>;
-
 function getAuthToken(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader) {
@@ -101,10 +99,6 @@ serve(async (req: Request) => {
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
   try {
-    if (functionName in workerCache) {
-      return await workerCache[functionName].fetch(req);
-    }
-
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
       memoryLimitMb,
@@ -113,7 +107,6 @@ serve(async (req: Request) => {
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
     });
-    workerCache[functionName] = worker;
     return await worker.fetch(req);
   } catch (e) {
     console.error(e);
