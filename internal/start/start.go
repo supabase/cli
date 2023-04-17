@@ -493,7 +493,8 @@ EOF
 					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/status"},
+					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
+					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
 					Interval: 2 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  10,
