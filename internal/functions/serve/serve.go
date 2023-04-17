@@ -68,7 +68,11 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 				importMapPath = filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
 			}
 		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
-			importMapPath = utils.FallbackImportMapPath
+			if filepath.IsAbs(utils.FallbackImportMapPath) {
+				importMapPath = utils.FallbackImportMapPath
+			} else {
+				importMapPath = filepath.Join(cwd, utils.FallbackImportMapPath)
+			}
 		}
 		if importMapPath != "" {
 			if _, err := fsys.Stat(importMapPath); err != nil {
