@@ -17,19 +17,20 @@ import (
 )
 
 var (
-	DbImage     string
-	NetId       string
-	DbId        string
-	KongId      string
-	GotrueId    string
-	InbucketId  string
-	RealtimeId  string
-	RestId      string
-	StorageId   string
-	ImgProxyId  string
-	DifferId    string
-	PgmetaId    string
-	StudioId    string
+	DbImage    string
+	NetId      string
+	DbId       string
+	KongId     string
+	GotrueId   string
+	InbucketId string
+	RealtimeId string
+	RestId     string
+	StorageId  string
+	ImgProxyId string
+	DifferId   string
+	PgmetaId   string
+	StudioId   string
+	// TODO: Rename to EdgeRuntimeId once we deprecate the relay.
 	DenoRelayId string
 	LogflareId  string
 	VectorId    string

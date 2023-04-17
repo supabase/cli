@@ -15,6 +15,7 @@ import (
 
 type CustomName struct {
 	ApiURL         string `env:"api.url,default=API_URL"`
+	GraphqlURL     string `env:"api.graphql_url,default=GRAPHQL_URL"`
 	DbURL          string `env:"db.url,default=DB_URL"`
 	StudioURL      string `env:"studio.url,default=STUDIO_URL"`
 	InbucketURL    string `env:"inbucket.url,default=INBUCKET_URL"`
@@ -29,6 +30,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	}
 	if !sliceContains(exclude, utils.RestId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
 		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
+		values[c.GraphqlURL] = fmt.Sprintf("http://localhost:%d/graphql/v1", utils.Config.Api.Port)
 	}
 	if !sliceContains(exclude, utils.StudioId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
@@ -141,6 +143,7 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 func PrettyPrint(w io.Writer, exclude ...string) {
 	names := CustomName{
 		ApiURL:         "         " + utils.Aqua("API URL"),
+		GraphqlURL:     "     " + utils.Aqua("GraphQL URL"),
 		DbURL:          "          " + utils.Aqua("DB URL"),
 		StudioURL:      "      " + utils.Aqua("Studio URL"),
 		InbucketURL:    "    " + utils.Aqua("Inbucket URL"),
