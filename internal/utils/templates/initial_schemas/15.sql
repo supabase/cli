@@ -17,15 +17,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: _realtime; Type: SCHEMA; Schema: -; Owner: postgres
---
-
-CREATE SCHEMA IF NOT EXISTS _realtime;
-
-
-ALTER SCHEMA _realtime OWNER TO postgres;
-
---
 -- Name: _analytics; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
@@ -33,6 +24,15 @@ CREATE SCHEMA IF NOT EXISTS _analytics;
 
 
 ALTER SCHEMA _analytics OWNER TO postgres;
+
+--
+-- Name: _realtime; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA IF NOT EXISTS _realtime;
+
+
+ALTER SCHEMA _realtime OWNER TO postgres;
 
 --
 -- Name: auth; Type: SCHEMA; Schema: -; Owner: supabase_admin
@@ -144,6 +144,15 @@ CREATE SCHEMA IF NOT EXISTS supabase_functions;
 ALTER SCHEMA supabase_functions OWNER TO supabase_admin;
 
 --
+-- Name: vault; Type: SCHEMA; Schema: -; Owner: supabase_admin
+--
+
+CREATE SCHEMA IF NOT EXISTS vault;
+
+
+ALTER SCHEMA vault OWNER TO supabase_admin;
+
+--
 -- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -197,6 +206,20 @@ CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;
 --
 
 COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
+
+
+--
+-- Name: supabase_vault; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;
+
+
+--
+-- Name: EXTENSION supabase_vault; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION supabase_vault IS 'Supabase Vault Extension';
 
 
 --
@@ -911,12 +934,36 @@ $$;
 
 ALTER FUNCTION supabase_functions.http_request() OWNER TO supabase_functions_admin;
 
+--
+-- Name: secrets_encrypt_secret_secret(); Type: FUNCTION; Schema: vault; Owner: supabase_admin
+--
+
+CREATE OR REPLACE FUNCTION vault.secrets_encrypt_secret_secret() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+		BEGIN
+		        new.secret = CASE WHEN new.secret IS NULL THEN NULL ELSE
+			CASE WHEN new.key_id IS NULL THEN NULL ELSE pg_catalog.encode(
+			  pgsodium.crypto_aead_det_encrypt(
+				pg_catalog.convert_to(new.secret, 'utf8'),
+				pg_catalog.convert_to((new.id::text || new.description::text || new.created_at::text || new.updated_at::text)::text, 'utf8'),
+				new.key_id::uuid,
+				new.nonce
+			  ),
+				'base64') END END;
+		RETURN new;
+		END;
+		$$;
+
+
+ALTER FUNCTION vault.secrets_encrypt_secret_secret() OWNER TO supabase_admin;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: extensions; Type: TABLE; Schema: _realtime; Owner: postgres
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: supabase_admin
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.extensions (
@@ -929,10 +976,10 @@ CREATE TABLE IF NOT EXISTS _realtime.extensions (
 );
 
 
-ALTER TABLE _realtime.extensions OWNER TO postgres;
+ALTER TABLE _realtime.extensions OWNER TO supabase_admin;
 
 --
--- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: postgres
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: supabase_admin
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
@@ -941,10 +988,10 @@ CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
 );
 
 
-ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
+ALTER TABLE _realtime.schema_migrations OWNER TO supabase_admin;
 
 --
--- Name: tenants; Type: TABLE; Schema: _realtime; Owner: postgres
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: supabase_admin
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.tenants (
@@ -963,7 +1010,7 @@ CREATE TABLE IF NOT EXISTS _realtime.tenants (
 );
 
 
-ALTER TABLE _realtime.tenants OWNER TO postgres;
+ALTER TABLE _realtime.tenants OWNER TO supabase_admin;
 
 --
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
@@ -1480,6 +1527,32 @@ CREATE TABLE IF NOT EXISTS supabase_functions.migrations (
 ALTER TABLE supabase_functions.migrations OWNER TO supabase_functions_admin;
 
 --
+-- Name: decrypted_secrets; Type: VIEW; Schema: vault; Owner: supabase_admin
+--
+
+CREATE OR REPLACE VIEW vault.decrypted_secrets AS
+ SELECT secrets.id,
+    secrets.name,
+    secrets.description,
+    secrets.secret,
+        CASE
+            WHEN (secrets.secret IS NULL) THEN NULL::text
+            ELSE
+            CASE
+                WHEN (secrets.key_id IS NULL) THEN NULL::text
+                ELSE convert_from(pgsodium.crypto_aead_det_decrypt(decode(secrets.secret, 'base64'::text), convert_to(((((secrets.id)::text || secrets.description) || (secrets.created_at)::text) || (secrets.updated_at)::text), 'utf8'::name), secrets.key_id, secrets.nonce), 'utf8'::name)
+            END
+        END AS decrypted_secret,
+    secrets.key_id,
+    secrets.nonce,
+    secrets.created_at,
+    secrets.updated_at
+   FROM vault.secrets;
+
+
+ALTER TABLE vault.decrypted_secrets OWNER TO supabase_admin;
+
+--
 -- Name: refresh_tokens id; Type: DEFAULT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1494,14 +1567,14 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 
 
 --
--- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
 INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('1d784f3e-9e48-45ac-9d56-50f8b39d5c64', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-05 05:01:34', '2023-01-05 05:01:34');
 
 
 --
--- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-30 04:09:10');
@@ -1519,7 +1592,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202301101
 
 
 --
--- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
 INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('bb4a1909-7f48-42b5-9814-68ebb2d065b9', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-01-30 04:09:12', '2023-01-30 04:09:12', 100, 'postgres_cdc_rls', 100000, 100, 500);
@@ -1699,10 +1772,23 @@ INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('202108
 
 
 --
+-- Data for Name: secrets; Type: TABLE DATA; Schema: vault; Owner: supabase_admin
+--
+
+
+
+--
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
+
+
+--
+-- Name: key_key_id_seq; Type: SEQUENCE SET; Schema: pgsodium; Owner: supabase_admin
+--
+
+SELECT pg_catalog.setval('pgsodium.key_key_id_seq', 1, false);
 
 
 --
@@ -1713,7 +1799,7 @@ SELECT pg_catalog.setval('supabase_functions.hooks_id_seq', 1, false);
 
 
 --
--- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+-- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
 --
 
 ALTER TABLE ONLY _realtime.extensions
@@ -1721,7 +1807,7 @@ ALTER TABLE ONLY _realtime.extensions
 
 
 --
--- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
 --
 
 ALTER TABLE ONLY _realtime.schema_migrations
@@ -1729,7 +1815,7 @@ ALTER TABLE ONLY _realtime.schema_migrations
 
 
 --
--- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
+-- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
 --
 
 ALTER TABLE ONLY _realtime.tenants
@@ -1929,14 +2015,14 @@ ALTER TABLE ONLY supabase_functions.migrations
 
 
 --
--- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: postgres
+-- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: supabase_admin
 --
 
 CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extensions USING btree (tenant_external_id, type);
 
 
 --
--- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: postgres
+-- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: supabase_admin
 --
 
 CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (external_id);
@@ -2181,7 +2267,7 @@ CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EA
 
 
 --
--- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: postgres
+-- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: supabase_admin
 --
 
 ALTER TABLE ONLY _realtime.extensions
@@ -3327,6 +3413,13 @@ GRANT ALL ON TABLE supabase_functions.migrations TO postgres;
 GRANT ALL ON TABLE supabase_functions.migrations TO anon;
 GRANT ALL ON TABLE supabase_functions.migrations TO authenticated;
 GRANT ALL ON TABLE supabase_functions.migrations TO service_role;
+
+
+--
+-- Name: TABLE decrypted_secrets; Type: ACL; Schema: vault; Owner: supabase_admin
+--
+
+GRANT ALL ON TABLE vault.decrypted_secrets TO pgsodium_keyiduser;
 
 
 --
