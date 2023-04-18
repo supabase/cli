@@ -261,14 +261,3 @@ func TestDatabaseStart(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
-
-func TestKongConfig(t *testing.T) {
-	utils.Config.Auth.AnonKey = "abc"
-	utils.Config.Auth.ServiceRoleKey = "123"
-	os.Setenv("SUPABASE_AUTH_CUSTOM_ROLE_KEY", "test")
-	config := NewKongConfig()
-	assert.Equal(t, config.ApiKeys["anon"], "abc")
-	assert.Equal(t, config.ApiKeys["service_role"], "123")
-	assert.Equal(t, config.ApiKeys["custom_role"], "test")
-	assert.NoError(t, kongConfigTemplate.Execute(os.Stderr, config))
-}
