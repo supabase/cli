@@ -2,7 +2,7 @@ _format_version: "1.1"
 services:
   - name: auth-v1-open
     _comment: "GoTrue: /auth/v1/verify* -> http://auth:9999/verify*"
-    url: http://supabase_auth_{{ .ProjectId }}:9999/verify
+    url: http://{{ .GotrueId }}:9999/verify
     routes:
       - name: auth-v1-open
         strip_path: true
@@ -12,7 +12,7 @@ services:
       - name: cors
   - name: auth-v1-open-callback
     _comment: "GoTrue: /auth/v1/callback* -> http://auth:9999/callback*"
-    url: http://supabase_auth_{{ .ProjectId }}:9999/callback
+    url: http://{{ .GotrueId }}:9999/callback
     routes:
       - name: auth-v1-open-callback
         strip_path: true
@@ -22,7 +22,7 @@ services:
       - name: cors
   - name: auth-v1-open-authorize
     _comment: "GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*"
-    url: http://supabase_auth_{{ .ProjectId }}:9999/authorize
+    url: http://{{ .GotrueId }}:9999/authorize
     routes:
       - name: auth-v1-open-authorize
         strip_path: true
@@ -32,7 +32,7 @@ services:
       - name: cors
   - name: auth-v1
     _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
-    url: http://supabase_auth_{{ .ProjectId }}:9999/
+    url: http://{{ .GotrueId }}:9999/
     routes:
       - name: auth-v1-all
         strip_path: true
@@ -40,12 +40,9 @@ services:
           - /auth/v1/
     plugins:
       - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: false
   - name: rest-v1
     _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
-    url: http://supabase_rest_{{ .ProjectId }}:3000/
+    url: http://{{ .RestId }}:3000/
     routes:
       - name: rest-v1-all
         strip_path: true
@@ -53,12 +50,9 @@ services:
           - /rest/v1/
     plugins:
       - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
   - name: graphql-v1
     _comment: "PostgREST: /graphql/v1 -> http://rest:3000/rpc/graphql"
-    url: http://supabase_rest_{{ .ProjectId }}:3000/rpc/graphql
+    url: http://{{ .RestId }}:3000/rpc/graphql
     routes:
       - name: graphql-v1-all
         strip_path: true
@@ -66,9 +60,6 @@ services:
           - /graphql/v1
     plugins:
       - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: true
       - name: request-transformer
         config:
           add:
@@ -76,7 +67,7 @@ services:
               - "Content-Profile: graphql_public"
   - name: realtime-v1
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
-    url: http://realtime-dev.supabase_realtime_{{ .ProjectId }}:4000/socket
+    url: http://{{ .RealtimeId }}:4000/socket
     routes:
       - name: realtime-v1-all
         strip_path: true
@@ -84,12 +75,9 @@ services:
           - /realtime/v1/
     plugins:
       - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: false
   - name: storage-v1
     _comment: "Storage: /storage/v1/* -> http://storage-api:5000/*"
-    url: http://supabase_storage_{{ .ProjectId }}:5000/
+    url: http://{{ .StorageId }}:5000/
     routes:
       - name: storage-v1-all
         strip_path: true
@@ -99,7 +87,7 @@ services:
       - name: cors
   - name: pg-meta
     _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
-    url: http://supabase_pg_meta_{{ .ProjectId }}:8080/
+    url: http://{{ .PgmetaId }}:8080/
     routes:
       - name: pg-meta-all
         strip_path: true
@@ -107,7 +95,7 @@ services:
           - /pg/
   - name: functions-v1
     _comment: "Functions: /functions/v1/* -> http://deno-relay:8081/*"
-    url: http://supabase_deno_relay_{{ .ProjectId }}:8081/
+    url: http://{{ .DenoRelayId }}:8081/
     routes:
       - name: functions-v1-all
         strip_path: true
@@ -115,15 +103,9 @@ services:
           - /functions/v1/
   - name: analytics-v1
     _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
-    url: http://supabase_analytics_{{ .ProjectId }}:4000/
+    url: http://{{ .LogflareId }}:4000/
     routes:
       - name: analytics-v1-all
         strip_path: true
         paths:
           - /analytics/v1/
-consumers:
-{{range $key, $val := .ApiKeys}}
-  - username: {{$key}}
-    keyauth_credentials:
-      - key: {{$val}}
-{{end}}

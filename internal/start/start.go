@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -62,35 +61,20 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 }
 
 type kongConfig struct {
-	ProjectId string
-	ApiKeys   map[string]string
+	GotrueId    string
+	RestId      string
+	RealtimeId  string
+	StorageId   string
+	PgmetaId    string
+	DenoRelayId string
+	LogflareId  string
 }
 
 var (
-	//go:embed templates/kong_config
+	//go:embed templates/kong.yml
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
-	customRoleKey      = regexp.MustCompile(`^SUPABASE_AUTH_(.*)_KEY$`)
 )
-
-func NewKongConfig() kongConfig {
-	config := kongConfig{
-		ProjectId: utils.Config.ProjectId,
-		ApiKeys: map[string]string{
-			"anon":         utils.Config.Auth.AnonKey,
-			"service_role": utils.Config.Auth.ServiceRoleKey,
-		},
-	}
-	for _, kv := range os.Environ() {
-		apikey := strings.Split(kv, "=")
-		match := customRoleKey.FindStringSubmatch(apikey[0])
-		if len(match) == 2 {
-			role := strings.ToLower(match[1])
-			config.ApiKeys[role] = apikey[1]
-		}
-	}
-	return config
-}
 
 type vectorConfig struct {
 	ApiKey      string
@@ -252,7 +236,15 @@ EOF
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, NewKongConfig()); err != nil {
+		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
+			GotrueId:    utils.GotrueId,
+			RestId:      utils.RestId,
+			RealtimeId:  utils.RealtimeId,
+			StorageId:   utils.StorageId,
+			PgmetaId:    utils.PgmetaId,
+			DenoRelayId: utils.DenoRelayId,
+			LogflareId:  utils.LogflareId,
+		}); err != nil {
 			return err
 		}
 
@@ -264,7 +256,7 @@ EOF
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
-					"KONG_PLUGINS=request-transformer,cors,key-auth",
+					"KONG_PLUGINS=request-transformer,cors",
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
