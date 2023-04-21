@@ -38,6 +38,11 @@ func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, 
 		return nil
 	}
 	// Push pending migrations
+	if !dryRun {
+		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+			return err
+		}
+	}
 	for _, filename := range pending {
 		if dryRun {
 			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
