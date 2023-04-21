@@ -2,6 +2,7 @@ package list
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -44,6 +46,11 @@ func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...fu
 func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
 	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
+			// If migration history table is undefined, the remote project has no migrations
+			return nil, nil
+		}
 		return nil, err
 	}
 	versions := []string{}

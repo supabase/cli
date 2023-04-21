@@ -84,16 +84,17 @@ func TestRemoteMigrations(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on missing schema", func(t *testing.T) {
+	t.Run("loads empty migrations on missing table", func(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
-		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
+		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
+		assert.NoError(t, err)
+		assert.Empty(t, versions)
 	})
 
 	t.Run("throws error on invalid row", func(t *testing.T) {
