@@ -73,11 +73,31 @@ func TestMigrationPush(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
-			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`)
+			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
 		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
+		assert.ErrorContains(t, err, `ERROR: database "target" does not exist (SQLSTATE 3D000)`)
+	})
+
+	t.Run("throws error on schema create failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(list.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
+		// Run test
+		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)`)
 	})
 
 	t.Run("throws error on push failure", func(t *testing.T) {
@@ -90,6 +110,10 @@ func TestMigrationPush(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
 			Query(repair.INSERT_MIGRATION_VERSION, "0").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
