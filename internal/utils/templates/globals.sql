@@ -37,6 +37,8 @@ CREATE ROLE supabase_auth_admin;
 ALTER ROLE supabase_auth_admin WITH NOSUPERUSER NOINHERIT CREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
 CREATE ROLE supabase_functions_admin;
 ALTER ROLE supabase_functions_admin WITH NOSUPERUSER NOINHERIT CREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'postgres';
+CREATE ROLE supabase_read_only_user;
+ALTER ROLE supabase_read_only_user WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION BYPASSRLS PASSWORD 'postgres';
 CREATE ROLE supabase_replication_admin;
 ALTER ROLE supabase_replication_admin WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN REPLICATION NOBYPASSRLS PASSWORD 'postgres';
 CREATE ROLE supabase_storage_admin;
@@ -85,6 +87,12 @@ ALTER ROLE supabase_auth_admin SET search_path TO 'auth';
 ALTER ROLE supabase_auth_admin SET idle_in_transaction_session_timeout TO '60000';
 
 --
+-- User Config "supabase_functions_admin"
+--
+
+ALTER ROLE supabase_functions_admin SET search_path TO 'supabase_functions';
+
+--
 -- User Config "supabase_storage_admin"
 --
 
@@ -96,7 +104,13 @@ ALTER ROLE supabase_storage_admin SET search_path TO 'storage';
 --
 
 GRANT anon TO authenticator GRANTED BY postgres;
+GRANT anon TO postgres GRANTED BY supabase_admin;
+GRANT anon TO supabase_storage_admin GRANTED BY supabase_admin;
 GRANT authenticated TO authenticator GRANTED BY postgres;
+GRANT authenticated TO postgres GRANTED BY supabase_admin;
+GRANT authenticated TO supabase_storage_admin GRANTED BY supabase_admin;
+GRANT pg_monitor TO postgres GRANTED BY supabase_admin;
+GRANT pg_read_all_data TO supabase_read_only_user GRANTED BY postgres;
 -- GRANT pgsodium_keyholder TO pgsodium_keymaker GRANTED BY postgres;
 -- GRANT pgsodium_keyholder TO postgres WITH ADMIN OPTION GRANTED BY postgres;
 -- GRANT pgsodium_keyiduser TO pgsodium_keyholder GRANTED BY postgres;
@@ -104,7 +118,10 @@ GRANT authenticated TO authenticator GRANTED BY postgres;
 -- GRANT pgsodium_keyiduser TO postgres WITH ADMIN OPTION GRANTED BY postgres;
 -- GRANT pgsodium_keymaker TO postgres WITH ADMIN OPTION GRANTED BY postgres;
 GRANT service_role TO authenticator GRANTED BY postgres;
+GRANT service_role TO postgres GRANTED BY supabase_admin;
+GRANT service_role TO supabase_storage_admin GRANTED BY supabase_admin;
 GRANT supabase_auth_admin TO postgres GRANTED BY supabase_admin;
+GRANT supabase_functions_admin TO postgres GRANTED BY supabase_admin;
 GRANT supabase_storage_admin TO postgres GRANTED BY supabase_admin;
 
 
