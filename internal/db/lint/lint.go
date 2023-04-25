@@ -55,6 +55,10 @@ func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts
 	if err != nil {
 		return err
 	}
+	if len(result) == 0 {
+		fmt.Fprintln(os.Stderr, "\nNo schema errors found")
+		return nil
+	}
 	return printResultJSON(result, toEnum(level), os.Stdout)
 }
 

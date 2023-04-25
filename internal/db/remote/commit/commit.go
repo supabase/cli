@@ -85,7 +85,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 		return err
 	}
 	if len(output) == 0 {
-		return errors.New("no changes found")
+		return errors.New("no schema changes found")
 	}
 	return afero.WriteFile(fsys, path, []byte(output), 0644)
 }
