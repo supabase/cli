@@ -38,7 +38,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.42.0",
+			Version:     "1.50.12",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
