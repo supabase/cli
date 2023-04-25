@@ -534,7 +534,7 @@ EOF
 
 	// Start all functions.
 	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
-		if err := serve.ServeFunctions(ctx, "", nil, "", fsys); err != nil {
+		if err := serve.ServeFunctions(ctx, "", nil, "", w, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.DenoRelayId)
@@ -608,7 +608,7 @@ EOF
 	}
 
 	// Setup database after all services are up
-	return start.SetupDatabase(ctx, fsys, w, options...)
+	return start.SetupDatabase(ctx, fsys, os.Stderr, options...)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

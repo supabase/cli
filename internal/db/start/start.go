@@ -146,8 +146,8 @@ func SetupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(w, "Setting up local schema...")
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
+		fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
 		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
 			return err
 		}
