@@ -93,8 +93,8 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 			"supabase_functions",
 			"supabase_migrations",
 		}, utils.SystemSchemas...)
-		exclude = likeEscapeSchema(exclude)
 	}
+	exclude = likeEscapeSchema(exclude)
 	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
 	if err != nil {
 		return nil, err
