@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -51,9 +50,7 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	args := "set -- " + testsPath + ";"
 	// Requires unix path inside container
 	cmd := []string{"/bin/bash", "-c", args + testScript}
-	out, err := utils.DockerExecOnce(ctx, utils.DbId, nil, cmd)
-	fmt.Print(out)
-	return err
+	return utils.DockerExecOnceWithStream(ctx, utils.DbId, nil, cmd, os.Stdout, os.Stderr)
 }
 
 // Ref 1: https://medium.com/@skdomino/taring-untaring-files-in-go-6b07cf56bc07
