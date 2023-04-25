@@ -160,6 +160,7 @@ var (
 		"pgsodium_keyholder",
 		"pgsodium_keyiduser",
 		"pgsodium_keymaker",
+		"pgtle_admin",
 	}
 	AllowedConfigs = []string{
 		// Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
