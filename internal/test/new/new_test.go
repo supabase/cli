@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -30,5 +31,16 @@ func TestCreatePgTAP(t *testing.T) {
 		err := Run(context.Background(), "pet", afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
+	})
+
+	t.Run("throws error on file exists", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		_, err := fsys.Create(filepath.Join(utils.DbTestsDir, "pet_test.sql"))
+		require.NoError(t, err)
+		// Run test
+		err = Run(context.Background(), "pet", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "already exists")
 	})
 }
