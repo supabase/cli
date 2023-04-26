@@ -118,3 +118,14 @@ func TestFileSizeLimitConfigParsing(t *testing.T) {
 		assert.Equal(t, sizeInBytes(0), testConfig.Storage.FileSizeLimit)
 	})
 }
+
+func TestSanitizeProjectI(t *testing.T) {
+	// Preserves valid consecutive characters
+	assert.Equal(t, "abc", sanitizeProjectId("abc"))
+	assert.Equal(t, "a..b_c", sanitizeProjectId("a..b_c"))
+	// Removes leading special characters
+	assert.Equal(t, "abc", sanitizeProjectId("_abc"))
+	assert.Equal(t, "abc", sanitizeProjectId("_@abc"))
+	// Replaces consecutive invalid characters with a single _
+	assert.Equal(t, "a_bc-", sanitizeProjectId("a@@bc-"))
+}
