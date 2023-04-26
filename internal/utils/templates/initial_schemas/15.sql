@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 15.1 (Debian 15.1-1.pgdg110+1)
--- Dumped by pg_dump version 15.0
+-- Dumped from database version 14.5 (Debian 14.5-2.pgdg110+2)
+-- Dumped by pg_dump version 14.7 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -94,13 +94,13 @@ CREATE SCHEMA IF NOT EXISTS pgbouncer;
 ALTER SCHEMA pgbouncer OWNER TO pgbouncer;
 
 --
--- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: supabase_admin
+-- Name: pgsodium; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
 CREATE SCHEMA IF NOT EXISTS pgsodium;
 
 
-ALTER SCHEMA pgsodium OWNER TO supabase_admin;
+ALTER SCHEMA pgsodium OWNER TO postgres;
 
 --
 -- Name: pgsodium; Type: EXTENSION; Schema: -; Owner: -
@@ -142,15 +142,6 @@ CREATE SCHEMA IF NOT EXISTS supabase_functions;
 
 
 ALTER SCHEMA supabase_functions OWNER TO supabase_admin;
-
---
--- Name: vault; Type: SCHEMA; Schema: -; Owner: supabase_admin
---
-
-CREATE SCHEMA IF NOT EXISTS vault;
-
-
-ALTER SCHEMA vault OWNER TO supabase_admin;
 
 --
 -- Name: pg_graphql; Type: EXTENSION; Schema: -; Owner: -
@@ -209,20 +200,6 @@ COMMENT ON EXTENSION pgjwt IS 'JSON Web Token API for Postgresql';
 
 
 --
--- Name: supabase_vault; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;
-
-
---
--- Name: EXTENSION supabase_vault; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION supabase_vault IS 'Supabase Vault Extension';
-
-
---
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -248,6 +225,18 @@ CREATE TYPE auth.aal_level AS ENUM (
 
 
 ALTER TYPE auth.aal_level OWNER TO supabase_auth_admin;
+
+--
+-- Name: code_challenge_method; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TYPE auth.code_challenge_method AS ENUM (
+    's256',
+    'plain'
+);
+
+
+ALTER TYPE auth.code_challenge_method OWNER TO supabase_auth_admin;
 
 --
 -- Name: factor_status; Type: TYPE; Schema: auth; Owner: supabase_auth_admin
@@ -700,10 +689,10 @@ DECLARE
 _parts text[];
 _filename text;
 BEGIN
-    select string_to_array(name, '/') into _parts;
-    select _parts[array_length(_parts,1)] into _filename;
-    -- @todo return the last part instead of 2
-    return split_part(_filename, '.', 2);
+	select string_to_array(name, '/') into _parts;
+	select _parts[array_length(_parts,1)] into _filename;
+	-- @todo return the last part instead of 2
+	return split_part(_filename, '.', 2);
 END
 $$;
 
@@ -720,8 +709,8 @@ CREATE OR REPLACE FUNCTION storage.filename(name text) RETURNS text
 DECLARE
 _parts text[];
 BEGIN
-    select string_to_array(name, '/') into _parts;
-    return _parts[array_length(_parts,1)];
+	select string_to_array(name, '/') into _parts;
+	return _parts[array_length(_parts,1)];
 END
 $$;
 
@@ -738,8 +727,8 @@ CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
 DECLARE
 _parts text[];
 BEGIN
-    select string_to_array(name, '/') into _parts;
-    return _parts[1:array_length(_parts,1)-1];
+	select string_to_array(name, '/') into _parts;
+	return _parts[1:array_length(_parts,1)-1];
 END
 $$;
 
@@ -934,36 +923,12 @@ $$;
 
 ALTER FUNCTION supabase_functions.http_request() OWNER TO supabase_functions_admin;
 
---
--- Name: secrets_encrypt_secret_secret(); Type: FUNCTION; Schema: vault; Owner: supabase_admin
---
-
-CREATE OR REPLACE FUNCTION vault.secrets_encrypt_secret_secret() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-		BEGIN
-		        new.secret = CASE WHEN new.secret IS NULL THEN NULL ELSE
-			CASE WHEN new.key_id IS NULL THEN NULL ELSE pg_catalog.encode(
-			  pgsodium.crypto_aead_det_encrypt(
-				pg_catalog.convert_to(new.secret, 'utf8'),
-				pg_catalog.convert_to((new.id::text || new.description::text || new.created_at::text || new.updated_at::text)::text, 'utf8'),
-				new.key_id::uuid,
-				new.nonce
-			  ),
-				'base64') END END;
-		RETURN new;
-		END;
-		$$;
-
-
-ALTER FUNCTION vault.secrets_encrypt_secret_secret() OWNER TO supabase_admin;
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: extensions; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+-- Name: extensions; Type: TABLE; Schema: _realtime; Owner: postgres
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.extensions (
@@ -976,10 +941,10 @@ CREATE TABLE IF NOT EXISTS _realtime.extensions (
 );
 
 
-ALTER TABLE _realtime.extensions OWNER TO supabase_admin;
+ALTER TABLE _realtime.extensions OWNER TO postgres;
 
 --
--- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+-- Name: schema_migrations; Type: TABLE; Schema: _realtime; Owner: postgres
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
@@ -988,10 +953,10 @@ CREATE TABLE IF NOT EXISTS _realtime.schema_migrations (
 );
 
 
-ALTER TABLE _realtime.schema_migrations OWNER TO supabase_admin;
+ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
 
 --
--- Name: tenants; Type: TABLE; Schema: _realtime; Owner: supabase_admin
+-- Name: tenants; Type: TABLE; Schema: _realtime; Owner: postgres
 --
 
 CREATE TABLE IF NOT EXISTS _realtime.tenants (
@@ -1010,7 +975,7 @@ CREATE TABLE IF NOT EXISTS _realtime.tenants (
 );
 
 
-ALTER TABLE _realtime.tenants OWNER TO supabase_admin;
+ALTER TABLE _realtime.tenants OWNER TO postgres;
 
 --
 -- Name: audit_log_entries; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
@@ -1032,6 +997,34 @@ ALTER TABLE auth.audit_log_entries OWNER TO supabase_auth_admin;
 --
 
 COMMENT ON TABLE auth.audit_log_entries IS 'Auth: Audit trail for user actions.';
+
+
+--
+-- Name: flow_state; Type: TABLE; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE TABLE IF NOT EXISTS auth.flow_state (
+    id uuid NOT NULL,
+    user_id uuid,
+    auth_code text NOT NULL,
+    code_challenge_method auth.code_challenge_method NOT NULL,
+    code_challenge text NOT NULL,
+    provider_type text NOT NULL,
+    provider_access_token text,
+    provider_refresh_token text,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    authentication_method text NOT NULL
+);
+
+
+ALTER TABLE auth.flow_state OWNER TO supabase_auth_admin;
+
+--
+-- Name: TABLE flow_state; Type: COMMENT; Schema: auth; Owner: supabase_auth_admin
+--
+
+COMMENT ON TABLE auth.flow_state IS 'stores metadata for pkce logins';
 
 
 --
@@ -1527,32 +1520,6 @@ CREATE TABLE IF NOT EXISTS supabase_functions.migrations (
 ALTER TABLE supabase_functions.migrations OWNER TO supabase_functions_admin;
 
 --
--- Name: decrypted_secrets; Type: VIEW; Schema: vault; Owner: supabase_admin
---
-
-CREATE OR REPLACE VIEW vault.decrypted_secrets AS
- SELECT secrets.id,
-    secrets.name,
-    secrets.description,
-    secrets.secret,
-        CASE
-            WHEN (secrets.secret IS NULL) THEN NULL::text
-            ELSE
-            CASE
-                WHEN (secrets.key_id IS NULL) THEN NULL::text
-                ELSE convert_from(pgsodium.crypto_aead_det_decrypt(decode(secrets.secret, 'base64'::text), convert_to(((((secrets.id)::text || secrets.description) || (secrets.created_at)::text) || (secrets.updated_at)::text), 'utf8'::name), secrets.key_id, secrets.nonce), 'utf8'::name)
-            END
-        END AS decrypted_secret,
-    secrets.key_id,
-    secrets.nonce,
-    secrets.created_at,
-    secrets.updated_at
-   FROM vault.secrets;
-
-
-ALTER TABLE vault.decrypted_secrets OWNER TO supabase_admin;
-
---
 -- Name: refresh_tokens id; Type: DEFAULT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -1567,39 +1534,45 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 
 
 --
--- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+-- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('1d784f3e-9e48-45ac-9d56-50f8b39d5c64', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "sWBpZNdjggEPTQVlI52Zfw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-01-05 05:01:34', '2023-01-05 05:01:34');
-
-
---
--- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
---
-
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-01-30 04:09:10');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-01-30 04:09:10');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('c6964317-0f17-4e7b-b81a-6613ef59438c', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-04-26 11:35:02', '2023-04-26 11:35:02');
 
 
 --
--- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('bb4a1909-7f48-42b5-9814-68ebb2d065b9', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-01-30 04:09:12', '2023-01-30 04:09:12', 100, 'postgres_cdc_rls', 100000, 100, 500);
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-03-16 02:25:35');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-03-16 02:25:36');
+
+
+--
+-- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
+--
+
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('c54efbc7-9b11-4b4e-b06f-e5b2423e93d6', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-26 11:35:02', '2023-04-26 11:35:02', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
 -- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+--
+
+
+
+--
+-- Data for Name: flow_state; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
 --
 
 
@@ -1697,6 +1670,9 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20221215195900');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230116124310');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230116124412');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230131181311');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230322519590');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230402418590');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230411005111');
 
 
 --
@@ -1733,22 +1709,22 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20230131181311');
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2023-04-06 08:00:54.875113');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2023-04-06 08:00:54.893123');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2023-04-06 08:00:54.903069');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2023-04-06 08:00:54.977572');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2023-04-06 08:00:55.007177');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2023-04-06 08:00:55.017454');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2023-04-06 08:00:55.03386');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2023-04-06 08:00:55.041908');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2023-04-06 08:00:55.052594');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2023-04-06 08:00:55.058769');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2023-04-06 08:00:55.068775');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-04-06 08:00:55.07397');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-04-06 08:00:55.083113');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-04-06 08:00:55.090631');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 08:00:55.108943');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 08:00:55.116335');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2023-03-16 02:25:37.548482');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2023-03-16 02:25:37.55595');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2023-03-16 02:25:37.560258');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2023-03-16 02:25:37.594153');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2023-03-16 02:25:37.599194');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2023-03-16 02:25:37.604658');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2023-03-16 02:25:37.609563');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2023-03-16 02:25:37.615929');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2023-03-16 02:25:37.620171');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2023-03-16 02:25:37.624484');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2023-03-16 02:25:37.629534');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-03-16 02:25:37.634022');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-03-16 02:25:37.639132');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-03-16 02:25:37.643598');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 09:18:55.232202');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 09:18:55.239444');
 
 
 --
@@ -1767,14 +1743,8 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-ve
 -- Data for Name: migrations; Type: TABLE DATA; Schema: supabase_functions; Owner: supabase_functions_admin
 --
 
-INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('initial', '2023-03-08 06:28:46.163363+00');
-INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('20210809183423_update_grants', '2023-03-08 06:28:46.163363+00');
-
-
---
--- Data for Name: secrets; Type: TABLE DATA; Schema: vault; Owner: supabase_admin
---
-
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('initial', '2023-03-16 02:25:30.966697+00');
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('20210809183423_update_grants', '2023-03-16 02:25:30.966697+00');
 
 
 --
@@ -1785,13 +1755,6 @@ SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 1, false);
 
 
 --
--- Name: key_key_id_seq; Type: SEQUENCE SET; Schema: pgsodium; Owner: supabase_admin
---
-
-SELECT pg_catalog.setval('pgsodium.key_key_id_seq', 1, false);
-
-
---
 -- Name: hooks_id_seq; Type: SEQUENCE SET; Schema: supabase_functions; Owner: supabase_functions_admin
 --
 
@@ -1799,7 +1762,7 @@ SELECT pg_catalog.setval('supabase_functions.hooks_id_seq', 1, false);
 
 
 --
--- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
+-- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
 --
 
 ALTER TABLE ONLY _realtime.extensions
@@ -1807,7 +1770,7 @@ ALTER TABLE ONLY _realtime.extensions
 
 
 --
--- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
 --
 
 ALTER TABLE ONLY _realtime.schema_migrations
@@ -1815,7 +1778,7 @@ ALTER TABLE ONLY _realtime.schema_migrations
 
 
 --
--- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: supabase_admin
+-- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: postgres
 --
 
 ALTER TABLE ONLY _realtime.tenants
@@ -1836,6 +1799,14 @@ ALTER TABLE ONLY auth.mfa_amr_claims
 
 ALTER TABLE ONLY auth.audit_log_entries
     ADD CONSTRAINT audit_log_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flow_state flow_state_pkey; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.flow_state
+    ADD CONSTRAINT flow_state_pkey PRIMARY KEY (id);
 
 
 --
@@ -2015,14 +1986,14 @@ ALTER TABLE ONLY supabase_functions.migrations
 
 
 --
--- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: supabase_admin
+-- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: postgres
 --
 
 CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extensions USING btree (tenant_external_id, type);
 
 
 --
--- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: supabase_admin
+-- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: postgres
 --
 
 CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (external_id);
@@ -2085,6 +2056,20 @@ CREATE INDEX identities_user_id_idx ON auth.identities USING btree (user_id);
 
 
 --
+-- Name: idx_auth_code; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_auth_code ON auth.flow_state USING btree (auth_code);
+
+
+--
+-- Name: idx_user_id_auth_method; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX idx_user_id_auth_method ON auth.flow_state USING btree (user_id, authentication_method);
+
+
+--
 -- Name: mfa_factors_user_friendly_name_unique; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2131,13 +2116,6 @@ CREATE INDEX refresh_tokens_parent_idx ON auth.refresh_tokens USING btree (paren
 --
 
 CREATE INDEX refresh_tokens_session_id_revoked_idx ON auth.refresh_tokens USING btree (session_id, revoked);
-
-
---
--- Name: refresh_tokens_token_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
---
-
-CREATE INDEX refresh_tokens_token_idx ON auth.refresh_tokens USING btree (token);
 
 
 --
@@ -2267,7 +2245,7 @@ CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EA
 
 
 --
--- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: supabase_admin
+-- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: postgres
 --
 
 ALTER TABLE ONLY _realtime.extensions
@@ -2430,7 +2408,7 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 
 
 --
--- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: postgres
 --
 
 GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
@@ -2440,10 +2418,9 @@ GRANT USAGE ON SCHEMA net TO service_role;
 
 
 --
--- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
+-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT USAGE ON SCHEMA public TO postgres;
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
@@ -2512,8 +2489,6 @@ GRANT ALL ON FUNCTION auth.uid() TO dashboard_user;
 -- Name: FUNCTION algorithm_sign(signables text, secret text, algorithm text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.algorithm_sign(signables text, secret text, algorithm text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.algorithm_sign(signables text, secret text, algorithm text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.algorithm_sign(signables text, secret text, algorithm text) TO dashboard_user;
 
 
@@ -2521,8 +2496,6 @@ GRANT ALL ON FUNCTION extensions.algorithm_sign(signables text, secret text, alg
 -- Name: FUNCTION armor(bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.armor(bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.armor(bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.armor(bytea) TO dashboard_user;
 
 
@@ -2530,8 +2503,6 @@ GRANT ALL ON FUNCTION extensions.armor(bytea) TO dashboard_user;
 -- Name: FUNCTION armor(bytea, text[], text[]); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.armor(bytea, text[], text[]) FROM postgres;
-GRANT ALL ON FUNCTION extensions.armor(bytea, text[], text[]) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.armor(bytea, text[], text[]) TO dashboard_user;
 
 
@@ -2539,8 +2510,6 @@ GRANT ALL ON FUNCTION extensions.armor(bytea, text[], text[]) TO dashboard_user;
 -- Name: FUNCTION crypt(text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.crypt(text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.crypt(text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.crypt(text, text) TO dashboard_user;
 
 
@@ -2548,8 +2517,6 @@ GRANT ALL ON FUNCTION extensions.crypt(text, text) TO dashboard_user;
 -- Name: FUNCTION dearmor(text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.dearmor(text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.dearmor(text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.dearmor(text) TO dashboard_user;
 
 
@@ -2557,8 +2524,6 @@ GRANT ALL ON FUNCTION extensions.dearmor(text) TO dashboard_user;
 -- Name: FUNCTION decrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2566,8 +2531,6 @@ GRANT ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) TO dashboard_user;
 -- Name: FUNCTION decrypt_iv(bytea, bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) TO dashboard_user;
 
 
@@ -2575,8 +2538,6 @@ GRANT ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) TO dashbo
 -- Name: FUNCTION digest(bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.digest(bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.digest(bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.digest(bytea, text) TO dashboard_user;
 
 
@@ -2584,8 +2545,6 @@ GRANT ALL ON FUNCTION extensions.digest(bytea, text) TO dashboard_user;
 -- Name: FUNCTION digest(text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.digest(text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.digest(text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.digest(text, text) TO dashboard_user;
 
 
@@ -2593,8 +2552,6 @@ GRANT ALL ON FUNCTION extensions.digest(text, text) TO dashboard_user;
 -- Name: FUNCTION encrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2602,8 +2559,6 @@ GRANT ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) TO dashboard_user;
 -- Name: FUNCTION encrypt_iv(bytea, bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) TO dashboard_user;
 
 
@@ -2611,8 +2566,6 @@ GRANT ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) TO dashbo
 -- Name: FUNCTION gen_random_bytes(integer); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.gen_random_bytes(integer) FROM postgres;
-GRANT ALL ON FUNCTION extensions.gen_random_bytes(integer) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.gen_random_bytes(integer) TO dashboard_user;
 
 
@@ -2620,8 +2573,6 @@ GRANT ALL ON FUNCTION extensions.gen_random_bytes(integer) TO dashboard_user;
 -- Name: FUNCTION gen_random_uuid(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.gen_random_uuid() FROM postgres;
-GRANT ALL ON FUNCTION extensions.gen_random_uuid() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.gen_random_uuid() TO dashboard_user;
 
 
@@ -2629,8 +2580,6 @@ GRANT ALL ON FUNCTION extensions.gen_random_uuid() TO dashboard_user;
 -- Name: FUNCTION gen_salt(text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.gen_salt(text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.gen_salt(text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.gen_salt(text) TO dashboard_user;
 
 
@@ -2638,8 +2587,6 @@ GRANT ALL ON FUNCTION extensions.gen_salt(text) TO dashboard_user;
 -- Name: FUNCTION gen_salt(text, integer); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.gen_salt(text, integer) FROM postgres;
-GRANT ALL ON FUNCTION extensions.gen_salt(text, integer) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.gen_salt(text, integer) TO dashboard_user;
 
 
@@ -2647,24 +2594,13 @@ GRANT ALL ON FUNCTION extensions.gen_salt(text, integer) TO dashboard_user;
 -- Name: FUNCTION grant_pg_cron_access(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.grant_pg_cron_access() FROM postgres;
-GRANT ALL ON FUNCTION extensions.grant_pg_cron_access() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.grant_pg_cron_access() TO dashboard_user;
-
-
---
--- Name: FUNCTION grant_pg_graphql_access(); Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION extensions.grant_pg_graphql_access() TO postgres WITH GRANT OPTION;
 
 
 --
 -- Name: FUNCTION grant_pg_net_access(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.grant_pg_net_access() FROM postgres;
-GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO dashboard_user;
 
 
@@ -2672,8 +2608,6 @@ GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO dashboard_user;
 -- Name: FUNCTION hmac(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.hmac(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2681,38 +2615,34 @@ GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO dashboard_user;
 -- Name: FUNCTION hmac(text, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.hmac(text, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO dashboard_user;
 
 
 --
--- Name: FUNCTION pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision); Type: ACL; Schema: extensions; Owner: supabase_admin
+-- Name: FUNCTION pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision) TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone); Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT blk_read_time double precision, OUT blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric) TO dashboard_user;
 
 
 --
--- Name: FUNCTION pg_stat_statements_reset(userid oid, dbid oid, queryid bigint); Type: ACL; Schema: extensions; Owner: supabase_admin
+-- Name: FUNCTION pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements_reset(userid oid, dbid oid, queryid bigint); Type: ACL; Schema: extensions; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint) TO dashboard_user;
 
 
 --
 -- Name: FUNCTION pgp_armor_headers(text, OUT key text, OUT value text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) TO dashboard_user;
 
 
@@ -2720,8 +2650,6 @@ GRANT ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value
 -- Name: FUNCTION pgp_key_id(bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_key_id(bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_key_id(bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_key_id(bytea) TO dashboard_user;
 
 
@@ -2729,8 +2657,6 @@ GRANT ALL ON FUNCTION extensions.pgp_key_id(bytea) TO dashboard_user;
 -- Name: FUNCTION pgp_pub_decrypt(bytea, bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) TO dashboard_user;
 
 
@@ -2738,8 +2664,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) TO dashboard_user
 -- Name: FUNCTION pgp_pub_decrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2747,8 +2671,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) TO dashboar
 -- Name: FUNCTION pgp_pub_decrypt(bytea, bytea, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) TO dashboard_user;
 
 
@@ -2756,8 +2678,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) TO da
 -- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) TO dashboard_user;
 
 
@@ -2765,8 +2685,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) TO dashboar
 -- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2774,8 +2692,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) TO da
 -- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) TO dashboard_user;
 
 
@@ -2783,8 +2699,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text)
 -- Name: FUNCTION pgp_pub_encrypt(text, bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) TO dashboard_user;
 
 
@@ -2792,8 +2706,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) TO dashboard_user;
 -- Name: FUNCTION pgp_pub_encrypt(text, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) TO dashboard_user;
 
 
@@ -2801,8 +2713,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) TO dashboard
 -- Name: FUNCTION pgp_pub_encrypt_bytea(bytea, bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) TO dashboard_user;
 
 
@@ -2810,8 +2720,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) TO dashboar
 -- Name: FUNCTION pgp_pub_encrypt_bytea(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) TO dashboard_user;
 
 
@@ -2819,8 +2727,6 @@ GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) TO da
 -- Name: FUNCTION pgp_sym_decrypt(bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) TO dashboard_user;
 
 
@@ -2828,8 +2734,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) TO dashboard_user;
 -- Name: FUNCTION pgp_sym_decrypt(bytea, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) TO dashboard_user;
 
 
@@ -2837,8 +2741,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) TO dashboard
 -- Name: FUNCTION pgp_sym_decrypt_bytea(bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) TO dashboard_user;
 
 
@@ -2846,8 +2748,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) TO dashboard
 -- Name: FUNCTION pgp_sym_decrypt_bytea(bytea, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) TO dashboard_user;
 
 
@@ -2855,8 +2755,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) TO das
 -- Name: FUNCTION pgp_sym_encrypt(text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) TO dashboard_user;
 
 
@@ -2864,8 +2762,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) TO dashboard_user;
 -- Name: FUNCTION pgp_sym_encrypt(text, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) TO dashboard_user;
 
 
@@ -2873,8 +2769,6 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) TO dashboard_
 -- Name: FUNCTION pgp_sym_encrypt_bytea(bytea, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) TO dashboard_user;
 
 
@@ -2882,38 +2776,13 @@ GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) TO dashboard
 -- Name: FUNCTION pgp_sym_encrypt_bytea(bytea, text, text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) TO dashboard_user;
-
-
---
--- Name: FUNCTION pgrst_ddl_watch(); Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION extensions.pgrst_ddl_watch() TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION pgrst_drop_watch(); Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION extensions.pgrst_drop_watch() TO postgres WITH GRANT OPTION;
-
-
---
--- Name: FUNCTION set_graphql_placeholder(); Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION extensions.set_graphql_placeholder() TO postgres WITH GRANT OPTION;
 
 
 --
 -- Name: FUNCTION sign(payload json, secret text, algorithm text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.sign(payload json, secret text, algorithm text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.sign(payload json, secret text, algorithm text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.sign(payload json, secret text, algorithm text) TO dashboard_user;
 
 
@@ -2921,8 +2790,6 @@ GRANT ALL ON FUNCTION extensions.sign(payload json, secret text, algorithm text)
 -- Name: FUNCTION try_cast_double(inp text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.try_cast_double(inp text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.try_cast_double(inp text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.try_cast_double(inp text) TO dashboard_user;
 
 
@@ -2930,8 +2797,6 @@ GRANT ALL ON FUNCTION extensions.try_cast_double(inp text) TO dashboard_user;
 -- Name: FUNCTION url_decode(data text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.url_decode(data text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.url_decode(data text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.url_decode(data text) TO dashboard_user;
 
 
@@ -2939,8 +2804,6 @@ GRANT ALL ON FUNCTION extensions.url_decode(data text) TO dashboard_user;
 -- Name: FUNCTION url_encode(data bytea); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.url_encode(data bytea) FROM postgres;
-GRANT ALL ON FUNCTION extensions.url_encode(data bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.url_encode(data bytea) TO dashboard_user;
 
 
@@ -2948,8 +2811,6 @@ GRANT ALL ON FUNCTION extensions.url_encode(data bytea) TO dashboard_user;
 -- Name: FUNCTION uuid_generate_v1(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_generate_v1() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_generate_v1() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_generate_v1() TO dashboard_user;
 
 
@@ -2957,8 +2818,6 @@ GRANT ALL ON FUNCTION extensions.uuid_generate_v1() TO dashboard_user;
 -- Name: FUNCTION uuid_generate_v1mc(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_generate_v1mc() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_generate_v1mc() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_generate_v1mc() TO dashboard_user;
 
 
@@ -2966,8 +2825,6 @@ GRANT ALL ON FUNCTION extensions.uuid_generate_v1mc() TO dashboard_user;
 -- Name: FUNCTION uuid_generate_v3(namespace uuid, name text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) TO dashboard_user;
 
 
@@ -2975,8 +2832,6 @@ GRANT ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) TO 
 -- Name: FUNCTION uuid_generate_v4(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_generate_v4() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_generate_v4() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_generate_v4() TO dashboard_user;
 
 
@@ -2984,8 +2839,6 @@ GRANT ALL ON FUNCTION extensions.uuid_generate_v4() TO dashboard_user;
 -- Name: FUNCTION uuid_generate_v5(namespace uuid, name text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) TO dashboard_user;
 
 
@@ -2993,8 +2846,6 @@ GRANT ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) TO 
 -- Name: FUNCTION uuid_nil(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_nil() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_nil() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_nil() TO dashboard_user;
 
 
@@ -3002,8 +2853,6 @@ GRANT ALL ON FUNCTION extensions.uuid_nil() TO dashboard_user;
 -- Name: FUNCTION uuid_ns_dns(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_ns_dns() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_ns_dns() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_ns_dns() TO dashboard_user;
 
 
@@ -3011,8 +2860,6 @@ GRANT ALL ON FUNCTION extensions.uuid_ns_dns() TO dashboard_user;
 -- Name: FUNCTION uuid_ns_oid(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_ns_oid() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_ns_oid() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_ns_oid() TO dashboard_user;
 
 
@@ -3020,8 +2867,6 @@ GRANT ALL ON FUNCTION extensions.uuid_ns_oid() TO dashboard_user;
 -- Name: FUNCTION uuid_ns_url(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_ns_url() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_ns_url() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_ns_url() TO dashboard_user;
 
 
@@ -3029,8 +2874,6 @@ GRANT ALL ON FUNCTION extensions.uuid_ns_url() TO dashboard_user;
 -- Name: FUNCTION uuid_ns_x500(); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.uuid_ns_x500() FROM postgres;
-GRANT ALL ON FUNCTION extensions.uuid_ns_x500() TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.uuid_ns_x500() TO dashboard_user;
 
 
@@ -3038,80 +2881,82 @@ GRANT ALL ON FUNCTION extensions.uuid_ns_x500() TO dashboard_user;
 -- Name: FUNCTION verify(token text, secret text, algorithm text); Type: ACL; Schema: extensions; Owner: postgres
 --
 
-REVOKE ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text) FROM postgres;
-GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text) TO dashboard_user;
 
 
 --
--- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO postgres;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO anon;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO service_role;
 
 
 --
--- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.exception(message text) TO postgres;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO anon;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO service_role;
 
 
 --
--- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.get_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.increment_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
+-- Name: FUNCTION sequential_executor(prepared_statement_names text[]); Type: ACL; Schema: graphql; Owner: postgres
 --
 
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO anon;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO authenticated;
+GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO service_role;
 
 
 --
--- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+-- Name: FUNCTION http_collect_response(request_id bigint, async boolean); Type: ACL; Schema: net; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO anon;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO authenticated;
+GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO service_role;
+
+
+--
+-- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
 
 
 --
--- Name: FUNCTION http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+-- Name: FUNCTION http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
@@ -3126,24 +2971,10 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
--- Name: FUNCTION crypto_aead_det_decrypt(message bytea, additional bytea, key_uuid uuid, nonce bytea); Type: ACL; Schema: pgsodium; Owner: pgsodium_keymaker
+-- Name: SEQUENCE key_key_id_seq; Type: ACL; Schema: pgsodium; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION pgsodium.crypto_aead_det_decrypt(message bytea, additional bytea, key_uuid uuid, nonce bytea) TO service_role;
-
-
---
--- Name: FUNCTION crypto_aead_det_encrypt(message bytea, additional bytea, key_uuid uuid, nonce bytea); Type: ACL; Schema: pgsodium; Owner: pgsodium_keymaker
---
-
-GRANT ALL ON FUNCTION pgsodium.crypto_aead_det_encrypt(message bytea, additional bytea, key_uuid uuid, nonce bytea) TO service_role;
-
-
---
--- Name: FUNCTION crypto_aead_det_keygen(); Type: ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-GRANT ALL ON FUNCTION pgsodium.crypto_aead_det_keygen() TO service_role;
+GRANT ALL ON SEQUENCE pgsodium.key_key_id_seq TO pgsodium_keyiduser;
 
 
 --
@@ -3196,6 +3027,14 @@ GRANT ALL ON FUNCTION supabase_functions.http_request() TO service_role;
 
 GRANT ALL ON TABLE auth.audit_log_entries TO dashboard_user;
 GRANT ALL ON TABLE auth.audit_log_entries TO postgres;
+
+
+--
+-- Name: TABLE flow_state; Type: ACL; Schema: auth; Owner: supabase_auth_admin
+--
+
+GRANT ALL ON TABLE auth.flow_state TO postgres;
+GRANT ALL ON TABLE auth.flow_state TO dashboard_user;
 
 
 --
@@ -3311,48 +3150,33 @@ GRANT ALL ON TABLE auth.users TO postgres;
 
 
 --
--- Name: TABLE pg_stat_statements; Type: ACL; Schema: extensions; Owner: supabase_admin
+-- Name: TABLE pg_stat_statements; Type: ACL; Schema: extensions; Owner: postgres
 --
 
-GRANT ALL ON TABLE extensions.pg_stat_statements TO postgres WITH GRANT OPTION;
-
-
---
--- Name: TABLE pg_stat_statements_info; Type: ACL; Schema: extensions; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE extensions.pg_stat_statements_info TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE extensions.pg_stat_statements TO dashboard_user;
 
 
 --
--- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: TABLE pg_stat_statements_info; Type: ACL; Schema: extensions; Owner: postgres
 --
 
-GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
+GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
+
+
+--
+-- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: postgres
+--
+
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
 
 
 --
--- Name: TABLE decrypted_key; Type: ACL; Schema: pgsodium; Owner: supabase_admin
+-- Name: TABLE valid_key; Type: ACL; Schema: pgsodium; Owner: postgres
 --
 
-GRANT ALL ON TABLE pgsodium.decrypted_key TO pgsodium_keyholder;
-
-
---
--- Name: TABLE masking_rule; Type: ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE pgsodium.masking_rule TO pgsodium_keyholder;
-
-
---
--- Name: TABLE mask_columns; Type: ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE pgsodium.mask_columns TO pgsodium_keyholder;
+GRANT ALL ON TABLE pgsodium.valid_key TO pgsodium_keyiduser;
 
 
 --
@@ -3416,13 +3240,6 @@ GRANT ALL ON TABLE supabase_functions.migrations TO service_role;
 
 
 --
--- Name: TABLE decrypted_secrets; Type: ACL; Schema: vault; Owner: supabase_admin
---
-
-GRANT ALL ON TABLE vault.decrypted_secrets TO pgsodium_keyiduser;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -3447,27 +3264,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL O
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: extensions; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON SEQUENCES  TO postgres WITH GRANT OPTION;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: extensions; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON FUNCTIONS  TO postgres WITH GRANT OPTION;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: extensions; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON TABLES  TO postgres WITH GRANT OPTION;
-
-
---
 -- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3475,6 +3271,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
 
 
 --
@@ -3488,6 +3294,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3495,6 +3311,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
 
 
 --
@@ -3528,38 +3354,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT 
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyholder;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyholder;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
 
 
 --
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON SEQUENCES  TO pgsodium_keyiduser;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON FUNCTIONS  TO pgsodium_keyiduser;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: pgsodium_masks; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA pgsodium_masks GRANT ALL ON TABLES  TO pgsodium_keyiduser;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA pgsodium GRANT ALL ON TABLES  TO pgsodium_keyiduser;
 
 
 --
@@ -3718,7 +3523,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 ALTER EVENT TRIGGER issue_graphql_placeholder OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+-- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
 --
 
 CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
@@ -3740,7 +3545,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 ALTER EVENT TRIGGER issue_pg_graphql_access OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
+-- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
 --
 
 CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
