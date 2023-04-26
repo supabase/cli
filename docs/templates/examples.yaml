@@ -39,6 +39,7 @@ supabase-start:
     name: Basic usage
     code: supabase start
     response: |
+      Creating custom roles supabase/roles.sql...
       Applying migration 20220810154536_employee.sql...
       Seeding data supabase/seed.sql...
       Started supabase local development setup.
@@ -48,13 +49,11 @@ supabase-start:
     response: |
       Excluding container: supabase/studio:20221214-4eecc99
       Excluding container: darthsim/imgproxy:v3.8.0
-      Seeding data supabase/seed.sql...
       Started supabase local development setup.
   - id: ignore-health-check
     name: Ignore service health checks
     code: supabase start --ignore-health-check
     response: |
-      Seeding data supabase/seed.sql...
       service not healthy: [supabase_storage_cli]
       Started supabase local development setup.
 supabase-stop:
@@ -74,10 +73,11 @@ supabase-status:
   - id: basic-usage
     name: Basic usage
     code: supabase status
-    response: |
+    response: |2
       supabase local development setup is running.
 
-              API URL: http://localhost:54321
+               API URL: http://localhost:54321
+           GraphQL URL: http://localhost:54321/graphql/v1
                 DB URL: postgresql://postgres:postgres@localhost:54322/postgres
             Studio URL: http://localhost:54323
           Inbucket URL: http://localhost:54324
@@ -91,6 +91,7 @@ supabase-status:
       ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
       API_URL="http://localhost:54321"
       DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
+      GRAPHQL_URL="http://localhost:54321/graphql/v1"
       INBUCKET_URL="http://localhost:54324"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
       SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
@@ -102,6 +103,7 @@ supabase-status:
       Stopped services: [supabase_inbucket_cli supabase_rest_cli supabase_studio_cli]
       SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
       DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
+      GRAPHQL_URL="http://localhost:54321/graphql/v1"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
       SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 supabase-migration-list:
@@ -144,3 +146,120 @@ supabase-migration-repair:
     code: supabase migration repair 20230222032233 --status applied
     response: |
       Repaired migration history: 20230222032233 => applied
+supabase-db-diff:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db diff -f my_table
+    response: |
+      Connecting to local database...
+      Creating shadow database...
+      Applying migration 20230425064254_remote_commit.sql...
+      Diffing schemas: auth,extensions,public,storage
+      Finished supabase db diff on branch main.
+
+      No schema changes found
+  - id: linked-project
+    name: Against linked project
+    code: supabase db diff -f my_table --linked
+    response: |
+      Connecting to local database...
+      Creating shadow database...
+      Diffing schemas: auth,extensions,public,storage
+      Finished supabase db diff on branch main.
+
+      WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+      Run supabase db reset to verify that the new migration does not generate errors.
+  - id: specific-schema
+    name: For a specific schema
+    code: supabase db diff -f my_table --schema auth
+    response: |
+      Connecting to local database...
+      Creating shadow database...
+      Diffing schemas: auth
+      Finished supabase db diff on branch main.
+
+      No schema changes found
+supabase-db-dump:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db dump -f supabase/schema.sql
+    response: |
+      Dumping schemas from remote database...
+      Dumped schema to supabase/schema.sql.
+  - id: role-only
+    name: Role only
+    code: supabase db dump -f supabase/roles.sql --role-only
+    response: |
+      Dumping roles from remote database...
+      Dumped schema to supabase/roles.sql.
+  - id: data-only
+    name: Data only
+    code: supabase db dump -f supabase/seed.sql --data-only
+    response: |
+      Dumping data from remote database...
+      Dumped schema to supabase/seed.sql.
+supabase-db-lint:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db lint
+    response: |
+      Linting schema: public
+
+      No schema errors found
+  - id: schema-warnings
+    name: Warnings for a specific schema
+    code: supabase db lint --level warning --schema storage
+    response: |
+      Linting schema: storage
+      [
+        {
+          "function": "storage.search",
+          "issues": [
+            {
+              "level": "warning",
+              "message": "unused variable \"_bucketid\"",
+              "sqlState": "00000"
+            }
+          ]
+        }
+      ]
+supabase-db-push:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db push
+    response: |
+      Linked project is up to date.
+  - id: self-hosted
+    name: Self hosted
+    code: supabase db push --db-url "postgres://user:pass@localhost:5432/postgres"
+    response: |
+      Pushing migration 20230410135622_create_employees_table.sql...
+      Finished supabase db push.
+  - id: dry-run
+    name: Dry run
+    code: supabase db push --dry-run
+    response: |
+      DRY RUN: migrations will *not* be pushed to the database.
+      Would push migration 20230410135622_create_employees_table.sql...
+      Would push migration 20230425064254_my_table.sql...
+      Finished supabase db push.
+supabase-db-reset:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db reset
+    response: |
+      Resetting database...
+      Initializing schema...
+      Applying migration 20220810154537_create_employees_table.sql...
+      Seeding data supabase/seed.sql...
+      Finished supabase db reset on branch main.
+supabase-test-db:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase test db
+    response: |
+      /tmp/supabase/tests/nested/order_test.pg .. ok
+      /tmp/supabase/tests/pet_test.sql .......... ok
+      All tests successful.
+      Files=2, Tests=2,  6 wallclock secs ( 0.03 usr  0.01 sys +  0.05 cusr  0.02 csys =  0.11 CPU)
+      Result: PASS

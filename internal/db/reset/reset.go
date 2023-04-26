@@ -65,7 +65,7 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	fmt.Fprintln(os.Stderr, "Initializing schema...")
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 		return err
 	}
