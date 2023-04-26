@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"text/template"
 
 	"github.com/BurntSushi/toml"
@@ -66,6 +67,7 @@ var (
 	//go:embed templates/init_config.toml
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
+	invalidProjectId   = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -406,6 +408,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	return nil
 }
 
+func sanitizeProjectId(src string) string {
+	sanitized := invalidProjectId.ReplaceAllString(src, "_")
+	return strings.TrimLeft(sanitized, "_.-")
+}
+
 func InitConfig(projectId string, fsys afero.Fs) error {
 	// Defaults to current directory name as project id
 	if len(projectId) == 0 {
@@ -415,6 +422,7 @@ func InitConfig(projectId string, fsys afero.Fs) error {
 		}
 		projectId = filepath.Base(cwd)
 	}
+	projectId = sanitizeProjectId(projectId)
 	// Create config file
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
