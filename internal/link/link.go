@@ -18,7 +18,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/pkg/api"
-	"golang.org/x/term"
 )
 
 var updatedConfig map[string]interface{} = make(map[string]interface{})
@@ -157,19 +156,10 @@ func updatePostgresConfig(conn *pgx.Conn) {
 
 func PromptPassword(stdin *os.File) string {
 	fmt.Fprint(os.Stderr, "Enter your database password: ")
-	return promptPassword(stdin)
+	return credentials.PromptMasked(stdin)
 }
 
 func PromptPasswordAllowBlank(stdin *os.File) string {
 	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
-	return promptPassword(stdin)
-}
-
-func promptPassword(stdin *os.File) string {
-	bytepw, err := term.ReadPassword(int(stdin.Fd()))
-	fmt.Println()
-	if err != nil {
-		return ""
-	}
-	return string(bytepw)
+	return credentials.PromptMasked(stdin)
 }

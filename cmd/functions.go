@@ -136,9 +136,7 @@ func init() {
 }
 
 func PromptLogin(fsys afero.Fs) error {
-	if _, err := utils.LoadAccessTokenFS(fsys); err == nil {
-		return nil
-	} else if strings.HasPrefix(err.Error(), "Access token not provided. Supply an access token by running") {
+	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
 		return login.Run(os.Stdin, fsys)
 	} else {
 		return err
