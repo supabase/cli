@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,7 +238,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 		Force:         true,
 	})
 	// 3. Serve and log to console
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, fsys); err != nil {
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, os.Stderr, fsys); err != nil {
 		return err
 	}
 	if err := utils.DockerStreamLogs(ctx, utils.DenoRelayId, os.Stdout, os.Stderr); err != nil {
@@ -247,7 +248,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -313,7 +314,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 
 	// 4. Start container
-	fmt.Println("Setting up Edge Functions runtime...")
+	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
 
 	var cmdString string
 	{

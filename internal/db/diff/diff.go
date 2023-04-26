@@ -17,7 +17,7 @@ Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration doe
 
 func SaveDiff(out, file string, fsys afero.Fs) error {
 	if len(out) < 2 {
-		fmt.Fprintln(os.Stderr, "No changes found")
+		fmt.Fprintln(os.Stderr, "No schema changes found")
 	} else if len(file) > 0 {
 		path := new.GetMigrationPath(file)
 		if err := afero.WriteFile(fsys, path, []byte(out), 0644); err != nil {

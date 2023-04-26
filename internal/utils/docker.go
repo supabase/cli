@@ -355,34 +355,43 @@ func DockerStreamLogs(ctx context.Context, container string, stdout, stderr io.W
 
 // Exec a command once inside a container, returning stdout and throwing error on non-zero exit code.
 func DockerExecOnce(ctx context.Context, container string, env []string, cmd []string) (string, error) {
+	stderr := io.Discard
+	if viper.GetBool("DEBUG") {
+		stderr = os.Stderr
+	}
+	var out bytes.Buffer
+	err := DockerExecOnceWithStream(ctx, container, env, cmd, &out, stderr)
+	return out.String(), err
+}
+
+func DockerExecOnceWithStream(ctx context.Context, container string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
 	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
 		Env:          env,
 		Cmd:          cmd,
-		AttachStderr: viper.GetBool("DEBUG"),
+		AttachStderr: true,
 		AttachStdout: true,
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 	// Read exec output
 	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer resp.Close()
 	// Capture error details
-	var out bytes.Buffer
-	if _, err := stdcopy.StdCopy(&out, os.Stderr, resp.Reader); err != nil {
-		return "", err
+	if _, err := stdcopy.StdCopy(stdout, stderr, resp.Reader); err != nil {
+		return err
 	}
 	// Get the exit code
 	iresp, err := Docker.ContainerExecInspect(ctx, exec.ID)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if iresp.ExitCode > 0 {
 		err = errors.New("error executing command")
 	}
-	return out.String(), err
+	return err
 }
