@@ -15,6 +15,10 @@ import (
 var (
 	//go:embed templates/index.ts
 	index string
+	//go:embed templates/vscode/extensions.json
+	vscodeExtensions string
+	//go:embed templates/vscode/settings.json
+	vscodeSettings string
 )
 
 func Run(ctx context.Context, slug string, fsys afero.Fs) error {
@@ -35,6 +39,23 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			return err
 		}
 		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "index.ts"), []byte(index), 0644); err != nil {
+			return err
+		}
+	}
+
+	// 3. Set up VS Code Settings
+	{
+		vscodeDir := utils.FunctionsDir + "/.vscode"
+		if _, err := fsys.Stat(vscodeDir); !errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
+			return err
+		}
+		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "extensions.json"), []byte(vscodeExtensions), 0644); err != nil {
+			return err
+		}
+		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "settings.json"), []byte(vscodeSettings), 0644); err != nil {
 			return err
 		}
 	}
