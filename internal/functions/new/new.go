@@ -45,7 +45,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 
 	// 3. Set up VS Code Settings
 	{
-		vscodeDir := filepath.Join (utils.FunctionsDir, ".vscode")
+		vscodeDir := filepath.Join(utils.FunctionsDir, ".vscode")
 		if _, err := fsys.Stat(vscodeDir); !errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
