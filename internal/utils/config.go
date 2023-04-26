@@ -409,7 +409,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 }
 
 func sanitizeProjectId(src string) string {
+	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
+	// It must also start with an alphanumeric character
 	return strings.TrimLeft(sanitized, "_.-")
 }
 
