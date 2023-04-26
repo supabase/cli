@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 // Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
@@ -86,7 +85,6 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AccessTokenKey = "access-token"
 )
 
 var (
@@ -102,7 +100,6 @@ var (
 	//go:embed denos/*
 	denoEmbedDir embed.FS
 
-	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
@@ -529,37 +526,6 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	}
 
 	return &sd, nil
-}
-
-func LoadAccessToken() (string, error) {
-	return LoadAccessTokenFS(afero.NewOsFs())
-}
-
-func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
-	// Env takes precedence
-	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
-		if !AccessTokenPattern.MatchString(accessToken) {
-			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
-		}
-		return accessToken, nil
-	}
-	// Load from native credentials store
-	if token, err := credentials.Get(AccessTokenKey); err == nil {
-		return token, nil
-	}
-	// Fallback to home directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	accessTokenPath := filepath.Join(home, ".supabase", AccessTokenKey)
-	accessToken, err := afero.ReadFile(fsys, accessTokenPath)
-	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
-		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
-	} else if err != nil {
-		return "", err
-	}
-	return string(accessToken), nil
 }
 
 func ValidateFunctionSlug(slug string) error {
