@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	//go:embed templates/init_gitignore
+	//go:embed templates/.gitignore
 	initGitignore []byte
-	//go:embed templates/vscode/init_extensions
+	//go:embed templates/.vscode/extensions.json
 	vscodeExtensions string
-	//go:embed templates/vscode/init_settings
+	//go:embed templates/.vscode/settings.json
 	vscodeSettings string
-	//go:embed templates/vscode/init_code-workspace
+	//go:embed templates/.code-workspace
 	vscodeWorkspaceConfig string
 
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
