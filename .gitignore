@@ -16,7 +16,7 @@
 # vendor/
 
 # IDE
-.vscode
+/.vscode
 
 # NPM
 node_modules
