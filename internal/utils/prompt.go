@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/term"
 )
 
 var (
@@ -146,18 +147,21 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 }
 
 // PromptYesNo asks yes/no questions using the label.
-func PromptYesNo(label string, def bool) bool {
+func PromptYesNo(label string, def bool, stdin *os.File) bool {
+	if !term.IsTerminal(int(stdin.Fd())) {
+		return def
+	}
+
 	choices := "Y/n"
 	if !def {
 		choices = "y/N"
 	}
 
 	r := bufio.NewReader(os.Stdin)
-	var s string
-
 	for {
 		fmt.Fprintf(os.Stderr, "%s [%s] ", label, choices)
-		s, _ = r.ReadString('\n')
+		// Any error will be handled as empty string
+		s, _ := r.ReadString('\n')
 		s = strings.TrimSpace(s)
 		if s == "" {
 			return def

@@ -52,8 +52,7 @@ func Run(fsys afero.Fs) error {
 	}
 
 	// 4. Generate VS Code workspace settings.
-	isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false)
-	if isVscode {
+	if isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false, os.Stdin); isVscode {
 		return writeVscodeConfig(fsys)
 	}
 	return nil
