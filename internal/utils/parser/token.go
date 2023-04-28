@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -106,7 +107,10 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 	}
 	err = scanner.Err()
 	if err != nil {
-		err = fmt.Errorf("%v\nAfter statement %d: %s", err, len(stats), utils.Aqua(token))
+		err = fmt.Errorf("%w\nAfter statement %d: %s", err, len(stats), utils.Aqua(token))
+	}
+	if errors.Is(err, bufio.ErrTooLong) {
+		err = fmt.Errorf("%w\nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (default is %dKB)", err, MaxScannerCapacity>>10)
 	}
 	return stats, err
 }
