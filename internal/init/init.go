@@ -3,6 +3,7 @@ package init
 import (
 	_ "embed"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -13,6 +14,12 @@ import (
 var (
 	//go:embed templates/init_gitignore
 	initGitignore []byte
+	//go:embed templates/vscode/init_extensions
+	vscodeExtensions string
+	//go:embed templates/vscode/init_settings
+	vscodeSettings string
+	//go:embed templates/vscode/init_code-workspace
+	vscodeWorkspaceConfig string
 
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
 )
@@ -42,9 +49,15 @@ func Run(fsys afero.Fs) error {
 		// User not using git
 		return nil
 	}
-
 	ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
-	return updateGitIgnore(ignorePath, fsys)
+	updateGitIgnore(ignorePath, fsys)
+
+	// 4. Generate VS Code workspace settings.
+	isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false)
+	if isVscode {
+		return writeVscodeConfig(fsys)
+	}
+	return nil
 }
 
 func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
@@ -69,5 +82,41 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 		return err
 	}
 
+	return nil
+}
+
+func writeVscodeConfig(fsys afero.Fs) error {
+	{
+		// Create mutli-root code-workspace.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		codeWorkspaceConfigPath := filepath.Join(cwd, filepath.Base(cwd)+".code-workspace")
+		if _, err := fsys.Stat(codeWorkspaceConfigPath); !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := afero.WriteFile(fsys, codeWorkspaceConfigPath, []byte(vscodeWorkspaceConfig), 0644); err != nil {
+			return err
+		}
+		fmt.Println("Open the " + utils.Aqua(filepath.Base(cwd)+".code-workspace") + " file in VS Code.")
+	}
+
+	{
+		// Create functions workspace settings.
+		vscodeDir := filepath.Join(utils.FunctionsDir, ".vscode")
+		if _, err := fsys.Stat(vscodeDir); !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
+			return err
+		}
+		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "extensions.json"), []byte(vscodeExtensions), 0644); err != nil {
+			return err
+		}
+		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "settings.json"), []byte(vscodeSettings), 0644); err != nil {
+			return err
+		}
+	}
 	return nil
 }
