@@ -96,8 +96,9 @@ var (
 		},
 	}
 
-	dataOnly bool
-	roleOnly bool
+	dataOnly     bool
+	roleOnly     bool
+	keepComments bool
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
@@ -108,7 +109,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, fsys)
+			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, fsys)
 		},
 	}
 
@@ -226,6 +227,7 @@ func init() {
 	dumpFlags := dbDumpCmd.Flags()
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
+	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")

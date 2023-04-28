@@ -23,7 +23,7 @@ var (
 	dumpRoleScript string
 )
 
-func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly bool, fsys afero.Fs) error {
+func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, keepComments bool, fsys afero.Fs) error {
 	// Initialise output stream
 	var outStream afero.File
 	if len(path) > 0 {
@@ -59,6 +59,11 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 		excludedSchemas = utils.InternalSchemas
 	}
 	// Run script in docker
+	cmd := []string{"bash", "-c", script, "--"}
+	if !keepComments {
+		// Delete comments when arg1 is set
+		cmd = append(cmd, "1")
+	}
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
@@ -73,7 +78,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 				"ALLOWED_CONFIGS=" + strings.Join(utils.AllowedConfigs, "|"),
 				"DB_URL=" + config.Database,
 			},
-			Cmd: []string{"bash", "-c", script},
+			Cmd: cmd,
 		},
 		container.HostConfig{
 			NetworkMode: container.NetworkMode("host"),
