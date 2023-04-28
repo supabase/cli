@@ -92,12 +92,13 @@ func writeVscodeConfig(fsys afero.Fs) error {
 		}
 		codeWorkspaceConfigPath := filepath.Join(cwd, filepath.Base(cwd)+".code-workspace")
 		if _, err := fsys.Stat(codeWorkspaceConfigPath); !errors.Is(err, os.ErrNotExist) {
+			// TODO: prompt to overwrite if config already exists
 			return err
 		}
 		if err := afero.WriteFile(fsys, codeWorkspaceConfigPath, []byte(vscodeWorkspaceConfig), 0644); err != nil {
 			return err
 		}
-		fmt.Println("Open the " + utils.Aqua(filepath.Base(cwd)+".code-workspace") + " file in VS Code.")
+		fmt.Println("Open the " + utils.Aqua(filepath.Base(codeWorkspaceConfigPath)) + " file in VS Code.")
 	}
 
 	{
