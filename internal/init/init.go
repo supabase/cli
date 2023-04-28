@@ -45,12 +45,11 @@ func Run(fsys afero.Fs) error {
 	}
 
 	// 3. Append to `.gitignore`.
-	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot == nil {
-		// User not using git
-		return nil
+	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot != nil {
+		if err := updateGitIgnore(utils.GitIgnorePath, fsys); err != nil {
+			return err
+		}
 	}
-	ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
-	updateGitIgnore(ignorePath, fsys)
 
 	// 4. Generate VS Code workspace settings.
 	isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false)

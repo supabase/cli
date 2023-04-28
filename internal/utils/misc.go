@@ -170,6 +170,7 @@ var (
 
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
+	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
 	ProjectRefPath        = filepath.Join(SupabaseDirPath, ".temp", "project-ref")
 	RemoteDbPath          = filepath.Join(SupabaseDirPath, ".temp", "remote-db-url")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
