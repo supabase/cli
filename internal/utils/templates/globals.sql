@@ -110,7 +110,7 @@ GRANT authenticated TO authenticator GRANTED BY postgres;
 GRANT authenticated TO postgres GRANTED BY supabase_admin;
 GRANT authenticated TO supabase_storage_admin GRANTED BY supabase_admin;
 GRANT pg_monitor TO postgres GRANTED BY supabase_admin;
-GRANT pg_read_all_data TO supabase_read_only_user GRANTED BY postgres;
+-- GRANT pg_read_all_data TO supabase_read_only_user GRANTED BY postgres;
 -- GRANT pgsodium_keyholder TO pgsodium_keymaker GRANTED BY postgres;
 -- GRANT pgsodium_keyholder TO postgres WITH ADMIN OPTION GRANTED BY postgres;
 -- GRANT pgsodium_keyiduser TO pgsodium_keyholder GRANTED BY postgres;
@@ -130,5 +130,17 @@ GRANT supabase_storage_admin TO postgres GRANTED BY supabase_admin;
 --
 -- PostgreSQL database cluster dump complete
 --
+
+DO $$
+BEGIN
+    -- role pg_read_all_data is not available on pg13
+    IF EXISTS (
+        SELECT FROM pg_catalog.pg_roles
+        WHERE rolname = 'pg_read_all_data'
+    ) THEN
+        GRANT pg_read_all_data TO supabase_read_only_user GRANTED BY postgres;
+    END IF;
+END
+$$;
 
 RESET ALL;
