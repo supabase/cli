@@ -16,7 +16,6 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 )
 
 const SET_POSTGRES_ROLE = "SET ROLE postgres;"
@@ -102,24 +101,15 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	sql, err := fsys.Open(utils.SeedDataPath)
+	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
+	seed, err := apply.NewMigrationFromFile(utils.SeedDataPath, fsys)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	defer sql.Close()
-	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	lines, err := parser.SplitAndTrim(sql)
-	if err != nil {
-		return err
-	}
 	// Batch seed commands, safe to use statement cache
-	batch := pgx.Batch{}
-	for _, line := range lines {
-		batch.Queue(line)
-	}
-	return conn.SendBatch(ctx, &batch).Close()
+	return seed.ExecBatchWithCache(ctx, conn)
 }
 
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
