@@ -89,16 +89,16 @@ func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
 
 func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	// Batch migration commands, without using statement cache
-	batch := pgconn.Batch{}
+	batch := &pgconn.Batch{}
 	for _, line := range m.Lines {
 		batch.ExecParams(line, nil, nil, nil, nil)
 	}
 	// Insert into migration history
 	if len(m.version) > 0 {
-		repair.InsertVersionSQL(&batch, m.version)
+		repair.InsertVersionSQL(batch, m.version)
 	}
 	// ExecBatch is implicitly transactional
-	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
 		// Defaults to printing the last statement on error
 		stat := repair.INSERT_MIGRATION_VERSION
 		i := len(result)

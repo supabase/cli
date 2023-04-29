@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -152,10 +153,14 @@ func TestApplyMigrations(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query("create table test").
 			Reply("SELECT 0").
+			Query(repair.INSERT_MIGRATION_VERSION, "20220727064247").
+			Reply("INSERT 1").
 			Query("drop table test").
 			Reply("SELECT 0").
 			Query("-- ignore me").
-			Reply("")
+			Reply("").
+			Query(repair.INSERT_MIGRATION_VERSION, "20220727064248").
+			Reply("INSERT 1")
 		// Run test
 		assert.NoError(t, ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept))
 	})
@@ -180,7 +185,8 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(query).
-			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
+			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`).
+			Query(repair.INSERT_MIGRATION_VERSION, "20220727064247")
 		// Run test
 		err := ApplyMigrations(context.Background(), postgresUrl, fsys, conn.Intercept)
 		// Check error
