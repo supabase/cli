@@ -39,7 +39,7 @@ const (
 	StudioImage      = "supabase/studio:20230428-6ff285f"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.2.12"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.2.18"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
