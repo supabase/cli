@@ -72,6 +72,8 @@ EOF
 	return config
 }
 
+var noBackupVolume bool = true
+
 func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	config := NewContainerConfig()
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
@@ -88,6 +90,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
+	noBackupVolume = client.IsErrNotFound(err)
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
@@ -95,7 +98,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
 	// Initialise if we are on PG14 and there's no existing db volume
-	if client.IsErrNotFound(err) && utils.Config.Db.MajorVersion <= 14 {
+	if noBackupVolume && utils.Config.Db.MajorVersion <= 14 {
 		if err := initDatabase(ctx, w, options...); err != nil {
 			return err
 		}
@@ -141,6 +144,9 @@ func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnCon
 }
 
 func SetupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	if !noBackupVolume {
+		return nil
+	}
 	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
 	if err != nil {
 		return err
