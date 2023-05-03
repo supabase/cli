@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -128,8 +127,7 @@ func TestResetDatabase(t *testing.T) {
 			Query(SET_POSTGRES_ROLE).
 			Reply("SET ROLE").
 			Query(sql).
-			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`).
-			Query(repair.INSERT_MIGRATION_VERSION, "0")
+			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
 		// Run test
 		err := resetDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error

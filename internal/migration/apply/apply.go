@@ -39,6 +39,8 @@ func migrateUp(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.
 	if err != nil {
 		return err
 	}
+	// Skip inserting to migration history table
+	migration.version = ""
 	return migration.ExecBatch(ctx, conn)
 }
 
