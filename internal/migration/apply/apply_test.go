@@ -3,7 +3,6 @@ package apply
 import (
 	"bufio"
 	"context"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -73,26 +73,14 @@ func TestMigrateDatabase(t *testing.T) {
 	t.Run("throws error on open failure", func(t *testing.T) {
 		path := filepath.Join(utils.MigrationsDir, "20220727064247_create_table.sql")
 		// Setup in-memory fs
-		fsys := &OpenErrorFs{DenyPath: path}
-		query := "create table test"
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(query), 0644))
+		fsys := &fstest.OpenErrorFs{DenyPath: path}
+		_, err := fsys.MemMapFs.Create(path)
+		require.NoError(t, err)
 		// Run test
-		err := MigrateDatabase(context.Background(), nil, fsys)
+		err = MigrateDatabase(context.Background(), nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
-}
-
-type OpenErrorFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *OpenErrorFs) Open(name string) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.Open(name)
 }
 
 func TestMigrationFile(t *testing.T) {

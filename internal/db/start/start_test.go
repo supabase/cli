@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -34,18 +35,6 @@ func (m *StatErrorFs) Stat(name string) (fs.FileInfo, error) {
 	return m.MemMapFs.Stat(name)
 }
 
-type OpenErrorFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *OpenErrorFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.OpenFile(name, flag, perm)
-}
-
 func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
@@ -59,7 +48,6 @@ func TestInitBranch(t *testing.T) {
 	t.Run("throws error on stat failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &StatErrorFs{DenyPath: utils.CurrBranchPath}
-		// Setup mock docker
 		// Run test
 		err := initCurrentBranch(fsys)
 		// Check error
@@ -68,7 +56,7 @@ func TestInitBranch(t *testing.T) {
 
 	t.Run("throws error on write failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &OpenErrorFs{DenyPath: utils.CurrBranchPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.CurrBranchPath}
 		// Run test
 		err := initCurrentBranch(fsys)
 		// Check error
@@ -82,7 +70,7 @@ func TestInitDatabase(t *testing.T) {
 		// Run test
 		err := initDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "invalid port")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on exec failure", func(t *testing.T) {
@@ -282,5 +270,70 @@ func TestStartCommand(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestSetupDatabase(t *testing.T) {
+	t.Run("skips when backup exists", func(t *testing.T) {
+		noBackupVolume = false
+		// Run test
+		err := SetupDatabase(context.Background(), nil, io.Discard)
+		// Check error
+		assert.NoError(t, err)
+		// Reset variable
+		noBackupVolume = true
+	})
+
+	t.Run("initialises database", func(t *testing.T) {
+		utils.Config.Db.Port = 5432
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Run test
+		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on connect failure", func(t *testing.T) {
+		utils.Config.Db.Port = 0
+		// Setup in-memory fs
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		// Run test
+		err := SetupDatabase(context.Background(), fsys, io.Discard)
+		// Check error
+		assert.ErrorContains(t, err, "invalid port (outside range)")
+	})
+
+	t.Run("throws error on read failure", func(t *testing.T) {
+		utils.Config.Db.Port = 5432
+		// Setup in-memory fs
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Run test
+		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
+	t.Run("throws error on exec failure", func(t *testing.T) {
+		utils.Config.Db.Port = 5432
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		sql := "create role postgres"
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(sql).
+			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
+		// Run test
+		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
 }
