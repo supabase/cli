@@ -299,13 +299,12 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		binds = append(binds, modules...)
 	}
 
-	fallbackImportMapPath := utils.FallbackImportMapPath
+	fallbackImportMapPath := filepath.Join(cwd, utils.FallbackImportMapPath)
 	if exists, err := afero.Exists(fsys, fallbackImportMapPath); err != nil {
 		return fmt.Errorf("Failed to read fallback import map: %w", err)
 	} else if !exists {
-		name := utils.GetPathHash(fallbackImportMapPath) + ".json"
-		fallbackImportMapPath = filepath.Join(utils.ImportMapsDir, name)
-		if err := afero.WriteFile(fsys, fallbackImportMapPath, []byte(`{"imports":{}}`), 0644); err != nil {
+		fallbackImportMapPath = absTempImportMapPath(cwd, utils.ImportMapsDir)
+		if err := utils.WriteFile(fallbackImportMapPath, []byte(`{"imports":{}}`), fsys); err != nil {
 			return err
 		}
 	}
@@ -450,18 +449,25 @@ func bindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 	resolved := importMap.Resolve(fsys)
 	binds := importMap.BindModules(resolved)
 	if len(binds) > 0 {
-		// Rewrite import map to temporary host path
-		name := utils.GetPathHash(hostImportMapPath) + ".json"
-		hostImportMapPath = filepath.Join(utils.ImportMapsDir, name)
-		f, err := fsys.Create(hostImportMapPath)
+		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, err
 		}
-		enc := json.NewEncoder(f)
-		if err := enc.Encode(resolved); err != nil {
+		contents, err := json.Marshal(resolved)
+		if err != nil {
+			return nil, err
+		}
+		// Rewrite import map to temporary host path
+		hostImportMapPath = absTempImportMapPath(cwd, hostImportMapPath)
+		if err := utils.WriteFile(hostImportMapPath, contents, fsys); err != nil {
 			return nil, err
 		}
 	}
 	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro,z")
 	return binds, nil
+}
+
+func absTempImportMapPath(cwd, hostPath string) string {
+	name := utils.GetPathHash(hostPath) + ".json"
+	return filepath.Join(cwd, utils.ImportMapsDir, name)
 }
