@@ -22,10 +22,10 @@ import (
 )
 
 const (
-	dockerFuncDirPath = "/home/deno/functions"
+	dockerFuncDirPath = utils.DockerDenoDir + "/functions"
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerFlagImportMapPath     = "/home/deno/flag_import_map.json"
-	dockerFallbackImportMapPath = "/home/deno/fallback_import_map.json"
+	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
+	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
 )
 
 var (
