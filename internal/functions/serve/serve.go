@@ -22,10 +22,10 @@ import (
 )
 
 const (
-	dockerFuncDirPath = "/home/deno/functions"
+	dockerFuncDirPath = utils.DockerDenoDir + "/functions"
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerFlagImportMapPath     = "/home/deno/flag_import_map.json"
-	dockerFallbackImportMapPath = "/home/deno/fallback_import_map.json"
+	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
+	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
 )
 
 var (
@@ -292,17 +292,27 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 	}
 	if importMapPath != "" {
-		binds = append(binds, importMapPath+":"+dockerFlagImportMapPath+":ro,z")
+		modules, err := bindImportMap(importMapPath, dockerFlagImportMapPath, fsys)
+		if err != nil {
+			return err
+		}
+		binds = append(binds, modules...)
 	}
 
-	fallbackImportMapString := `{"imports":{}}`
-	if fallbackImportMapBytes, err := afero.ReadFile(fsys, utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
-		// skip
-	} else if err != nil {
+	fallbackImportMapPath := filepath.Join(cwd, utils.FallbackImportMapPath)
+	if exists, err := afero.Exists(fsys, fallbackImportMapPath); err != nil {
 		return fmt.Errorf("Failed to read fallback import map: %w", err)
-	} else {
-		fallbackImportMapString = string(fallbackImportMapBytes)
+	} else if !exists {
+		fallbackImportMapPath = absTempImportMapPath(cwd, utils.ImportMapsDir)
+		if err := utils.WriteFile(fallbackImportMapPath, []byte(`{"imports":{}}`), fsys); err != nil {
+			return err
+		}
 	}
+	modules, err := bindImportMap(fallbackImportMapPath, dockerFallbackImportMapPath, fsys)
+	if err != nil {
+		return err
+	}
+	binds = append(binds, modules...)
 
 	if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
 		return err
@@ -325,10 +335,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		cmdString = strings.Join(cmd, " ")
 	}
 
-	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && cat <<'EOF' > /home/deno/fallback_import_map.json && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
-EOF
-` + fallbackImportMapString + `
 EOF
 `}
 	_, err = utils.DockerStart(
@@ -404,7 +412,12 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 			dockerImportMapPath = dockerFlagImportMapPath
 		} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
 			dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
-			binds = append(binds, filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)+":"+dockerImportMapPath+":ro,z")
+			hostImportMapPath := filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
+			modules, err := bindImportMap(hostImportMapPath, dockerImportMapPath, fsys)
+			if err != nil {
+				return nil, "", err
+			}
+			binds = append(binds, modules...)
 		}
 
 		verifyJWT := true
@@ -426,4 +439,35 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 	}
 
 	return binds, string(functionsConfigBytes), nil
+}
+
+func bindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs) ([]string, error) {
+	importMap, err := utils.NewImportMap(hostImportMapPath, fsys)
+	if err != nil {
+		return nil, err
+	}
+	resolved := importMap.Resolve(fsys)
+	binds := importMap.BindModules(resolved)
+	if len(binds) > 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		contents, err := json.Marshal(resolved)
+		if err != nil {
+			return nil, err
+		}
+		// Rewrite import map to temporary host path
+		hostImportMapPath = absTempImportMapPath(cwd, hostImportMapPath)
+		if err := utils.WriteFile(hostImportMapPath, contents, fsys); err != nil {
+			return nil, err
+		}
+	}
+	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro,z")
+	return binds, nil
+}
+
+func absTempImportMapPath(cwd, hostPath string) string {
+	name := utils.GetPathHash(hostPath) + ".json"
+	return filepath.Join(cwd, utils.ImportMapsDir, name)
 }
