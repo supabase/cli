@@ -97,6 +97,7 @@ func (m *OpenErrorFs) Open(name string) (afero.File, error) {
 
 func TestMigrationFile(t *testing.T) {
 	t.Run("new from file sets max token", func(t *testing.T) {
+		viper.Reset()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup initial migration
