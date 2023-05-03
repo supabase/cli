@@ -1,15 +1,14 @@
 package utils
 
 import (
-	"io/fs"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/zalando/go-keyring"
 )
 
@@ -80,7 +79,7 @@ func TestLoadTokenFallback(t *testing.T) {
 		path, err := getAccessTokenPath()
 		assert.NoError(t, err)
 		// Setup in-memory fs
-		fsys := &OpenErrorFs{DenyPath: path}
+		fsys := &fstest.OpenErrorFs{DenyPath: path}
 		// Run test
 		token, err := fallbackLoadToken(fsys)
 		// Check error
@@ -154,29 +153,10 @@ func TestSaveTokenFallback(t *testing.T) {
 		home, err := os.UserHomeDir()
 		assert.NoError(t, err)
 		// Setup in-memory fs
-		fsys := &OpenErrorFs{DenyPath: home}
+		fsys := &fstest.OpenErrorFs{DenyPath: home}
 		// Run test
 		err = fallbackSaveToken(token, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
 	})
-}
-
-type OpenErrorFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *OpenErrorFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.OpenFile(name, flag, perm)
-}
-
-func (m *OpenErrorFs) Open(name string) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.Open(name)
 }

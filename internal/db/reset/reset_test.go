@@ -92,7 +92,7 @@ func TestResetDatabase(t *testing.T) {
 		// Run test
 		err := resetDatabase(context.Background(), fsys)
 		// Check error
-		assert.ErrorContains(t, err, "invalid port")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on duplicate schema", func(t *testing.T) {
