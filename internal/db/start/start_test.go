@@ -89,12 +89,13 @@ func TestInitDatabase(t *testing.T) {
 }
 
 func TestStartDatabase(t *testing.T) {
-	t.Cleanup(func() {
+	teardown := func() {
 		utils.Containers = []string{}
 		utils.Volumes = []string{}
-	})
+	}
 
 	t.Run("initialise main branch", func(t *testing.T) {
+		defer teardown()
 		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
@@ -130,6 +131,7 @@ func TestStartDatabase(t *testing.T) {
 	})
 
 	t.Run("recover from backup volume", func(t *testing.T) {
+		defer teardown()
 		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
@@ -164,6 +166,7 @@ func TestStartDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on start failure", func(t *testing.T) {
+		defer teardown()
 		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
