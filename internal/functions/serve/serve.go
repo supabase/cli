@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -342,9 +344,16 @@ EOF
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
-			Image:      utils.EdgeRuntimeImage,
-			Env:        append(env, userEnv...),
-			Entrypoint: entrypoint,
+			Image:        utils.EdgeRuntimeImage,
+			Env:          append(env, userEnv...),
+			Entrypoint:   entrypoint,
+			ExposedPorts: nat.PortSet{"8081/tcp": {}},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/8081"},
+				Interval: 2 * time.Second,
+				Timeout:  2 * time.Second,
+				Retries:  10,
+			},
 		},
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
