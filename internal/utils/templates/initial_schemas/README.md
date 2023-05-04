@@ -29,5 +29,5 @@ go run . start
 - `INSERT INTO *.schema_migrations` statements are only required if there are new migrations.
 - `ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO` should be followed by supabase_admin.
 
-4. Set `major_version = 14` in `supabase/config.toml` and repeat steps 1-3 to udpate `14.sql`
-5. Set `major_version = 13` in `supabase/config.toml` and repeat steps 1-3 to udpate `13.sql`
+4. Set `major_version = 14` in `supabase/config.toml` and repeat steps 1-3 to update `14.sql`
+5. Set `major_version = 13` in `supabase/config.toml` and repeat steps 1-3 to update `13.sql`
