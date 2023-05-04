@@ -119,13 +119,26 @@ func IsServiceReady(ctx context.Context, container string) bool {
 	if container == utils.RestId {
 		return isPostgRESTHealthy(ctx)
 	}
+	if container == utils.DenoRelayId {
+		return isEdgeRuntimeHealthy(ctx)
+	}
 	return AssertContainerHealthy(ctx, container) == nil
 }
 
 func isPostgRESTHealthy(ctx context.Context) bool {
 	// PostgREST does not support native health checks
 	restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, restUrl, nil)
+	return checkHTTPHead(ctx, restUrl)
+}
+
+func isEdgeRuntimeHealthy(ctx context.Context) bool {
+	// Native health check logs too much hyper::Error(IncompleteMessage)
+	restUrl := fmt.Sprintf("http://localhost:%d/functions/v1/_internal/health", utils.Config.Api.Port)
+	return checkHTTPHead(ctx, restUrl)
+}
+
+func checkHTTPHead(ctx context.Context, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return false
 	}
