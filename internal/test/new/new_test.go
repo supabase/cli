@@ -16,7 +16,7 @@ func TestCreatePgTAP(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "pet", fsys)
+		err := Run(context.Background(), "pet", TemplatePgTAP, fsys)
 		// Check error
 		assert.NoError(t, err)
 		f, err := fsys.Stat(filepath.Join(utils.DbTestsDir, "pet_test.sql"))
@@ -28,7 +28,7 @@ func TestCreatePgTAP(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "pet", afero.NewReadOnlyFs(fsys))
+		err := Run(context.Background(), "pet", TemplatePgTAP, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -39,7 +39,7 @@ func TestCreatePgTAP(t *testing.T) {
 		_, err := fsys.Create(filepath.Join(utils.DbTestsDir, "pet_test.sql"))
 		require.NoError(t, err)
 		// Run test
-		err = Run(context.Background(), "pet", fsys)
+		err = Run(context.Background(), "pet", TemplatePgTAP, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "already exists")
 	})
