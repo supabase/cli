@@ -12,14 +12,13 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	// Default max capacity is 64 * 1024 which is not enough for certain lines
-	// containing e.g. geographical data.
-	// 256K ought to be enough for anybody...
-	MaxScannerCapacity = 256 * 1024
-	// Equal to `startBufSize` from `bufio/scan.go`
-	startBufSize = 4096
-)
+// Equal to `startBufSize` from `bufio/scan.go`
+const startBufSize = 4096
+
+// Default max capacity is 64 * 1024 which is not enough for certain lines
+// containing e.g. geographical data.
+// 256K ought to be enough for anybody...
+var MaxScannerCapacity = 256 * 1024
 
 // State transition table for tokenizer:
 //
@@ -87,7 +86,7 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 
 	// Increase scanner capacity to support very long lines containing e.g. geodata
 	buf := make([]byte, startBufSize)
-	maxbuf := viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")
+	maxbuf := int(viper.GetSizeInBytes("SCANNER_BUFFER_SIZE"))
 	if maxbuf == 0 {
 		maxbuf = MaxScannerCapacity
 	}
@@ -110,7 +109,7 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 		err = fmt.Errorf("%w\nAfter statement %d: %s", err, len(stats), utils.Aqua(token))
 	}
 	if errors.Is(err, bufio.ErrTooLong) {
-		err = fmt.Errorf("%w\nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (default is %dKB)", err, MaxScannerCapacity>>10)
+		err = fmt.Errorf("%w\nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is %dKB)", err, maxbuf>>10)
 	}
 	return stats, err
 }

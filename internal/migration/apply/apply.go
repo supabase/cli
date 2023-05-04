@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -66,7 +65,9 @@ func NewMigrationFromFile(path string, fsys afero.Fs) (*MigrationFile, error) {
 	// Unless explicitly specified, Use file length as max buffer size
 	if !viper.IsSet("SCANNER_BUFFER_SIZE") {
 		if fi, err := sql.Stat(); err == nil {
-			viper.Set("SCANNER_BUFFER_SIZE", strconv.FormatInt(fi.Size(), 10))
+			if size := int(fi.Size()); size > parser.MaxScannerCapacity {
+				parser.MaxScannerCapacity = size
+			}
 		}
 	}
 	file, err := NewMigrationFromReader(sql)
