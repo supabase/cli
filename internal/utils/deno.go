@@ -216,8 +216,8 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 }
 
 type ImportMap struct {
-	Imports map[string]string
-	Scopes  map[string]map[string]string
+	Imports map[string]string            `json:"imports"`
+	Scopes  map[string]map[string]string `json:"scopes"`
 }
 
 func NewImportMap(path string, fsys afero.Fs) (*ImportMap, error) {
@@ -300,11 +300,20 @@ func resolveHostPath(hostPath string, fsys afero.Fs) string {
 	if exists, _ := afero.Exists(fsys, rebased); !exists {
 		return hostPath
 	}
+	// Directory imports need to be suffixed with /
+	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
+	if strings.HasSuffix(hostPath, "/") {
+		rel += "/"
+	}
 	return getModulePath(rel)
 }
 
 func getModulePath(hostPath string) string {
-	return path.Join(DockerModsDir, GetPathHash(hostPath))
+	mod := path.Join(DockerModsDir, GetPathHash(hostPath))
+	if strings.HasSuffix(hostPath, "/") {
+		mod += "/"
+	}
+	return mod
 }
 
 func GetPathHash(path string) string {

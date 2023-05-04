@@ -348,8 +348,9 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.GotrueImage,
-				Env:   env,
+				Image:        utils.GotrueImage,
+				Env:          env,
+				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"},
 					Interval: 2 * time.Second,
@@ -420,6 +421,7 @@ EOF
 					"/bin/sh", "-c",
 					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
+				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
 					Interval: 2 * time.Second,
