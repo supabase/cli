@@ -3,6 +3,7 @@ package reset
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -258,7 +259,7 @@ func TestRestartDatabase(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		// Restarts storage api
+		// Restarts postgres
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
@@ -275,13 +276,34 @@ func TestRestartDatabase(t *testing.T) {
 		utils.RestId = "test-rest"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RestId + "/kill").
-			Reply(http.StatusOK)
+			Reply(http.StatusServiceUnavailable)
+		// Restarts storage-api
 		utils.StorageId = "test-storage"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
 			Reply(http.StatusServiceUnavailable)
+		// Restarts gotrue
+		utils.StorageId = "test-auth"
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
-		RestartDatabase(context.Background())
+		RestartDatabase(context.Background(), io.Discard)
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on restart failure", func(t *testing.T) {
+		utils.DbId = "test-db"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -296,7 +318,7 @@ func TestRestartDatabase(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
 		// Run test
-		RestartDatabase(context.Background())
+		RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
