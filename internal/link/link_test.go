@@ -33,11 +33,12 @@ var dbConfig = pgconn.Config{
 func TestPreRun(t *testing.T) {
 	// Reset global variable
 	copy := utils.Config
-	t.Cleanup(func() {
+	teardown := func() {
 		utils.Config = copy
-	})
+	}
 
 	t.Run("passes sanity check", func(t *testing.T) {
+		defer teardown()
 		project := apitest.RandomProjectRef()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -49,6 +50,7 @@ func TestPreRun(t *testing.T) {
 	})
 
 	t.Run("throws error on invalid project ref", func(t *testing.T) {
+		defer teardown()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -58,6 +60,7 @@ func TestPreRun(t *testing.T) {
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
+		defer teardown()
 		project := apitest.RandomProjectRef()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -68,8 +71,16 @@ func TestPreRun(t *testing.T) {
 	})
 }
 
+// Reset global variable
+func teardown() {
+	for k := range updatedConfig {
+		delete(updatedConfig, k)
+	}
+}
+
 func TestPostRun(t *testing.T) {
 	t.Run("prints completion message", func(t *testing.T) {
+		defer teardown()
 		project := "test-project"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -82,6 +93,7 @@ func TestPostRun(t *testing.T) {
 	})
 
 	t.Run("prints changed config", func(t *testing.T) {
+		defer teardown()
 		project := "test-project"
 		updatedConfig["api"] = "test"
 		// Setup in-memory fs
@@ -103,14 +115,8 @@ func TestLinkCommand(t *testing.T) {
 	// Mock credentials store
 	keyring.MockInit()
 
-	// Reset global variable
-	t.Cleanup(func() {
-		for k := range updatedConfig {
-			delete(updatedConfig, k)
-		}
-	})
-
 	t.Run("link valid project", func(t *testing.T) {
+		defer teardown()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -152,6 +158,7 @@ func TestLinkCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
+		defer teardown()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
@@ -171,6 +178,7 @@ func TestLinkCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on write failure", func(t *testing.T) {
+		defer teardown()
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Flush pending mocks after test execution
@@ -197,14 +205,8 @@ func TestLinkPostgrest(t *testing.T) {
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-	// Reset global variable
-	t.Cleanup(func() {
-		for k := range updatedConfig {
-			delete(updatedConfig, k)
-		}
-	})
-
 	t.Run("ignores matching config", func(t *testing.T) {
+		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -220,6 +222,7 @@ func TestLinkPostgrest(t *testing.T) {
 	})
 
 	t.Run("updates api on newer config", func(t *testing.T) {
+		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -244,6 +247,7 @@ func TestLinkPostgrest(t *testing.T) {
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
+		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -257,6 +261,7 @@ func TestLinkPostgrest(t *testing.T) {
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
+		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -276,14 +281,8 @@ func TestSliceEqual(t *testing.T) {
 }
 
 func TestLinkDatabase(t *testing.T) {
-	// Reset global variable
-	t.Cleanup(func() {
-		for k := range updatedConfig {
-			delete(updatedConfig, k)
-		}
-	})
-
 	t.Run("throws error on connect failure", func(t *testing.T) {
+		defer teardown()
 		// Run test
 		err := linkDatabase(context.Background(), pgconn.Config{})
 		// Check error
@@ -292,6 +291,7 @@ func TestLinkDatabase(t *testing.T) {
 	})
 
 	t.Run("ignores missing server version", func(t *testing.T) {
+		defer teardown()
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
 			"standard_conforming_strings": "on",
@@ -309,6 +309,7 @@ func TestLinkDatabase(t *testing.T) {
 	})
 
 	t.Run("updates config to newer db version", func(t *testing.T) {
+		defer teardown()
 		utils.Config.Db.MajorVersion = 14
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
@@ -331,6 +332,7 @@ func TestLinkDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on query failure", func(t *testing.T) {
+		defer teardown()
 		utils.Config.Db.MajorVersion = 14
 		// Setup mock postgres
 		conn := pgtest.NewConn()
