@@ -462,7 +462,7 @@ func bindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 		if err != nil {
 			return nil, err
 		}
-		contents, err := json.Marshal(resolved)
+		contents, err := json.MarshalIndent(resolved, "", "    ")
 		if err != nil {
 			return nil, err
 		}
