@@ -300,6 +300,8 @@ func resolveHostPath(hostPath string, fsys afero.Fs) string {
 	if exists, _ := afero.Exists(fsys, rebased); !exists {
 		return hostPath
 	}
+	// Directory imports need to be suffixed with /
+	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
 	if strings.HasSuffix(hostPath, "/") {
 		rel += "/"
 	}
