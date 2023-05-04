@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bufio"
 	_ "embed"
 	"io/fs"
 	"os"
@@ -44,6 +45,7 @@ func TestSplitAndTrim(t *testing.T) {
 	sql := "\tBEGIN; " + strings.Repeat("a", MaxScannerCapacity)
 	stats, err := SplitAndTrim(strings.NewReader(sql))
 	// Check error
-	assert.ErrorContains(t, err, "bufio.Scanner: token too long\nAfter statement 1: \tBEGIN;")
+	assert.ErrorIs(t, err, bufio.ErrTooLong)
+	assert.ErrorContains(t, err, "After statement 1: \tBEGIN;")
 	assert.ElementsMatch(t, []string{"BEGIN"}, stats)
 }

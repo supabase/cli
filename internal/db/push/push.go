@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 )
 
 var (
@@ -82,30 +82,10 @@ func getPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([
 
 func pushMigration(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Pushing migration "+utils.Bold(filename)+"...")
-	sql, err := fsys.Open(filepath.Join(utils.MigrationsDir, filename))
+	path := filepath.Join(utils.MigrationsDir, filename)
+	migration, err := apply.NewMigrationFromFile(path, fsys)
 	if err != nil {
 		return err
 	}
-	lines, err := parser.SplitAndTrim(sql)
-	if err != nil {
-		return err
-	}
-	batch := pgconn.Batch{}
-	for _, line := range lines {
-		batch.ExecParams(line, nil, nil, nil, nil)
-	}
-	// Insert into migration history
-	lines = append(lines, repair.INSERT_MIGRATION_VERSION)
-	version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-	repair.InsertVersionSQL(&batch, version)
-	// ExecBatch is implicitly transactional
-	if result, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		i := len(result)
-		var stat string
-		if i < len(lines) {
-			stat = lines[i]
-		}
-		return fmt.Errorf("%v\nAt statement %d: %s", err, i, utils.Aqua(stat))
-	}
-	return nil
+	return migration.ExecBatch(ctx, conn)
 }

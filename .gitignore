@@ -16,11 +16,11 @@
 # vendor/
 
 # IDE
-.vscode
+/.vscode
 
 # NPM
 node_modules
 package-lock.json
 
 # Initialised by cli for local testing
-supabase/
+/supabase

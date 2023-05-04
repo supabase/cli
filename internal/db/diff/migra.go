@@ -168,26 +168,6 @@ func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*
 	return apply.MigrateDatabase(ctx, conn, fsys)
 }
 
-// Applies local migration scripts to a database.
-func ApplyMigrations(ctx context.Context, url string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	// Parse connection url
-	config, err := pgx.ParseConfig(url)
-	if err != nil {
-		return err
-	}
-	// Apply config overrides
-	for _, op := range options {
-		op(config)
-	}
-	// Connect to database
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	return apply.MigrateDatabase(ctx, conn, fsys)
-}
-
 // Diffs local database schema against shadow, dumps output to stdout.
 func DiffSchemaMigra(ctx context.Context, source, target string, schema []string) (string, error) {
 	env := []string{"SOURCE=" + source, "TARGET=" + target}

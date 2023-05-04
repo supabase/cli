@@ -16,12 +16,10 @@ var (
 		Use:     "login",
 		Short:   "Authenticate using an access token",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := login.Run(os.Stdin, afero.NewOsFs()); err != nil {
-				return err
-			}
-
+			return login.Run(os.Stdin, afero.NewOsFs())
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase login") + ".")
-			return nil
 		},
 	}
 )

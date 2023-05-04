@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
 )
 
 const SET_POSTGRES_ROLE = "SET ROLE postgres;"
@@ -37,15 +37,8 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 	}
 
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
-	{
-		fmt.Fprintln(os.Stderr, "Resetting database...")
-		if err := RecreateDatabase(ctx, options...); err != nil {
-			return err
-		}
-		defer RestartDatabase(context.Background())
-		if err := resetDatabase(ctx, fsys, options...); err != nil {
-			return err
-		}
+	if err := resetDatabase(ctx, fsys, options...); err != nil {
+		return err
 	}
 
 	branch, err := utils.GetCurrentBranchFS(fsys)
@@ -59,13 +52,22 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 }
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Resetting database...")
+	if err := RecreateDatabase(ctx, options...); err != nil {
+		return err
+	}
+	defer RestartDatabase(context.Background(), os.Stderr)
+	return initDatabase(ctx, fsys, options...)
+}
+
+func initDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.Port)
 	conn, err := utils.ConnectByUrl(ctx, url, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(os.Stderr, "Initialising schema...")
+	fmt.Fprintln(os.Stderr, "Initializing schema...")
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
 		return err
 	}
@@ -102,24 +104,15 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	sql, err := fsys.Open(utils.SeedDataPath)
+	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
+	seed, err := apply.NewMigrationFromFile(utils.SeedDataPath, fsys)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	defer sql.Close()
-	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	lines, err := parser.SplitAndTrim(sql)
-	if err != nil {
-		return err
-	}
 	// Batch seed commands, safe to use statement cache
-	batch := pgx.Batch{}
-	for _, line := range lines {
-		batch.Queue(line)
-	}
-	return conn.SendBatch(ctx, &batch).Close()
+	return seed.ExecBatchWithCache(ctx, conn)
 }
 
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
@@ -138,24 +131,29 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	return nil
 }
 
-func RestartDatabase(ctx context.Context) {
+func RestartDatabase(ctx context.Context, w io.Writer) {
+	fmt.Fprintln(w, "Restarting containers...")
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to restart database:", err)
+		fmt.Fprintln(w, "Failed to restart database:", err)
 		return
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
-		fmt.Fprintln(os.Stderr, "Database is not healthy.")
+		fmt.Fprintln(w, "Database is not healthy.")
 		return
 	}
 	// TODO: update storage-api to handle postgres restarts
 	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to restart storage-api:", err)
+		fmt.Fprintln(w, "Failed to restart storage-api:", err)
 	}
 	// Reload PostgREST schema cache.
 	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		fmt.Fprintln(os.Stderr, "Error reloading PostgREST schema cache:", err)
+		fmt.Fprintln(w, "Error reloading PostgREST schema cache:", err)
+	}
+	// TODO: update gotrue to handle postgres restarts
+	if err := utils.Docker.ContainerRestart(ctx, utils.GotrueId, container.StopOptions{}); err != nil {
+		fmt.Fprintln(w, "Failed to restart gotrue:", err)
 	}
 }
 

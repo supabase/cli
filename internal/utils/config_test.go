@@ -19,17 +19,19 @@ var (
 func TestConfigParsing(t *testing.T) {
 	// Reset global variable
 	copy := initConfigTemplate
-	t.Cleanup(func() {
+	teardown := func() {
 		initConfigTemplate = copy
-	})
+	}
 
 	t.Run("classic config file", func(t *testing.T) {
+		defer teardown()
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, false))
 		assert.NoError(t, LoadConfigFS(fsys))
 	})
 
 	t.Run("config file with environment variables", func(t *testing.T) {
+		defer teardown()
 		initConfigTemplate = testInitConfigTemplate
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -44,6 +46,7 @@ func TestConfigParsing(t *testing.T) {
 	})
 
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {
+		defer teardown()
 		initConfigTemplate = testInitConfigTemplate
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -117,4 +120,15 @@ func TestFileSizeLimitConfigParsing(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, sizeInBytes(0), testConfig.Storage.FileSizeLimit)
 	})
+}
+
+func TestSanitizeProjectI(t *testing.T) {
+	// Preserves valid consecutive characters
+	assert.Equal(t, "abc", sanitizeProjectId("abc"))
+	assert.Equal(t, "a..b_c", sanitizeProjectId("a..b_c"))
+	// Removes leading special characters
+	assert.Equal(t, "abc", sanitizeProjectId("_abc"))
+	assert.Equal(t, "abc", sanitizeProjectId("_@abc"))
+	// Replaces consecutive invalid characters with a single _
+	assert.Equal(t, "a_bc-", sanitizeProjectId("a@@bc-"))
 }

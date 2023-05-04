@@ -1,18 +1,12 @@
 package utils
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/md5"
-	"embed"
+	_ "embed"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -20,7 +14,6 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 // Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
@@ -29,7 +22,7 @@ var Version string
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.70"
+	Pg15Image = "supabase/postgres:15.1.0.73"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -37,14 +30,14 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.60.7"
-	StudioImage      = "supabase/studio:20230330-99fed3d"
+	StudioImage      = "supabase/studio:20230428-6ff285f"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.2.12"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.2.18"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.51.4"
+	GotrueImage   = "supabase/gotrue:v2.60.7"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.37.4"
 	LogflareImage = "supabase/logflare:1.0.2"
@@ -86,7 +79,6 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
-	AccessTokenKey = "access-token"
 )
 
 var (
@@ -99,10 +91,6 @@ var (
 	//go:embed templates/globals.sql
 	GlobalsSql string
 
-	//go:embed denos/*
-	denoEmbedDir embed.FS
-
-	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
@@ -173,6 +161,8 @@ var (
 
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
+	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
+	ImportMapsDir         = filepath.Join(SupabaseDirPath, ".temp", "import_maps")
 	ProjectRefPath        = filepath.Join(SupabaseDirPath, ".temp", "project-ref")
 	RemoteDbPath          = filepath.Join(SupabaseDirPath, ".temp", "remote-db-url")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
@@ -183,11 +173,6 @@ var (
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
-)
-
-// Used by unit tests
-var (
-	DenoPathOverride string
 )
 
 func GetCurrentTimestamp() string {
@@ -315,6 +300,13 @@ func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
 	return nil
 }
 
+func WriteFile(path string, contents []byte, fsys afero.Fs) error {
+	if err := MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, path, contents, 0644)
+}
+
 func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
@@ -345,221 +337,6 @@ func LoadProjectRef(fsys afero.Fs) (string, error) {
 		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 	}
 	return projectRef, nil
-}
-
-func GetDenoPath() (string, error) {
-	if len(DenoPathOverride) > 0 {
-		return DenoPathOverride, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	denoBinName := "deno"
-	if runtime.GOOS == "windows" {
-		denoBinName = "deno.exe"
-	}
-	denoPath := filepath.Join(home, ".supabase", denoBinName)
-	return denoPath, nil
-}
-
-func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
-	denoPath, err := GetDenoPath()
-	if err != nil {
-		return err
-	}
-
-	if _, err := fsys.Stat(denoPath); err == nil {
-		// Upgrade Deno.
-		cmd := exec.CommandContext(ctx, denoPath, "upgrade", "--version", DenoVersion)
-		cmd.Stderr = os.Stderr
-		cmd.Stdout = os.Stdout
-		return cmd.Run()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	// Install Deno.
-	if err := MkdirIfNotExistFS(fsys, filepath.Dir(denoPath)); err != nil {
-		return err
-	}
-
-	// 1. Determine OS triple
-	var assetFilename string
-	assetRepo := "denoland/deno"
-	{
-		if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-apple-darwin.zip"
-		} else if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-			assetFilename = "deno-aarch64-apple-darwin.zip"
-		} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-unknown-linux-gnu.zip"
-		} else if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-			// TODO: version pin to official release once available https://github.com/denoland/deno/issues/1846
-			assetRepo = "LukeChannings/deno-arm64"
-			assetFilename = "deno-linux-arm64.zip"
-		} else if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-pc-windows-msvc.zip"
-		} else {
-			return errors.New("Platform " + runtime.GOOS + "/" + runtime.GOARCH + " is currently unsupported for Functions.")
-		}
-	}
-
-	// 2. Download & install Deno binary.
-	{
-		assetUrl := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", assetRepo, DenoVersion, assetFilename)
-		req, err := http.NewRequestWithContext(ctx, "GET", assetUrl, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return errors.New("Failed installing Deno binary.")
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-
-		r, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-		// There should be only 1 file: the deno binary
-		if len(r.File) != 1 {
-			return err
-		}
-		denoContents, err := r.File[0].Open()
-		if err != nil {
-			return err
-		}
-		defer denoContents.Close()
-
-		denoBytes, err := io.ReadAll(denoContents)
-		if err != nil {
-			return err
-		}
-
-		if err := afero.WriteFile(fsys, denoPath, denoBytes, 0755); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func isScriptModified(fsys afero.Fs, destPath string, src []byte) (bool, error) {
-	dest, err := afero.ReadFile(fsys, destPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	// compare the md5 checksum of src bytes with user's copy.
-	// if the checksums doesn't match, script is modified.
-	return md5.Sum(dest) != md5.Sum(src), nil
-}
-
-type DenoScriptDir struct {
-	ExtractPath string
-	BuildPath   string
-}
-
-// Copy Deno scripts needed for function deploy and downloads, returning a DenoScriptDir struct or an error.
-func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error) {
-	denoPath, err := GetDenoPath()
-	if err != nil {
-		return nil, err
-	}
-
-	denoDirPath := filepath.Dir(denoPath)
-	scriptDirPath := filepath.Join(denoDirPath, "denos")
-
-	// make the script directory if not exist
-	if err := MkdirIfNotExistFS(fsys, scriptDirPath); err != nil {
-		return nil, err
-	}
-
-	// copy embed files to script directory
-	err = fs.WalkDir(denoEmbedDir, "denos", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// skip copying the directory
-		if d.IsDir() {
-			return nil
-		}
-
-		destPath := filepath.Join(denoDirPath, path)
-
-		contents, err := fs.ReadFile(denoEmbedDir, path)
-		if err != nil {
-			return err
-		}
-
-		// check if the script should be copied
-		modified, err := isScriptModified(fsys, destPath, contents)
-		if err != nil {
-			return err
-		}
-		if !modified {
-			return nil
-		}
-
-		if err := afero.WriteFile(fsys, filepath.Join(denoDirPath, path), contents, 0666); err != nil {
-			return err
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	sd := DenoScriptDir{
-		ExtractPath: filepath.Join(scriptDirPath, "extract.ts"),
-		BuildPath:   filepath.Join(scriptDirPath, "build.ts"),
-	}
-
-	return &sd, nil
-}
-
-func LoadAccessToken() (string, error) {
-	return LoadAccessTokenFS(afero.NewOsFs())
-}
-
-func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
-	// Env takes precedence
-	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
-		if !AccessTokenPattern.MatchString(accessToken) {
-			return "", errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
-		}
-		return accessToken, nil
-	}
-	// Load from native credentials store
-	if token, err := credentials.Get(AccessTokenKey); err == nil {
-		return token, nil
-	}
-	// Fallback to home directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	accessTokenPath := filepath.Join(home, ".supabase", AccessTokenKey)
-	accessToken, err := afero.ReadFile(fsys, accessTokenPath)
-	if errors.Is(err, os.ErrNotExist) || string(accessToken) == "" {
-		return "", errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
-	} else if err != nil {
-		return "", err
-	}
-	return string(accessToken), nil
 }
 
 func ValidateFunctionSlug(slug string) error {

@@ -1,8 +1,10 @@
 package reset
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -68,7 +71,7 @@ func TestResetCommand(t *testing.T) {
 	})
 }
 
-func TestResetDatabase(t *testing.T) {
+func TestInitDatabase(t *testing.T) {
 	t.Run("initialises postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
@@ -82,7 +85,7 @@ func TestResetDatabase(t *testing.T) {
 			Query(SET_POSTGRES_ROLE).
 			Reply("SET ROLE")
 		// Run test
-		assert.NoError(t, resetDatabase(context.Background(), fsys, conn.Intercept))
+		assert.NoError(t, initDatabase(context.Background(), fsys, conn.Intercept))
 	})
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
@@ -90,9 +93,9 @@ func TestResetDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := resetDatabase(context.Background(), fsys)
+		err := initDatabase(context.Background(), fsys)
 		// Check error
-		assert.ErrorContains(t, err, "invalid port")
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on duplicate schema", func(t *testing.T) {
@@ -106,9 +109,28 @@ func TestResetDatabase(t *testing.T) {
 		conn.Query(utils.InitialSchemaSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := resetDatabase(context.Background(), fsys, conn.Intercept)
+		err := initDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
+	})
+
+	t.Run("throws error on failure to switch role", func(t *testing.T) {
+		utils.Config.Db.Port = 54322
+		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA").
+			Query(SET_POSTGRES_ROLE).
+			Reply("SET ROLE").
+			ReplyError(pgerrcode.InvalidParameterValue, `role "test" does not exist`)
+		// Run test
+		err := initDatabase(context.Background(), fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: role "test" does not exist (SQLSTATE 22023)`)
 	})
 
 	t.Run("throws error on migration failure", func(t *testing.T) {
@@ -129,7 +151,7 @@ func TestResetDatabase(t *testing.T) {
 			Query(sql).
 			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
 		// Run test
-		err := resetDatabase(context.Background(), fsys, conn.Intercept)
+		err := initDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: table "example" already exists (SQLSTATE 42710)`)
 	})
@@ -158,6 +180,15 @@ func TestSeedDatabase(t *testing.T) {
 
 	t.Run("ignores missing seed", func(t *testing.T) {
 		assert.NoError(t, SeedDatabase(context.Background(), nil, afero.NewMemMapFs()))
+	})
+
+	t.Run("throws error on read failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.SeedDataPath}
+		// Run test
+		err := SeedDatabase(context.Background(), nil, fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
 	t.Run("throws error on insert failure", func(t *testing.T) {
@@ -258,7 +289,7 @@ func TestRestartDatabase(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		// Restarts storage api
+		// Restarts postgres
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
@@ -275,15 +306,38 @@ func TestRestartDatabase(t *testing.T) {
 		utils.RestId = "test-rest"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RestId + "/kill").
-			Reply(http.StatusOK)
+			Reply(http.StatusServiceUnavailable)
+		// Restarts storage-api
 		utils.StorageId = "test-storage"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
 			Reply(http.StatusServiceUnavailable)
+		// Restarts gotrue
+		utils.GotrueId = "test-auth"
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.GotrueId + "/restart").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
-		RestartDatabase(context.Background())
+		RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("logs error on restart failure", func(t *testing.T) {
+		utils.DbId = "test-db"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		var stderr bytes.Buffer
+		RestartDatabase(context.Background(), &stderr)
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Contains(t, stderr.String(), "Failed to restart database")
 	})
 
 	t.Run("timeout health check", func(t *testing.T) {
@@ -296,7 +350,7 @@ func TestRestartDatabase(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
 		// Run test
-		RestartDatabase(context.Background())
+		RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
