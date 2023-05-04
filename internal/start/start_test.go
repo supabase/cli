@@ -187,7 +187,7 @@ func TestDatabaseStart(t *testing.T) {
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
 			utils.StorageId, utils.ImgProxyId, utils.DenoRelayId, utils.PgmetaId, utils.StudioId,
-			utils.LogflareId,
+			utils.LogflareId, utils.RestId,
 		}
 		for _, container := range started {
 			gock.New(utils.Docker.DaemonHost()).
@@ -202,6 +202,9 @@ func TestDatabaseStart(t *testing.T) {
 		}
 		gock.New("localhost").
 			Head("/rest/v1/").
+			Reply(http.StatusOK)
+		gock.New("localhost").
+			Head("/functions/v1/_internal/health").
 			Reply(http.StatusOK)
 		// Run test
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
