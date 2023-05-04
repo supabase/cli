@@ -1619,32 +1619,32 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('0bf3859e-9d2f-4490-a611-22b938249f45', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-04-26 13:46:10', '2023-04-26 13:46:10');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('f588315d-df22-4da1-8bb0-3ef666543de8', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-05-04 16:17:06', '2023-05-04 16:17:06');
 
 
 --
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-04-26 13:46:08');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-04-26 13:46:09');
-INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-04-26 13:46:09');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20210706140551, '2023-05-04 16:17:05');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220329161857, '2023-05-04 16:17:05');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220410212326, '2023-05-04 16:17:05');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220506102948, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220527210857, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815211129, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220815215024, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20220818141501, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221018173709, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-05-04 16:17:06');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-05-04 16:17:06');
 
 
 --
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: supabase_admin
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('746f7d92-617e-4cdc-a605-d1dac4e74c9c', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-26 13:46:10', '2023-04-26 13:46:10', 100, 'postgres_cdc_rls', 100000, 100, 500);
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('8f09134b-33cb-41e5-ab17-ffa5de554833', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-05-04 16:17:06', '2023-05-04 16:17:06', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -1791,22 +1791,22 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20230411005111');
 -- Data for Name: migrations; Type: TABLE DATA; Schema: storage; Owner: supabase_storage_admin
 --
 
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2023-04-06 08:00:54.875113');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2023-04-06 08:00:54.893123');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2023-04-06 08:00:54.903069');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2023-04-06 08:00:54.977572');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2023-04-06 08:00:55.007177');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2023-04-06 08:00:55.017454');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2023-04-06 08:00:55.03386');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2023-04-06 08:00:55.041908');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2023-04-06 08:00:55.052594');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2023-04-06 08:00:55.058769');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2023-04-06 08:00:55.068775');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-04-06 08:00:55.07397');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-04-06 08:00:55.083113');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-04-06 08:00:55.090631');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 08:00:55.108943');
-INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 08:00:55.116335');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (0, 'create-migrations-table', 'e18db593bcde2aca2a408c4d1100f6abba2195df', '2023-05-04 16:17:08.409811');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (1, 'initialmigration', '6ab16121fbaa08bbd11b712d05f358f9b555d777', '2023-05-04 16:17:08.418955');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (2, 'pathtoken-column', '49756be03be4c17bb85fe70d4a861f27de7e49ad', '2023-05-04 16:17:08.422695');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (3, 'add-migrations-rls', 'bb5d124c53d68635a883e399426c6a5a25fc893d', '2023-05-04 16:17:08.440202');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (4, 'add-size-functions', '6d79007d04f5acd288c9c250c42d2d5fd286c54d', '2023-05-04 16:17:08.442733');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (5, 'change-column-name-in-get-size', 'fd65688505d2ffa9fbdc58a944348dd8604d688c', '2023-05-04 16:17:08.445605');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (6, 'add-rls-to-buckets', '63e2bab75a2040fee8e3fb3f15a0d26f3380e9b6', '2023-05-04 16:17:08.448891');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (7, 'add-public-to-buckets', '82568934f8a4d9e0a85f126f6fb483ad8214c418', '2023-05-04 16:17:08.450621');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (8, 'fix-search-function', '1a43a40eddb525f2e2f26efd709e6c06e58e059c', '2023-05-04 16:17:08.452596');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (9, 'search-files-search-function', '34c096597eb8b9d077fdfdde9878c88501b2fafc', '2023-05-04 16:17:08.455412');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (10, 'add-trigger-to-auto-update-updated_at-column', '37d6bb964a70a822e6d37f22f457b9bca7885928', '2023-05-04 16:17:08.457981');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (11, 'add-automatic-avif-detection-flag', 'bd76c53a9c564c80d98d119c1b3a28e16c8152db', '2023-05-04 16:17:08.461777');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bucket-custom-limits', 'cbe0a4c32a0e891554a21020433b7a4423c07ee7', '2023-05-04 16:17:08.466792');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-05-04 16:17:08.469755');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-05-04 16:17:08.481969');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-05-04 16:17:08.484029');
 
 
 --
@@ -1825,8 +1825,8 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-ve
 -- Data for Name: migrations; Type: TABLE DATA; Schema: supabase_functions; Owner: supabase_functions_admin
 --
 
-INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('initial', '2023-03-08 06:28:46.163363+00');
-INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('20210809183423_update_grants', '2023-03-08 06:28:46.163363+00');
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('initial', '2023-05-04 16:17:00.09346+00');
+INSERT INTO supabase_functions.migrations (version, inserted_at) VALUES ('20210809183423_update_grants', '2023-05-04 16:17:00.09346+00');
 
 
 --
@@ -3799,7 +3799,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 ALTER EVENT TRIGGER issue_graphql_placeholder OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
+-- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
 --
 
 CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
@@ -3807,7 +3807,7 @@ CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
    EXECUTE FUNCTION extensions.grant_pg_cron_access();
 
 
-ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO supabase_admin;
+ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO postgres;
 
 --
 -- Name: issue_pg_graphql_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
@@ -3821,7 +3821,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 ALTER EVENT TRIGGER issue_pg_graphql_access OWNER TO supabase_admin;
 
 --
--- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin
+-- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: postgres
 --
 
 CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
@@ -3829,7 +3829,7 @@ CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
    EXECUTE FUNCTION extensions.grant_pg_net_access();
 
 
-ALTER EVENT TRIGGER issue_pg_net_access OWNER TO supabase_admin;
+ALTER EVENT TRIGGER issue_pg_net_access OWNER TO postgres;
 
 --
 -- Name: pgrst_ddl_watch; Type: EVENT TRIGGER; Schema: -; Owner: supabase_admin

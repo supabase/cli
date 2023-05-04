@@ -3,7 +3,7 @@
 --
 
 -- Dumped from database version 13.3 (Debian 13.3-1.pgdg100+1)
--- Dumped by pg_dump version 15.0
+-- Dumped by pg_dump version 15.2 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -1338,7 +1338,7 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('2cf6aa79-fd75-42e1-921c-f381bd3fbe04', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-04-27 04:38:37', '2023-04-27 04:38:37');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('4ced9642-c25d-47c5-9345-98004de54b9c', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-05-04 16:26:06', '2023-05-04 16:26:06');
 
 
 --
@@ -1363,7 +1363,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202301101
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('96efa2fb-8374-4b8d-bb95-40d11279aab8', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-27 04:38:37', '2023-04-27 04:38:37', 100, 'postgres_cdc_rls', 100000, 100, 500);
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('e3590739-ab9e-4687-89a3-d2ca3bfb863c', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-05-04 16:26:06', '2023-05-04 16:26:06', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -3014,4 +3014,5 @@ ALTER EVENT TRIGGER pgrst_drop_watch OWNER TO supabase_admin;
 -- PostgreSQL database dump complete
 --
 
+DROP EXTENSION pg_graphql; CREATE EXTENSION pg_graphql WITH SCHEMA graphql;
 RESET ALL;

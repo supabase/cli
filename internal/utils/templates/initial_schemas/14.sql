@@ -3,7 +3,7 @@
 --
 
 -- Dumped from database version 14.5 (Debian 14.5-2.pgdg110+2)
--- Dumped by pg_dump version 15.0
+-- Dumped by pg_dump version 15.2 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -1546,7 +1546,7 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('4a4557ef-8e02-44b2-bd31-d828660385e1', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-04-27 04:30:58', '2023-04-27 04:30:58');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('fb0da028-3a30-4ba0-8f4f-5acf2f1669f8', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-05-04 16:29:37', '2023-05-04 16:29:37');
 
 
 --
@@ -1571,7 +1571,7 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202301101
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('33811002-8eb1-4100-bad2-f6f9881501c3', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-27 04:30:58', '2023-04-27 04:30:58', 100, 'postgres_cdc_rls', 100000, 100, 500);
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('0031e2db-17c2-41e7-90aa-516d295c1ace', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-05-04 16:29:37', '2023-05-04 16:29:37', 100, 'postgres_cdc_rls', 100000, 100, 500);
 
 
 --
@@ -2417,7 +2417,7 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 
 
 --
--- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: postgres
 --
 
 GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
@@ -2896,96 +2896,78 @@ GRANT ALL ON FUNCTION extensions.verify(token text, secret text, algorithm text)
 
 
 --
--- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION comment_directive(comment_ text); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO postgres;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO anon;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.comment_directive(comment_ text) TO service_role;
 
 
 --
--- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION exception(message text); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.exception(message text) TO postgres;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO anon;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO authenticated;
 GRANT ALL ON FUNCTION graphql.exception(message text) TO service_role;
 
 
 --
--- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION get_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.get_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.get_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION increment_schema_version(); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.increment_schema_version() TO postgres;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO anon;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO authenticated;
 GRANT ALL ON FUNCTION graphql.increment_schema_version() TO service_role;
 
 
 --
--- Name: FUNCTION sequential_executor(prepared_statement_names text[]); Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: FUNCTION sequential_executor(prepared_statement_names text[]); Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO postgres;
 GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO anon;
 GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO authenticated;
 GRANT ALL ON FUNCTION graphql.sequential_executor(prepared_statement_names text[]) TO service_role;
 
 
 --
--- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: supabase_admin
---
-
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
--- GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
-
-
---
--- Name: FUNCTION http_collect_response(request_id bigint, async boolean); Type: ACL; Schema: net; Owner: supabase_admin
+-- Name: FUNCTION http_collect_response(request_id bigint, async boolean); Type: ACL; Schema: net; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO postgres;
 GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO anon;
 GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO authenticated;
 GRANT ALL ON FUNCTION net.http_collect_response(request_id bigint, async boolean) TO service_role;
 
 
 --
--- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+-- Name: FUNCTION http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
 GRANT ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
 
 
 --
--- Name: FUNCTION http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: supabase_admin
+-- Name: FUNCTION http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer); Type: ACL; Schema: net; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin;
-GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO postgres;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO anon;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO authenticated;
 GRANT ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO service_role;
@@ -3193,10 +3175,9 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 
 
 --
--- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: supabase_admin
+-- Name: SEQUENCE seq_schema_version; Type: ACL; Schema: graphql; Owner: postgres
 --
 
-GRANT ALL ON SEQUENCE graphql.seq_schema_version TO postgres;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO anon;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO authenticated;
 GRANT ALL ON SEQUENCE graphql.seq_schema_version TO service_role;
@@ -3304,6 +3285,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3314,6 +3305,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3321,6 +3322,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
 
 
 --
