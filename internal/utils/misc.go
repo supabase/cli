@@ -37,7 +37,7 @@ const (
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.60.7"
+	GotrueImage   = "supabase/gotrue:v2.62.1"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.37.4"
 	LogflareImage = "supabase/logflare:1.0.2"
