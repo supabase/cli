@@ -31,7 +31,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	return RenderTable(remoteVersions, localVersions)
+	table := makeTable(remoteVersions, localVersions)
+	return RenderTable(table)
 }
 
 func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
@@ -111,8 +112,7 @@ func makeTable(remoteMigrations, localMigrations []string) string {
 	return table
 }
 
-func RenderTable(remoteVersions, localVersions []string) error {
-	table := makeTable(remoteVersions, localVersions)
+func RenderTable(markdown string) error {
 	r, err := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(-1),
@@ -120,7 +120,7 @@ func RenderTable(remoteVersions, localVersions []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := r.Render(table)
+	out, err := r.Render(markdown)
 	if err != nil {
 		return err
 	}
