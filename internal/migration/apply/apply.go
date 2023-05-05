@@ -26,8 +26,10 @@ func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 }
 
 func MigrateUp(ctx context.Context, conn *pgx.Conn, pending []string, fsys afero.Fs) error {
-	if err := repair.CreateMigrationTable(ctx, conn); err != nil {
-		return err
+	if len(pending) > 0 {
+		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+			return err
+		}
 	}
 	for _, filename := range pending {
 		if err := applyMigration(ctx, conn, filename, fsys); err != nil {

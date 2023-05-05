@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -137,23 +136,18 @@ func TestInitDatabase(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_table.sql")
-		sql := "CREATE TABLE example()"
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA").
 			Query(SET_POSTGRES_ROLE).
-			Reply("SET ROLE").
-			Query(sql).
-			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
+			Reply("SET ROLE")
 		// Run test
 		err := initDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, `ERROR: table "example" already exists (SQLSTATE 42710)`)
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
