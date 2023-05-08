@@ -6,6 +6,7 @@ set -euo pipefail
 # Explanation of special flags:
 #
 #   --column-inserts  include migration history, but not pgsodium key
+#   --no-comments     only object owner can set comment, omit to allow restore by non-superuser
 pg_dump \
     --column-inserts \
     --exclude-table-data 'pgsodium.key' \
