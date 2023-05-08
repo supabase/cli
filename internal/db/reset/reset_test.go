@@ -311,6 +311,11 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.GotrueId + "/restart").
 			Reply(http.StatusServiceUnavailable)
+		// Restarts realtime
+		utils.RealtimeId = "test-realtime"
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RealtimeId + "/restart").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		RestartDatabase(context.Background(), io.Discard)
 		// Check error

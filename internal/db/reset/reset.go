@@ -155,6 +155,10 @@ func RestartDatabase(ctx context.Context, w io.Writer) {
 	if err := utils.Docker.ContainerRestart(ctx, utils.GotrueId, container.StopOptions{}); err != nil {
 		fmt.Fprintln(w, "Failed to restart gotrue:", err)
 	}
+	// TODO: update realtime to handle postgres restarts
+	if err := utils.Docker.ContainerRestart(ctx, utils.RealtimeId, container.StopOptions{}); err != nil {
+		fmt.Fprintln(w, "Failed to restart realtime:", err)
+	}
 }
 
 func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
