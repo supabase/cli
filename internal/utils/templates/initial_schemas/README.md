@@ -14,7 +14,7 @@ Because Realtime, GoTrue, Logflare, and Storage have their own migrations, and t
 
 ```bash
 go run . init
-go run . start -x gotrue,storage-api,imgproxy
+go run . start
 ```
 
 2. Run the initial dump script and pipe output to `15.sql`
@@ -27,7 +27,7 @@ go run . start -x gotrue,storage-api,imgproxy
 
 - `INSERT INTO _realtime.extensions` and `_realtime.tenants` usually do not require updating.
 - `INSERT INTO *.schema_migrations` statements are only required if there are new migrations.
-- `ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO` should be followed by `supabase_admin`.
+- `ALTER EVENT TRIGGER issue_pg_cron_access OWNER TO` should be followed by supabase_admin.
 
 4. Set `major_version = 14` in `supabase/config.toml` and repeat steps 1-3 to update `14.sql`
 5. Set `major_version = 13` in `supabase/config.toml` and repeat steps 1-3 to update `13.sql`
