@@ -239,7 +239,8 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 		Force:         true,
 	})
 	// 3. Serve and log to console
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, os.Stderr, fsys); err != nil {
+	dbUrl := "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, os.Stderr, fsys); err != nil {
 		return err
 	}
 	if err := utils.DockerStreamLogs(ctx, utils.DenoRelayId, os.Stdout, os.Stderr); err != nil {
@@ -249,7 +250,7 @@ func runServeAll(ctx context.Context, envFilePath string, noVerifyJWT *bool, imp
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, w io.Writer, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -279,7 +280,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_URL=http://" + utils.KongId + ":8000",
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-		"SUPABASE_DB_URL=postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres",
+		"SUPABASE_DB_URL=" + dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + dockerFuncDirPath,
