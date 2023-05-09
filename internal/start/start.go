@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
@@ -28,7 +29,7 @@ import (
 
 var errUnhealthy = errors.New("service not healthy")
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, dbUrl string) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -45,7 +46,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, fsys, excludedContainers)
+		return run(p, ctx, fsys, excludedContainers, dbUrl)
 	}); err != nil {
 		if ignoreHealthCheck && errors.Is(err, errUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
@@ -94,10 +95,14 @@ var (
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
 
-func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, options ...func(*pgx.ConnConfig)) error {
+func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbUrl string, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
+	}
+	dbConfig, err := pgconn.ParseConfig(dbUrl)
+	if err != nil && len(dbUrl) > 0 {
+		return err
 	}
 
 	// Pull images.
@@ -175,8 +180,17 @@ EOF
 
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
-	if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
-		return err
+	if len(dbUrl) == 0 {
+		if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
+			return err
+		}
+		dbConfig = &pgconn.Config{
+			Host:     utils.DbId,
+			User:     "postgres",
+			Password: "postgres",
+			Port:     5432,
+			Database: "postgres",
+		}
 	}
 
 	var started []string
@@ -193,12 +207,12 @@ EOF
 				Hostname: "127.0.0.1",
 				Image:    utils.LogflareImage,
 				Env: []string{
-					"DB_DATABASE=postgres",
-					"DB_HOSTNAME=" + utils.DbId,
-					"DB_PORT=5432",
+					"DB_DATABASE=" + dbConfig.Database,
+					"DB_HOSTNAME=" + dbConfig.Host,
+					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 					"DB_SCHEMA=_analytics",
 					"DB_USERNAME=supabase_admin",
-					"DB_PASSWORD=postgres",
+					"DB_PASSWORD=" + dbConfig.Password,
 					"LOGFLARE_MIN_CLUSTER_SIZE=1",
 					"LOGFLARE_SINGLE_TENANT=true",
 					"LOGFLARE_SUPABASE_MODE=true",
@@ -288,7 +302,7 @@ EOF
 			"GOTRUE_API_PORT=9999",
 
 			"GOTRUE_DB_DRIVER=postgres",
-			"GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:postgres@" + utils.DbId + ":5432/postgres",
+			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
@@ -401,11 +415,11 @@ EOF
 				Image: utils.RealtimeImage,
 				Env: []string{
 					"PORT=4000",
-					"DB_HOST=" + utils.DbId,
-					"DB_PORT=5432",
+					"DB_HOST=" + dbConfig.Host,
+					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 					"DB_USER=supabase_admin",
-					"DB_PASSWORD=postgres",
-					"DB_NAME=postgres",
+					"DB_PASSWORD=" + dbConfig.Password,
+					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=supabaserealtime",
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
@@ -446,7 +460,7 @@ EOF
 			container.Config{
 				Image: utils.PostgrestImage,
 				Env: []string{
-					"PGRST_DB_URI=postgresql://authenticator:postgres@" + utils.DbId + ":5432/postgres",
+					fmt.Sprintf("PGRST_DB_URI=postgresql://authenticator:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					"PGRST_DB_ANON_ROLE=anon",
@@ -475,7 +489,7 @@ EOF
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"POSTGREST_URL=http://" + utils.RestId + ":3000",
 					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"DATABASE_URL=postgresql://supabase_storage_admin:postgres@" + utils.DbId + ":5432/postgres",
+					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
 					"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
@@ -536,7 +550,8 @@ EOF
 
 	// Start all functions.
 	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
-		if err := serve.ServeFunctions(ctx, "", nil, "", w, fsys); err != nil {
+		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
+		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.DenoRelayId)
@@ -550,7 +565,11 @@ EOF
 				Image: utils.PgmetaImage,
 				Env: []string{
 					"PG_META_PORT=8080",
-					"PG_META_DB_HOST=" + utils.DbId,
+					"PG_META_DB_HOST=" + dbConfig.Host,
+					"PG_META_DB_NAME=" + dbConfig.Database,
+					"PG_META_DB_USER=" + dbConfig.User,
+					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
+					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
@@ -610,7 +629,7 @@ EOF
 	}
 
 	// Setup database after all services are up
-	return start.SetupDatabase(ctx, fsys, os.Stderr, options...)
+	return start.SetupDatabase(ctx, *dbConfig, fsys, os.Stderr, options...)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
