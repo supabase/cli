@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -280,7 +281,7 @@ func TestSetupDatabase(t *testing.T) {
 	t.Run("skips when backup exists", func(t *testing.T) {
 		noBackupVolume = false
 		// Run test
-		err := SetupDatabase(context.Background(), nil, io.Discard)
+		err := SetupDatabase(context.Background(), pgconn.Config{}, nil, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		// Reset variable
@@ -295,7 +296,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupDatabase(context.Background(), pgconn.Config{}, fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -305,7 +306,7 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
 		// Run test
-		err := SetupDatabase(context.Background(), fsys, io.Discard)
+		err := SetupDatabase(context.Background(), pgconn.Config{}, fsys, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -318,7 +319,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupDatabase(context.Background(), pgconn.Config{}, fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -335,7 +336,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn.Query(sql).
 			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
 		// Run test
-		err := SetupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupDatabase(context.Background(), pgconn.Config{}, fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
