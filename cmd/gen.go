@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/signal"
 
+	env "github.com/Netflix/go-env"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/types/typescript"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var (
@@ -15,6 +18,33 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "gen",
 		Short:   "Run code generation tools",
+	}
+
+	keyNames  keys.CustomName
+	keyOutput = utils.EnumFlag{
+		Allowed: []string{
+			utils.OutputEnv,
+			utils.OutputJson,
+			utils.OutputToml,
+			utils.OutputYaml,
+		},
+		Value: utils.OutputEnv,
+	}
+
+	genKeysCmd = &cobra.Command{
+		Use:   "keys",
+		Short: "Generate keys for preview branch",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			es, err := env.EnvironToEnvSet(override)
+			if err != nil {
+				return err
+			}
+			return env.Unmarshal(es, &keyNames)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return keys.Run(ctx, keyNames, keyOutput.Value, afero.NewOsFs())
+		},
 	}
 
 	genTypesCmd = &cobra.Command{
@@ -57,5 +87,9 @@ func init() {
 	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
+	keyFlags := genKeysCmd.Flags()
+	keyFlags.VarP(&keyOutput, "output", "o", "Output format of key variables.")
+	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
+	genCmd.AddCommand(genKeysCmd)
 	rootCmd.AddCommand(genCmd)
 }
