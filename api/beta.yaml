@@ -2372,14 +2372,18 @@ components:
     AttributeValue:
       type: object
       properties:
+        default:
+          oneOf:
+            - type: object
+            - type: number
+            - type: string
+            - type: boolean
         name:
           type: string
         names:
           type: array
           items:
             type: string
-        default:
-          type: object
     AttributeMapping:
       type: object
       properties:
