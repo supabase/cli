@@ -21,7 +21,7 @@ type CustomClaims struct {
 	jwt.RegisteredClaims
 }
 
-func NewJWTToken(ref, role string, expiry time.Time) (string, error) {
+func NewJWTToken(ref, role string, expiry time.Time) *jwt.Token {
 	claims := CustomClaims{
 		ref,
 		role,
@@ -30,13 +30,13 @@ func NewJWTToken(ref, role string, expiry time.Time) (string, error) {
 			Issuer:    "supabase",
 		},
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SigningString()
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 }
 
 type CustomName struct {
 	DbHost         string `env:"db.host,default=NEXT_PUBLIC_SUPABASE_URL"`
 	DbPassword     string `env:"db.password,default=SUPABASE_DB_PASSWORD"`
+	JWTSecret      string `env:"db.password,default=SUPABASE_AUTH_JWT_SECRET"`
 	AnonKey        string `env:"auth.anon_key,default=SUPABASE_AUTH_ANON_KEY"`
 	ServiceRoleKey string `env:"auth.service_role_key,default=SUPABASE_AUTH_SERVICE_ROLE_KEY"`
 }
@@ -61,17 +61,20 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	password := hex.EncodeToString(hash[:])
 	// Generate JWT tokens
 	expiry := time.Now().AddDate(10, 0, 0)
-	utils.Config.Auth.AnonKey, err = NewJWTToken(projectRef, "anon", expiry)
+	anonToken := NewJWTToken(projectRef, "anon", expiry)
+	utils.Config.Auth.AnonKey, err = anonToken.SignedString([]byte(utils.Config.Auth.JwtSecret))
 	if err != nil {
 		return err
 	}
-	utils.Config.Auth.ServiceRoleKey, err = NewJWTToken(projectRef, "service_role", expiry)
+	serviceToken := NewJWTToken(projectRef, "service_role", expiry)
+	utils.Config.Auth.ServiceRoleKey, err = serviceToken.SignedString([]byte(utils.Config.Auth.JwtSecret))
 	if err != nil {
 		return err
 	}
 	return utils.EncodeOutput(format, os.Stdout, map[string]string{
 		names.DbHost:         fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
 		names.DbPassword:     password,
+		names.JWTSecret:      utils.Config.Auth.JwtSecret,
 		names.AnonKey:        utils.Config.Auth.AnonKey,
 		names.ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
 	})
