@@ -87,10 +87,14 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
 	noBackupVolume = client.IsErrNotFound(err)
+	if noBackupVolume {
+		fmt.Fprintln(w, "Starting database...")
+	} else {
+		fmt.Fprintln(w, "Starting database from backup...")
+	}
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
