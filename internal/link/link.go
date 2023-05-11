@@ -83,7 +83,7 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func updateApiConfig(config api.PostgrestConfigResponse) {
+func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
 	maxRows := uint(config.MaxRows)
 	searchPath := readCsv(config.DbExtraSearchPath)
 	dbSchema := readCsv(config.DbSchema)
