@@ -25,6 +25,10 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 		if cmd.GroupID == groupManagementAPI {
 			return true
 		}
+		// Find the last assigned group
+		if len(cmd.GroupID) > 0 {
+			break
+		}
 		cmd = cmd.Parent()
 	}
 	return false

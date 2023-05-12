@@ -66,8 +66,8 @@ var (
 		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SetHelpCommandGroupID(groupLocalDev)
-			return cmd.Root().PersistentPostRunE(cmd, args)
+			cmd.GroupID = groupLocalDev
+			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -82,8 +82,8 @@ var (
 		Short: "Serve all Functions locally",
 		Args:  cobra.RangeArgs(0, 1),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SetHelpCommandGroupID(groupLocalDev)
-			return cmd.Root().PersistentPostRunE(cmd, args)
+			cmd.GroupID = groupLocalDev
+			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
