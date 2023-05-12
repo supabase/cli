@@ -87,7 +87,7 @@ type (
 	config struct {
 		ProjectId string              `toml:"project_id"`
 		Api       api                 `toml:"api"`
-		Db        db                  `toml:"db"`
+		Db        db                  `toml:"db" mapstructure:"db"`
 		Studio    studio              `toml:"studio"`
 		Inbucket  inbucket            `toml:"inbucket"`
 		Storage   storage             `toml:"storage"`
@@ -106,9 +106,10 @@ type (
 	}
 
 	db struct {
-		Port         uint `toml:"port"`
-		ShadowPort   uint `toml:"shadow_port"`
-		MajorVersion uint `toml:"major_version"`
+		Port         uint   `toml:"port"`
+		ShadowPort   uint   `toml:"shadow_port"`
+		MajorVersion uint   `toml:"major_version"`
+		Password     string `toml:"-" mapstructure:"password"`
 	}
 
 	studio struct {
@@ -251,6 +252,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			InitialSchemaSql = InitialSchemaPg15Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
+		}
+		if Config.Db.Password == "" {
+			Config.Db.Password = "postgres"
 		}
 		if Config.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
