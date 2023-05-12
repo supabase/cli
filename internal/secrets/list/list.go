@@ -12,21 +12,10 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
-	}
-
 	// 2. Print secrets.
 	{
-		projectRef, err := utils.LoadProjectRef(fsys)
-		if err != nil {
-			return err
-		}
-
 		resp, err := utils.GetSupabase().GetSecretsWithResponse(ctx, projectRef)
 		if err != nil {
 			return err
