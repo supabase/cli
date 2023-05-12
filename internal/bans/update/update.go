@@ -21,21 +21,9 @@ func validateIps(ips []string) error {
 	return nil
 }
 
-func Run(ctx context.Context, projectRefArg string, dbIpsToUnban []string, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	projectRef := projectRefArg
-
+func Run(ctx context.Context, projectRef string, dbIpsToUnban []string, fsys afero.Fs) error {
 	// 1. sanity checks
 	{
-		if len(projectRefArg) == 0 {
-			ref, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			projectRef = ref
-		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-		}
 		err := validateIps(dbIpsToUnban)
 		if err != nil {
 			return err

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/bans/get"
 	"github.com/supabase/cli/internal/bans/update"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -30,8 +31,11 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return update.Run(ctx, projectRef, dbIpsToUnban, fsys)
+			return update.Run(ctx, flags.ProjectRef, dbIpsToUnban, fsys)
 		},
 	}
 
@@ -43,14 +47,17 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, projectRef, fsys)
+			return get.Run(ctx, flags.ProjectRef, fsys)
 		},
 	}
 )
 
 func init() {
-	bansCmd.PersistentFlags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	bansCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	bansCmd.AddCommand(bansGetCmd)
 	bansRemoveCmd.Flags().StringSliceVar(&dbIpsToUnban, "db-unban-ip", []string{}, "IP to allow DB connections from.")
 	bansCmd.AddCommand(bansRemoveCmd)

@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/hostnames/delete"
 	"github.com/supabase/cli/internal/hostnames/get"
 	"github.com/supabase/cli/internal/hostnames/reverify"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -38,8 +39,11 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return create.Run(ctx, projectRef, customHostname, rawOutput, fsys)
+			return create.Run(ctx, flags.ProjectRef, customHostname, rawOutput, fsys)
 		},
 	}
 
@@ -52,8 +56,11 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, projectRef, rawOutput, fsys)
+			return get.Run(ctx, flags.ProjectRef, rawOutput, fsys)
 		},
 	}
 
@@ -61,8 +68,15 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 		Use:   "reverify",
 		Short: "Re-verify the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := PromptLogin(fsys); err != nil {
+				return err
+			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return reverify.Run(ctx, projectRef, rawOutput, afero.NewOsFs())
+			return reverify.Run(ctx, flags.ProjectRef, rawOutput, fsys)
 		},
 	}
 
@@ -74,8 +88,15 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 This reconfigures your Supabase project to respond to requests on your custom hostname.
 After the custom hostname is activated, your project's auth services will no longer function on the Supabase-provisioned subdomain.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := PromptLogin(fsys); err != nil {
+				return err
+			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return activate.Run(ctx, projectRef, rawOutput, afero.NewOsFs())
+			return activate.Run(ctx, flags.ProjectRef, rawOutput, afero.NewOsFs())
 		},
 	}
 
@@ -83,14 +104,21 @@ After the custom hostname is activated, your project's auth services will no lon
 		Use:   "delete",
 		Short: "Deletes the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := PromptLogin(fsys); err != nil {
+				return err
+			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return delete.Run(ctx, projectRef, afero.NewOsFs())
+			return delete.Run(ctx, flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	customHostnamesCmd.PersistentFlags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	customHostnamesCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	customHostnamesCmd.PersistentFlags().BoolVar(&rawOutput, "include-raw-output", false, "Include raw output (useful for debugging).")
 	customHostnamesCreateCmd.Flags().StringVar(&customHostname, "custom-hostname", "", "The custom hostname to use for your Supabase project.")
 	customHostnamesCmd.AddCommand(customHostnamesGetCmd)
