@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -26,18 +24,10 @@ var (
 		Use:   "update",
 		Short: "Update SSL enforcement configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if !dbEnforceSsl && !dbDisableSsl {
 				return fmt.Errorf("enable/disable not specified")
 			}
-			return update.Run(ctx, flags.ProjectRef, dbEnforceSsl, fsys)
+			return update.Run(cmd.Context(), flags.ProjectRef, dbEnforceSsl, afero.NewOsFs())
 		},
 	}
 
@@ -45,15 +35,7 @@ var (
 		Use:   "get",
 		Short: "Get the current SSL enforcement configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, flags.ProjectRef, fsys)
+			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )

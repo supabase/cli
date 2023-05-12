@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/restrictions/get"
@@ -25,15 +22,7 @@ var (
 		Use:   "update",
 		Short: "Update network restrictions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return update.Run(ctx, flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks, fsys)
+			return update.Run(cmd.Context(), flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks, afero.NewOsFs())
 		},
 	}
 
@@ -41,15 +30,7 @@ var (
 		Use:   "get",
 		Short: "Get the current network restrictions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, flags.ProjectRef, fsys)
+			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
