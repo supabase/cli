@@ -173,6 +173,10 @@ var (
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
+
+	ErrNotLinked  = errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+	ErrInvalidRef = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	ErrNotRunning = errors.New(Aqua("supabase start") + " is not running.")
 )
 
 func GetCurrentTimestamp() string {
@@ -221,7 +225,7 @@ func NewError(s string) error {
 
 func AssertSupabaseDbIsRunning() error {
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		return errors.New(Aqua("supabase start") + " is not running.")
+		return ErrNotRunning
 	}
 
 	return nil
@@ -319,7 +323,7 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 
 func AssertIsLinkedFS(fsys afero.Fs) error {
 	if _, err := fsys.Stat(ProjectRefPath); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+		return ErrNotLinked
 	} else if err != nil {
 		return err
 	}
@@ -329,7 +333,7 @@ func AssertIsLinkedFS(fsys afero.Fs) error {
 
 func AssertProjectRefIsValid(projectRef string) error {
 	if !ProjectRefPattern.MatchString(projectRef) {
-		return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+		return ErrInvalidRef
 	}
 	return nil
 }
@@ -337,11 +341,11 @@ func AssertProjectRefIsValid(projectRef string) error {
 func LoadProjectRef(fsys afero.Fs) (string, error) {
 	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
 	if err != nil {
-		return "", errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+		return "", ErrNotLinked
 	}
 	projectRef := string(bytes.TrimSpace(projectRefBytes))
 	if !ProjectRefPattern.MatchString(projectRef) {
-		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+		return "", ErrInvalidRef
 	}
 	return projectRef, nil
 }
