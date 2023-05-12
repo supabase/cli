@@ -21,7 +21,7 @@ var (
 		Short: "List all secrets on Supabase",
 		Long:  "List all secrets in the linked project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), afero.NewOsFs())
+			return list.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -34,7 +34,7 @@ var (
 			if err != nil {
 				return err
 			}
-			return set.Run(cmd.Context(), envFilePath, args, afero.NewOsFs())
+			return set.Run(cmd.Context(), flags.ProjectRef, envFilePath, args, afero.NewOsFs())
 		},
 	}
 
@@ -43,12 +43,13 @@ var (
 		Short: "Unset a secret(s) on Supabase",
 		Long:  "Unset a secret(s) from the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return unset.Run(cmd.Context(), args, afero.NewOsFs())
+			return unset.Run(cmd.Context(), flags.ProjectRef, args, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
+	secretsCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	secretsSetCmd.Flags().String("env-file", "", "Read secrets from a .env file.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)
