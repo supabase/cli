@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/start"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -19,14 +20,16 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "start",
 		Short:   "Start containers for Supabase local development",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if preview {
-				cmd.SetHelpCommandGroupID(groupManagementAPI)
-			}
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, flags.ProjectRef, dbUrl)
+			fsys := afero.NewOsFs()
+			if preview {
+				projectRef, err := utils.LoadProjectRef(fsys)
+				if err != nil {
+					return err
+				}
+				flags.ProjectRef = projectRef
+			}
+			return start.Run(cmd.Context(), fsys, excludedContainers, ignoreHealthCheck, flags.ProjectRef, dbUrl)
 		},
 	}
 )
