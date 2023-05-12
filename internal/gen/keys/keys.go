@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -43,15 +44,21 @@ type CustomName struct {
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
 	projectRef, err := utils.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}
-	branch := getGitBranch(fsys)
+	// Load JWT secret from api
+	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving JWT secret: " + string(resp.Body))
+	}
+	utils.Config.Auth.JwtSecret = *resp.JSON200.JwtSecret
 	// Generate database password
+	branch := getGitBranch(fsys)
 	key := strings.Join([]string{
 		projectRef,
 		utils.Config.Auth.JwtSecret,
