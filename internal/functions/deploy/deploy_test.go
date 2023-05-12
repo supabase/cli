@@ -105,7 +105,6 @@ func TestDeployCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -123,7 +122,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, "", nil, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, nil, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -134,7 +133,6 @@ func TestDeployCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -152,31 +150,9 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, "", nil, false, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, nil, false, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on malformed ref", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup invalid project ref
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte("test-project"), 0644))
-		// Run test
-		noVerifyJWT := true
-		err := Run(context.Background(), "test-func", "", &noVerifyJWT, true, "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Invalid project ref format.")
-	})
-
-	t.Run("throws error on malformed ref arg", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		noVerifyJWT := true
-		err := Run(context.Background(), "test-func", "test-project", &noVerifyJWT, true, "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {
