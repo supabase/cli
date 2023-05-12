@@ -21,7 +21,13 @@ const (
 )
 
 func IsManagementAPI(cmd *cobra.Command) bool {
-	return cmd.GroupID == groupManagementAPI || cmd.Parent().GroupID == groupManagementAPI
+	for cmd != cmd.Root() {
+		if cmd.GroupID == groupManagementAPI {
+			return true
+		}
+		cmd = cmd.Parent()
+	}
+	return false
 }
 
 var experimental = []*cobra.Command{
@@ -49,6 +55,7 @@ var (
 			if IsExperimental(cmd) && !viper.GetBool("experimental") {
 				return errors.New("must set the --experimental flag to run this command")
 			}
+			cmd.SilenceUsage = true
 			// Change workdir
 			fsys := afero.NewOsFs()
 			if err := changeWorkDir(fsys); err != nil {
@@ -68,7 +75,6 @@ var (
 				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 			}
 			// Prepare context
-			cmd.SilenceUsage = true
 			if viper.GetBool("DEBUG") {
 				cmd.SetContext(utils.WithTraceContext(ctx))
 			} else {

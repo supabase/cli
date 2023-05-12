@@ -22,12 +22,8 @@ func TestSecretSetCommand(t *testing.T) {
 	t.Run("Sets secret via cli args", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -39,20 +35,17 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		// Validate api
+		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
+		// Check error
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("Sets secret value via env file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -70,76 +63,45 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(200)
 		// Run test
-		assert.NoError(t, Run(context.Background(), tmpfile.Name(), []string{}, fsys))
-		// Validate api
+		err = Run(context.Background(), project, tmpfile.Name(), []string{}, fsys)
+		// Check error
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on missing config file", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), "", []string{}, afero.NewMemMapFs()))
-	})
-
-	t.Run("throws error on missing project ref", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
-		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
-	})
-
-	t.Run("throws error on missing access token", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
-		_, err = fsys.Create(utils.ProjectRefPath)
-		require.NoError(t, err)
-		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
 	})
 
 	t.Run("throws error on empty secret", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{}, fsys))
+		err := Run(context.Background(), project, "", []string{}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "No arguments found. Use --env-file to read from a .env file.")
 	})
 
 	t.Run("throws error on malformed secret", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{"malformed"}, fsys))
+		err := Run(context.Background(), project, "", []string{"malformed"}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Invalid secret pair: malformed. Must be NAME=VALUE.")
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -151,20 +113,17 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON(api.CreateSecretsJSONBody{dummy}).
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		// Validate api
+		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(utils.ConfigPath)
-		require.NoError(t, err)
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
-		require.NoError(t, err)
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -177,8 +136,9 @@ func TestSecretSetCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(context.Background(), "", []string{dummyEnv}, fsys))
-		// Validate api
+		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, `Unexpected error setting project secrets: {"message":"unavailable"}`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
