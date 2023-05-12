@@ -42,12 +42,21 @@ type CustomName struct {
 	ServiceRoleKey string `env:"auth.service_role_key,default=SUPABASE_AUTH_SERVICE_ROLE_KEY"`
 }
 
-func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
-	// Sanity checks
-	projectRef, err := utils.LoadProjectRef(fsys)
-	if err != nil {
+func Run(ctx context.Context, projectRef, format string, names CustomName, fsys afero.Fs) error {
+	branch := GetGitBranch(fsys)
+	if err := GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
 		return err
 	}
+	return utils.EncodeOutput(format, os.Stdout, map[string]string{
+		names.DbHost:         fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
+		names.DbPassword:     utils.Config.Db.Password,
+		names.JWTSecret:      utils.Config.Auth.JwtSecret,
+		names.AnonKey:        utils.Config.Auth.AnonKey,
+		names.ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
+	})
+}
+
+func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.Fs) error {
 	// Load JWT secret from api
 	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
 	if err != nil {
@@ -58,14 +67,13 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	}
 	utils.Config.Auth.JwtSecret = *resp.JSON200.JwtSecret
 	// Generate database password
-	branch := getGitBranch(fsys)
 	key := strings.Join([]string{
 		projectRef,
 		utils.Config.Auth.JwtSecret,
 		branch,
 	}, ":")
 	hash := sha256.Sum256([]byte(key))
-	password := hex.EncodeToString(hash[:])
+	utils.Config.Db.Password = hex.EncodeToString(hash[:])
 	// Generate JWT tokens
 	expiry := time.Now().AddDate(10, 0, 0)
 	anonToken := NewJWTToken(projectRef, "anon", expiry)
@@ -75,19 +83,10 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	}
 	serviceToken := NewJWTToken(projectRef, "service_role", expiry)
 	utils.Config.Auth.ServiceRoleKey, err = serviceToken.SignedString([]byte(utils.Config.Auth.JwtSecret))
-	if err != nil {
-		return err
-	}
-	return utils.EncodeOutput(format, os.Stdout, map[string]string{
-		names.DbHost:         fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
-		names.DbPassword:     password,
-		names.JWTSecret:      utils.Config.Auth.JwtSecret,
-		names.AnonKey:        utils.Config.Auth.AnonKey,
-		names.ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
-	})
+	return err
 }
 
-func getGitBranch(fsys afero.Fs) string {
+func GetGitBranch(fsys afero.Fs) string {
 	branch := "main"
 	if gitRoot, err := utils.GetGitRoot(fsys); err == nil {
 		if repo, err := git.PlainOpen(*gitRoot); err == nil {

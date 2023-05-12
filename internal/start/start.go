@@ -23,13 +23,14 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
 
 var errUnhealthy = errors.New("service not healthy")
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, dbUrl string) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef, dbUrl string) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -46,7 +47,35 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, fsys, excludedContainers, dbUrl)
+		var dbConfig pgconn.Config
+		if len(dbUrl) > 0 {
+			config, err := pgconn.ParseConfig(dbUrl)
+			if err != nil {
+				return err
+			}
+			dbConfig = *config
+		} else if len(projectRef) > 0 {
+			branch := keys.GetGitBranch(fsys)
+			if err := keys.GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
+				return err
+			}
+			dbConfig = pgconn.Config{
+				Host:     fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
+				Port:     5432,
+				User:     "postgres",
+				Password: utils.Config.Db.Password,
+				Database: "postgres",
+			}
+		} else {
+			dbConfig = pgconn.Config{
+				Host:     utils.DbId,
+				Port:     5432,
+				User:     "postgres",
+				Password: utils.Config.Db.Password,
+				Database: "postgres",
+			}
+		}
+		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
 		if ignoreHealthCheck && errors.Is(err, errUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
@@ -95,14 +124,10 @@ var (
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
 
-func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbUrl string, options ...func(*pgx.ConnConfig)) error {
+func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
-	}
-	dbConfig, err := pgconn.ParseConfig(dbUrl)
-	if err != nil && len(dbUrl) > 0 {
-		return err
 	}
 
 	// Pull images.
@@ -180,16 +205,9 @@ EOF
 
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
-	if len(dbUrl) == 0 {
+	if dbConfig.Host == utils.DbId {
 		if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
 			return err
-		}
-		dbConfig = &pgconn.Config{
-			Host:     utils.DbId,
-			User:     "postgres",
-			Password: "postgres",
-			Port:     5432,
-			Database: "postgres",
 		}
 	}
 
@@ -629,7 +647,7 @@ EOF
 	}
 
 	// Setup database after all services are up
-	return start.SetupDatabase(ctx, *dbConfig, fsys, os.Stderr, options...)
+	return start.SetupDatabase(ctx, dbConfig, fsys, os.Stderr, options...)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

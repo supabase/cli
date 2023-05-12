@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/types/typescript"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -34,6 +35,10 @@ var (
 	genKeysCmd = &cobra.Command{
 		Use:   "keys",
 		Short: "Generate keys for preview branch",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetHelpCommandGroupID(groupManagementAPI)
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			es, err := env.EnvironToEnvSet(override)
 			if err != nil {
@@ -42,8 +47,7 @@ var (
 			return env.Unmarshal(es, &keyNames)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return keys.Run(ctx, keyNames, keyOutput.Value, afero.NewOsFs())
+			return keys.Run(cmd.Context(), flags.ProjectRef, keyOutput.Value, keyNames, afero.NewOsFs())
 		},
 	}
 
@@ -88,6 +92,7 @@ func init() {
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
+	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.VarP(&keyOutput, "output", "o", "Output format of key variables.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)

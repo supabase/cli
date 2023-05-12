@@ -6,19 +6,27 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/start"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
 	allowedContainers  = start.ExcludableContainers()
 	excludedContainers []string
 	ignoreHealthCheck  bool
+	preview            bool
 
 	startCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "start",
 		Short:   "Start containers for Supabase local development",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if preview {
+				cmd.SetHelpCommandGroupID(groupManagementAPI)
+			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, dbUrl)
+			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, flags.ProjectRef, dbUrl)
 		},
 	}
 )
@@ -28,6 +36,7 @@ func init() {
 	names := strings.Join(allowedContainers, ",")
 	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
-	flags.StringVar(&dbUrl, "db-url", "", "Connect to the specified database url")
+	// flags.StringVar(&dbUrl, "db-url", "", "Connect to the specified database url")
+	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
 	rootCmd.AddCommand(startCmd)
 }
