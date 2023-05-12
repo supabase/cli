@@ -32,7 +32,7 @@ func ParseProjectRef(fsys afero.Fs) error {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		return promptProjectRef(os.Stdin)
 	}
-	return errors.New("Cannot find project ref. Have you run " + utils.Aqua("supabase link") + "?")
+	return utils.ErrNotLinked
 }
 
 func promptProjectRef(stdin io.Reader) error {

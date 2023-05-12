@@ -104,7 +104,7 @@ func TestSwitchCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is not running.")
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

@@ -92,7 +92,7 @@ func TestRunMigra(t *testing.T) {
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is not running.")
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
