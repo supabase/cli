@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -11,12 +12,17 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 const (
 	groupLocalDev      = "local-dev"
 	groupManagementAPI = "management-api"
 )
+
+func IsManagementAPI(cmd *cobra.Command) bool {
+	return cmd.GroupID == groupManagementAPI || cmd.Parent().GroupID == groupManagementAPI
+}
 
 var experimental = []*cobra.Command{
 	bansCmd,
@@ -43,20 +49,32 @@ var (
 			if IsExperimental(cmd) && !viper.GetBool("experimental") {
 				return errors.New("must set the --experimental flag to run this command")
 			}
+			// Change workdir
+			fsys := afero.NewOsFs()
+			if err := changeWorkDir(fsys); err != nil {
+				return err
+			}
+			// Add common flags
+			ctx := cmd.Context()
+			if IsManagementAPI(cmd) {
+				if err := PromptLogin(fsys); err != nil {
+					return err
+				}
+				if cmd.Flags().Lookup("project-ref") != nil {
+					if err := flags.ParseProjectRef(fsys); err != nil {
+						return err
+					}
+				}
+				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
+			}
+			// Prepare context
 			cmd.SilenceUsage = true
 			if viper.GetBool("DEBUG") {
-				cmd.SetContext(utils.WithTraceContext(cmd.Context()))
+				cmd.SetContext(utils.WithTraceContext(ctx))
 			} else {
 				utils.CmdSuggestion = "Try rerunning the command with --debug to troubleshoot the error."
 			}
-			workdir := viper.GetString("WORKDIR")
-			if workdir == "" {
-				var err error
-				if workdir, err = utils.GetProjectRoot(afero.NewOsFs()); err != nil {
-					return err
-				}
-			}
-			return os.Chdir(workdir)
+			return nil
 		},
 	}
 )
@@ -103,4 +121,15 @@ func init() {
 // approach for example: https://github.com/portworx/pxc/tree/master/cmd
 func GetRootCmd() *cobra.Command {
 	return rootCmd
+}
+
+func changeWorkDir(fsys afero.Fs) error {
+	workdir := viper.GetString("WORKDIR")
+	if workdir == "" {
+		var err error
+		if workdir, err = utils.GetProjectRoot(fsys); err != nil {
+			return err
+		}
+	}
+	return os.Chdir(workdir)
 }

@@ -29,15 +29,7 @@ var (
 		Long:  "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return delete.Run(ctx, args[0], flags.ProjectRef, fsys)
+			return delete.Run(cmd.Context(), args[0], flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -47,15 +39,7 @@ var (
 		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return download.Run(ctx, args[0], flags.ProjectRef, fsys)
+			return download.Run(cmd.Context(), args[0], flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -69,19 +53,11 @@ var (
 		Long:  "Deploy a Function to the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(ctx, args[0], flags.ProjectRef, noVerifyJWT, useLegacyBundle, importMapPath, fsys)
+			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, useLegacyBundle, importMapPath, afero.NewOsFs())
 		},
 	}
 
@@ -89,6 +65,10 @@ var (
 		Use:   "new <Function name>",
 		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetHelpCommandGroupID(groupLocalDev)
+			return cmd.Root().PersistentPostRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return new_.Run(ctx, args[0], afero.NewOsFs())
@@ -101,6 +81,10 @@ var (
 		Use:   "serve <Function name>",
 		Short: "Serve all Functions locally",
 		Args:  cobra.RangeArgs(0, 1),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetHelpCommandGroupID(groupLocalDev)
+			return cmd.Root().PersistentPostRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.

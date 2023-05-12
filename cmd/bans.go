@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/bans/get"
@@ -27,15 +24,7 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 		Use:   "remove",
 		Short: "Remove a network ban",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return update.Run(ctx, flags.ProjectRef, dbIpsToUnban, fsys)
+			return update.Run(cmd.Context(), flags.ProjectRef, dbIpsToUnban, afero.NewOsFs())
 		},
 	}
 
@@ -43,15 +32,7 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 		Use:   "get",
 		Short: "Get the current network bans",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, flags.ProjectRef, fsys)
+			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )

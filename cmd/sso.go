@@ -2,10 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 
-	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 
 	"github.com/supabase/cli/internal/sso/create"
@@ -23,19 +20,6 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "sso",
 		Short:   "Manage Single Sign-On (SSO) authentication for projects",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-
-			fsys := afero.NewOsFs()
-			if err := flags.ParseProjectRef(fsys); err != nil {
-				return err
-			}
-			return nil
-		},
 	}
 
 	ssoProviderType = utils.EnumFlag{

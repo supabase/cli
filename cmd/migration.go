@@ -107,15 +107,6 @@ func init() {
 	rootCmd.AddCommand(migrationCmd)
 }
 
-func loadLinkedProject(fsys afero.Fs) (err error) {
-	projectRef, err = utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	dbPassword = getPassword(projectRef)
-	return nil
-}
-
 func getPassword(projectRef string) string {
 	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
 		return password
@@ -134,9 +125,12 @@ func parseDatabaseConfig(fsys afero.Fs) error {
 		}
 		return err
 	}
-	if err := loadLinkedProject(fsys); err != nil {
+	// Load linked project
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
 		return err
 	}
+	dbPassword = getPassword(projectRef)
 	// Initialise connection details for hosted project
 	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
 	dbConfig.Port = 6543
