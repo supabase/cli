@@ -10,19 +10,9 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, slug string, projectRefArg string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	projectRef := projectRefArg
 	{
-		if len(projectRefArg) == 0 {
-			ref, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			projectRef = ref
-		} else if !utils.ProjectRefPattern.MatchString(projectRefArg) {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}

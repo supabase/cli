@@ -11,20 +11,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectRefArg string, desiredSubdomain string, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	projectRef := projectRefArg
 	subdomain := strings.TrimSpace(desiredSubdomain)
 	{
-		if len(projectRefArg) == 0 {
-			ref, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			projectRef = ref
-		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-		}
 		if len(subdomain) == 0 {
 			return errors.New("non-empty vanity subdomain expected")
 		}

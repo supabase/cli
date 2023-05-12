@@ -11,6 +11,8 @@ import (
 )
 
 var (
+	projectRef string
+
 	linkCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "link",

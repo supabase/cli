@@ -1,12 +1,8 @@
 package cmd
 
 import (
-	"bufio"
-	"errors"
-	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -17,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -25,8 +22,6 @@ var (
 		Use:     "functions",
 		Short:   "Manage Supabase Edge functions",
 	}
-
-	projectRef string
 
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
@@ -38,8 +33,11 @@ var (
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return delete.Run(ctx, args[0], projectRef, fsys)
+			return delete.Run(ctx, args[0], flags.ProjectRef, fsys)
 		},
 	}
 
@@ -53,8 +51,11 @@ var (
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
+			if err := flags.ParseProjectRef(fsys); err != nil {
+				return err
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return download.Run(ctx, args[0], projectRef, fsys)
+			return download.Run(ctx, args[0], flags.ProjectRef, fsys)
 		},
 	}
 
@@ -72,7 +73,7 @@ var (
 			if err := PromptLogin(fsys); err != nil {
 				return err
 			}
-			if err := PromptProjectRef(fsys, cmd); err != nil {
+			if err := flags.ParseProjectRef(fsys); err != nil {
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -80,7 +81,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(ctx, args[0], projectRef, noVerifyJWT, useLegacyBundle, importMapPath, fsys)
+			return deploy.Run(ctx, args[0], flags.ProjectRef, noVerifyJWT, useLegacyBundle, importMapPath, fsys)
 		},
 	}
 
@@ -116,9 +117,9 @@ var (
 )
 
 func init() {
-	functionsDeleteCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
-	functionsDeployCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
@@ -126,7 +127,7 @@ func init() {
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions (caution: experimental feature)")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
-	functionsDownloadCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
@@ -138,29 +139,6 @@ func init() {
 func PromptLogin(fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
 		return login.Run(os.Stdin, fsys)
-	} else {
-		return err
-	}
-}
-
-// PromptProjectRef prompts for the project ref if there is no project ref provided
-// or if there is no linked project
-func PromptProjectRef(fsys afero.Fs, cmd *cobra.Command) error {
-	if len(projectRef) > 0 {
-		return nil
-	} else if err := utils.AssertIsLinkedFS(fsys); err == nil {
-		return nil
-	} else if strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-		fmt.Fprintf(os.Stderr, `You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
-Enter your project ref: `, utils.GetSupabaseDashboardURL())
-
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			return errors.New("Cancelled " + utils.Aqua(cmd.UseLine()) + ".")
-		}
-
-		projectRef = strings.TrimSpace(scanner.Text())
-		return nil
 	} else {
 		return err
 	}

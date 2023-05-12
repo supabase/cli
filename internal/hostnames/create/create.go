@@ -12,20 +12,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectRefArg string, customHostname string, includeRawOutput bool, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, customHostname string, includeRawOutput bool, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	projectRef := projectRefArg
 	hostname := strings.TrimSpace(customHostname)
 	{
-		if len(projectRefArg) == 0 {
-			ref, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			projectRef = ref
-		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-		}
 		if len(hostname) == 0 {
 			return errors.New("non-empty custom hostname expected")
 		}
