@@ -1,14 +1,12 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/secrets/unset"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -23,8 +21,7 @@ var (
 		Short: "List all secrets on Supabase",
 		Long:  "List all secrets in the linked project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return list.Run(ctx, afero.NewOsFs())
+			return list.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -37,8 +34,7 @@ var (
 			if err != nil {
 				return err
 			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return set.Run(ctx, envFilePath, args, afero.NewOsFs())
+			return set.Run(cmd.Context(), flags.ProjectRef, envFilePath, args, afero.NewOsFs())
 		},
 	}
 
@@ -47,13 +43,13 @@ var (
 		Short: "Unset a secret(s) on Supabase",
 		Long:  "Unset a secret(s) from the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return unset.Run(ctx, args, afero.NewOsFs())
+			return unset.Run(cmd.Context(), flags.ProjectRef, args, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
+	secretsCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	secretsSetCmd.Flags().String("env-file", "", "Read secrets from a .env file.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)

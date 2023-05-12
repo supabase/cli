@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 
@@ -55,8 +54,7 @@ var (
 				fmt.Fprintln(os.Stderr, printKeyValue("Creating project", name))
 				cobra.CheckErr(PromptCreateFlags(cmd))
 			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return create.Run(ctx, api.CreateProjectBody{
+			return create.Run(cmd.Context(), api.CreateProjectBody{
 				Name:           name,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
@@ -71,8 +69,7 @@ var (
 		Short: "List all Supabase projects",
 		Long:  "List all Supabase projects the logged-in user can access.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return list.Run(ctx, afero.NewOsFs())
+			return list.Run(cmd.Context(), afero.NewOsFs())
 		},
 	}
 )

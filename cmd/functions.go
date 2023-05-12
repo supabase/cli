@@ -1,12 +1,8 @@
 package cmd
 
 import (
-	"bufio"
-	"errors"
-	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -17,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -26,20 +23,13 @@ var (
 		Short:   "Manage Supabase Edge functions",
 	}
 
-	projectRef string
-
 	functionsDeleteCmd = &cobra.Command{
 		Use:   "delete <Function name>",
 		Short: "Delete a Function from Supabase",
 		Long:  "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return delete.Run(ctx, args[0], projectRef, fsys)
+			return delete.Run(cmd.Context(), args[0], flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -49,12 +39,7 @@ var (
 		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return download.Run(ctx, args[0], projectRef, fsys)
+			return download.Run(cmd.Context(), args[0], flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -68,19 +53,11 @@ var (
 		Long:  "Deploy a Function to the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			if err := PromptProjectRef(fsys, cmd); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(ctx, args[0], projectRef, noVerifyJWT, useLegacyBundle, importMapPath, fsys)
+			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, useLegacyBundle, importMapPath, afero.NewOsFs())
 		},
 	}
 
@@ -88,6 +65,10 @@ var (
 		Use:   "new <Function name>",
 		Short: "Create a new Function locally",
 		Args:  cobra.ExactArgs(1),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetHelpCommandGroupID(groupLocalDev)
+			return cmd.Root().PersistentPostRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return new_.Run(ctx, args[0], afero.NewOsFs())
@@ -100,6 +81,10 @@ var (
 		Use:   "serve <Function name>",
 		Short: "Serve all Functions locally",
 		Args:  cobra.RangeArgs(0, 1),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SetHelpCommandGroupID(groupLocalDev)
+			return cmd.Root().PersistentPostRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.
@@ -116,9 +101,9 @@ var (
 )
 
 func init() {
-	functionsDeleteCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
-	functionsDeployCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
@@ -126,7 +111,7 @@ func init() {
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions (caution: experimental feature)")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
-	functionsDownloadCmd.Flags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
@@ -138,29 +123,6 @@ func init() {
 func PromptLogin(fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
 		return login.Run(os.Stdin, fsys)
-	} else {
-		return err
-	}
-}
-
-// PromptProjectRef prompts for the project ref if there is no project ref provided
-// or if there is no linked project
-func PromptProjectRef(fsys afero.Fs, cmd *cobra.Command) error {
-	if len(projectRef) > 0 {
-		return nil
-	} else if err := utils.AssertIsLinkedFS(fsys); err == nil {
-		return nil
-	} else if strings.HasPrefix(err.Error(), "Cannot find project ref. Have you run") {
-		fmt.Fprintf(os.Stderr, `You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
-Enter your project ref: `, utils.GetSupabaseDashboardURL())
-
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			return errors.New("Cancelled " + utils.Aqua(cmd.UseLine()) + ".")
-		}
-
-		projectRef = strings.TrimSpace(scanner.Text())
-		return nil
 	} else {
 		return err
 	}

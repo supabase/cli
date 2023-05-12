@@ -20,20 +20,10 @@ import (
 
 const eszipContentType = "application/vnd.denoland.eszip"
 
-func Run(ctx context.Context, slug string, projectRefArg string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	projectRef := projectRefArg
 	var scriptDir *utils.DenoScriptDir
 	{
-		if len(projectRefArg) == 0 {
-			ref, err := utils.LoadProjectRef(fsys)
-			if err != nil {
-				return err
-			}
-			projectRef = ref
-		} else if !utils.ProjectRefPattern.MatchString(projectRef) {
-			return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-		}
 		// Load function config if any for fallbacks for some flags, but continue on error.
 		_ = utils.LoadConfigFS(fsys)
 		// Ensure noVerifyJWT is not nil.

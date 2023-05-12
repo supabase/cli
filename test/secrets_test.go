@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clicmd "github.com/supabase/cli/cmd"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/test/mocks/supabase"
 )
 
@@ -37,9 +37,6 @@ func (suite *SecretsTestSuite) TestList() {
 	list.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 
-	ref := gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
-	require.NoError(suite.T(), os.WriteFile(utils.ProjectRefPath, []byte(ref), os.FileMode(0755)))
-
 	// set stdout to write into file so we can capture cmd output
 	tmpfile, err := os.CreateTemp(suite.tempDir, "output")
 	require.NoError(suite.T(), err)
@@ -48,12 +45,13 @@ func (suite *SecretsTestSuite) TestList() {
 	defer func() { os.Stdout = oldStdout }()
 	os.Stdout = tmpfile
 
+	flags.ProjectRef = gonanoid.MustGenerate(supabase.IDAlphabet, supabase.IDLength)
 	require.NoError(suite.T(), list.RunE(list, []string{}))
 
 	// check request details
 	suite.mtx.RLock()
 	defer suite.mtx.RUnlock()
-	require.Contains(suite.T(), suite.ids, ref)
+	require.Contains(suite.T(), suite.ids, flags.ProjectRef)
 	require.Contains(suite.T(), suite.headers, http.Header{
 		"Authorization":   []string{fmt.Sprintf("Bearer %s", supabase.AccessToken)},
 		"Accept-Encoding": []string{"gzip"},

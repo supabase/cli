@@ -56,7 +56,7 @@ func TestPreRun(t *testing.T) {
 		// Run test
 		err := PreRun("malformed", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+		assert.ErrorIs(t, err, utils.ErrInvalidRef)
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {

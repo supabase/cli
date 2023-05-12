@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -21,7 +20,6 @@ func TestDeleteCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -35,29 +33,9 @@ func TestDeleteCommand(t *testing.T) {
 			Delete("/v1/projects/" + project + "/functions/test-func").
 			Reply(http.StatusOK)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "test-func", "", fsys))
+		assert.NoError(t, Run(context.Background(), "test-func", project, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on malformed ref", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup invalid project ref
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte("test-project"), 0644))
-		// Run test
-		err := Run(context.Background(), "test-func", "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Invalid project ref format.")
-	})
-
-	t.Run("throws error on malformed ref arg", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), "test-func", "test-project", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Invalid project ref format.")
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {

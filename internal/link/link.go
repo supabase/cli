@@ -24,8 +24,8 @@ var updatedConfig map[string]interface{} = make(map[string]interface{})
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
-	if !utils.ProjectRefPattern.MatchString(projectRef) {
-		return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	if err := utils.AssertProjectRefIsValid(projectRef); err != nil {
+		return err
 	}
 	return utils.LoadConfigFS(fsys)
 }

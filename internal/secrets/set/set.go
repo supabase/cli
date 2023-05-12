@@ -13,21 +13,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, envFilePath string, args []string, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	{
-		if err := utils.AssertSupabaseCliIsSetUpFS(fsys); err != nil {
-			return err
-		}
-	}
-
 	// 2. Set secret(s).
 	{
-		projectRef, err := utils.LoadProjectRef(fsys)
-		if err != nil {
-			return err
-		}
-
 		var secrets api.CreateSecretsJSONBody
 		if envFilePath != "" {
 			envMap, err := godotenv.Read(envFilePath)
