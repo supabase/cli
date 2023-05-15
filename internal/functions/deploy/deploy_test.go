@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -340,14 +341,17 @@ verify_jwt = false
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		require.NoError(t, afero.WriteFile(fsys, "supabase/functions/import_map.json", []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte(""), 0644))
+		absPath, err := filepath.Abs(utils.FallbackImportMapPath)
+		require.NoError(t, err)
+		require.NoError(t, afero.WriteFile(fsys, absPath, []byte("{}"), 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup valid deno path
-		_, err := fsys.Create(utils.DenoPathOverride)
+		_, err = fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()

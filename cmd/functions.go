@@ -57,7 +57,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, useLegacyBundle, importMapPath, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, false, importMapPath, afero.NewOsFs())
 		},
 	}
 
@@ -106,6 +106,7 @@ func init() {
 	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
+	cobra.CheckErr(functionsDeployCmd.Flags().MarkHidden("legacy-bundle"))
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
