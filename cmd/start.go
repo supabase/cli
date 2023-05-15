@@ -41,5 +41,6 @@ func init() {
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
 	// flags.StringVar(&dbUrl, "db-url", "", "Connect to the specified database url")
 	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
+	cobra.CheckErr(flags.MarkHidden("preview"))
 	rootCmd.AddCommand(startCmd)
 }
