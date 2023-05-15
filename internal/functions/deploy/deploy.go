@@ -93,7 +93,6 @@ func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {
 	return buf.String(), nil
 }
 
-// TODO: Remove `useLegacyBundle` after 2023-06-01
 func deployFunction(ctx context.Context, projectRef, slug string, functionBody io.Reader, verifyJWT, useLegacyBundle bool) error {
 	{
 		resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
