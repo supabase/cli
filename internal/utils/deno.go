@@ -320,28 +320,3 @@ func GetPathHash(path string) string {
 	digest := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(digest[:])
 }
-
-func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error) {
-	if importMapPath == "" {
-		if functionConfig, ok := Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
-			importMapPath = functionConfig.ImportMap
-			if !filepath.IsAbs(importMapPath) {
-				importMapPath = filepath.Join(SupabaseDirPath, importMapPath)
-			}
-		} else if exists, _ := afero.Exists(fsys, FallbackImportMapPath); exists {
-			importMapPath = FallbackImportMapPath
-		} else {
-			return importMapPath, nil
-		}
-	}
-	resolved, err := filepath.Abs(importMapPath)
-	if err != nil {
-		return "", err
-	}
-	if f, err := fsys.Stat(resolved); err != nil {
-		return "", fmt.Errorf("Failed to read import map: %w", err)
-	} else if f.IsDir() {
-		return "", errors.New("Importing directory is unsupported: " + resolved)
-	}
-	return resolved, nil
-}
