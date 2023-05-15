@@ -36,15 +36,15 @@ var (
 		Use:   "keys",
 		Short: "Generate keys for preview branch",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SetHelpCommandGroupID(groupManagementAPI)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
-		PreRunE: func(cmd *cobra.Command, args []string) error {
 			es, err := env.EnvironToEnvSet(override)
 			if err != nil {
 				return err
 			}
-			return env.Unmarshal(es, &keyNames)
+			if err := env.Unmarshal(es, &keyNames); err != nil {
+				return err
+			}
+			cmd.GroupID = groupManagementAPI
+			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return keys.Run(cmd.Context(), flags.ProjectRef, keyOutput.Value, keyNames, afero.NewOsFs())
