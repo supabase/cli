@@ -320,25 +320,3 @@ func GetPathHash(path string) string {
 	digest := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(digest[:])
 }
-
-func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error) {
-	if importMapPath == "" {
-		if functionConfig, ok := Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
-			importMapPath = filepath.Join(SupabaseDirPath, functionConfig.ImportMap)
-		} else if f, err := fsys.Stat(FallbackImportMapPath); err == nil && !f.IsDir() {
-			importMapPath = FallbackImportMapPath
-		} else {
-			return importMapPath, nil
-		}
-	}
-	resolved, err := filepath.Abs(importMapPath)
-	if err != nil {
-		return "", err
-	}
-	if f, err := fsys.Stat(importMapPath); err != nil {
-		return "", fmt.Errorf("Failed to read import map: %w", err)
-	} else if f.IsDir() {
-		return "", fmt.Errorf("Failed to read import map: %s", importMapPath)
-	}
-	return resolved, nil
-}
