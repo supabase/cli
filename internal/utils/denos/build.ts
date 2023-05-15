@@ -6,7 +6,7 @@ import { build } from "https://deno.land/x/eszip@v0.35.0/mod.ts";
 async function buildAndWrite(p: string, importMapPath: string) {
   const cwd = `file://${Deno.cwd()}/`
   const entrypoint = new URL(p, cwd).href;
-  const importMap = new URL(importMapPath || "supabase/functions/import_map.json", cwd).href
+  const importMap = new URL(importMapPath || "import_map.json", cwd).href
 
   const eszip = await build([entrypoint], async (specifier: string) => {
     const url = new URL(specifier);

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -67,12 +68,17 @@ func bundleFunction(ctx context.Context, slug, importMapPath, buildScriptPath st
 	if err != nil {
 		return nil, err
 	}
-	entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
+	// Run deno from supabase/functions directory
+	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
+	if err := os.Chdir(utils.FunctionsDir); err != nil {
+		return nil, err
+	}
+	defer os.Chdir(cwd)
 	// Bundle function and import_map with deno
-	args := []string{"run", "-A", buildScriptPath, entrypointPath, importMapPath}
+	args := []string{"run", "-A", buildScriptPath, filepath.Join(slug, "index.ts"), importMapPath}
 	cmd := exec.CommandContext(ctx, denoPath, args...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
