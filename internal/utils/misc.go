@@ -321,16 +321,6 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	return nil
 }
 
-func AssertIsLinkedFS(fsys afero.Fs) error {
-	if _, err := fsys.Stat(ProjectRefPath); errors.Is(err, os.ErrNotExist) {
-		return ErrNotLinked
-	} else if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func AssertProjectRefIsValid(projectRef string) error {
 	if !ProjectRefPattern.MatchString(projectRef) {
 		return ErrInvalidRef
@@ -340,8 +330,10 @@ func AssertProjectRefIsValid(projectRef string) error {
 
 func LoadProjectRef(fsys afero.Fs) (string, error) {
 	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return "", ErrNotLinked
+	} else if err != nil {
+		return "", err
 	}
 	projectRef := string(bytes.TrimSpace(projectRefBytes))
 	if !ProjectRefPattern.MatchString(projectRef) {

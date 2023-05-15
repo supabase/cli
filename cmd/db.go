@@ -180,8 +180,14 @@ var (
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if linked || len(dbUrl) > 0 {
+				if err := parseDatabaseConfig(fsys); err != nil {
+					return err
+				}
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return lint.Run(ctx, schema, level.Value, afero.NewOsFs())
+			return lint.Run(ctx, schema, level.Value, dbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -218,7 +224,7 @@ func init() {
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
-	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against linked project.")
+	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against the linked project.")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
 	diffFlags.Lookup("schema").DefValue = "all"
@@ -252,6 +258,7 @@ func init() {
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
+	lintFlags.BoolVar(&linked, "linked", false, "Lints the linked project for schema errors.")
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
 	lintFlags.Lookup("schema").DefValue = "all"
 	lintFlags.Var(&level, "level", "Error level to emit.")
