@@ -22,6 +22,7 @@ const eszipContentType = "application/vnd.denoland.eszip"
 
 func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool, useLegacyBundle bool, importMapPath string, fsys afero.Fs) error {
 	// 1. Sanity checks.
+	var scriptDir *utils.DenoScriptDir
 	{
 		// Load function config if any for fallbacks for some flags, but continue on error.
 		_ = utils.LoadConfigFS(fsys)
@@ -33,60 +34,76 @@ func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool,
 			}
 			noVerifyJWT = &x
 		}
-		resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
-		if err != nil {
-			return err
+		if importMapPath != "" {
+			// skip
+		} else if functionConfig, ok := utils.Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
+			if filepath.IsAbs(functionConfig.ImportMap) {
+				importMapPath = functionConfig.ImportMap
+			} else {
+				importMapPath = filepath.Join(utils.SupabaseDirPath, functionConfig.ImportMap)
+			}
+		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			importMapPath = utils.FallbackImportMapPath
 		}
-		importMapPath = resolved
+		if importMapPath != "" {
+			if _, err := fsys.Stat(importMapPath); err != nil {
+				return fmt.Errorf("Failed to read import map: %w", err)
+			}
+		}
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
 		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
 			return err
 		}
+
+		var err error
+		scriptDir, err = utils.CopyDenoScripts(ctx, fsys)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 2. Bundle Function.
-	scriptDir, err := utils.CopyDenoScripts(ctx, fsys)
-	if err != nil {
-		return err
+	var functionBody io.Reader
+	var functionSize int
+	{
+		fmt.Println("Bundling " + utils.Bold(slug))
+		denoPath, err := utils.GetDenoPath()
+		if err != nil {
+			return err
+		}
+
+		functionPath := filepath.Join(utils.FunctionsDir, slug)
+		if _, err := fsys.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+			// allow deploy from within supabase/
+			functionPath = filepath.Join("functions", slug)
+			if _, err := fsys.Stat(functionPath); errors.Is(err, os.ErrNotExist) {
+				// allow deploy from current directory
+				functionPath = slug
+			}
+		}
+
+		buildScriptPath := scriptDir.BuildPath
+		args := []string{"run", "-A", buildScriptPath, filepath.Join(functionPath, "index.ts"), importMapPath}
+		if useLegacyBundle {
+			args = []string{"bundle", "--no-check=remote", "--quiet", filepath.Join(functionPath, "index.ts")}
+		}
+		cmd := exec.CommandContext(ctx, denoPath, args...)
+		var outBuf, errBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("Error bundling function: %w\n%v", err, errBuf.String())
+		}
+
+		functionBody = &outBuf
+		functionSize = outBuf.Len()
 	}
-	functionBody, err := bundleFunction(ctx, slug, importMapPath, scriptDir.BuildPath, fsys)
-	if err != nil {
-		return err
-	}
-	functionSize := functionBody.Len()
 
 	// 3. Deploy new Function.
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(units.HumanSize(float64(functionSize))) + ")")
 	return deployFunction(ctx, projectRef, slug, functionBody, !*noVerifyJWT, useLegacyBundle)
-}
-
-func bundleFunction(ctx context.Context, slug, importMapPath, buildScriptPath string, fsys afero.Fs) (*bytes.Buffer, error) {
-	fmt.Println("Bundling " + utils.Bold(slug))
-	denoPath, err := utils.GetDenoPath()
-	if err != nil {
-		return nil, err
-	}
-	// Run deno from supabase/functions directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chdir(utils.FunctionsDir); err != nil {
-		return nil, err
-	}
-	defer os.Chdir(cwd)
-	// Bundle function and import_map with deno
-	args := []string{"run", "-A", buildScriptPath, filepath.Join(slug, "index.ts"), importMapPath}
-	cmd := exec.CommandContext(ctx, denoPath, args...)
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("Error bundling function: %w\n%v", err, errBuf.String())
-	}
-	return &outBuf, nil
 }
 
 func makeLegacyFunctionBody(functionBody io.Reader) (string, error) {

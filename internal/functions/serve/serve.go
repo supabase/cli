@@ -55,11 +55,32 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 				return fmt.Errorf("Failed to read env file: %w", err)
 			}
 		}
-		resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
+		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		importMapPath = resolved
+		if importMapPath != "" {
+			if !filepath.IsAbs(importMapPath) {
+				importMapPath = filepath.Join(cwd, importMapPath)
+			}
+		} else if functionConfig, ok := utils.Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
+			if filepath.IsAbs(functionConfig.ImportMap) {
+				importMapPath = functionConfig.ImportMap
+			} else {
+				importMapPath = filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
+			}
+		} else if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
+			if filepath.IsAbs(utils.FallbackImportMapPath) {
+				importMapPath = utils.FallbackImportMapPath
+			} else {
+				importMapPath = filepath.Join(cwd, utils.FallbackImportMapPath)
+			}
+		}
+		if importMapPath != "" {
+			if _, err := fsys.Stat(importMapPath); err != nil {
+				return fmt.Errorf("Failed to read import map: %w", err)
+			}
+		}
 	}
 
 	// 2. Parse user defined env

@@ -1,19 +1,40 @@
 import { encode } from "https://deno.land/std@0.127.0/encoding/base64.ts";
+import * as path from "https://deno.land/std@0.127.0/path/mod.ts";
 import { writeAll } from "https://deno.land/std@0.162.0/streams/conversion.ts";
 import { compress } from "https://deno.land/x/brotli@0.1.7/mod.ts";
 import { build } from "https://deno.land/x/eszip@v0.35.0/mod.ts";
 
+const virtualBasePath = "file:///src/";
+
 async function buildAndWrite(p: string, importMapPath: string) {
-  const cwd = `file://${Deno.cwd()}/`
-  const entrypoint = new URL(p, cwd).href;
-  const importMap = new URL(importMapPath || "import_map.json", cwd).href
+  const funcDirPath = path.dirname(p);
+  try {
+    await Deno.lstat(funcDirPath);
+  } catch (e) {
+    console.error(
+      `Error: Cannot access "${funcDirPath}". Check if directory exists and has read permissions.`,
+    );
+    Deno.exit(1);
+  }
+
+  const entrypoint = new URL("index.ts", virtualBasePath).href;
 
   const eszip = await build([entrypoint], async (specifier: string) => {
     const url = new URL(specifier);
     if (url.protocol === "file:") {
       console.error(specifier);
-      const actualPath = url.pathname;
+      // if the path is `file:///*`, treat it as a path from parent directory
+      let actualPath = specifier.replace("file:///", `./${funcDirPath}/../`);
+      // if the path is `file:///src/*`, treat it as a relative path from current dir
+      if (specifier.startsWith(virtualBasePath)) {
+        actualPath = specifier.replace(virtualBasePath, `./${funcDirPath}/`);
+      }
 
+      // If an import map path is set read file from the given path.
+      // Otherwise default to `import_map.json` in functions directory.
+      if (specifier.endsWith("import_map.json") && importMapPath) {
+        actualPath = importMapPath;
+      }
       try {
         const content = await Deno.readTextFile(actualPath);
         return {
@@ -39,7 +60,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
     }
 
     return load(specifier);
-  }, importMap);
+  }, "file:///src/import_map.json");
   // compress ESZIP payload using Brotli
   const compressed = compress(eszip);
 
