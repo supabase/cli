@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -267,7 +268,7 @@ func TestUserSchema(t *testing.T) {
 	// Setup mock postgres
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
-	conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public}'")).
+	conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", "'{public}'")).
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()
