@@ -4,10 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -44,34 +42,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestDeployCommand(t *testing.T) {
-	t.Run("deploys new function (legacy bundle)", func(t *testing.T) {
-		const slug = "test-func"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup valid deno path
-		_, err := fsys.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusNotFound)
-		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/functions").
-			Reply(http.StatusCreated).
-			JSON(api.FunctionResponse{Id: "1"})
-		// Run test
-		noVerifyJWT := true
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, true, "", fsys))
-		// Validate api
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("deploys new function (ESZIP)", func(t *testing.T) {
 		const slug = "test-func"
 		// Setup in-memory fs
@@ -95,35 +65,7 @@ func TestDeployCommand(t *testing.T) {
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJWT := true
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, false, "", fsys))
-		// Validate api
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("updates deployed function (legacy bundle)", func(t *testing.T) {
-		const slug = "test-func"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup valid deno path
-		_, err := fsys.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		gock.New(utils.DefaultApiHost).
-			Patch("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, nil, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -151,7 +93,7 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, nil, false, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, nil, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -163,7 +105,7 @@ func TestDeployCommand(t *testing.T) {
 		project := apitest.RandomProjectRef()
 		// Run test
 		noVerifyJWT := true
-		err := Run(context.Background(), "@", project, &noVerifyJWT, true, "", fsys)
+		err := Run(context.Background(), "@", project, &noVerifyJWT, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -175,7 +117,7 @@ func TestDeployCommand(t *testing.T) {
 		project := apitest.RandomProjectRef()
 		// Run test
 		noVerifyJWT := true
-		err := Run(context.Background(), "test-func", project, &noVerifyJWT, true, "", fsys)
+		err := Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -202,7 +144,7 @@ func TestDeployCommand(t *testing.T) {
 			Body(&body)
 		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), "test-func", project, &noVerifyJWT, true, "", fsys)
+		err = Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -230,7 +172,7 @@ func TestDeployCommand(t *testing.T) {
 			Body(&body)
 
 		noVerifyJWT := true
-		err = Run(context.Background(), "test-func", project, &noVerifyJWT, false, "", fsys)
+		err = Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\neszip failed\n")
 	})
@@ -262,25 +204,12 @@ verify_jwt = false
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/functions").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				body, err := io.ReadAll(req.Body)
-				if err != nil {
-					return false, err
-				}
-
-				var bodyJson map[string]interface{}
-				err = json.Unmarshal(body, &bodyJson)
-				if err != nil {
-					return false, err
-				}
-
-				return bodyJson["verify_jwt"] == false, nil
-			}).
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("verify_jwt", "false").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, nil, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, nil, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -312,26 +241,13 @@ verify_jwt = false
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/functions").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				body, err := io.ReadAll(req.Body)
-				if err != nil {
-					return false, err
-				}
-
-				var bodyJson map[string]interface{}
-				err = json.Unmarshal(body, &bodyJson)
-				if err != nil {
-					return false, err
-				}
-
-				return bodyJson["verify_jwt"] == true, nil
-			}).
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("verify_jwt", "true").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -365,14 +281,20 @@ verify_jwt = false
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, false, "", fsys))
+		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestDeployFunction(t *testing.T) {
-	const slug = "test-func"
+	slug := "test-func"
+	verifyJwt := true
+	params := api.CreateFunctionParams{
+		Slug:      &slug,
+		Name:      &slug,
+		VerifyJwt: &verifyJwt,
+	}
 	// Setup valid project ref
 	project := apitest.RandomProjectRef()
 	// Setup valid access token
@@ -386,7 +308,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -398,7 +320,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error deploying Function:")
 	})
@@ -413,7 +335,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -428,7 +350,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Failed to create a new Function on the Supabase project:")
 	})
@@ -444,7 +366,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -460,7 +382,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, slug, strings.NewReader("body"), true, true)
+		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Failed to update an existing Function's body on the Supabase project:")
 	})
