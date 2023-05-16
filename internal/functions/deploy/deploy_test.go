@@ -42,8 +42,9 @@ func TestMain(m *testing.M) {
 }
 
 func TestDeployCommand(t *testing.T) {
+	const slug = "test-func"
+
 	t.Run("deploys new function (ESZIP)", func(t *testing.T) {
-		const slug = "test-func"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
@@ -71,7 +72,6 @@ func TestDeployCommand(t *testing.T) {
 	})
 
 	t.Run("updates deployed function (ESZIP)", func(t *testing.T) {
-		const slug = "test-func"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
@@ -178,7 +178,6 @@ func TestDeployCommand(t *testing.T) {
 	})
 
 	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
-		const slug = "test-func"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -215,7 +214,6 @@ verify_jwt = false
 	})
 
 	t.Run("verify_jwt flag overrides config", func(t *testing.T) {
-		const slug = "test-func"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -253,7 +251,6 @@ verify_jwt = false
 	})
 
 	t.Run("uses fallback import map", func(t *testing.T) {
-		const slug = "test-func"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
