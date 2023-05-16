@@ -35,6 +35,13 @@ func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool,
 		if err != nil {
 			return err
 		}
+		// Upstream server expects import map to be always defined
+		if importMapPath == "" {
+			resolved, err = filepath.Abs(utils.FallbackImportMapPath)
+			if err != nil {
+				return err
+			}
+		}
 		importMapPath = resolved
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
