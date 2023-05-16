@@ -40,6 +40,7 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 	}
 
 	// 1. Sanity checks.
+	fmt.Fprintf(os.Stderr, "Serving functions with legacy %s... Run %s instead to use Edge Runtime.\n", utils.Yellow(utils.DenoRelayImage), utils.Aqua("functions serve"))
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
