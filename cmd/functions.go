@@ -57,7 +57,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, false, importMapPath, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 
