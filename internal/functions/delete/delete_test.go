@@ -15,11 +15,15 @@ import (
 
 func TestDeleteCommand(t *testing.T) {
 	const slug = "test-func"
+	// Setup valid project ref
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("deletes function from project", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -45,8 +49,6 @@ func TestDeleteCommand(t *testing.T) {
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -62,8 +64,6 @@ func TestDeleteCommand(t *testing.T) {
 	t.Run("throws error on missing function", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -80,8 +80,6 @@ func TestDeleteCommand(t *testing.T) {
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).

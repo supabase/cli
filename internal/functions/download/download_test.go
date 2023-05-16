@@ -47,6 +47,9 @@ func TestDownloadCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
@@ -107,6 +110,9 @@ func TestDownloadCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
@@ -125,10 +131,13 @@ func TestDownloadCommand(t *testing.T) {
 
 func TestDownloadFunction(t *testing.T) {
 	const slug = "test-func"
+	// Setup valid project ref
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("throws error on network error", func(t *testing.T) {
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -145,8 +154,6 @@ func TestDownloadFunction(t *testing.T) {
 	})
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -163,8 +170,6 @@ func TestDownloadFunction(t *testing.T) {
 	})
 
 	t.Run("throws error on extract failure", func(t *testing.T) {
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "extract failed")
 		var body bytes.Buffer
@@ -194,6 +199,9 @@ func TestDownloadFunction(t *testing.T) {
 func TestGetMetadata(t *testing.T) {
 	const slug = "test-func"
 	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("fallback to default paths", func(t *testing.T) {
 		// Setup mock api
