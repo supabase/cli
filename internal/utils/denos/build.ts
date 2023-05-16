@@ -1,14 +1,14 @@
 import { encode } from "https://deno.land/std@0.127.0/encoding/base64.ts";
+import * as path from "https://deno.land/std@0.127.0/path/mod.ts";
 import { writeAll } from "https://deno.land/std@0.162.0/streams/conversion.ts";
 import { compress } from "https://deno.land/x/brotli@0.1.7/mod.ts";
 import { build } from "https://deno.land/x/eszip@v0.35.0/mod.ts";
 
-async function buildAndWrite(p: string, importMapPath: string) {
-  const cwd = `file://${Deno.cwd()}/`
-  const entrypoint = new URL(p, cwd).href;
-  const importMap = new URL(importMapPath || "supabase/functions/import_map.json", cwd).href
+async function buildAndWrite(entrypointPath: string, importMapPath: string) {
+  const entrypointUrl = path.toFileUrl(entrypointPath).href
+  const importMapUrl = path.toFileUrl(importMapPath).href
 
-  const eszip = await build([entrypoint], async (specifier: string) => {
+  const eszip = await build([entrypointUrl], async (specifier: string) => {
     const url = new URL(specifier);
     if (url.protocol === "file:") {
       console.error(specifier);
@@ -24,7 +24,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
       } catch (e) {
         if (
           (e instanceof Deno.errors.NotFound) &&
-          actualPath.endsWith("import_map.json")
+          actualPath === importMapPath
         ) {
           // if there's no import_map.json, set an empty one
           return {
@@ -39,7 +39,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
     }
 
     return load(specifier);
-  }, importMap);
+  }, importMapUrl);
   // compress ESZIP payload using Brotli
   const compressed = compress(eszip);
 
@@ -53,7 +53,7 @@ async function buildAndWrite(p: string, importMapPath: string) {
   await writeAll(Deno.stdout, combinedPayload);
 }
 
-buildAndWrite(Deno.args[0], Deno.args[1]);
+buildAndWrite(...Deno.args);
 
 // Adapted from https://github.com/denoland/deno/blob/bacbf949256e32ca84e7f11c0171db7d9a644b44/cli/auth_tokens.rs#L38
 
