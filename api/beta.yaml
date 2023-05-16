@@ -391,27 +391,33 @@ paths:
           schema:
             pattern: /^[A-Za-z0-9_-]+$/
             type: string
-        - name: import_map_path
+        - name: slug
+          required: false
+          in: query
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+        - name: name
           required: false
           in: query
           schema:
             type: string
-        - name: entrypoint_path
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: import_map
-          required: false
-          in: query
-          schema:
-            type: boolean
         - name: verify_jwt
           required: false
           in: query
           schema:
             type: boolean
-        - name: name
+        - name: import_map
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: entrypoint_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: import_map_path
           required: false
           in: query
           schema:
