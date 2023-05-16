@@ -12,6 +12,12 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
+)
+
+var (
+	legacyEntrypointPath = "file:///src/index.ts"
+	legacyImportMapPath  = "file:///src/import_map.json"
 )
 
 func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
@@ -38,6 +44,11 @@ func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) err
 			return err
 		}
 
+		meta, err := getFunctionMetadata(ctx, projectRef, slug)
+		if err != nil {
+			return err
+		}
+
 		resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
 		if err != nil {
 			return err
@@ -52,7 +63,7 @@ func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) err
 			extractScriptPath := scriptDir.ExtractPath
 			funcDir := filepath.Join(utils.FunctionsDir, slug)
 			var errBuf bytes.Buffer
-			args := []string{"run", "-A", extractScriptPath, funcDir}
+			args := []string{"run", "-A", extractScriptPath, funcDir, *meta.EntrypointPath}
 			cmd := exec.CommandContext(ctx, denoPath, args...)
 			cmd.Stdin = resBuf
 			cmd.Stdout = os.Stdout
@@ -67,4 +78,22 @@ func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) err
 
 	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
 	return nil
+}
+
+func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.FunctionSlugResponse, error) {
+	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		return nil, errors.New("Failed to fetch Function metadata on the Supabase project: " + string(resp.Body))
+	}
+
+	if resp.JSON200.EntrypointPath == nil {
+		resp.JSON200.EntrypointPath = &legacyEntrypointPath
+	}
+	if resp.JSON200.ImportMapPath == nil {
+		resp.JSON200.ImportMapPath = &legacyImportMapPath
+	}
+	return resp.JSON200, nil
 }
