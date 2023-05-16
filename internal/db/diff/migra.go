@@ -17,12 +17,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 )
-
-const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
 
 var (
 	//go:embed templates/migra.sh
@@ -94,29 +93,7 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 			"supabase_migrations",
 		}, utils.SystemSchemas...)
 	}
-	exclude = likeEscapeSchema(exclude)
-	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
-	if err != nil {
-		return nil, err
-	}
-	schemas := []string{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		schemas = append(schemas, name)
-	}
-	return schemas, nil
-}
-
-func likeEscapeSchema(schemas []string) (result []string) {
-	// Treat _ as literal, * as any character
-	replacer := strings.NewReplacer("_", `\_`, "*", "%")
-	for _, sch := range schemas {
-		result = append(result, replacer.Replace(sch))
-	}
-	return result
+	return reset.ListSchemas(ctx, conn, exclude...)
 }
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {

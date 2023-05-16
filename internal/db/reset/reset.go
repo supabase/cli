@@ -2,6 +2,7 @@ package reset
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -19,13 +20,23 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const SET_POSTGRES_ROLE = "SET ROLE postgres;"
+const (
+	SET_POSTGRES_ROLE = "SET ROLE postgres;"
+	LIST_SCHEMAS      = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
+)
 
 var (
 	healthTimeout = 5 * time.Second
+	//go:embed templates/drop.sql
+	dropObjects string
 )
 
-func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if len(config.Password) > 0 {
+		fmt.Fprintln(os.Stderr, "Resetting remote database...")
+		return resetRemote(ctx, config, fsys, options...)
+	}
+
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -52,7 +63,7 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 }
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	fmt.Fprintln(os.Stderr, "Resetting database...")
+	fmt.Fprintln(os.Stderr, "Resetting local database...")
 	if err := RecreateDatabase(ctx, options...); err != nil {
 		return err
 	}
@@ -179,4 +190,56 @@ func WaitForHealthyService(ctx context.Context, container string, timeout time.D
 		return status.AssertContainerHealthy(ctx, container) == nil
 	}
 	return RetryEverySecond(ctx, probe, timeout)
+}
+
+func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	// List user defined schemas
+	excludes := append([]string{"public"}, utils.InternalSchemas...)
+	userSchemas, err := ListSchemas(ctx, conn, excludes...)
+	if err != nil {
+		return err
+	}
+	userSchemas = append(userSchemas, "supabase_migrations")
+	// Drop user defined objects
+	migration := apply.MigrationFile{}
+	for _, schema := range userSchemas {
+		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
+		migration.Lines = append(migration.Lines, sql)
+	}
+	migration.Lines = append(migration.Lines, dropObjects)
+	if err := migration.ExecBatch(ctx, conn); err != nil {
+		return err
+	}
+	return InitialiseDatabase(ctx, conn, fsys)
+}
+
+func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
+	exclude = likeEscapeSchema(exclude)
+	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
+	if err != nil {
+		return nil, err
+	}
+	schemas := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		schemas = append(schemas, name)
+	}
+	return schemas, nil
+}
+
+func likeEscapeSchema(schemas []string) (result []string) {
+	// Treat _ as literal, * as any character
+	replacer := strings.NewReplacer("_", `\_`, "*", "%")
+	for _, sch := range schemas {
+		result = append(result, replacer.Replace(sch))
+	}
+	return result
 }
