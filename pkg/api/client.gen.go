@@ -2417,6 +2417,38 @@ func NewCreateFunctionRequestWithBody(server string, ref string, params *CreateF
 
 	}
 
+	if params.EntrypointPath != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	if params.ImportMapPath != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
 	queryURL.RawQuery = queryValues.Encode()
 
 	req, err := http.NewRequest("POST", queryURL.String(), body)
@@ -2608,6 +2640,38 @@ func NewUpdateFunctionRequestWithBody(server string, ref string, functionSlug st
 	if params.ImportMap != nil {
 
 		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	if params.EntrypointPath != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+	}
+
+	if params.ImportMapPath != nil {
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
