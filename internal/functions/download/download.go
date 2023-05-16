@@ -86,7 +86,7 @@ func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.Fun
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, errors.New("Failed to fetch Function metadata on the Supabase project: " + string(resp.Body))
+		return nil, errors.New("Failed to download Function " + utils.Aqua(slug) + " on the Supabase project: " + string(resp.Body))
 	}
 
 	if resp.JSON200.EntrypointPath == nil {
