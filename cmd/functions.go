@@ -92,6 +92,7 @@ var (
 				noVerifyJWT = nil
 			}
 			slug := ""
+			// TODO: Make `functions serve <function-name>` do `functions serve` under the hood and remove deno relay code.
 			if len(args) > 0 {
 				slug = args[0]
 			}
