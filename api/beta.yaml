@@ -271,6 +271,16 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: entrypoint_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: import_map_path
+          required: false
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -402,6 +412,16 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: entrypoint_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: import_map_path
+          required: false
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1758,6 +1778,10 @@ components:
           type: boolean
         import_map:
           type: boolean
+        entrypoint_path:
+          type: string
+        import_map_path:
+          type: string
       required:
         - id
         - slug
@@ -1788,6 +1812,10 @@ components:
           type: boolean
         import_map:
           type: boolean
+        entrypoint_path:
+          type: string
+        import_map_path:
+          type: string
       required:
         - id
         - slug

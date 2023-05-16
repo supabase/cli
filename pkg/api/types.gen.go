@@ -353,15 +353,17 @@ type Domain struct {
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	CreatedAt float32                `json:"created_at"`
-	Id        string                 `json:"id"`
-	ImportMap *bool                  `json:"import_map,omitempty"`
-	Name      string                 `json:"name"`
-	Slug      string                 `json:"slug"`
-	Status    FunctionResponseStatus `json:"status"`
-	UpdatedAt float32                `json:"updated_at"`
-	VerifyJwt *bool                  `json:"verify_jwt,omitempty"`
-	Version   float32                `json:"version"`
+	CreatedAt      float32                `json:"created_at"`
+	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
+	Id             string                 `json:"id"`
+	ImportMap      *bool                  `json:"import_map,omitempty"`
+	ImportMapPath  *string                `json:"import_map_path,omitempty"`
+	Name           string                 `json:"name"`
+	Slug           string                 `json:"slug"`
+	Status         FunctionResponseStatus `json:"status"`
+	UpdatedAt      float32                `json:"updated_at"`
+	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
+	Version        float32                `json:"version"`
 }
 
 // FunctionResponseStatus defines model for FunctionResponse.Status.
@@ -369,15 +371,17 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	CreatedAt float32                    `json:"created_at"`
-	Id        string                     `json:"id"`
-	ImportMap *bool                      `json:"import_map,omitempty"`
-	Name      string                     `json:"name"`
-	Slug      string                     `json:"slug"`
-	Status    FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt float32                    `json:"updated_at"`
-	VerifyJwt *bool                      `json:"verify_jwt,omitempty"`
-	Version   float32                    `json:"version"`
+	CreatedAt      float32                    `json:"created_at"`
+	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
+	Id             string                     `json:"id"`
+	ImportMap      *bool                      `json:"import_map,omitempty"`
+	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
+	Name           string                     `json:"name"`
+	Slug           string                     `json:"slug"`
+	Status         FunctionSlugResponseStatus `json:"status"`
+	UpdatedAt      float32                    `json:"updated_at"`
+	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
+	Version        float32                    `json:"version"`
 }
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
@@ -735,18 +739,22 @@ type TokenParamsGrantType string
 
 // CreateFunctionParams defines parameters for CreateFunction.
 type CreateFunctionParams struct {
-	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name      *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name           *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // UpdateFunctionParams defines parameters for UpdateFunction.
 type UpdateFunctionParams struct {
-	Slug      *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name      *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name           *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // DeleteSecretsJSONBody defines parameters for DeleteSecrets.
