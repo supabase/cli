@@ -65,13 +65,15 @@ func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool,
 	// Note: eszip created will always contain a `import_map.json`.
 	importMap := true
 	verifyJWT := !*noVerifyJWT
+	importMapUrl := "file://" + importMapPath
+	entrypointUrl := "file://" + entrypointPath
 	return deployFunction(ctx, projectRef, api.CreateFunctionParams{
 		Slug:           &slug,
 		Name:           &slug,
 		VerifyJwt:      &verifyJWT,
 		ImportMap:      &importMap,
-		ImportMapPath:  &importMapPath,
-		EntrypointPath: &entrypointPath,
+		ImportMapPath:  &importMapUrl,
+		EntrypointPath: &entrypointUrl,
 	}, functionBody)
 }
 
