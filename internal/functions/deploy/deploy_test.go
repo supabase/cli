@@ -276,7 +276,7 @@ verify_jwt = false
 			Reply(http.StatusNotFound)
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/"+project+"/functions").
-			MatchParam("import_map", "true").
+			MatchParam("import_map_path", absPath).
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
@@ -288,13 +288,7 @@ verify_jwt = false
 }
 
 func TestDeployFunction(t *testing.T) {
-	slug := "test-func"
-	verifyJwt := true
-	params := api.CreateFunctionParams{
-		Slug:      &slug,
-		Name:      &slug,
-		VerifyJwt: &verifyJwt,
-	}
+	const slug = "test-func"
 	// Setup valid project ref
 	project := apitest.RandomProjectRef()
 	// Setup valid access token
@@ -308,7 +302,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -320,7 +314,7 @@ func TestDeployFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error deploying Function:")
 	})
@@ -335,7 +329,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -350,7 +344,7 @@ func TestDeployFunction(t *testing.T) {
 			Post("/v1/projects/" + project + "/functions").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Failed to create a new Function on the Supabase project:")
 	})
@@ -366,7 +360,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -382,7 +376,7 @@ func TestDeployFunction(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := deployFunction(context.Background(), project, params, strings.NewReader("body"))
+		err := deployFunction(context.Background(), project, slug, "", "", true, strings.NewReader("body"))
 		// Check error
 		assert.ErrorContains(t, err, "Failed to update an existing Function's body on the Supabase project:")
 	})

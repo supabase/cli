@@ -69,19 +69,15 @@ func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool,
 	// 3. Deploy new Function.
 	functionSize := units.HumanSize(float64(functionBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
-	// Note: eszip created will always contain a `import_map.json`.
-	importMap := true
-	verifyJWT := !*noVerifyJWT
-	importMapUrl := "file://" + importMapPath
-	entrypointUrl := "file://" + entrypointPath
-	return deployFunction(ctx, projectRef, api.CreateFunctionParams{
-		Slug:           &slug,
-		Name:           &slug,
-		VerifyJwt:      &verifyJWT,
-		ImportMap:      &importMap,
-		ImportMapPath:  &importMapUrl,
-		EntrypointPath: &entrypointUrl,
-	}, functionBody)
+	return deployFunction(
+		ctx,
+		projectRef,
+		slug,
+		"file://"+entrypointPath,
+		"file://"+importMapPath,
+		!*noVerifyJWT,
+		functionBody,
+	)
 }
 
 func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScriptPath string, fsys afero.Fs) (*bytes.Buffer, error) {
@@ -101,8 +97,7 @@ func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScr
 	return &outBuf, nil
 }
 
-func deployFunction(ctx context.Context, projectRef string, params api.CreateFunctionParams, functionBody io.Reader) error {
-	slug := *params.Slug
+func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
 	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return err
@@ -110,7 +105,13 @@ func deployFunction(ctx context.Context, projectRef string, params api.CreateFun
 
 	switch resp.StatusCode() {
 	case http.StatusNotFound: // Function doesn't exist yet, so do a POST
-		resp, err := utils.GetSupabase().CreateFunctionWithBodyWithResponse(ctx, projectRef, &params, eszipContentType, functionBody)
+		resp, err := utils.GetSupabase().CreateFunctionWithBodyWithResponse(ctx, projectRef, &api.CreateFunctionParams{
+			Slug:           &slug,
+			Name:           &slug,
+			VerifyJwt:      &verifyJWT,
+			ImportMapPath:  &importMapUrl,
+			EntrypointPath: &entrypointUrl,
+		}, eszipContentType, functionBody)
 		if err != nil {
 			return err
 		}
@@ -119,10 +120,9 @@ func deployFunction(ctx context.Context, projectRef string, params api.CreateFun
 		}
 	case http.StatusOK: // Function already exists, so do a PATCH
 		resp, err := utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
-			VerifyJwt:      params.VerifyJwt,
-			ImportMap:      params.ImportMap,
-			ImportMapPath:  params.ImportMapPath,
-			EntrypointPath: params.EntrypointPath,
+			VerifyJwt:      &verifyJWT,
+			ImportMapPath:  &importMapUrl,
+			EntrypointPath: &entrypointUrl,
 		}, eszipContentType, functionBody)
 		if err != nil {
 			return err
