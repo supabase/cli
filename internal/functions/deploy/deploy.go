@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -18,66 +19,35 @@ import (
 
 const eszipContentType = "application/vnd.denoland.eszip"
 
-func Run(ctx context.Context, slug string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	{
-		// Load function config if any for fallbacks for some flags, but continue on error.
-		_ = utils.LoadConfigFS(fsys)
-		// Ensure noVerifyJWT is not nil.
-		if noVerifyJWT == nil {
-			x := false
-			if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
-				x = true
-			}
-			noVerifyJWT = &x
-		}
-		resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
+func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+	// Load function config if any for fallbacks for some flags, but continue on error.
+	_ = utils.LoadConfigFS(fsys)
+	if len(slugs) == 0 {
+		allSlugs, err := getFunctionSlugs(fsys)
 		if err != nil {
 			return err
 		}
-		// Upstream server expects import map to be always defined
-		if importMapPath == "" {
-			resolved, err = filepath.Abs(utils.FallbackImportMapPath)
-			if err != nil {
-				return err
-			}
-		}
-		importMapPath = resolved
-		if err := utils.ValidateFunctionSlug(slug); err != nil {
-			return err
-		}
-		if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
-			return err
-		}
+		slugs = allSlugs
 	}
+	if len(slugs) == 0 {
+		return errors.New("No Functions specified or found in " + utils.Bold(utils.FunctionsDir))
+	}
+	return deployAll(ctx, slugs, projectRef, importMapPath, noVerifyJWT, fsys)
+}
 
-	// 2. Bundle Function.
-	scriptDir, err := utils.CopyDenoScripts(ctx, fsys)
+func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
+	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
-	if err != nil {
-		return err
+	var slugs []string
+	for _, fi := range functions {
+		if !fi.IsDir() {
+			continue
+		}
+		slugs = append(slugs, fi.Name())
 	}
-	fmt.Println("Bundling " + utils.Bold(slug))
-	functionBody, err := bundleFunction(ctx, entrypointPath, importMapPath, scriptDir.BuildPath, fsys)
-	if err != nil {
-		return err
-	}
-
-	// 3. Deploy new Function.
-	functionSize := units.HumanSize(float64(functionBody.Len()))
-	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
-	return deployFunction(
-		ctx,
-		projectRef,
-		slug,
-		"file://"+entrypointPath,
-		"file://"+importMapPath,
-		!*noVerifyJWT,
-		functionBody,
-	)
+	return slugs, nil
 }
 
 func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScriptPath string, fsys afero.Fs) (*bytes.Buffer, error) {
@@ -138,4 +108,79 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 	url := fmt.Sprintf("%s/project/%v/functions/%v/details", utils.GetSupabaseDashboardURL(), projectRef, slug)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 	return nil
+}
+
+func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScriptPath string, noVerifyJWT *bool, fsys afero.Fs) error {
+	// 1. Sanity checks.
+	if err := utils.ValidateFunctionSlug(slug); err != nil {
+		return err
+	}
+	// Ensure noVerifyJWT is not nil.
+	if noVerifyJWT == nil {
+		x := false
+		if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
+			x = true
+		}
+		noVerifyJWT = &x
+	}
+	resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
+	if err != nil {
+		return err
+	}
+	// Upstream server expects import map to be always defined
+	if importMapPath == "" {
+		resolved, err = filepath.Abs(utils.FallbackImportMapPath)
+		if err != nil {
+			return err
+		}
+	}
+	importMapPath = resolved
+	// 2. Bundle Function.
+	entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
+	if err != nil {
+		return err
+	}
+	fmt.Println("Bundling " + utils.Bold(slug))
+	functionBody, err := bundleFunction(ctx, entrypointPath, importMapPath, buildScriptPath, fsys)
+	if err != nil {
+		return err
+	}
+	// 3. Deploy new Function.
+	functionSize := units.HumanSize(float64(functionBody.Len()))
+	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
+	return deployFunction(
+		ctx,
+		projectRef,
+		slug,
+		"file://"+entrypointPath,
+		"file://"+importMapPath,
+		!*noVerifyJWT,
+		functionBody,
+	)
+}
+
+func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
+	// Setup deno binaries
+	if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
+		return err
+	}
+	scriptDir, err := utils.CopyDenoScripts(ctx, fsys)
+	if err != nil {
+		return err
+	}
+	errCh := make([]chan error, len(slugs))
+	for i, slug := range slugs {
+		errCh[i] = make(chan error)
+		go func(i int, slug string) {
+			errCh[i] <- deployOne(ctx, slug, projectRef, importMapPath, scriptDir.BuildPath, noVerifyJWT, fsys)
+		}(i, slug)
+	}
+	// Log all errors and return the last one
+	for _, ch := range errCh {
+		if errDeploy := <-ch; errDeploy != nil {
+			fmt.Fprintln(os.Stderr, errDeploy)
+			err = errDeploy
+		}
+	}
+	return err
 }

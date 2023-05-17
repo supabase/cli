@@ -41,10 +41,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestDeployCommand(t *testing.T) {
+func TestDeployOne(t *testing.T) {
 	const slug = "test-func"
 
 	t.Run("deploys new function (ESZIP)", func(t *testing.T) {
+		entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
+		require.NoError(t, err)
+		importMapPath, err := filepath.Abs(utils.FallbackImportMapPath)
+		require.NoError(t, err)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
@@ -53,7 +57,7 @@ func TestDeployCommand(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup valid deno path
-		_, err := fsys.Create(utils.DenoPathOverride)
+		_, err = fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
@@ -61,13 +65,16 @@ func TestDeployCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/functions").
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("entrypoint_path", "file://"+entrypointPath).
+			MatchParam("import_map_path", "file://"+importMapPath).
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJWT := true
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJWT, "", fsys))
-		// Validate api
+		err = deployOne(context.Background(), slug, project, "", "", &noVerifyJWT, fsys)
+		// Check error
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -93,8 +100,9 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, nil, "", fsys))
-		// Validate api
+		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -105,21 +113,20 @@ func TestDeployCommand(t *testing.T) {
 		project := apitest.RandomProjectRef()
 		// Run test
 		noVerifyJWT := true
-		err := Run(context.Background(), "@", project, &noVerifyJWT, "", fsys)
+		err := deployOne(context.Background(), "@", project, "", "", &noVerifyJWT, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
 
-	t.Run("throws error on failure to install deno", func(t *testing.T) {
+	t.Run("throws error on missing import map", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		noVerifyJWT := true
-		err := Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
+		err := deployOne(context.Background(), slug, project, "import_map.json", "", nil, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on bundle failure", func(t *testing.T) {
@@ -143,38 +150,161 @@ func TestDeployCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 		// Run test
-		noVerifyJWT := true
-		err = Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
+		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+}
 
-	t.Run("throws error on ESZIP failure", func(t *testing.T) {
+func TestDeployAll(t *testing.T) {
+	const slug = "test-func"
+
+	t.Run("deploys multiple functions", func(t *testing.T) {
+		functions := []string{slug, slug + "-2"}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		// Setup deno error
-		t.Setenv("TEST_DENO_ERROR", "eszip failed")
-		var body bytes.Buffer
-		archive := zip.NewWriter(&body)
-		w, err := archive.Create("deno")
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
-		_, err = w.Write([]byte("binary"))
-		require.NoError(t, err)
-		require.NoError(t, archive.Close())
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New("https://github.com").
-			Get("/denoland/deno/releases/download/v" + utils.DenoVersion).
-			Reply(http.StatusOK).
-			Body(&body)
-
+		for i := range functions {
+			// Do not match slug to avoid flakey tests
+			gock.New(utils.DefaultApiHost).
+				Get("/v1/projects/" + project + "/functions/").
+				Reply(http.StatusNotFound)
+			gock.New(utils.DefaultApiHost).
+				Post("/v1/projects/" + project + "/functions").
+				Reply(http.StatusCreated).
+				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
+		}
+		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), "test-func", project, &noVerifyJWT, "", fsys)
+		err = deployAll(context.Background(), functions, project, "", &noVerifyJWT, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Error bundling function: exit status 1\neszip failed\n")
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on failure to install deno", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Run test
+		err := deployAll(context.Background(), []string{slug}, project, "", nil, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "operation not permitted")
+	})
+
+	t.Run("throws error on copy failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Run test
+		err = deployAll(context.Background(), []string{slug}, project, "", nil, afero.NewReadOnlyFs(fsys))
+		// Check error
+		assert.ErrorContains(t, err, "operation not permitted")
+	})
+}
+
+func TestDeployCommand(t *testing.T) {
+	const slug = "test-func"
+
+	t.Run("deploys multiple functions", func(t *testing.T) {
+		functions := []string{slug, slug + "-2"}
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		for i := range functions {
+			// Do not match slug to avoid flakey tests
+			gock.New(utils.DefaultApiHost).
+				Get("/v1/projects/" + project + "/functions/").
+				Reply(http.StatusNotFound)
+			gock.New(utils.DefaultApiHost).
+				Post("/v1/projects/" + project + "/functions").
+				Reply(http.StatusCreated).
+				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
+		}
+		// Run test
+		noVerifyJWT := true
+		err = Run(context.Background(), functions, project, &noVerifyJWT, "", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("deploys functions from directory", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		importMapPath, err := filepath.Abs(utils.FallbackImportMapPath)
+		require.NoError(t, err)
+		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
+		// Setup function entrypoint
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug)
+		require.NoError(t, fsys.MkdirAll(entrypointPath, 0755))
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err = fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusNotFound)
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("slug", slug).
+			MatchParam("import_map_path", "file://"+importMapPath).
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		err = Run(context.Background(), nil, project, nil, "", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on missing directory", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), nil, "", nil, "", fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("throws error on empty functions", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fsys.MkdirAll(utils.FunctionsDir, 0755))
+		// Run test
+		err := Run(context.Background(), nil, "", nil, "", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
 
 	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
@@ -208,7 +338,7 @@ verify_jwt = false
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		assert.NoError(t, Run(context.Background(), slug, project, nil, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, project, nil, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -245,40 +375,7 @@ verify_jwt = false
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, "", fsys))
-		// Validate api
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("uses fallback import map", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte(""), 0644))
-		absPath, err := filepath.Abs(utils.FallbackImportMapPath)
-		require.NoError(t, err)
-		require.NoError(t, afero.WriteFile(fsys, absPath, []byte("{}"), 0644))
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup valid deno path
-		_, err = fsys.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusNotFound)
-		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
-			MatchParam("import_map_path", absPath).
-			Reply(http.StatusCreated).
-			JSON(api.FunctionResponse{Id: "1"})
-		// Run test
-		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), slug, project, &noVerifyJwt, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, project, &noVerifyJwt, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
