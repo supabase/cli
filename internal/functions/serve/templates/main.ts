@@ -98,6 +98,7 @@ serve(async (req: Request) => {
     .filter(([name, _]) =>
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
+  const forceCreate = true;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
@@ -106,6 +107,7 @@ serve(async (req: Request) => {
       noModuleCache,
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
+      forceCreate,
     });
     return await worker.fetch(req);
   } catch (e) {
