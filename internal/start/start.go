@@ -438,7 +438,7 @@ EOF
 					"DB_USER=supabase_admin",
 					"DB_PASSWORD=" + dbConfig.Password,
 					"DB_NAME=" + dbConfig.Database,
-					"DB_AFTER_CONNECT_QUERY=CREATE SCHEMA IF NOT EXISTS _realtime; SET search_path TO _realtime",
+					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=supabaserealtime",
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"FLY_ALLOC_ID=abc123",
