@@ -51,13 +51,12 @@ var (
 		Use:   "deploy <Function name>",
 		Short: "Deploy a Function to Supabase",
 		Long:  "Deploy a Function to the linked Supabase project.",
-		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(cmd.Context(), args[0], flags.ProjectRef, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args, flags.ProjectRef, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 
