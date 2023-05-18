@@ -32,7 +32,9 @@ async function extractEszip(
     const module = await parser.getModuleSource(specifier);
     const absPath = path.fromFileUrl(specifier);
     const relPath = path.relative(basePath, absPath);
-    await write(path.join(destPath, relPath), module);
+    const dest = path.join(destPath, relPath);
+    console.info(path.resolve(dest));
+    await write(dest, module);
   }
 }
 
