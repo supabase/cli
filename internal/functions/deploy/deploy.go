@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -176,7 +175,7 @@ func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath st
 	for _, slug := range slugs {
 		// Log all errors and proceed
 		if err := <-errCh; err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			return err
 		}
 		go func(slug string) {
 			errCh <- deployOne(ctx, slug, projectRef, importMapPath, scriptDir.BuildPath, noVerifyJWT, fsys)
