@@ -159,6 +159,9 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScript
 	)
 }
 
+// TODO: api has a race condition that prevents deploying in parallel
+const maxConcurrency = 1
+
 func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
 	// Setup deno binaries
 	if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
@@ -168,19 +171,16 @@ func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath st
 	if err != nil {
 		return err
 	}
-	errCh := make([]chan error, len(slugs))
-	for i, slug := range slugs {
-		errCh[i] = make(chan error)
-		go func(i int, slug string) {
-			errCh[i] <- deployOne(ctx, slug, projectRef, importMapPath, scriptDir.BuildPath, noVerifyJWT, fsys)
-		}(i, slug)
-	}
-	// Log all errors and return the last one
-	for _, ch := range errCh {
-		if errDeploy := <-ch; errDeploy != nil {
-			fmt.Fprintln(os.Stderr, errDeploy)
-			err = errDeploy
+	errCh := make(chan error, maxConcurrency)
+	errCh <- nil
+	for _, slug := range slugs {
+		// Log all errors and proceed
+		if err := <-errCh; err != nil {
+			fmt.Fprintln(os.Stderr, err)
 		}
+		go func(slug string) {
+			errCh <- deployOne(ctx, slug, projectRef, importMapPath, scriptDir.BuildPath, noVerifyJWT, fsys)
+		}(slug)
 	}
-	return err
+	return <-errCh
 }
