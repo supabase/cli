@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -58,10 +59,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	if err != nil {
 		return err
 	}
-	branch, err := utils.GetCurrentBranchFS(fsys)
-	if err != nil {
-		branch = "main"
-	}
+	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	return SaveDiff(out, file, fsys)
 }
