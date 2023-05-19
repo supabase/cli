@@ -92,7 +92,7 @@ func GetGitBranch(fsys afero.Fs) string {
 		return head
 	}
 	branch := "main"
-	if gitRoot, err := utils.GetGitRoot(fsys); err == nil {
+	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot != nil {
 		if repo, err := git.PlainOpen(*gitRoot); err == nil {
 			if ref, err := repo.Head(); err == nil {
 				branch = ref.Name().Short()
