@@ -260,8 +260,8 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
 		// Setup function entrypoint
-		entrypointPath := filepath.Join(utils.FunctionsDir, slug)
-		require.NoError(t, fsys.MkdirAll(entrypointPath, 0755))
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -286,15 +286,6 @@ func TestDeployCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on missing directory", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), nil, "", nil, "", fsys)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on empty functions", func(t *testing.T) {
