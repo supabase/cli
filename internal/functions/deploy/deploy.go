@@ -35,16 +35,15 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 }
 
 func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
-	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
+	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
+	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
 		return nil, err
 	}
 	var slugs []string
-	for _, fi := range functions {
-		if !fi.IsDir() {
-			continue
-		}
-		slugs = append(slugs, fi.Name())
+	for _, path := range paths {
+		slug := filepath.Base(filepath.Dir(path))
+		slugs = append(slugs, slug)
 	}
 	return slugs, nil
 }
