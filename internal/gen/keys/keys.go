@@ -92,11 +92,10 @@ func GetGitBranch(fsys afero.Fs) string {
 		return head
 	}
 	branch := "main"
-	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot != nil {
-		if repo, err := git.PlainOpen(*gitRoot); err == nil {
-			if ref, err := repo.Head(); err == nil {
-				branch = ref.Name().Short()
-			}
+	opts := &git.PlainOpenOptions{DetectDotGit: true}
+	if repo, err := git.PlainOpenWithOptions(".", opts); err == nil {
+		if ref, err := repo.Head(); err == nil {
+			branch = ref.Name().Short()
 		}
 	}
 	return branch
