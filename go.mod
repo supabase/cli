@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/charmbracelet/lipgloss v0.7.1
 	github.com/deepmap/oapi-codegen v1.12.4
-	github.com/docker/cli v24.0.0+incompatible
+	github.com/docker/cli v24.0.1+incompatible
 	github.com/docker/docker v24.0.1+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/go-git/go-git/v5 v5.6.1
