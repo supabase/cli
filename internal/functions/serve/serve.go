@@ -34,7 +34,7 @@ var (
 	mainFuncEmbed string
 )
 
-func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, unstable *bool, fsys afero.Fs) error {
 	if len(slug) == 0 {
 		return runServeAll(ctx, envFilePath, noVerifyJWT, importMapPath, fsys)
 	}
@@ -174,6 +174,11 @@ func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool
 			} else {
 				return fmt.Errorf("failed to check index.ts for function %s: %w", slug, err)
 			}
+
+			if *unstable {
+				denoRunCmd = append(denoRunCmd, "--unstable")
+			}
+
 			denoRunCmd = append(denoRunCmd, dockerFuncPath)
 		}
 

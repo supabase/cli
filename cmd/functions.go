@@ -75,6 +75,7 @@ var (
 	}
 
 	envFilePath string
+	unstable    = new(bool)
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve <Function name>",
@@ -95,7 +96,7 @@ var (
 			if len(args) > 0 {
 				slug = args[0]
 			}
-			return serve.Run(ctx, slug, envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return serve.Run(ctx, slug, envFilePath, noVerifyJWT, importMapPath, unstable, afero.NewOsFs())
 		},
 	}
 )
@@ -111,6 +112,7 @@ func init() {
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions (caution: experimental feature)")
+	functionsServeCmd.Flags().BoolVar(unstable, "unstable", false, "Enable the use of unstable Deno APIs")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
