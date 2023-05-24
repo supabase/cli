@@ -349,7 +349,8 @@ EOF
 			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 			"GOTRUE_SMS_AUTOCONFIRM=true",
 
-			"GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=false",
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", *utils.Config.Auth.EnableRefreshTokenRotation),
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 		}
 
 		for name, config := range utils.Config.Auth.External {
