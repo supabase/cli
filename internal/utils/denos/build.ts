@@ -12,7 +12,7 @@ async function buildAndWrite(entrypointPath: string, importMapPath: string) {
     const url = new URL(specifier);
     if (url.protocol === "file:") {
       console.error(specifier);
-      const actualPath = url.pathname;
+      const actualPath = path.fromFileUrl(url);
 
       try {
         const content = await Deno.readTextFile(actualPath);

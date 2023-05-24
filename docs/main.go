@@ -38,7 +38,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.50.13",
+			Version:     "1.62.3",
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -157,6 +157,10 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 	}
 
 	names := strings.Split(cmd.CommandPath(), " ")
+	if len(names) > 3 {
+		base := strings.Join(names[2:], "-")
+		names = append(names[:2], base)
+	}
 	path := filepath.Join(names...) + ".md"
 	if contents, err := docsDir.ReadFile(path); err == nil {
 		noHeader := bytes.TrimLeftFunc(contents, func(r rune) bool {

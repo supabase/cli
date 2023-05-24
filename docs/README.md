@@ -11,11 +11,11 @@ go run docs/main.go > cli_v1_commands.yaml
 ### Release
 
 1. Clone the [supabase/supabase](https://github.com/supabase/supabase) repo
-2. Copy over the formatted CLI reference
+2. Copy over the CLI reference and reformat using supabase config
 
 ```bash
-npx prettier -w cli_v1_commands.yaml
-mv cli_v1_commands.yaml ../supabase/specs/
+mv ../cli/cli_v1_commands.yaml specs/
+npx prettier -w specs/cli_v1_commands.yaml
 ```
 
 3. If there are new commands added, update [common-cli-sections.json](https://github.com/supabase/supabase/blob/master/spec/common-cli-sections.json) manually

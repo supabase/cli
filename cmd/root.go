@@ -82,6 +82,7 @@ var (
 			// Prepare context
 			if viper.GetBool("DEBUG") {
 				cmd.SetContext(utils.WithTraceContext(ctx))
+				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 			} else {
 				utils.CmdSuggestion = "Try rerunning the command with --debug to troubleshoot the error."
 			}
