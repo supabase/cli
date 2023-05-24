@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 
@@ -231,38 +232,10 @@ func AssertSupabaseDbIsRunning() error {
 	return nil
 }
 
-func GetGitRoot(fsys afero.Fs) (*string, error) {
-	origWd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		_, err := afero.ReadDir(fsys, ".git")
-
-		if err == nil {
-			gitRoot, err := os.Getwd()
-			if err != nil {
-				return nil, err
-			}
-
-			if err := os.Chdir(origWd); err != nil {
-				return nil, err
-			}
-
-			return &gitRoot, nil
-		}
-
-		if cwd, err := os.Getwd(); err != nil {
-			return nil, err
-		} else if isRootDirectory(cwd) {
-			return nil, nil
-		}
-
-		if err := os.Chdir(".."); err != nil {
-			return nil, err
-		}
-	}
+func IsGitRepo() bool {
+	opts := &git.PlainOpenOptions{DetectDotGit: true}
+	_, err := git.PlainOpenWithOptions(".", opts)
+	return err == nil
 }
 
 // If the `os.Getwd()` is within a supabase project, this will return

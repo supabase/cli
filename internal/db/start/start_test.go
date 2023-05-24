@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -24,18 +22,6 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-type StatErrorFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *StatErrorFs) Stat(name string) (fs.FileInfo, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.Stat(name)
-}
-
 func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
@@ -48,7 +34,7 @@ func TestInitBranch(t *testing.T) {
 
 	t.Run("throws error on stat failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &StatErrorFs{DenyPath: utils.CurrBranchPath}
+		fsys := &fstest.StatErrorFs{DenyPath: utils.CurrBranchPath}
 		// Run test
 		err := initCurrentBranch(fsys)
 		// Check error
