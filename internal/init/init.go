@@ -45,7 +45,7 @@ func Run(fsys afero.Fs) error {
 	}
 
 	// 3. Append to `.gitignore`.
-	if gitRoot, _ := utils.GetGitRoot(fsys); gitRoot != nil {
+	if utils.IsGitRepo() {
 		if err := updateGitIgnore(utils.GitIgnorePath, fsys); err != nil {
 			return err
 		}
