@@ -26,7 +26,7 @@ type CustomName struct {
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
-		c.DbURL: fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.Port),
+		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@localhost:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
 	}
 	if !sliceContains(exclude, utils.RestId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
 		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
