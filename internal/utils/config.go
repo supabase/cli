@@ -109,7 +109,7 @@ type (
 		Port         uint   `toml:"port"`
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-" mapstructure:"password"`
+		Password     string `toml:"-"`
 	}
 
 	studio struct {
