@@ -48,7 +48,7 @@ func NewContainerConfig() container.Config {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
-			"POSTGRES_PASSWORD=postgres",
+			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 		},
