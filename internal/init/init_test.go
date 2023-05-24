@@ -1,12 +1,13 @@
 package init
 
 import (
-	"path/filepath"
+	"os"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -22,30 +23,9 @@ func TestInitCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate generated .gitignore
-		ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
-		exists, err = afero.Exists(fsys, ignorePath)
+		exists, err = afero.Exists(fsys, utils.GitIgnorePath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
-		// Validate generated seed.sql
-		exists, err = afero.Exists(fsys, utils.SeedDataPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("does not generate gitignore if no git", func(t *testing.T) {
-		// Setup read-only fs
-		fsys := &afero.MemMapFs{}
-		// Run test
-		assert.NoError(t, Run(fsys))
-		// Validate generated config.toml
-		exists, err := afero.Exists(fsys, utils.ConfigPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-		// Validate generated .gitignore
-		ignorePath := filepath.Join(filepath.Dir(utils.ConfigPath), ".gitignore")
-		exists, err = afero.Exists(fsys, ignorePath)
-		assert.NoError(t, err)
-		assert.False(t, exists)
 		// Validate generated seed.sql
 		exists, err = afero.Exists(fsys, utils.SeedDataPath)
 		assert.NoError(t, err)
@@ -61,11 +41,29 @@ func TestInitCommand(t *testing.T) {
 		assert.Error(t, Run(fsys))
 	})
 
+	t.Run("throws error on permission denied", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &fstest.StatErrorFs{DenyPath: utils.ConfigPath}
+		// Run test
+		err := Run(fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
 	t.Run("throws error on failure to write config", func(t *testing.T) {
 		// Setup read-only fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
 		assert.Error(t, Run(fsys))
+	})
+
+	t.Run("throws error on seed failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &fstest.CreateErrorFs{DenyPath: utils.SeedDataPath}
+		// Run test
+		err := Run(fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
