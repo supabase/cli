@@ -121,7 +121,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -167,7 +167,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -187,7 +187,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -207,7 +207,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

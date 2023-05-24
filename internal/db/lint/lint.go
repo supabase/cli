@@ -69,7 +69,7 @@ func connect(ctx context.Context, config pgconn.Config, fsys afero.Fs, options .
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return nil, err
 	}
-	return utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	return utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {

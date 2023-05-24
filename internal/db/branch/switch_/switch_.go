@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
@@ -57,7 +58,7 @@ func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx
 }
 
 func switchDatabase(ctx context.Context, source, target string, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "template1", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Database: "template1"}, options...)
 	if err != nil {
 		return err
 	}
