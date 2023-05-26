@@ -169,7 +169,7 @@ END;`
 	})
 
 	t.Run("case insenstive", func(t *testing.T) {
-		sql := "begin atomic select 'end'; end"
+		sql := "begin atomic; select 'end'; end"
 		stats, err := Split(strings.NewReader(sql))
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{sql}, stats)
