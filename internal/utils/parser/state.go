@@ -169,12 +169,13 @@ type AtomicState struct {
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
-	// Escapes quoted delimiter as string literals
+	// If we are in a quoted state, the current delimiter doesn't count.
 	if curr := s.prev.Next(r, data); curr != nil {
 		s.prev = curr
 	}
 	if _, ok := s.prev.(*ReadyState); ok {
 		window := data[len(data)-len(s.delimiter):]
+		// Treat delimiter as case insensitive
 		if strings.ToUpper(string(window)) == string(s.delimiter) {
 			return &ReadyState{}
 		}
