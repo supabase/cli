@@ -32,13 +32,14 @@ func TestSplit(t *testing.T) {
 		return nil
 	}))
 	require.Len(t, fixture, 18)
+	fixture = append(fixture, "\n")
 
 	sql, err := os.Open(filepath.Join(testdata, "all.sql"))
 	require.NoError(t, err)
 	stats, err := Split(sql)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, fixture, stats[:len(fixture)])
+	assert.ElementsMatch(t, fixture, stats)
 }
 
 func TestSplitAndTrim(t *testing.T) {
