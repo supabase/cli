@@ -103,7 +103,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			},
 			[]string{
 				"node",
-				"dist/server/app.js",
+				"dist/server/server.js",
 				"gen",
 				"types",
 				"typescript",
