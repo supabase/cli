@@ -8,7 +8,9 @@ import (
 )
 
 const (
-	// Allow arbitrary whitespaces between BEGIN and ATOMIC keywords
+	// Omit BEGIN to allow arbitrary whitespaces between BEGIN and ATOMIC keywords.
+	// This can fail if ATOMIC is used as column name because it is not a reserved
+	// keyword: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
 	BEGIN_ATOMIC = "ATOMIC"
 	END_ATOMIC   = "END"
 )
