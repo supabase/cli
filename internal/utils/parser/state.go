@@ -41,12 +41,14 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	case ';':
 		// Emit token
 		return nil
+	case '(':
+		return &AtomicState{prev: s, delimiter: []byte{')'}}
 	case 'c':
 		fallthrough
 	case 'C':
 		offset := len(data) - len(BEGIN_ATOMIC)
 		if offset >= 0 && strings.ToUpper(string(data[offset:])) == BEGIN_ATOMIC {
-			return &AtomicState{prev: s}
+			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
 		}
 	}
 	return s
@@ -162,18 +164,20 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 
 // Opened BEGIN ATOMIC function body
 type AtomicState struct {
-	prev State
+	prev      State
+	delimiter []byte
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
-	if _, ok := s.prev.(*ReadyState); ok {
-		window := data[len(data)-len(END_ATOMIC):]
-		if strings.ToUpper(string(window)) == END_ATOMIC {
-			return &ReadyState{}
-		}
-	}
+	// Escapes quoted delimiter as string literals
 	if curr := s.prev.Next(r, data); curr != nil {
 		s.prev = curr
+	}
+	if _, ok := s.prev.(*ReadyState); ok {
+		window := data[len(data)-len(s.delimiter):]
+		if strings.ToUpper(string(window)) == string(s.delimiter) {
+			return &ReadyState{}
+		}
 	}
 	return s
 }

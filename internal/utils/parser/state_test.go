@@ -153,6 +153,29 @@ func TestDoubleQuote(t *testing.T) {
 	})
 }
 
+func TestParentheses(t *testing.T) {
+	t.Run("preserves parentheses", func(t *testing.T) {
+		sql := []string{
+			`CREATE RULE notify_me AS ON UPDATE TO mytable DO (NOTIFY mytable; SELECT "1");`,
+			`SELECT 1`,
+		}
+		stats, err := Split(strings.NewReader(strings.Join(sql, "")))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, sql, stats)
+	})
+
+	t.Run("ignores literals", func(t *testing.T) {
+		sql := `CREATE RULE notify_me AS ON UPDATE TO mytable DO (-- )
+SELECT ')';
+-- )
+)
+`
+		stats, err := Split(strings.NewReader(sql))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{sql}, stats)
+	})
+}
+
 func TestBeginAtomic(t *testing.T) {
 	t.Run("inline body", func(t *testing.T) {
 		sql := `CREATE FUNCTION add(a integer, b integer) RETURNS integer
