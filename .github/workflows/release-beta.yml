@@ -57,6 +57,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+          BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
+          SCOOP_TOKEN: ${{ secrets.GH_PAT }}
+          SKIP_UPLOAD: true
 
       - run: gh release edit ${{ github.ref_name }} --draft=false --prerelease
         env:
