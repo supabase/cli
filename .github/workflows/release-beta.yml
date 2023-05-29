@@ -1,13 +1,32 @@
-name: Release
+name: Release (Beta)
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
+  release:
+    name: semantic-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new-release-published: ${{ steps.semantic-release.outputs.new_release_published }}
+      new-release-version: ${{ steps.semantic-release.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v3
+      - id: semantic-release
+        uses: cycjimmy/semantic-release-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   goreleaser:
     name: GoReleaser
+    needs:
+      - release
+    if: needs.release.outputs.new-release-published == 'true'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -21,16 +40,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install chocolatey
-        run: |
-          mkdir -p /opt/chocolatey
-          wget -q -O - "https://github.com/chocolatey/choco/releases/download/${CHOCOLATEY_VERSION}/chocolatey.v${CHOCOLATEY_VERSION}.tar.gz" | tar -xz -C "/opt/chocolatey"
-          echo '#!/bin/bash' >> /usr/local/bin/choco
-          echo 'mono /opt/chocolatey/choco.exe $@' >> /usr/local/bin/choco
-          chmod +x /usr/local/bin/choco
-        env:
-          CHOCOLATEY_VERSION: 1.2.0
-
       - uses: goreleaser/goreleaser-action@v4
         with:
           distribution: goreleaser
@@ -38,18 +47,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
-          BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
-          SCOOP_TOKEN: ${{ secrets.GH_PAT }}
-
-      - run: gh release edit ${{ github.ref_name }} --draft=false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
     name: Publish NPM
     needs:
+      - release
       - goreleaser
+    if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -57,7 +61,7 @@ jobs:
         with:
           node-version: "16.x"
           registry-url: "https://registry.npmjs.org"
-      - run: npm --git-tag-version=false version "${GITHUB_REF_NAME#v}"
+      - run: npm --git-tag-version=false version ${{ needs.release.outputs.new-release-version }}
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
