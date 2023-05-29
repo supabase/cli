@@ -26,7 +26,7 @@
     "branches": [
       {
         "name": "main",
-        "prerelease": true
+        "channel": "beta"
       }
     ],
     "plugins": [
