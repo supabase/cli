@@ -62,7 +62,7 @@ jobs:
           SCOOP_TOKEN: ${{ secrets.GH_PAT }}
           SKIP_UPLOAD: true
 
-      - run: gh release edit ${{ needs.release.outputs.new-release-version }} --draft=false --prerelease
+      - run: gh release edit v${{ needs.release.outputs.new-release-version }} --draft=false --prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
