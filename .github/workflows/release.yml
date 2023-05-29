@@ -2,7 +2,8 @@ name: Release
 
 on:
   release:
-    - released
+    types:
+      - released
 
 jobs:
   goreleaser:
