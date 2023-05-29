@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  release:
+    - released
 
 jobs:
   goreleaser:
@@ -42,7 +41,7 @@ jobs:
           BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
           SCOOP_TOKEN: ${{ secrets.GH_PAT }}
 
-      - run: gh release edit ${{ github.ref_name }} --draft=false
+      - run: gh release edit ${{ github.ref_name }} --draft=false --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
