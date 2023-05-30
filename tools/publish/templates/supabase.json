@@ -1,0 +1,15 @@
+{
+    "version": "{{ .Version }}",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/supabase/cli/releases/download/v{{ .Version }}/supabase_windows_amd64.tar.gz",
+            "bin": [
+                "supabase.exe"
+            ],
+            "hash": "{{ .Checksum.supabase_windows_amd64 }}"
+        }
+    },
+    "homepage": "https://supabase.com",
+    "license": "MIT",
+    "description": "Supabase CLI"
+}
