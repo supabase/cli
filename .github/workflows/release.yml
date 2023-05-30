@@ -28,7 +28,6 @@ jobs:
         with:
           node-version: "16.x"
           registry-url: "https://registry.npmjs.org"
-      - run: npm --git-tag-version=false version "${GITHUB_REF_NAME#v}"
-      - run: npm publish
+      - run: npm dist-tag add "supabase@${GITHUB_REF_NAME#v}" latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
