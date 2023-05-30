@@ -18,17 +18,17 @@ import (
 )
 
 var (
+	apiHeaders = http.Header{
+		"Accept":               {"application/vnd.github+json"},
+		"Authorization":        {"Bearer " + os.Getenv("GITHUB_TOKEN")},
+		"X-GitHub-Api-Version": {"2022-11-28"},
+	}
 	//go:embed templates/supabase.rb
 	brewFormula         string
 	brewFormulaTemplate = template.Must(template.New("brewFormula").Parse(brewFormula))
 	//go:embed templates/supabase.json
 	scoopBucket         string
 	scoopBucketTemplate = template.Must(template.New("scoopBucket").Parse(scoopBucket))
-	apiHeaders          = http.Header{
-		"Accept":               {"application/vnd.github+json"},
-		"Authorization":        {"Bearer " + os.Getenv("GITHUB_TOKEN")},
-		"X-GitHub-Api-Version": {"2022-11-28"},
-	}
 )
 
 func main() {
@@ -86,7 +86,6 @@ func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
 	if err := scanner.Err(); err != nil {
 		return config, err
 	}
-	log.Println(config.Checksum)
 	return config, nil
 }
 
@@ -131,7 +130,6 @@ func commitGitHub(ctx context.Context, url string, contents []byte) (err error) 
 	if err != nil {
 		return err
 	}
-	log.Println(body.Sha)
 	var jsonBody bytes.Buffer
 	enc := json.NewEncoder(&jsonBody)
 	if err := enc.Encode(body); err != nil {
@@ -151,6 +149,7 @@ func commitGitHub(ctx context.Context, url string, contents []byte) (err error) 
 }
 
 func getFileSha(ctx context.Context, url string) (string, error) {
+	log.Println(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
