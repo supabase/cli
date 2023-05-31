@@ -2,6 +2,7 @@ package init
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -15,6 +16,8 @@ func TestInitCommand(t *testing.T) {
 	t.Run("creates config file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
 		require.NoError(t, fsys.Mkdir(".git", 0755))
 		// Run test
 		assert.NoError(t, Run(fsys, ""))
@@ -30,6 +33,10 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, utils.SeedDataPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
+		// Validate vscode workspace isn't generated
+		exists, err = afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 
 	t.Run("throws error when config file exists", func(t *testing.T) {
@@ -64,6 +71,32 @@ func TestInitCommand(t *testing.T) {
 		err := Run(fsys, "")
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
+	t.Run("creates vscode workspace file", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &afero.MemMapFs{}
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		// Run test
+		assert.NoError(t, Run(fsys, "yes"))
+		// Validate generated vscode workspace
+		exists, err := afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		assert.NoError(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("does not create vscode workspace file", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &afero.MemMapFs{}
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		// Run test
+		assert.NoError(t, Run(fsys, "no"))
+		// Validate vscode workspace isn't generated
+		exists, err := afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 }
 
