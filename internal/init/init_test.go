@@ -20,7 +20,7 @@ func TestInitCommand(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, fsys.Mkdir(".git", 0755))
 		// Run test
-		assert.NoError(t, Run(fsys, new(bool)))
+		assert.NoError(t, Run(fsys, nil))
 		// Validate generated config.toml
 		exists, err := afero.Exists(fsys, utils.ConfigPath)
 		assert.NoError(t, err)
@@ -45,14 +45,14 @@ func TestInitCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(fsys, new(bool)))
+		assert.Error(t, Run(fsys, nil))
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.StatErrorFs{DenyPath: utils.ConfigPath}
 		// Run test
-		err := Run(fsys, new(bool))
+		err := Run(fsys, nil)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -61,14 +61,14 @@ func TestInitCommand(t *testing.T) {
 		// Setup read-only fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		assert.Error(t, Run(fsys, new(bool)))
+		assert.Error(t, Run(fsys, nil))
 	})
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.CreateErrorFs{DenyPath: utils.SeedDataPath}
 		// Run test
-		err := Run(fsys, new(bool))
+		err := Run(fsys, nil)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
