@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -24,7 +25,7 @@ var (
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
 )
 
-func Run(fsys afero.Fs) error {
+func Run(fsys afero.Fs, createVscodeWorkspace string) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
@@ -52,9 +53,17 @@ func Run(fsys afero.Fs) error {
 	}
 
 	// 4. Generate VS Code workspace settings.
-	if isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false, os.Stdin); isVscode {
-		return writeVscodeConfig(fsys)
+	skipVscodePrompt := len(createVscodeWorkspace) > 0
+	if skipVscodePrompt {
+		if strings.ToLower(createVscodeWorkspace) == "y" || strings.ToLower(createVscodeWorkspace) == "yes" {
+			return writeVscodeConfig(fsys)
+		}
+	} else {
+		if isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false, os.Stdin); isVscode {
+			return writeVscodeConfig(fsys)
+		}
 	}
+
 	return nil
 }
 
