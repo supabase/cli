@@ -77,9 +77,8 @@ var (
 	envFilePath string
 
 	functionsServeCmd = &cobra.Command{
-		Use:   "serve <Function name>",
+		Use:   "serve",
 		Short: "Serve all Functions locally",
-		Args:  cobra.RangeArgs(0, 1),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.GroupID = groupLocalDev
 			return cmd.Root().PersistentPreRunE(cmd, args)
@@ -90,12 +89,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			slug := ""
-			// TODO: Make `functions serve <function-name>` do `functions serve` under the hood and remove deno relay code.
-			if len(args) > 0 {
-				slug = args[0]
-			}
-			return serve.Run(ctx, slug, envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return serve.Run(ctx, "", envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 )
@@ -110,7 +104,7 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions (caution: experimental feature)")
+	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsCmd.AddCommand(functionsDeleteCmd)
