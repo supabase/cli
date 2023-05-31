@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	createVscodeWorkspace string
+	createVscodeWorkspace = new(bool)
 
 	initCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -18,6 +18,9 @@ var (
 		Short:   "Initialize a local project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
+			if !cmd.Flags().Changed("create-vscode-workspace") {
+				createVscodeWorkspace = nil
+			}
 			if err := _init.Run(fsys, createVscodeWorkspace); err != nil {
 				return err
 			}
@@ -30,6 +33,6 @@ var (
 
 func init() {
 	flags := initCmd.Flags()
-	flags.StringVar(&createVscodeWorkspace, "create-vscode-workspace", "", "Generate VS Code workspace.")
+	flags.BoolVar(createVscodeWorkspace, "create-vscode-workspace", false, "Generate VS Code workspace.")
 	rootCmd.AddCommand(initCmd)
 }
