@@ -34,6 +34,7 @@ var (
 	mainFuncEmbed string
 )
 
+// TODO: Remove deno relay code once we're confident w/ the stability of edge runtime.
 func Run(ctx context.Context, slug string, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	if len(slug) == 0 {
 		return runServeAll(ctx, envFilePath, noVerifyJWT, importMapPath, fsys)
