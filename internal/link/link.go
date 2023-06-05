@@ -131,11 +131,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	batch := pgconn.Batch{}
-	batch.ExecParams(repair.CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
-	batch.ExecParams(repair.CREATE_VERSION_TABLE, nil, nil, nil, nil)
-	_, err = conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
-	return err
+	return repair.CreateMigrationTable(ctx, conn)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {
