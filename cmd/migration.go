@@ -66,7 +66,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value)
+			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value, fsys)
 		},
 	}
 
