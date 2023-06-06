@@ -79,13 +79,16 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 }
 
 func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
+		// RLS policies in auth and storage schemas can be included with -s flag
 		exclude = append([]string{
-			"_analytics",
+			"auth",
+			// "extensions",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
+			"storage",
+			"_analytics",
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
