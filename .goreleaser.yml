@@ -28,7 +28,7 @@ changelog:
     - title: Others
       order: 999
 brews:
-  - name: supabase@beta
+  - name: supabase-beta
     tap:
       owner: supabase
       name: homebrew-tap
@@ -38,7 +38,7 @@ brews:
       email: bobbie@soedirgo.dev
     url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     homepage: https://supabase.com
-    description: Supabase CLI
+    description: Supabase CLI (Beta)
     license: MIT
     install: |
       bin.install "supabase"
@@ -46,7 +46,7 @@ brews:
       (fish_completion/"supabase.fish").write `#{bin}/supabase completion fish`
       (zsh_completion/"_supabase").write `#{bin}/supabase completion zsh`
 scoops:
-  - name: supabase@beta
+  - name: supabase-beta
     bucket:
       owner: supabase
       name: scoop-bucket
@@ -56,7 +56,7 @@ scoops:
       email: bobbie@soedirgo.dev
     url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     homepage: https://supabase.com
-    description: Supabase CLI
+    description: Supabase CLI (Beta)
     license: MIT
 nfpms:
   - vendor: Supabase
