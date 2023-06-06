@@ -27,6 +27,37 @@ changelog:
       order: 1
     - title: Others
       order: 999
+brews:
+  - name: supabase@beta
+    tap:
+      owner: supabase
+      name: homebrew-tap
+      token: "{{ .Env.BREWTAP_TOKEN }}"
+    commit_author:
+      name: Bobbie Soedirgo
+      email: bobbie@soedirgo.dev
+    url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: https://supabase.com
+    description: Supabase CLI
+    license: MIT
+    install: |
+      bin.install "supabase"
+      (bash_completion/"supabase").write `#{bin}/supabase completion bash`
+      (fish_completion/"supabase.fish").write `#{bin}/supabase completion fish`
+      (zsh_completion/"_supabase").write `#{bin}/supabase completion zsh`
+scoops:
+  - name: supabase@beta
+    bucket:
+      owner: supabase
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_TOKEN }}"
+    commit_author:
+      name: Bobbie Soedirgo
+      email: bobbie@soedirgo.dev
+    url_template: "https://github.com/supabase/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: https://supabase.com
+    description: Supabase CLI
+    license: MIT
 nfpms:
   - vendor: Supabase
     description: Supabase CLI
