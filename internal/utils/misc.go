@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 
@@ -29,11 +30,11 @@ const (
 	PostgrestImage   = "postgrest/postgrest:v10.1.2"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage      = "supabase/postgres-meta:v0.60.7"
-	StudioImage      = "supabase/studio:20230512-ad596d8"
+	PgmetaImage      = "supabase/postgres-meta:v0.66.0"
+	StudioImage      = "supabase/studio:20230605-c876cea"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.3.5"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.4.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
@@ -231,38 +232,10 @@ func AssertSupabaseDbIsRunning() error {
 	return nil
 }
 
-func GetGitRoot(fsys afero.Fs) (*string, error) {
-	origWd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		_, err := afero.ReadDir(fsys, ".git")
-
-		if err == nil {
-			gitRoot, err := os.Getwd()
-			if err != nil {
-				return nil, err
-			}
-
-			if err := os.Chdir(origWd); err != nil {
-				return nil, err
-			}
-
-			return &gitRoot, nil
-		}
-
-		if cwd, err := os.Getwd(); err != nil {
-			return nil, err
-		} else if isRootDirectory(cwd) {
-			return nil, nil
-		}
-
-		if err := os.Chdir(".."); err != nil {
-			return nil, err
-		}
-	}
+func IsGitRepo() bool {
+	opts := &git.PlainOpenOptions{DetectDotGit: true}
+	_, err := git.PlainOpenWithOptions(".", opts)
+	return err == nil
 }
 
 // If the `os.Getwd()` is within a supabase project, this will return

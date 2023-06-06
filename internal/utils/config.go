@@ -109,7 +109,7 @@ type (
 		Port         uint   `toml:"port"`
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-" mapstructure:"password"`
+		Password     string `toml:"-"`
 	}
 
 	studio struct {
@@ -127,12 +127,14 @@ type (
 	}
 
 	auth struct {
-		SiteUrl                string   `toml:"site_url"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
-		JwtExpiry              uint     `toml:"jwt_expiry"`
-		EnableSignup           *bool    `toml:"enable_signup"`
-		Email                  email    `toml:"email"`
-		External               map[string]provider
+		SiteUrl                    string   `toml:"site_url"`
+		AdditionalRedirectUrls     []string `toml:"additional_redirect_urls"`
+		JwtExpiry                  uint     `toml:"jwt_expiry"`
+		EnableRefreshTokenRotation *bool    `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint     `toml:"refresh_token_reuse_interval"`
+		EnableSignup               *bool    `toml:"enable_signup"`
+		Email                      email    `toml:"email"`
+		External                   map[string]provider
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key"`
@@ -279,6 +281,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Auth.ServiceRoleKey == "" {
 			Config.Auth.ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+		}
+		if Config.Auth.EnableRefreshTokenRotation == nil {
+			x := false
+			Config.Auth.EnableRefreshTokenRotation = &x
 		}
 		if Config.Auth.EnableSignup == nil {
 			x := true

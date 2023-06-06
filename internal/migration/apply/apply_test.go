@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -39,7 +40,7 @@ func TestMigrateDatabase(t *testing.T) {
 			Reply("INSERT 1")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -76,7 +77,7 @@ func TestMigrateUp(t *testing.T) {
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -97,7 +98,7 @@ func TestMigrateUp(t *testing.T) {
 			Reply("CREATE TABLE")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -149,7 +150,7 @@ func TestMigrationFile(t *testing.T) {
 			Query(repair.INSERT_MIGRATION_VERSION, "0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

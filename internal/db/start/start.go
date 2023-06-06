@@ -48,7 +48,7 @@ func NewContainerConfig() container.Config {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
-			"POSTGRES_PASSWORD=postgres",
+			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 		},
@@ -136,7 +136,7 @@ func initCurrentBranch(fsys afero.Fs) error {
 
 func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	// Initialise globals
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func SetupDatabase(ctx context.Context, dbConfig pgconn.Config, fsys afero.Fs, w
 	if dbConfig.Host != utils.DbId {
 		return nil
 	}
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}

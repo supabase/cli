@@ -67,7 +67,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
 	var conn *pgx.Conn
 	if config.Host == "localhost" && config.Port == uint16(utils.Config.Db.Port) {
-		conn, err = utils.ConnectLocalPostgres(ctx, config.Host, uint(config.Port), config.Database, options...)
+		conn, err = utils.ConnectLocalPostgres(ctx, config, options...)
 	} else {
 		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
 	}
@@ -79,13 +79,16 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 }
 
 func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
+		// RLS policies in auth and storage schemas can be included with -s flag
 		exclude = append([]string{
-			"_analytics",
+			"auth",
+			// "extensions",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
+			"storage",
+			"_analytics",
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
@@ -113,7 +116,7 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	defer ticker.Stop()
 	// Retry until connected, cancelled, or timeout
 	for t := now; t.Before(expiry); t = <-ticker.C {
-		conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.ShadowPort, "postgres", options...)
+		conn, err = utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}, options...)
 		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
 			break
 		}

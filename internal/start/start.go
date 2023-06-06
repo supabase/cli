@@ -349,7 +349,8 @@ EOF
 			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
 			"GOTRUE_SMS_AUTOCONFIRM=true",
 
-			"GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=false",
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", *utils.Config.Auth.EnableRefreshTokenRotation),
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 		}
 
 		for name, config := range utils.Config.Auth.External {
@@ -614,7 +615,7 @@ EOF
 				Image: utils.StudioImage,
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
-					"POSTGRES_PASSWORD=postgres",
+					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
