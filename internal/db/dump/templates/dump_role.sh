@@ -9,6 +9,7 @@ set -euo pipefail
 #
 #   - do not create or alter reserved roles as they are blocked by supautils
 #   - explicitly allow altering safe attributes, ie. statement_timeout, pgrst.*
+#   - discard role attributes that require superuser, ie. nosuperuser, noreplication
 #   - do not alter membership grants by supabase_admin role
 pg_dumpall \
     --roles-only \
@@ -18,6 +19,7 @@ pg_dumpall \
     --database "$DB_URL" \
 | sed -E "s/^CREATE ROLE \"($RESERVED_ROLES)\"/-- &/" \
 | sed -E "s/^ALTER ROLE \"($RESERVED_ROLES)\"/-- &/" \
+| sed -E "s/ (NOSUPERUSER|NOREPLICATION)//g" \
 | sed -E "s/^-- (.* SET \"($ALLOWED_CONFIGS)\" .*)/\1/" \
 | sed -E "s/GRANT \".*\" TO \"($RESERVED_ROLES)\"/-- &/" \
 | sed -E "${1:+/^--/d}" \

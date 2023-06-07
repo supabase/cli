@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/bans/get"
 	"github.com/supabase/cli/internal/bans/update"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -26,12 +24,7 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 		Use:   "remove",
 		Short: "Remove a network ban",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return update.Run(ctx, projectRef, dbIpsToUnban, fsys)
+			return update.Run(cmd.Context(), flags.ProjectRef, dbIpsToUnban, afero.NewOsFs())
 		},
 	}
 
@@ -39,18 +32,13 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 		Use:   "get",
 		Short: "Get the current network bans",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := PromptLogin(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return get.Run(ctx, projectRef, fsys)
+			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	bansCmd.PersistentFlags().StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
+	bansCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	bansCmd.AddCommand(bansGetCmd)
 	bansRemoveCmd.Flags().StringSliceVar(&dbIpsToUnban, "db-unban-ip", []string{}, "IP to allow DB connections from.")
 	bansCmd.AddCommand(bansRemoveCmd)

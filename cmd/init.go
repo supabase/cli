@@ -9,21 +9,30 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var initCmd = &cobra.Command{
-	GroupID: groupLocalDev,
-	Use:     "init",
-	Short:   "Initialize a local project",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fsys := afero.NewOsFs()
-		if err := _init.Run(fsys); err != nil {
-			return err
-		}
+var (
+	createVscodeWorkspace = new(bool)
 
-		fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
-		return nil
-	},
-}
+	initCmd = &cobra.Command{
+		GroupID: groupLocalDev,
+		Use:     "init",
+		Short:   "Initialize a local project",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if !cmd.Flags().Changed("with-vscode-workspace") {
+				createVscodeWorkspace = nil
+			}
+			if err := _init.Run(fsys, createVscodeWorkspace); err != nil {
+				return err
+			}
+
+			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
+			return nil
+		},
+	}
+)
 
 func init() {
+	flags := initCmd.Flags()
+	flags.BoolVar(createVscodeWorkspace, "with-vscode-workspace", false, "Generate VS Code workspace.")
 	rootCmd.AddCommand(initCmd)
 }

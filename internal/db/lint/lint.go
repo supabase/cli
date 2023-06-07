@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
@@ -37,20 +38,14 @@ func toEnum(level string) LintLevel {
 	return -1
 }
 
-func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, level string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
-	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-		return err
-	}
-	// Run lint script
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", opts...)
+	conn, err := connect(ctx, config, fsys, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+	// Run lint script
 	result, err := LintDatabase(ctx, conn, schema)
 	if err != nil {
 		return err
@@ -60,6 +55,21 @@ func Run(ctx context.Context, schema []string, level string, fsys afero.Fs, opts
 		return nil
 	}
 	return printResultJSON(result, toEnum(level), os.Stdout)
+}
+
+func connect(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
+	if len(config.Password) > 0 {
+		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
+		return utils.ConnectRemotePostgres(ctx, config, options...)
+	}
+	fmt.Fprintln(os.Stderr, "Connecting to local database...")
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return nil, err
+	}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return nil, err
+	}
+	return utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 )
@@ -56,7 +58,7 @@ var (
 
 	migrationRepairCmd = &cobra.Command{
 		Use:   "repair <version>",
-		Short: "Repairs the migration history table",
+		Short: "Repair the migration history table",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
@@ -64,37 +66,45 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value)
+			return repair.Run(ctx, dbConfig, args[0], targetStatus.Value, fsys)
+		},
+	}
+
+	migrationUpCmd = &cobra.Command{
+		Use:   "up",
+		Short: "Apply pending migrations to local database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return up.Run(ctx, afero.NewOsFs())
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Local database is up to date.")
 		},
 	}
 )
 
 func init() {
-	migrationCmd.PersistentFlags().StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	// Build list command
 	listFlags := migrationListCmd.Flags()
+	listFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	listFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", listFlags.Lookup("password")))
+	migrationListCmd.MarkFlagsMutuallyExclusive("db-url", "password")
 	migrationCmd.AddCommand(migrationListCmd)
 	// Build repair command
 	repairFlags := migrationRepairCmd.Flags()
 	repairFlags.Var(&targetStatus, "status", "Version status to update.")
 	cobra.CheckErr(migrationRepairCmd.MarkFlagRequired("status"))
+	repairFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	repairFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", repairFlags.Lookup("password")))
+	migrationRepairCmd.MarkFlagsMutuallyExclusive("db-url", "password")
 	migrationCmd.AddCommand(migrationRepairCmd)
+	// Build up command
+	migrationCmd.AddCommand(migrationUpCmd)
 	// Build new command
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
-}
-
-func loadLinkedProject(fsys afero.Fs) (err error) {
-	projectRef, err = utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	dbPassword = getPassword(projectRef)
-	return nil
 }
 
 func getPassword(projectRef string) string {
@@ -115,9 +125,12 @@ func parseDatabaseConfig(fsys afero.Fs) error {
 		}
 		return err
 	}
-	if err := loadLinkedProject(fsys); err != nil {
+	// Load linked project
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil {
 		return err
 	}
+	dbPassword = getPassword(projectRef)
 	// Initialise connection details for hosted project
 	dbConfig.Host = utils.GetSupabaseDbHost(projectRef)
 	dbConfig.Port = 6543

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -92,7 +93,7 @@ func TestRunMigra(t *testing.T) {
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is not running.")
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -105,7 +106,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{"\\_analytics",pgbouncer,realtime,"\\_realtime","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}') ORDER BY schema_name`).
+		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}') ORDER BY schema_name`).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := RunMigra(context.Background(), []string{}, "", dbConfig, fsys, conn.Intercept)
@@ -267,7 +268,7 @@ func TestUserSchema(t *testing.T) {
 	// Setup mock postgres
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
-	conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public}'")).
+	conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", "'{public}'")).
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()

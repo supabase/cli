@@ -91,7 +91,7 @@ func TestServeCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", "", nil, "", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is not running.")
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
 
 	t.Run("throws error on missing env file", func(t *testing.T) {

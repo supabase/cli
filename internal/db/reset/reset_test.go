@@ -7,12 +7,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ import (
 
 func TestResetCommand(t *testing.T) {
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs())
+		err := Run(context.Background(), pgconn.Config{}, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -41,9 +42,9 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), pgconn.Config{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "supabase start is not running.")
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -64,7 +65,7 @@ func TestResetCommand(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
 		// Run test
-		err := Run(context.Background(), fsys, conn.Intercept)
+		err := Run(context.Background(), pgconn.Config{}, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -137,23 +138,18 @@ func TestInitDatabase(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_table.sql")
-		sql := "CREATE TABLE example()"
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA").
 			Query(SET_POSTGRES_ROLE).
-			Reply("SET ROLE").
-			Query(sql).
-			ReplyError(pgerrcode.DuplicateObject, `table "example" already exists`)
+			Reply("SET ROLE")
 		// Run test
 		err := initDatabase(context.Background(), fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, `ERROR: table "example" already exists (SQLSTATE 42710)`)
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
@@ -171,7 +167,7 @@ func TestSeedDatabase(t *testing.T) {
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -204,7 +200,7 @@ func TestSeedDatabase(t *testing.T) {
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 54322, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -317,6 +313,11 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.GotrueId + "/restart").
 			Reply(http.StatusServiceUnavailable)
+		// Restarts realtime
+		utils.RealtimeId = "test-realtime"
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RealtimeId + "/restart").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		RestartDatabase(context.Background(), io.Discard)
 		// Check error
@@ -353,5 +354,75 @@ func TestRestartDatabase(t *testing.T) {
 		RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestResetRemote(t *testing.T) {
+	dbConfig := pgconn.Config{
+		Host:     "localhost",
+		Port:     5432,
+		User:     "admin",
+		Password: "password",
+		Database: "postgres",
+	}
+
+	t.Run("resets remote database", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query("DROP SCHEMA IF EXISTS supabase_migrations CASCADE").
+			Reply("DROP SCHEMA").
+			Query(dropObjects).
+			Reply("INSERT 0")
+		// Run test
+		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on connect failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := resetRemote(context.Background(), pgconn.Config{}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "invalid port (outside range)")
+	})
+
+	t.Run("throws error on list schema failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
+		// Run test
+		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: permission denied for relation information_schema (SQLSTATE 42501)")
+	})
+
+	t.Run("throws error on drop schema failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+			Reply("SELECT 0").
+			Query("DROP SCHEMA IF EXISTS supabase_migrations CASCADE").
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
+			Query(dropObjects)
+		// Run test
+		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})
 }

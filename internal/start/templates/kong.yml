@@ -85,6 +85,11 @@ services:
           - /storage/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Forwarded: host=localhost:{{ .ApiPort }}/storage/v1;proto=http"
   - name: pg-meta
     _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
     url: http://{{ .PgmetaId }}:8080/

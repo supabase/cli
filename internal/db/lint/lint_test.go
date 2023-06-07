@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -63,7 +64,7 @@ func TestLintCommand(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
-	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", fsys, conn.Intercept))
+	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", pgconn.Config{}, fsys, conn.Intercept))
 	// Validate api
 	assert.Empty(t, apitest.ListUnmatchedRequests())
 }
@@ -120,7 +121,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -166,7 +167,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -186,7 +187,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -206,7 +207,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, "localhost", 5432, "postgres", conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

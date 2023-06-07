@@ -24,8 +24,8 @@ var updatedConfig map[string]interface{} = make(map[string]interface{})
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
-	if !utils.ProjectRefPattern.MatchString(projectRef) {
-		return errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	if err := utils.AssertProjectRefIsValid(projectRef); err != nil {
+		return err
 	}
 	return utils.LoadConfigFS(fsys)
 }
@@ -83,7 +83,7 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func updateApiConfig(config api.PostgrestConfigResponse) {
+func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
 	maxRows := uint(config.MaxRows)
 	searchPath := readCsv(config.DbExtraSearchPath)
 	dbSchema := readCsv(config.DbSchema)
@@ -131,11 +131,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	batch := pgconn.Batch{}
-	batch.ExecParams(repair.CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
-	batch.ExecParams(repair.CREATE_VERSION_TABLE, nil, nil, nil, nil)
-	_, err = conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
-	return err
+	return repair.CreateMigrationTable(ctx, conn)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {

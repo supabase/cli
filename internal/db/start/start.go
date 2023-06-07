@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
@@ -47,7 +48,7 @@ func NewContainerConfig() container.Config {
 	config := container.Config{
 		Image: utils.DbImage,
 		Env: []string{
-			"POSTGRES_PASSWORD=postgres",
+			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 		},
@@ -87,10 +88,14 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	fmt.Fprintln(w, "Starting database...")
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
 	noBackupVolume = client.IsErrNotFound(err)
+	if noBackupVolume {
+		fmt.Fprintln(w, "Starting database...")
+	} else {
+		fmt.Fprintln(w, "Starting database from backup...")
+	}
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
@@ -131,7 +136,7 @@ func initCurrentBranch(fsys afero.Fs) error {
 
 func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	// Initialise globals
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
@@ -143,11 +148,14 @@ func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnCon
 	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
 }
 
-func SetupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+func SetupDatabase(ctx context.Context, dbConfig pgconn.Config, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	if !noBackupVolume {
 		return nil
 	}
-	conn, err := utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.Port, "postgres", options...)
+	if dbConfig.Host != utils.DbId {
+		return nil
+	}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}

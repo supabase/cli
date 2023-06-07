@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 
@@ -22,18 +23,18 @@ var Version string
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.73"
+	Pg15Image = "supabase/postgres:15.1.0.90"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
 	PostgrestImage   = "postgrest/postgrest:v10.1.2"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage      = "supabase/postgres-meta:v0.60.7"
-	StudioImage      = "supabase/studio:20230428-6ff285f"
+	PgmetaImage      = "supabase/postgres-meta:v0.66.0"
+	StudioImage      = "supabase/studio:20230605-c876cea"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.2.18"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.4.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
@@ -173,6 +174,10 @@ var (
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
+
+	ErrNotLinked  = errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+	ErrInvalidRef = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	ErrNotRunning = errors.New(Aqua("supabase start") + " is not running.")
 )
 
 func GetCurrentTimestamp() string {
@@ -221,44 +226,16 @@ func NewError(s string) error {
 
 func AssertSupabaseDbIsRunning() error {
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		return errors.New(Aqua("supabase start") + " is not running.")
+		return ErrNotRunning
 	}
 
 	return nil
 }
 
-func GetGitRoot(fsys afero.Fs) (*string, error) {
-	origWd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	for {
-		_, err := afero.ReadDir(fsys, ".git")
-
-		if err == nil {
-			gitRoot, err := os.Getwd()
-			if err != nil {
-				return nil, err
-			}
-
-			if err := os.Chdir(origWd); err != nil {
-				return nil, err
-			}
-
-			return &gitRoot, nil
-		}
-
-		if cwd, err := os.Getwd(); err != nil {
-			return nil, err
-		} else if isRootDirectory(cwd) {
-			return nil, nil
-		}
-
-		if err := os.Chdir(".."); err != nil {
-			return nil, err
-		}
-	}
+func IsGitRepo() bool {
+	opts := &git.PlainOpenOptions{DetectDotGit: true}
+	_, err := git.PlainOpenWithOptions(".", opts)
+	return err == nil
 }
 
 // If the `os.Getwd()` is within a supabase project, this will return
@@ -317,24 +294,23 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	return nil
 }
 
-func AssertIsLinkedFS(fsys afero.Fs) error {
-	if _, err := fsys.Stat(ProjectRefPath); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
-	} else if err != nil {
-		return err
+func AssertProjectRefIsValid(projectRef string) error {
+	if !ProjectRefPattern.MatchString(projectRef) {
+		return ErrInvalidRef
 	}
-
 	return nil
 }
 
 func LoadProjectRef(fsys afero.Fs) (string, error) {
 	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
-	if err != nil {
-		return "", errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
+	if errors.Is(err, os.ErrNotExist) {
+		return "", ErrNotLinked
+	} else if err != nil {
+		return "", err
 	}
 	projectRef := string(bytes.TrimSpace(projectRefBytes))
 	if !ProjectRefPattern.MatchString(projectRef) {
-		return "", errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+		return "", ErrInvalidRef
 	}
 	return projectRef, nil
 }

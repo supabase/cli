@@ -2,22 +2,15 @@ package push
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/apply"
-	"github.com/supabase/cli/internal/migration/list"
-	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
-)
-
-var (
-	errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
 )
 
 func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,7 +22,7 @@ func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, 
 		return err
 	}
 	defer conn.Close(context.Background())
-	pending, err := getPendingMigrations(ctx, conn, fsys)
+	pending, err := up.GetPendingMigrations(ctx, conn, fsys)
 	if err != nil {
 		return err
 	}
@@ -38,54 +31,15 @@ func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, 
 		return nil
 	}
 	// Push pending migrations
-	if !dryRun {
-		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
-			return err
-		}
-	}
-	for _, filename := range pending {
-		if dryRun {
+	if dryRun {
+		for _, filename := range pending {
 			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
-			continue
 		}
-		if err := pushMigration(ctx, conn, filename, fsys); err != nil {
+	} else {
+		if err := apply.MigrateUp(ctx, conn, pending, fsys); err != nil {
 			return err
 		}
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
-}
-
-func getPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
-	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
-	if err != nil {
-		return nil, err
-	}
-	localMigrations, err := list.LoadLocalMigrations(fsys)
-	if err != nil {
-		return nil, err
-	}
-	// Check remote is in-sync or behind local
-	if len(remoteMigrations) > len(localMigrations) {
-		return nil, fmt.Errorf("%w; Found %d versions and %d migrations.", errConflict, len(remoteMigrations), len(localMigrations))
-	}
-	for i, remote := range remoteMigrations {
-		filename := localMigrations[i]
-		// LoadLocalMigrations guarantees we always have a match
-		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		if remote != local {
-			return nil, fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", errConflict, remote, filename, i)
-		}
-	}
-	return localMigrations[len(remoteMigrations):], nil
-}
-
-func pushMigration(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Pushing migration "+utils.Bold(filename)+"...")
-	path := filepath.Join(utils.MigrationsDir, filename)
-	migration, err := apply.NewMigrationFromFile(path, fsys)
-	if err != nil {
-		return err
-	}
-	return migration.ExecBatch(ctx, conn)
 }

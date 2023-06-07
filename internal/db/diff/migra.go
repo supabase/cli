@@ -17,12 +17,12 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 )
-
-const LIST_SCHEMAS = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
 
 var (
 	//go:embed templates/migra.sh
@@ -59,10 +59,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	if err != nil {
 		return err
 	}
-	branch, err := utils.GetCurrentBranchFS(fsys)
-	if err != nil {
-		branch = "main"
-	}
+	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	return SaveDiff(out, file, fsys)
 }
@@ -70,7 +67,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
 	var conn *pgx.Conn
 	if config.Host == "localhost" && config.Port == uint16(utils.Config.Db.Port) {
-		conn, err = utils.ConnectLocalPostgres(ctx, config.Host, uint(config.Port), config.Database, options...)
+		conn, err = utils.ConnectLocalPostgres(ctx, config, options...)
 	} else {
 		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
 	}
@@ -82,41 +79,22 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 }
 
 func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
+		// RLS policies in auth and storage schemas can be included with -s flag
 		exclude = append([]string{
-			"_analytics",
+			"auth",
+			// "extensions",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
+			"storage",
+			"_analytics",
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
 		}, utils.SystemSchemas...)
 	}
-	exclude = likeEscapeSchema(exclude)
-	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
-	if err != nil {
-		return nil, err
-	}
-	schemas := []string{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		schemas = append(schemas, name)
-	}
-	return schemas, nil
-}
-
-func likeEscapeSchema(schemas []string) (result []string) {
-	// Treat _ as literal, * as any character
-	replacer := strings.NewReplacer("_", `\_`, "*", "%")
-	for _, sch := range schemas {
-		result = append(result, replacer.Replace(sch))
-	}
-	return result
+	return reset.ListSchemas(ctx, conn, exclude...)
 }
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
@@ -138,7 +116,7 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	defer ticker.Stop()
 	// Retry until connected, cancelled, or timeout
 	for t := now; t.Before(expiry); t = <-ticker.C {
-		conn, err = utils.ConnectLocalPostgres(ctx, "localhost", utils.Config.Db.ShadowPort, "postgres", options...)
+		conn, err = utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}, options...)
 		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
 			break
 		}

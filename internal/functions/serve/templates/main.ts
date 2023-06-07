@@ -91,13 +91,14 @@ serve(async (req: Request) => {
   console.error(`serving the request with ${servicePath}`);
 
   const memoryLimitMb = 150;
-  const workerTimeoutMs = 1 * 60 * 1000;
+  const workerTimeoutMs = 1 * 60 * 5000;
   const noModuleCache = false;
   const envVarsObj = Deno.env.toObject();
   const envVars = Object.entries(envVarsObj)
     .filter(([name, _]) =>
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
+  const forceCreate = true;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
@@ -106,6 +107,7 @@ serve(async (req: Request) => {
       noModuleCache,
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
+      forceCreate,
     });
     return await worker.fetch(req);
   } catch (e) {

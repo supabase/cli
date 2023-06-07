@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -65,9 +66,26 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectLocalPostgres(ctx context.Context, host string, port uint, database string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	url := fmt.Sprintf("postgresql://postgres:postgres@%s:%d/%s?connect_timeout=2", host, port, database)
-	return ConnectByUrl(ctx, url, options...)
+func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
+	if len(config.Host) == 0 {
+		config.Host = "localhost"
+	}
+	if config.Port == 0 {
+		config.Port = uint16(Config.Db.Port)
+	}
+	if len(config.User) == 0 {
+		config.User = "postgres"
+	}
+	if len(config.Password) == 0 {
+		config.Password = Config.Db.Password
+	}
+	if len(config.Database) == 0 {
+		config.Database = "postgres"
+	}
+	if config.ConnectTimeout == 0 {
+		config.ConnectTimeout = 2 * time.Second
+	}
+	return ConnectByUrl(ctx, ToPostgresURL(config), options...)
 }
 
 func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {

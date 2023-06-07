@@ -2,8 +2,17 @@ package parser
 
 import (
 	"bytes"
+	"strings"
 	"unicode"
 	"unicode/utf8"
+)
+
+const (
+	// Omit BEGIN to allow arbitrary whitespaces between BEGIN and ATOMIC keywords.
+	// This can fail if ATOMIC is used as column name because it is not a reserved
+	// keyword: https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+	BEGIN_ATOMIC = "ATOMIC"
+	END_ATOMIC   = "END"
 )
 
 type State interface {
@@ -32,6 +41,15 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	case ';':
 		// Emit token
 		return nil
+	case '(':
+		return &AtomicState{prev: s, delimiter: []byte{')'}}
+	case 'c':
+		fallthrough
+	case 'C':
+		offset := len(data) - len(BEGIN_ATOMIC)
+		if offset >= 0 && strings.ToUpper(string(data[offset:])) == BEGIN_ATOMIC {
+			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
+		}
 	}
 	return s
 }
@@ -107,7 +125,7 @@ type DollarState struct {
 func (s *DollarState) Next(r rune, data []byte) State {
 	window := data[len(data)-len(s.delimiter):]
 	if bytes.Equal(window, s.delimiter) {
-		// Break out of block state
+		// Break out of dollar state
 		return &ReadyState{}
 	}
 	return s
@@ -142,4 +160,25 @@ type EscapeState struct{}
 
 func (s *EscapeState) Next(r rune, data []byte) State {
 	return &ReadyState{}
+}
+
+// Opened BEGIN ATOMIC function body
+type AtomicState struct {
+	prev      State
+	delimiter []byte
+}
+
+func (s *AtomicState) Next(r rune, data []byte) State {
+	// If we are in a quoted state, the current delimiter doesn't count.
+	if curr := s.prev.Next(r, data); curr != nil {
+		s.prev = curr
+	}
+	if _, ok := s.prev.(*ReadyState); ok {
+		window := data[len(data)-len(s.delimiter):]
+		// Treat delimiter as case insensitive
+		if strings.ToUpper(string(window)) == string(s.delimiter) {
+			return &ReadyState{}
+		}
+	}
+	return s
 }
