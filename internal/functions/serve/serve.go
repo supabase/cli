@@ -297,8 +297,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	binds = append(binds, modules...)
 
-	if err := utils.
-	IfNotExistFS(fsys, utils.FunctionsDir); err != nil {
+	if err := utils.IfNotExistFS(fsys, utils.FunctionsDir); err != nil {
 		return err
 	}
 	binds, functionsConfigString, err := populatePerFunctionConfigs(binds, importMapPath, noVerifyJWT, fsys)
