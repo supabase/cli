@@ -36,6 +36,14 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 	}
 	defer conn.Close(context.Background())
 	// Update migration history
+	if err := UpdateMigrationTable(ctx, conn, version, status, fsys); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Repaired migration history:", version, "=>", status)
+	return nil
+}
+
+func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status string, fsys afero.Fs) error {
 	batch := batchCreateTable()
 	switch status {
 	case Applied:
@@ -47,11 +55,8 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 	case Reverted:
 		DeleteVersionSQL(&batch, version)
 	}
-	if _, err = conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Repaired migration history:", version, "=>", status)
-	return nil
+	_, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
+	return err
 }
 
 func batchCreateTable() pgconn.Batch {
