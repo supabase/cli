@@ -9,6 +9,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/cache"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
 	"github.com/supabase/cli/internal/inspect/index_usage"
+	"github.com/supabase/cli/internal/inspect/locks"
 )
 
 var (
@@ -56,6 +57,19 @@ var (
 			return index_usage.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectLocksCmd = &cobra.Command{
+		Use:   "db locks",
+		Short: "Shows queries which have taken out an exclusive lock on a relation",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return locks.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -64,5 +78,6 @@ func init() {
 	inspectCmd.AddCommand(inspectCacheHitCmd)
 	inspectCmd.AddCommand(inspectReplicationSlotsCmd)
 	inspectCmd.AddCommand(inspectIndexUsageCmd)
+	inspectCmd.AddCommand(inspectLocksCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
