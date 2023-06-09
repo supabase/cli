@@ -20,7 +20,7 @@ var (
 	}
 
 	inspectCacheHitCmd = &cobra.Command{
-		Use:   "db:cache-hit",
+		Use:   "db cache-hit",
 		Short: "Shows cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
@@ -33,7 +33,7 @@ var (
 	}
 
 	inspectReplicationSlotsCmd = &cobra.Command{
-		Use:   "db:replication-slots",
+		Use:   "db replication-slots",
 		Short: "Shows information about replication slots on the database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
@@ -46,7 +46,7 @@ var (
 	}
 
 	inspectIndexUsageCmd = &cobra.Command{
-		Use:   "db:index-usage",
+		Use:   "db index-usage",
 		Short: "Shows information about the efficiency of indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
