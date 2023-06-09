@@ -297,7 +297,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	binds = append(binds, modules...)
 
-	if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
+	if err := utils.
+	IfNotExistFS(fsys, utils.FunctionsDir); err != nil {
 		return err
 	}
 	binds, functionsConfigString, err := populatePerFunctionConfigs(binds, importMapPath, noVerifyJWT, fsys)
@@ -318,7 +319,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		cmdString = strings.Join(cmd, " ")
 	}
 
-	entrypoint := []string{"sh", "-c", `mkdir /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `mkdir -p /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
 EOF
 `}
