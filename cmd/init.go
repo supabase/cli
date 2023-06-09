@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	_init "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -16,6 +17,13 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "init",
 		Short:   "Initialize a local project",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if !viper.IsSet("WORKDIR") {
+				// Prevents recursing to parent directory
+				viper.Set("WORKDIR", ".")
+			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if !cmd.Flags().Changed("with-vscode-workspace") {
