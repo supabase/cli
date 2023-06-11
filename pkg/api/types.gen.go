@@ -438,17 +438,17 @@ type PgsodiumConfigResponse struct {
 
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
-	EffectiveCacheSize            int                                          `json:"effective_cache_size"`
-	MaintenanceWorkMem            int                                          `json:"maintenance_work_mem"`
+	EffectiveCacheSize            string                                       `json:"effective_cache_size"`
+	MaintenanceWorkMem            string                                       `json:"maintenance_work_mem"`
 	MaxConnections                int                                          `json:"max_connections"`
 	MaxParallelMaintenanceWorkers int                                          `json:"max_parallel_maintenance_workers"`
 	MaxParallelWorkers            int                                          `json:"max_parallel_workers"`
 	MaxParallelWorkersPerGather   int                                          `json:"max_parallel_workers_per_gather"`
 	MaxWorkerProcesses            int                                          `json:"max_worker_processes"`
 	SessionReplicationRole        PostgresConfigResponseSessionReplicationRole `json:"session_replication_role"`
-	SharedBuffers                 int                                          `json:"shared_buffers"`
-	StatementTimeout              int                                          `json:"statement_timeout"`
-	WorkMem                       int                                          `json:"work_mem"`
+	SharedBuffers                 string                                       `json:"shared_buffers"`
+	StatementTimeout              string                                       `json:"statement_timeout"`
+	WorkMem                       string                                       `json:"work_mem"`
 }
 
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
@@ -646,17 +646,17 @@ type UpdatePoolingConfigResponsePoolMode string
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
-	EffectiveCacheSize            int                                            `json:"effective_cache_size"`
-	MaintenanceWorkMem            int                                            `json:"maintenance_work_mem"`
+	EffectiveCacheSize            string                                         `json:"effective_cache_size"`
+	MaintenanceWorkMem            string                                         `json:"maintenance_work_mem"`
 	MaxConnections                int                                            `json:"max_connections"`
 	MaxParallelMaintenanceWorkers int                                            `json:"max_parallel_maintenance_workers"`
 	MaxParallelWorkers            int                                            `json:"max_parallel_workers"`
 	MaxParallelWorkersPerGather   int                                            `json:"max_parallel_workers_per_gather"`
 	MaxWorkerProcesses            int                                            `json:"max_worker_processes"`
 	SessionReplicationRole        UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role"`
-	SharedBuffers                 int                                            `json:"shared_buffers"`
-	StatementTimeout              int                                            `json:"statement_timeout"`
-	WorkMem                       int                                            `json:"work_mem"`
+	SharedBuffers                 string                                         `json:"shared_buffers"`
+	StatementTimeout              string                                         `json:"statement_timeout"`
+	WorkMem                       string                                         `json:"work_mem"`
 }
 
 // UpdatePostgresConfigBodySessionReplicationRole defines model for UpdatePostgresConfigBody.SessionReplicationRole.
