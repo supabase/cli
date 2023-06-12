@@ -46,8 +46,8 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	}
 
 	// Passing in script string means command line args must be set manually, ie. "$@"
-	testsPath := path.Join(dstPath, filepath.Dir(utils.DbTestsDir), filepath.Base(utils.DbTestsDir))
-	args := "set -- " + testsPath + ";"
+	testsPath := path.Join(filepath.Dir(utils.DbTestsDir), filepath.Base(utils.DbTestsDir))
+	args := "cd " + dstPath + ";set -- " + testsPath + ";"
 	// Requires unix path inside container
 	cmd := []string{"/bin/bash", "-c", args + testScript}
 	return utils.DockerExecOnceWithStream(ctx, utils.DbId, nil, cmd, os.Stdout, os.Stderr)
