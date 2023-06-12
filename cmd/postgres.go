@@ -21,7 +21,7 @@ var (
 
 	postgresConfigGetCmd = &cobra.Command{
 		Use:   "get",
-		Short: "Update network restrictions",
+		Short: "Get the current Postgres database config overrides",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
@@ -29,7 +29,7 @@ var (
 
 	postgresConfigUpdateCmd = &cobra.Command{
 		Use:   "update",
-		Short: "Update Postgres database config.",
+		Short: "Update Postgres database config",
 		Long: `Overriding the default Postgres config could result in unstable database behaviour.
 Custom configuration also overrides the optimizations generated based on the compute add-ons in use.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,7 +47,7 @@ func init() {
 	postgresConfigCmd.AddCommand(postgresConfigGetCmd)
 	postgresConfigCmd.AddCommand(postgresConfigUpdateCmd)
 
-	postgresConfigUpdateCmd.Flags().StringSliceVar(&postgresConfigValues, "config", []string{}, "Config overrides specified as a 'key:value' pair")
+	postgresConfigUpdateCmd.Flags().StringSliceVar(&postgresConfigValues, "config", []string{}, "Config overrides specified as a 'key=value' pair")
 	postgresConfigUpdateCmd.Flags().BoolVar(&postgresConfigUpdateReplaceMode, "replace-existing-overrides", false, "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.")
 
 	rootCmd.AddCommand(postgresCmd)
