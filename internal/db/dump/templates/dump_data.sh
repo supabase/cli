@@ -9,8 +9,8 @@ set -euo pipefail
 #   --schema '*'     include all other schemas by default
 pg_dump \
     --data-only \
-    --column-inserts \
     --quote-all-identifier \
+    --rows-per-insert 100000 \
     --exclude-schema "$EXCLUDED_SCHEMAS" \
     --exclude-table "auth.schema_migrations" \
     --exclude-table "storage.migrations" \
