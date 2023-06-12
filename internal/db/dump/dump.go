@@ -23,7 +23,7 @@ var (
 	dumpRoleScript string
 )
 
-func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, keepComments bool, fsys afero.Fs) error {
+func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, keepComments, useCopy bool, fsys afero.Fs) error {
 	// Initialise output stream
 	var outStream afero.File
 	if len(path) > 0 {
@@ -64,6 +64,10 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	}
 	// Run script in docker
 	cmd := []string{"bash", "-c", script, "--"}
+	env := []string{}
+	if !useCopy {
+		env = append(env, "COLUMN_INSERTS=1")
+	}
 	if !keepComments {
 		// Delete comments when arg1 is set
 		cmd = append(cmd, "1")
@@ -72,16 +76,16 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 		ctx,
 		container.Config{
 			Image: utils.Pg15Image,
-			Env: []string{
-				"PGHOST=" + config.Host,
+			Env: append(env,
+				"PGHOST="+config.Host,
 				fmt.Sprintf("PGPORT=%d", config.Port),
-				"PGUSER=" + config.User,
-				"PGPASSWORD=" + config.Password,
-				"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|"),
-				"RESERVED_ROLES=" + strings.Join(utils.ReservedRoles, "|"),
-				"ALLOWED_CONFIGS=" + strings.Join(utils.AllowedConfigs, "|"),
-				"DB_URL=" + config.Database,
-			},
+				"PGUSER="+config.User,
+				"PGPASSWORD="+config.Password,
+				"EXCLUDED_SCHEMAS="+strings.Join(excludedSchemas, "|"),
+				"RESERVED_ROLES="+strings.Join(utils.ReservedRoles, "|"),
+				"ALLOWED_CONFIGS="+strings.Join(utils.AllowedConfigs, "|"),
+				"DB_URL="+config.Database,
+			),
 			Cmd: cmd,
 		},
 		container.HostConfig{

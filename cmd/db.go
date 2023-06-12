@@ -97,6 +97,7 @@ var (
 	}
 
 	dataOnly     bool
+	useCopy      bool
 	roleOnly     bool
 	keepComments bool
 
@@ -109,7 +110,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, fsys)
+			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, useCopy, fsys)
 		},
 	}
 
@@ -238,6 +239,7 @@ func init() {
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
+	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
 	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
