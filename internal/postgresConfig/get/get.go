@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/charmbracelet/glamour"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"io"
-	"os"
-	"text/tabwriter"
+	"strings"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -18,21 +18,43 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		PrintOutPostgresConfigOverrides(config)
+		err = PrintOutPostgresConfigOverrides(config)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 }
 
-func PrintOutPostgresConfigOverrides(config map[string]interface{}) {
+func PrintOutPostgresConfigOverrides(config map[string]interface{}) error {
 	fmt.Println("- Custom Postgres Config -")
-	const padding = 4
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, padding, ' ', tabwriter.Debug)
-	fmt.Fprintf(w, "Config\tValue\t\n")
-	for k, v := range config {
-		fmt.Fprintf(w, "%s\t%+v\t\n", k, v)
+	markdownTable := []string{
+		"|Parameter|Value|\n|-|-|\n",
 	}
-	w.Flush()
+
+	for k, v := range config {
+		markdownTable = append(markdownTable, fmt.Sprintf(
+			"|`%s`|`%+v`|\n",
+			k, v,
+		))
+	}
+
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(-1),
+	)
+	if err != nil {
+		return err
+	}
+
+	out, err := r.Render(strings.Join(markdownTable, ""))
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(out)
 	fmt.Println("- End of Custom Postgres Config -")
+	return nil
 }
 
 func GetCurrentPostgresConfig(ctx context.Context, projectRef string) (map[string]interface{}, error) {
