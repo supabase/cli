@@ -12,7 +12,7 @@ set -euo pipefail
 pg_dump \
     --data-only \
     --quote-all-identifier \
-    --rows-per-insert 100000 \
+    ${COLUMN_INSERTS:+--rows-per-insert 100000} \
     --exclude-schema "$EXCLUDED_SCHEMAS" \
     --exclude-table "auth.schema_migrations" \
     --exclude-table "storage.migrations" \
