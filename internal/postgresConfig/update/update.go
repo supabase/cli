@@ -16,7 +16,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 	// 1. Prepare config overrides
 	newConfigOverrides := make(map[string]string)
 	for _, config := range values {
-		splits := strings.Split(config, ":")
+		splits := strings.Split(config, "=")
 		if len(splits) != 2 {
 			return fmt.Errorf("expected config value in key:value format, received: '%s'", config)
 		}
