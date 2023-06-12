@@ -69,8 +69,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 		env = append(env, "COLUMN_INSERTS=1")
 	}
 	if !keepComments {
-		// Delete comments when arg1 is set
-		cmd = append(cmd, "1")
+		env = append(env, "DELETE_COMMENTS=1")
 	}
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
