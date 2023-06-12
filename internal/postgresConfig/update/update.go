@@ -60,7 +60,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 			if resp.StatusCode() == 400 {
 				return fmt.Errorf("failed to update config overrides: %s (%s). This usually indicates that an unsupported or invalid config override was attempted. Please refer to https://supabase.com/docs/guides/platform/custom-postgres-config", resp.Status(), string(resp.Body))
 			}
-			return fmt.Errorf("failed to update config overrides: %s", resp.Status())
+			return fmt.Errorf("failed to update config overrides: %s (%s)", resp.Status(), string(resp.Body))
 		}
 	}
 	return get.Run(ctx, projectRef, fsys)
