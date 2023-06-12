@@ -40,6 +40,13 @@ npm i supabase@beta --save-dev
   brew install supabase/tap/supabase
   ```
 
+  To install the beta release channel:
+  
+  ```sh
+  brew install supabase/tap/supabase-beta
+  brew link --overwrite supabase-beta
+  ```
+  
   To upgrade:
 
   ```sh
