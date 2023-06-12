@@ -8,7 +8,7 @@ set -euo pipefail
 #   --column-inserts only column insert syntax is supported, ie. no copy from stdin
 #   --schema '*'     include all other schemas by default
 #
-# Never remove SQL comments because multiline records may contain them
+# Never delete SQL comments because multiline records may begin with them.
 pg_dump \
     --data-only \
     --quote-all-identifier \
