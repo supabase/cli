@@ -44,12 +44,16 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 		script = dumpDataScript
 		// We want to dump user data in auth, storage, etc. for migrating to new project
 		excludedSchemas = append([]string{
+			// "auth",
 			"extensions",
 			"pgbouncer",
 			"realtime",
-			"_realtime"},
-			utils.SystemSchemas...,
-		)
+			"_realtime",
+			// "storage",
+			"_analytics",
+			// "supabase_functions",
+			"supabase_migrations",
+		}, utils.SystemSchemas...)
 	} else if roleOnly {
 		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
 		script = dumpRoleScript
