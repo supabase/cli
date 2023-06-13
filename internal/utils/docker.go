@@ -360,15 +360,16 @@ func DockerExecOnce(ctx context.Context, container string, env []string, cmd []s
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerExecOnceWithStream(ctx, container, env, cmd, &out, stderr)
+	err := DockerExecOnceWithStream(ctx, container, "", env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerExecOnceWithStream(ctx context.Context, container string, env, cmd []string, stdout, stderr io.Writer) error {
+func DockerExecOnceWithStream(ctx context.Context, container, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
 	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
 		Env:          env,
 		Cmd:          cmd,
+		WorkingDir:   workdir,
 		AttachStderr: true,
 		AttachStdout: true,
 	})
