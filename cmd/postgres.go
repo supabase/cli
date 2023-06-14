@@ -11,12 +11,8 @@ import (
 var (
 	postgresCmd = &cobra.Command{
 		GroupID: groupManagementAPI,
-		Use:     "postgres",
-		Short:   "Manage Postgres database",
-	}
-	postgresConfigCmd = &cobra.Command{
-		Use:   "config",
-		Short: "Manage Postgres database config",
+		Use:     "postgres-config",
+		Short:   "Manage Postgres database config",
 	}
 
 	postgresConfigGetCmd = &cobra.Command{
@@ -43,9 +39,8 @@ Custom configuration also overrides the optimizations generated based on the com
 
 func init() {
 	postgresCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	postgresCmd.AddCommand(postgresConfigCmd)
-	postgresConfigCmd.AddCommand(postgresConfigGetCmd)
-	postgresConfigCmd.AddCommand(postgresConfigUpdateCmd)
+	postgresCmd.AddCommand(postgresConfigGetCmd)
+	postgresCmd.AddCommand(postgresConfigUpdateCmd)
 
 	postgresConfigUpdateCmd.Flags().StringSliceVar(&postgresConfigValues, "config", []string{}, "Config overrides specified as a 'key=value' pair")
 	postgresConfigUpdateCmd.Flags().BoolVar(&postgresConfigUpdateReplaceMode, "replace-existing-overrides", false, "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.")

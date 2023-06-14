@@ -40,7 +40,7 @@ var experimental = []*cobra.Command{
 	vanityCmd,
 	sslEnforcementCmd,
 	genKeysCmd,
-	postgresConfigCmd,
+	postgresCmd,
 }
 
 func IsExperimental(cmd *cobra.Command) bool {
