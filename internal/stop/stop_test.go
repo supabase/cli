@@ -100,8 +100,9 @@ func TestStopServices(t *testing.T) {
 
 	t.Run("removes data volumes", func(t *testing.T) {
 		utils.DbId = "test-db"
-		utils.ConfigId = "test-config-db"
+		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
+		utils.DenoRelayId = "test-functions"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -121,6 +122,9 @@ func TestStopServices(t *testing.T) {
 			Reply(http.StatusOK)
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.StorageId).
+			Reply(http.StatusNotFound)
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DenoRelayId).
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
