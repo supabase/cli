@@ -86,6 +86,7 @@ func TestStartDatabase(t *testing.T) {
 		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
+		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
