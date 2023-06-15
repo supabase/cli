@@ -21,6 +21,7 @@ var (
 	DbImage    string
 	NetId      string
 	DbId       string
+	ConfigId   string
 	KongId     string
 	GotrueId   string
 	InbucketId string
@@ -206,6 +207,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		} else {
 			NetId = "supabase_network_" + Config.ProjectId
 			DbId = "supabase_db_" + Config.ProjectId
+			ConfigId = "supabase_config_" + Config.ProjectId
 			KongId = "supabase_kong_" + Config.ProjectId
 			GotrueId = "supabase_auth_" + Config.ProjectId
 			InbucketId = "supabase_inbucket_" + Config.ProjectId
