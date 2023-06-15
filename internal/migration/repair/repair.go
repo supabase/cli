@@ -2,10 +2,12 @@ package repair
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
@@ -30,6 +32,9 @@ const (
 )
 
 func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if _, err := strconv.Atoi(version); err != nil {
+		return errors.New("invalid version number")
+	}
 	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
