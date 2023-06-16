@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/outliers"
+	"github.com/supabase/cli/internal/inspect/calls"
 )
 
 var (
@@ -103,6 +104,19 @@ var (
 			return blocking.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectCallsCmd = &cobra.Command{
+		Use:   "calls",
+		Short: "Shows queries from pg_stat_statements ordered by total times called",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return calls.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -115,5 +129,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectLocksCmd)
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
+	inspectDBCmd.AddCommand(inspectCallsCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
