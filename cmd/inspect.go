@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/index_usage"
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/blocking"
+	"github.com/supabase/cli/internal/inspect/outliers"
 )
 
 var (
@@ -89,6 +90,19 @@ var (
 			return blocking.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectOutliersCmd = &cobra.Command{
+		Use:   "outliers",
+		Short: "Shows queries from pg_stat_statements ordered by total execution time",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return blocking.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -100,5 +114,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectIndexUsageCmd)
 	inspectDBCmd.AddCommand(inspectLocksCmd)
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
+	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
