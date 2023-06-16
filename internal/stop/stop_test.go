@@ -3,6 +3,7 @@ package stop
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -92,7 +93,7 @@ func TestStopServices(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
 		// Run test
-		err := stop(context.Background(), true)
+		err := stop(context.Background(), true, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -131,7 +132,7 @@ func TestStopServices(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
 		// Run test
-		err := stop(context.Background(), false)
+		err := stop(context.Background(), false, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -149,7 +150,7 @@ func TestStopServices(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := stop(context.Background(), true)
+		err := stop(context.Background(), true, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
