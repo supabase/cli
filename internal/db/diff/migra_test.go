@@ -133,6 +133,8 @@ func TestRunMigra(t *testing.T) {
 }
 
 func TestMigrateShadow(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
 	t.Run("throws error on timeout", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		// Setup in-memory fs

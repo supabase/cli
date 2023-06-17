@@ -21,7 +21,6 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -128,10 +127,10 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 }
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	return MigrateShadowDatabaseToVersion(ctx, container, "", fsys, options...)
+	return MigrateShadowDatabaseVersions(ctx, container, nil, fsys, options...)
 }
 
-func MigrateShadowDatabaseToVersion(ctx context.Context, container, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
@@ -145,10 +144,6 @@ func MigrateShadowDatabaseToVersion(ctx context.Context, container, version stri
 		if err := initShadow15(ctx, conn, container[:12], fsys); err != nil {
 			return err
 		}
-	}
-	migrations, err := list.LoadPartialMigrations(version, fsys)
-	if err != nil {
-		return err
 	}
 	return apply.MigrateUp(ctx, conn, migrations, fsys)
 }
