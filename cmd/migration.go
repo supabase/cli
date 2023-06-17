@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/squash"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
@@ -70,6 +71,17 @@ var (
 		},
 	}
 
+	migrationSquashCmd = &cobra.Command{
+		Use:   "squash <version>",
+		Short: "Squash migrations before the specified version",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return squash.Run(ctx, args[0], fsys)
+		},
+	}
+
 	migrationUpCmd = &cobra.Command{
 		Use:   "up",
 		Short: "Apply pending migrations to local database",
@@ -100,6 +112,8 @@ func init() {
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", repairFlags.Lookup("password")))
 	migrationRepairCmd.MarkFlagsMutuallyExclusive("db-url", "password")
 	migrationCmd.AddCommand(migrationRepairCmd)
+	// Build squash command
+	migrationCmd.AddCommand(migrationSquashCmd)
 	// Build up command
 	migrationCmd.AddCommand(migrationUpCmd)
 	// Build new command
