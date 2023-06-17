@@ -3,6 +3,7 @@ package outliers
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -15,7 +16,7 @@ import (
 const OUTLIERS_QUERY = `
 SELECT
 	interval '1 millisecond' * total_exec_time AS total_exec_time,
-	to_char((total_exec_time}/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
+	to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
 	to_char(calls, 'FM999G999G999G990') AS ncalls,
 	interval '1 millisecond' * (blk_read_time + blk_write_time) AS sync_io_time,
 	query
@@ -46,9 +47,14 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	// TODO: implement a markdown table marshaller
-	table := "|Query|Execution Time|Proportion of exec time|Number Calls|Sync IO time|\n|-|-|-|\n"
+	table := "|Query|Execution Time|Proportion of exec time|Number Calls|Sync IO time|\n|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Query, r.Total_exec_time, r.Prop_exec_time, r.Ncalls, r.Sync_io_time)
+		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
+		query := re.ReplaceAllString(r.Query, " ")
+
+		re = regexp.MustCompile(`\|`)
+		query = re.ReplaceAllString(query, `\|`)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|\n", query, r.Total_exec_time, r.Prop_exec_time, r.Ncalls, r.Sync_io_time)
 	}
 	return list.RenderTable(table)
 }

@@ -101,7 +101,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return blocking.Run(ctx, dbConfig, fsys)
+			return outliers.Run(ctx, dbConfig, fsys)
 		},
 	}
 
