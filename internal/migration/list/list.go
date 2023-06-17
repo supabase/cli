@@ -143,6 +143,10 @@ func loadLocalVersions(fsys afero.Fs) ([]string, error) {
 }
 
 func LoadLocalMigrations(fsys afero.Fs) ([]string, error) {
+	return LoadPartialMigrations("", fsys)
+}
+
+func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
 	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
 		return nil, err
 	}
@@ -163,6 +167,9 @@ func LoadLocalMigrations(fsys afero.Fs) ([]string, error) {
 			continue
 		}
 		names = append(names, filename)
+		if matches[1] == version {
+			break
+		}
 	}
 	return names, nil
 }
