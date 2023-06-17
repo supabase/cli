@@ -14,9 +14,10 @@ import (
 
 const INDEX_USAGE_QUERY = `
 SELECT relname,
-   CASE idx_scan
-     WHEN 0 THEN 'Insufficient data'
-     ELSE (100 * idx_scan / (seq_scan + idx_scan))::text
+CASE
+    WHEN idx_scan IS NULL THEN 'Insufficient data'
+    WHEN idx_scan = 0 THEN 'Insufficient data'
+    ELSE (100 * idx_scan / (seq_scan + idx_scan))::text
    END percent_of_times_index_used,
    n_live_tup rows_in_table
  FROM
