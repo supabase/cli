@@ -14,10 +14,11 @@ import (
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := strconv.Atoi(version); err != nil {
 		return errors.New("invalid version number")
 	}
@@ -40,7 +41,12 @@ func Run(ctx context.Context, version string, fsys afero.Fs, options ...func(*pg
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
-	return nil
+	// 3. Update migration history
+	if len(config.Host) == 0 {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
+	return baselineMigrations(ctx, config, version, fsys)
 }
 
 func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -68,4 +74,26 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		Password: utils.Config.Db.Password,
 	}
 	return dump.DumpSchema(ctx, config, false, f)
+}
+
+const DELETE_MIGRATION_BEFORE = "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1"
+
+func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+		return err
+	}
+	m, err := repair.NewMigrationFromVersion(version, fsys)
+	if err != nil {
+		return err
+	}
+	// Data statements don't mutate schemas, safe to use statement cache
+	batch := pgx.Batch{}
+	batch.Queue(DELETE_MIGRATION_BEFORE, version)
+	batch.Queue(repair.INSERT_MIGRATION_VERSION, version, m.Lines)
+	return conn.SendBatch(ctx, &batch).Close()
 }
