@@ -18,35 +18,51 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+var ErrMissingVersion = errors.New("version not found")
+
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := strconv.Atoi(version); err != nil {
-		return errors.New("invalid version number")
+		return repair.ErrInvalidVersion
 	}
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	// 1. Dump migrated shadow database
+	// 1. Squash local migrations
+	if err := squashToVersion(ctx, version, fsys, options...); err != nil {
+		return err
+	}
+	// 2. Update migration history
+	if len(config.Host) == 0 {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
+	return baselineMigrations(ctx, config, version, fsys, options...)
+}
+
+func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
+	}
+	if len(migrations) == 0 {
+		return ErrMissingVersion
+	}
+	// Migrate to target version and dump
+	if len(migrations) == 1 {
+		return nil
 	}
 	if err := squashMigrations(ctx, migrations, fsys, options...); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Squashed migration history to", version)
-	// 2. Remove merged files
+	// Remove merged files
 	for _, name := range migrations[:len(migrations)-1] {
 		path := filepath.Join(utils.MigrationsDir, name)
 		if err := fsys.Remove(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
-	// 3. Update migration history
-	if len(config.Host) == 0 {
-		return nil
-	}
-	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
-	return baselineMigrations(ctx, config, version, fsys)
+	return nil
 }
 
 func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

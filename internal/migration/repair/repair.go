@@ -31,9 +31,11 @@ const (
 	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = $1"
 )
 
+var ErrInvalidVersion = errors.New("invalid version number")
+
 func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := strconv.Atoi(version); err != nil {
-		return errors.New("invalid version number")
+		return ErrInvalidVersion
 	}
 	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
