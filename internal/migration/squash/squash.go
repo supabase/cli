@@ -21,8 +21,10 @@ import (
 var ErrMissingVersion = errors.New("version not found")
 
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if _, err := strconv.Atoi(version); err != nil {
-		return repair.ErrInvalidVersion
+	if len(version) > 0 {
+		if _, err := strconv.Atoi(version); err != nil {
+			return repair.ErrInvalidVersion
+		}
 	}
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err

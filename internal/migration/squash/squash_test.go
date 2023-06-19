@@ -70,7 +70,7 @@ func TestSquashCommand(t *testing.T) {
 			Query(repair.INSERT_MIGRATION_VERSION, "1", "{}").
 			Reply("INSERT 1")
 		// Run test
-		err := Run(context.Background(), "1", pgconn.Config{}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{}, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
