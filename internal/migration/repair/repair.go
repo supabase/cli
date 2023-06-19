@@ -115,8 +115,11 @@ type MigrationFile struct {
 func NewMigrationFromVersion(version string, fsys afero.Fs) (*MigrationFile, error) {
 	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
 	matches, err := afero.Glob(fsys, path)
-	if err != nil || len(matches) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("glob %s: %w", path, os.ErrNotExist)
 	}
 	return NewMigrationFromFile(matches[0], fsys)
 }
