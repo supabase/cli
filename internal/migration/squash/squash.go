@@ -50,13 +50,15 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 		return ErrMissingVersion
 	}
 	// Migrate to target version and dump
+	path := filepath.Join(utils.MigrationsDir, migrations[len(migrations)-1])
 	if len(migrations) == 1 {
+		fmt.Fprintln(os.Stderr, utils.Bold(path), "is already the earliest migration.")
 		return nil
 	}
 	if err := squashMigrations(ctx, migrations, fsys, options...); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Squashed migration history to", version)
+	fmt.Fprintln(os.Stderr, "Squashed local migrations to", utils.Bold(path))
 	// Remove merged files
 	for _, name := range migrations[:len(migrations)-1] {
 		path := filepath.Join(utils.MigrationsDir, name)
