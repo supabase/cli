@@ -57,9 +57,15 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|blocked pid|blocking statement|blocking duration|blocking pid|blocked statement|blocked duration|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		re := regexp.MustCompile(`\r?\n|\t`)
-		blocking_statement := re.ReplaceAllString(r.Blocking_statement, " ")
+		// remove whitespace from query
+		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
+		blocking_statement := re.ReplaceAllString(r.Query, " ")
 		blocked_statement := re.ReplaceAllString(r.Blocked_statement, " ")
+
+		// escape pipes in query
+		re = regexp.MustCompile(`\|`)
+		blocking_statement := re.ReplaceAllString(r.Blocking_statement, `\|`)
+		blocked_statement := re.ReplaceAllString(r.Blocked_statement, `\|`)
 		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
 	return list.RenderTable(table)

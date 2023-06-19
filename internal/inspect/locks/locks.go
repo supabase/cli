@@ -53,8 +53,13 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|pid|relname|transaction id|granted|query|age|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		re := regexp.MustCompile(`\r?\n|\t`)
+		// remove whitespace from query
+		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
 		query := re.ReplaceAllString(r.Query, " ")
+
+		// escape pipes in query
+		re = regexp.MustCompile(`\|`)
+		query = re.ReplaceAllString(query, `\|`)
 		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
 	}
 	return list.RenderTable(table)

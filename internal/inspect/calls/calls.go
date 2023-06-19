@@ -3,6 +3,7 @@ package calls
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -46,9 +47,16 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	// TODO: implement a markdown table marshaller
-	table := "|Query|Execution Time|Proportion of exec time|Number Calls|Sync IO time|\n|-|-|-|\n"
+	table := "|Query|Total Execution Time|Proportion of total exec time|Number Calls|Sync IO time|\n|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Query, r.Total_exec_time, r.Prop_exec_time, r.Ncalls, r.Sync_io_time)
+		// remove whitespace from query
+		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
+		query := re.ReplaceAllString(r.Query, " ")
+
+		// escape pipes in query
+		re = regexp.MustCompile(`\|`)
+		query = re.ReplaceAllString(query, `\|`)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|\n", query, r.Total_exec_time, r.Prop_exec_time, r.Ncalls, r.Sync_io_time)
 	}
 	return list.RenderTable(table)
 }
