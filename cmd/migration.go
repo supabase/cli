@@ -78,7 +78,12 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return squash.Run(ctx, args[0], fsys)
+			if linked || len(dbUrl) > 0 {
+				if err := parseDatabaseConfig(fsys); err != nil {
+					return err
+				}
+			}
+			return squash.Run(ctx, args[0], dbConfig, fsys)
 		},
 	}
 
@@ -113,6 +118,13 @@ func init() {
 	migrationRepairCmd.MarkFlagsMutuallyExclusive("db-url", "password")
 	migrationCmd.AddCommand(migrationRepairCmd)
 	// Build squash command
+	squashFlags := migrationSquashCmd.Flags()
+	squashFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
+	squashFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", squashFlags.Lookup("password")))
+	migrationSquashCmd.MarkFlagsMutuallyExclusive("db-url", "password")
+	squashFlags.BoolVar(&linked, "linked", false, "Updates migration history of the linked project.")
+	migrationSquashCmd.MarkFlagsMutuallyExclusive("db-url", "linked")
 	migrationCmd.AddCommand(migrationSquashCmd)
 	// Build up command
 	migrationCmd.AddCommand(migrationUpCmd)
