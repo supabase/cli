@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/squash"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/squash"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -60,7 +60,6 @@ var (
 	migrationRepairCmd = &cobra.Command{
 		Use:   "repair <version>",
 		Short: "Repair the migration history table",
-		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -71,10 +70,11 @@ var (
 		},
 	}
 
+	version string
+
 	migrationSquashCmd = &cobra.Command{
-		Use:   "squash <version>",
-		Short: "Squash migrations before the specified version",
-		Args:  cobra.ExactArgs(1),
+		Use:   "squash",
+		Short: "Squash migrations to a single file",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -83,7 +83,7 @@ var (
 					return err
 				}
 			}
-			return squash.Run(ctx, args[0], dbConfig, fsys)
+			return squash.Run(ctx, version, dbConfig, fsys)
 		},
 	}
 
@@ -119,11 +119,12 @@ func init() {
 	migrationCmd.AddCommand(migrationRepairCmd)
 	// Build squash command
 	squashFlags := migrationSquashCmd.Flags()
+	squashFlags.StringVar(&version, "version", "", "Squash up to the specified version.")
 	squashFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	squashFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", squashFlags.Lookup("password")))
 	migrationSquashCmd.MarkFlagsMutuallyExclusive("db-url", "password")
-	squashFlags.BoolVar(&linked, "linked", false, "Updates migration history of the linked project.")
+	squashFlags.BoolVar(&linked, "linked", false, "Update migration history of the linked project.")
 	migrationSquashCmd.MarkFlagsMutuallyExclusive("db-url", "linked")
 	migrationCmd.AddCommand(migrationSquashCmd)
 	// Build up command
