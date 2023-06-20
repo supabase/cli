@@ -37,7 +37,6 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 	if len(config.Host) == 0 {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
 	return baselineMigrations(ctx, config, version, fsys, options...)
 }
 
@@ -99,6 +98,15 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 const DELETE_MIGRATION_BEFORE = "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1"
 
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if len(version) == 0 {
+		// Expecting no errors here because the caller should have handled them
+		if migrations, _ := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
+			if matches := utils.MigrateFilePattern.FindStringSubmatch(migrations[0]); len(matches) > 1 {
+				version = matches[1]
+			}
+		}
+	}
+	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
 	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
