@@ -253,6 +253,33 @@ func TestSquashMigrations(t *testing.T) {
 }
 
 func TestBaselineMigration(t *testing.T) {
+	t.Run("baselines earliest version", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		paths := []string{
+			filepath.Join(utils.MigrationsDir, "0_init.sql"),
+			filepath.Join(utils.MigrationsDir, "1_target.sql"),
+		}
+		sql := "create schema test"
+		require.NoError(t, afero.WriteFile(fsys, paths[0], []byte(sql), 0644))
+		require.NoError(t, afero.WriteFile(fsys, paths[1], []byte{}, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '%[1]d';INSERT INTO supabase_migrations.schema_migrations(version, statements) VALUES('%[1]d', '{%[2]s}')", 0, sql)).
+			Reply("INSERT 1")
+		// Run test
+		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
