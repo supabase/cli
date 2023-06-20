@@ -85,6 +85,9 @@ var (
 			}
 			return squash.Run(ctx, version, dbConfig, fsys)
 		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Finished " + utils.Aqua("supabase migration squash") + ".")
+		},
 	}
 
 	migrationUpCmd = &cobra.Command{
