@@ -4,16 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	// 2. Print secrets.
+	// 2. Print api-keys.
 	{
 		resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
 		if err != nil {
@@ -24,25 +24,42 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			return errors.New("Unexpected error retrieving project api-keys: " + string(resp.Body))
 		}
 
-		table := `|NAME|KEY VALUE|
-|-|-|
-`
-		for _, api_key := range *resp.JSON200 {
-			table += fmt.Sprintf("|`%s`|`%x`|\n", strings.ReplaceAll(api_key.Name, "|", "\\|"), api_key.ApiKey)
+		columns := []table.Column{
+			{Title: "NAME", Width: 20},
+			{Title: "KEY VALUE", Width: 50},
 		}
 
-		r, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(500),
+		rows := []table.Row{}
+
+		for _, api_key := range *resp.JSON200 {
+			rows = append(rows, table.Row{
+				api_key.Name,
+				api_key.ApiKey,
+			})
+		}
+
+		var baseStyle = lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#85e0b7"))
+
+		t := table.New(
+			table.WithColumns(columns),
+			table.WithRows(rows),
+			table.WithHeight(5),
 		)
-		if err != nil {
-			return err
-		}
-		out, err := r.Render(table)
-		if err != nil {
-			return err
-		}
-		fmt.Print(out)
+
+		s := table.DefaultStyles()
+		s.Header = s.Header.
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("#85e0b7")).
+			BorderBottom(true).
+			Bold(true).
+			Foreground(lipgloss.Color("#85e0b7"))
+		s.Selected = s.Selected.Foreground(lipgloss.Color("#ffffff"))
+
+		t.SetStyles(s)
+
+		fmt.Print(baseStyle.Render(t.View()) + "\n")
 	}
 
 	return nil

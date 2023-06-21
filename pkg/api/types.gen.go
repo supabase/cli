@@ -302,12 +302,6 @@ type CreateSecretBody struct {
 	Value string `json:"value"`
 }
 
-// CreateApiKeyBody defines model for CreateApiKeyBody.
-type CreateApiKeyBody struct {
-	Name string `json:"name"`
-	ApiKey string `json:"api_key"`
-}
-
 // DatabaseResponse defines model for DatabaseResponse.
 type DatabaseResponse struct {
 	// Host Database host
@@ -768,9 +762,6 @@ type DeleteSecretsJSONBody = []string
 
 // CreateSecretsJSONBody defines parameters for CreateSecrets.
 type CreateSecretsJSONBody = []CreateSecretBody
-
-// CreateApiKeysJSONBody defines parameters for CreateApiKeys.
-type CreateApiKeysJSONBody = []CreateApiKeyBody
 
 // GetTypescriptTypesParams defines parameters for GetTypescriptTypes.
 type GetTypescriptTypesParams struct {

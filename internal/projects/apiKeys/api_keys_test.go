@@ -27,7 +27,7 @@ func TestProjectApiKeysCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON(api.CreateApiKeysJSONBody{
+			JSON([]api.ApiKeyResponse{
 				{
 					Name:  "Test ApiKey",
 					ApiKey: "dummy-api-key-value",
