@@ -72,7 +72,7 @@ func TestPullCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", dbConfig, false, false, false, false, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Error running pg_dump on remote database: request returned Service Unavailable")
+		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

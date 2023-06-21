@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -111,6 +112,11 @@ var (
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, useCopy, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			if len(file) > 0 {
+				fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
+			}
 		},
 	}
 
