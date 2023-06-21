@@ -438,17 +438,17 @@ type PgsodiumConfigResponse struct {
 
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
-	EffectiveCacheSize            string                                       `json:"effective_cache_size"`
-	MaintenanceWorkMem            string                                       `json:"maintenance_work_mem"`
-	MaxConnections                int                                          `json:"max_connections"`
-	MaxParallelMaintenanceWorkers int                                          `json:"max_parallel_maintenance_workers"`
-	MaxParallelWorkers            int                                          `json:"max_parallel_workers"`
-	MaxParallelWorkersPerGather   int                                          `json:"max_parallel_workers_per_gather"`
-	MaxWorkerProcesses            int                                          `json:"max_worker_processes"`
-	SessionReplicationRole        PostgresConfigResponseSessionReplicationRole `json:"session_replication_role"`
-	SharedBuffers                 string                                       `json:"shared_buffers"`
-	StatementTimeout              string                                       `json:"statement_timeout"`
-	WorkMem                       string                                       `json:"work_mem"`
+	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
+	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
+	MaxConnections                *int                                          `json:"max_connections,omitempty"`
+	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
+	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
+	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
+	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
+	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
+	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
+	WorkMem                       *string                                       `json:"work_mem,omitempty"`
 }
 
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
@@ -646,17 +646,17 @@ type UpdatePoolingConfigResponsePoolMode string
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
-	EffectiveCacheSize            string                                         `json:"effective_cache_size"`
-	MaintenanceWorkMem            string                                         `json:"maintenance_work_mem"`
-	MaxConnections                int                                            `json:"max_connections"`
-	MaxParallelMaintenanceWorkers int                                            `json:"max_parallel_maintenance_workers"`
-	MaxParallelWorkers            int                                            `json:"max_parallel_workers"`
-	MaxParallelWorkersPerGather   int                                            `json:"max_parallel_workers_per_gather"`
-	MaxWorkerProcesses            int                                            `json:"max_worker_processes"`
-	SessionReplicationRole        UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role"`
-	SharedBuffers                 string                                         `json:"shared_buffers"`
-	StatementTimeout              string                                         `json:"statement_timeout"`
-	WorkMem                       string                                         `json:"work_mem"`
+	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
+	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
+	MaxConnections                *int                                            `json:"max_connections,omitempty"`
+	MaxParallelMaintenanceWorkers *int                                            `json:"max_parallel_maintenance_workers,omitempty"`
+	MaxParallelWorkers            *int                                            `json:"max_parallel_workers,omitempty"`
+	MaxParallelWorkersPerGather   *int                                            `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxWorkerProcesses            *int                                            `json:"max_worker_processes,omitempty"`
+	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
+	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
+	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
+	WorkMem                       *string                                         `json:"work_mem,omitempty"`
 }
 
 // UpdatePostgresConfigBodySessionReplicationRole defines model for UpdatePostgresConfigBody.SessionReplicationRole.
@@ -730,7 +730,7 @@ type TokenParams struct {
 	ClientSecret string               `form:"client_secret" json:"client_secret"`
 	Code         *string              `form:"code,omitempty" json:"code,omitempty"`
 	CodeVerifier *string              `form:"code_verifier,omitempty" json:"code_verifier,omitempty"`
-	RedirectUri  string               `form:"redirect_uri" json:"redirect_uri"`
+	RedirectUri  *string              `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
 	RefreshToken *string              `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
 }
 
