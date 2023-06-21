@@ -133,6 +133,8 @@ func TestRunMigra(t *testing.T) {
 }
 
 func TestMigrateShadow(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
 	t.Run("throws error on timeout", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		// Setup in-memory fs
@@ -141,7 +143,7 @@ func TestMigrateShadow(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		// Run test
-		err := MigrateShadowDatabase(ctx, fsys)
+		err := MigrateShadowDatabase(ctx, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation was canceled")
 	})
@@ -157,7 +159,7 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
@@ -176,7 +178,7 @@ func TestMigrateShadow(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})

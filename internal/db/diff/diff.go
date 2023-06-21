@@ -61,14 +61,8 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if utils.Config.Db.MajorVersion <= 14 {
-		if err := MigrateShadowDatabase(ctx, fsys); err != nil {
-			return err
-		}
-	} else {
-		if err := MigrateShadowFromBase(ctx, shadow[:12], fsys); err != nil {
-			return err
-		}
+	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
+		return err
 	}
 
 	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))

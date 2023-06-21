@@ -126,12 +126,43 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return conn, err
 }
 
-func MigrateShadowFromBase(ctx context.Context, shadowHost string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	return MigrateShadowDatabaseVersions(ctx, container, nil, fsys, options...)
+}
+
+func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+	if utils.Config.Db.MajorVersion <= 14 {
+		if err := initShadow14(ctx, conn, fsys); err != nil {
+			return err
+		}
+	} else {
+		if err := initShadow15(ctx, conn, container[:12], fsys); err != nil {
+			return err
+		}
+	}
+	return apply.MigrateUp(ctx, conn, migrations, fsys)
+}
+
+func initShadow14(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+		return err
+	}
+	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
+		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+}
+
+func initShadow15(ctx context.Context, conn *pgx.Conn, shadowHost string, fsys afero.Fs) error {
 	// Apply service migrations
 	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
 		"ANON_KEY=" + utils.Config.Auth.AnonKey,
@@ -158,35 +189,11 @@ func MigrateShadowFromBase(ctx context.Context, shadowHost string, fsys afero.Fs
 	}
 	// Apply user migrations
 	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
+		return apply.BatchExecDDL(ctx, conn, roles)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
-}
-
-func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
-		return err
-	}
-	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
+	return nil
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
@@ -222,14 +229,8 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if utils.Config.Db.MajorVersion <= 14 {
-		if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
-			return "", err
-		}
-	} else {
-		if err := MigrateShadowFromBase(ctx, shadow[:12], fsys, options...); err != nil {
-			return "", err
-		}
+	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
+		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	source := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)
