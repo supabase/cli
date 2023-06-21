@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -21,22 +20,15 @@ import (
 )
 
 func TestLintCommand(t *testing.T) {
-	const version = "1.41"
-
 	// Setup in-memory fs
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
 	// Setup mock docker
-	require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+	require.NoError(t, apitest.MockDocker(utils.Docker))
 	defer gock.OffAll()
-	gock.New("http:///var/run/docker.sock").
-		Head("/_ping").
+	gock.New(utils.Docker.DaemonHost()).
+		Get("/v" + utils.Docker.ClientVersion() + "/containers").
 		Reply(http.StatusOK).
-		SetHeader("API-Version", version).
-		SetHeader("OSType", "linux")
-	gock.New("http:///var/run/docker.sock").
-		Get("/v" + version + "/containers").
-		Reply(200).
 		JSON(types.ContainerJSON{})
 	// Setup db response
 	expected := Result{
