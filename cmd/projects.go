@@ -11,12 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
+	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/list"
-	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
 var (
@@ -77,8 +77,7 @@ var (
 
 	projectsApiKeysCmd = &cobra.Command{
 		Use:   "api-keys",
-		Short: "List all api-keys for a Supabase project",
-		Long:  "List all api-keys for a Supabase project the logged-in user can access.",
+		Short: "List all API keys for a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
