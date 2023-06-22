@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	podman "github.com/containers/common/libnetwork/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
 	dockerConfig "github.com/docker/cli/cli/config"
@@ -63,7 +64,7 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 		},
 	)
 	// if error is network already exists, no need to propagate to user
-	if errdefs.IsConflict(err) {
+	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
 	}
 	return err
