@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/viper"
@@ -50,18 +51,7 @@ func AssertDockerIsRunning(ctx context.Context) error {
 }
 
 func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
-	existing, err := Docker.NetworkInspect(
-		ctx,
-		networkId,
-		types.NetworkInspectOptions{},
-	)
-
-	// if network already exists, abort
-	if existing.ID != "" && err == nil {
-		return nil
-	}
-
-	_, err = Docker.NetworkCreate(
+	_, err := Docker.NetworkCreate(
 		ctx,
 		networkId,
 		types.NetworkCreate{
@@ -72,7 +62,10 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 			},
 		},
 	)
-
+	// if error is network already exists, no need to propagate to user
+	if errdefs.IsConflict(err) {
+		return nil
+	}
 	return err
 }
 
