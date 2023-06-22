@@ -14,8 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
 	dockerConfig "github.com/docker/cli/cli/config"
+	"github.com/docker/cli/cli/config/configfile"
+	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -30,16 +33,12 @@ import (
 var Docker = NewDocker()
 
 func NewDocker() *client.Client {
-	docker, err := client.NewClientWithOpts(
-		client.WithAPIVersionNegotiation(),
-		// Support env (e.g. for mock setup or rootless docker)
-		client.FromEnv,
-	)
+	docker, err := command.NewAPIClientFromFlags(&dockerFlags.ClientOptions{}, &configfile.ConfigFile{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
 		os.Exit(1)
 	}
-	return docker
+	return docker.(*client.Client)
 }
 
 func AssertDockerIsRunning(ctx context.Context) error {
@@ -367,15 +366,16 @@ func DockerExecOnce(ctx context.Context, container string, env []string, cmd []s
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerExecOnceWithStream(ctx, container, env, cmd, &out, stderr)
+	err := DockerExecOnceWithStream(ctx, container, "", env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerExecOnceWithStream(ctx context.Context, container string, env, cmd []string, stdout, stderr io.Writer) error {
+func DockerExecOnceWithStream(ctx context.Context, container, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
 	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
 		Env:          env,
 		Cmd:          cmd,
+		WorkingDir:   workdir,
 		AttachStderr: true,
 		AttachStdout: true,
 	})

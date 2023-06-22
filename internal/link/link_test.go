@@ -125,7 +125,9 @@ func TestLinkCommand(t *testing.T) {
 		conn.Query(repair.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE")
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE")
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -300,7 +302,9 @@ func TestLinkDatabase(t *testing.T) {
 		conn.Query(repair.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE")
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE")
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -320,7 +324,9 @@ func TestLinkDatabase(t *testing.T) {
 		conn.Query(repair.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE")
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE")
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -340,7 +346,8 @@ func TestLinkDatabase(t *testing.T) {
 		conn.Query(repair.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
+			Query(repair.ADD_STATEMENTS_COLUMN)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error

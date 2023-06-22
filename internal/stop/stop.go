@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/docker/docker/api/types"
@@ -19,7 +20,10 @@ func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 	}
 
 	// Stop all services
-	if err := stop(ctx, backup); err != nil {
+	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+		w := utils.StatusWriter{Program: p}
+		return stop(ctx, backup, w)
+	}); err != nil {
 		return err
 	}
 
@@ -27,7 +31,7 @@ func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 	return nil
 }
 
-func stop(ctx context.Context, backup bool) error {
+func stop(ctx context.Context, backup bool, w io.Writer) error {
 	args := filters.NewArgs(
 		filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId),
 	)
@@ -45,6 +49,7 @@ func stop(ctx context.Context, backup bool) error {
 			ids = append(ids, c.ID)
 		}
 	}
+	fmt.Fprintln(w, "Stopping containers...")
 	utils.WaitAll(ids, utils.DockerStop)
 	if _, err := utils.Docker.ContainersPrune(ctx, args); err != nil {
 		return err
@@ -52,10 +57,12 @@ func stop(ctx context.Context, backup bool) error {
 	// Remove named volumes
 	if backup {
 		fmt.Fprintln(os.Stderr, "Postgres database saved to volume:", utils.DbId)
+		fmt.Fprintln(os.Stderr, "Postgres config saved to volume:", utils.ConfigId)
 		fmt.Fprintln(os.Stderr, "Storage directory saved to volume:", utils.StorageId)
+		fmt.Fprintln(os.Stderr, "Functions cache saved to volume:", utils.DenoRelayId)
 	} else {
 		// TODO: label named volumes to use VolumesPrune for branch support
-		volumes := []string{utils.DbId, utils.StorageId}
+		volumes := []string{utils.ConfigId, utils.DbId, utils.StorageId, utils.DenoRelayId}
 		utils.WaitAll(volumes, func(name string) {
 			if err := utils.Docker.VolumeRemove(ctx, name, true); err != nil {
 				fmt.Fprintln(os.Stderr, "failed to remove volume:", name, err)

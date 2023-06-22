@@ -61,7 +61,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if err := MigrateShadowDatabase(ctx, fsys); err != nil {
+	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
 		return err
 	}
 

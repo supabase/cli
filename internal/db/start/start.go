@@ -81,8 +81,11 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	hostConfig := WithSyslogConfig(container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
-		Binds:         []string{utils.DbId + ":/var/lib/postgresql/data"},
-		ExtraHosts:    []string{"host.docker.internal:host-gateway"},
+		Binds: []string{
+			utils.DbId + ":/var/lib/postgresql/data",
+			utils.ConfigId + ":/etc/postgresql-custom",
+		},
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	})
 	if utils.Config.Db.MajorVersion <= 14 {
 		config.Entrypoint = nil

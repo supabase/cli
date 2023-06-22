@@ -98,6 +98,7 @@ type kongConfig struct {
 	PgmetaId    string
 	DenoRelayId string
 	LogflareId  string
+	ApiPort     uint
 }
 
 var (
@@ -268,6 +269,7 @@ EOF
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
+
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:    utils.GotrueId,
 			RestId:      utils.RestId,
@@ -276,6 +278,7 @@ EOF
 			PgmetaId:    utils.PgmetaId,
 			DenoRelayId: utils.DenoRelayId,
 			LogflareId:  utils.LogflareId,
+			ApiPort:     utils.Config.Api.Port,
 		}); err != nil {
 			return err
 		}

@@ -23,7 +23,7 @@ var Version string
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.73"
+	Pg15Image = "supabase/postgres:15.1.0.90"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -31,7 +31,7 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.66.0"
-	StudioImage      = "supabase/studio:20230512-ad596d8"
+	StudioImage      = "supabase/studio:20230605-c876cea"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.4.2"
@@ -40,7 +40,7 @@ const (
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.62.1"
 	RealtimeImage = "supabase/realtime:v2.10.1"
-	StorageImage  = "supabase/storage-api:v0.37.4"
+	StorageImage  = "supabase/storage-api:v0.40.4"
 	LogflareImage = "supabase/logflare:1.0.2"
 	// Should be kept in-sync with DenoRelayImage
 	DenoVersion = "1.30.3"

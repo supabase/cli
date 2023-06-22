@@ -4,7 +4,8 @@ set -euo pipefail
 # TODO: move this dependency to base image
 if ! command -v pg_prove &> /dev/null; then
     apt-get -qq update
-    apt-get -qq install postgresql-14-pgtap &> /dev/null
+    apt-get -qq install make &> /dev/null
+    echo | cpan -T TAP::Parser::SourceHandler::pgTAP &> /dev/null
 fi
 
 # temporarily enable pgtap

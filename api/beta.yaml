@@ -175,7 +175,7 @@ paths:
           schema:
             type: string
         - name: redirect_uri
-          required: true
+          required: false
           in: query
           schema:
             type: string
@@ -1415,7 +1415,6 @@ paths:
         - projects config
       security: &ref_36
         - bearer: []
-        - bearer: []
     patch:
       operationId: updatePgbouncerConfig
       summary: Updates project's pgbouncer config
@@ -2026,11 +2025,11 @@ components:
       type: object
       properties:
         status:
+          type: string
           enum:
             - not-used
             - custom-domain-used
             - active
-          type: string
         custom_domain:
           type: string
       required:
@@ -2108,6 +2107,7 @@ components:
         target_version:
           type: number
         error:
+          type: string
           enum:
             - 1_upgraded_instance_launch_failed
             - 2_volume_detachchment_from_upgraded_instance_failed
@@ -2117,8 +2117,8 @@ components:
             - 6_volume_detachchment_from_original_instance_failed
             - 7_volume_attachment_to_upgraded_instance_failed
             - 8_upgrade_completion_failed
-          type: string
         progress:
+          type: string
           enum:
             - 1_started
             - 2_launched_upgraded_instance
@@ -2129,13 +2129,12 @@ components:
             - 7_detached_volume_from_original_instance
             - 8_attached_volume_to_upgraded_instance
             - 9_completed_upgrade
-          type: string
         status:
+          type: number
           enum:
             - 0
             - 1
             - 2
-          type: number
       required:
         - initiated_at
         - target_version
@@ -2166,17 +2165,11 @@ components:
       type: object
       properties:
         statement_timeout:
-          type: integer
-          minimum: 0
-          maximum: 2147483647
+          type: string
         effective_cache_size:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
+          type: string
         maintenance_work_mem:
-          type: integer
-          minimum: 1024
-          maximum: 2147483647
+          type: string
         max_connections:
           type: integer
           minimum: 1
@@ -2198,46 +2191,24 @@ components:
           minimum: 0
           maximum: 262143
         shared_buffers:
-          type: integer
-          minimum: 16
-          maximum: 1073741823
+          type: string
         work_mem:
-          type: integer
-          minimum: 64
-          maximum: 2147483647
+          type: string
         session_replication_role:
           enum:
             - origin
             - replica
             - local
           type: string
-      required:
-        - statement_timeout
-        - effective_cache_size
-        - maintenance_work_mem
-        - max_connections
-        - max_parallel_maintenance_workers
-        - max_parallel_workers
-        - max_parallel_workers_per_gather
-        - max_worker_processes
-        - shared_buffers
-        - work_mem
-        - session_replication_role
     UpdatePostgresConfigBody:
       type: object
       properties:
         statement_timeout:
-          type: integer
-          minimum: 0
-          maximum: 2147483647
+          type: string
         effective_cache_size:
-          type: integer
-          minimum: 1
-          maximum: 2147483647
+          type: string
         maintenance_work_mem:
-          type: integer
-          minimum: 1024
-          maximum: 2147483647
+          type: string
         max_connections:
           type: integer
           minimum: 1
@@ -2259,31 +2230,15 @@ components:
           minimum: 0
           maximum: 262143
         shared_buffers:
-          type: integer
-          minimum: 16
-          maximum: 1073741823
+          type: string
         work_mem:
-          type: integer
-          minimum: 64
-          maximum: 2147483647
+          type: string
         session_replication_role:
           enum:
             - origin
             - replica
             - local
           type: string
-      required:
-        - statement_timeout
-        - effective_cache_size
-        - maintenance_work_mem
-        - max_connections
-        - max_parallel_maintenance_workers
-        - max_parallel_workers
-        - max_parallel_workers_per_gather
-        - max_worker_processes
-        - shared_buffers
-        - work_mem
-        - session_replication_role
     ProjectPgBouncerConfig:
       type: object
       properties:

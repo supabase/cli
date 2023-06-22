@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
@@ -44,13 +43,11 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	if err := utils.Docker.CopyToContainer(ctx, utils.DbId, dstPath, &buf, types.CopyToContainerOptions{}); err != nil {
 		return err
 	}
-
 	// Passing in script string means command line args must be set manually, ie. "$@"
-	testsPath := path.Join(dstPath, filepath.Dir(utils.DbTestsDir), filepath.Base(utils.DbTestsDir))
-	args := "set -- " + testsPath + ";"
+	args := "set -- " + filepath.ToSlash(utils.DbTestsDir) + ";"
 	// Requires unix path inside container
 	cmd := []string{"/bin/bash", "-c", args + testScript}
-	return utils.DockerExecOnceWithStream(ctx, utils.DbId, nil, cmd, os.Stdout, os.Stderr)
+	return utils.DockerExecOnceWithStream(ctx, utils.DbId, dstPath, nil, cmd, os.Stdout, os.Stderr)
 }
 
 // Ref 1: https://medium.com/@skdomino/taring-untaring-files-in-go-6b07cf56bc07

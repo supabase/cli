@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -112,7 +113,7 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	seed, err := apply.NewMigrationFromFile(utils.SeedDataPath, fsys)
+	seed, err := repair.NewMigrationFromFile(utils.SeedDataPath, fsys)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -202,7 +203,7 @@ func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, optio
 	}
 	userSchemas = append(userSchemas, "supabase_migrations")
 	// Drop user defined objects
-	migration := apply.MigrationFile{}
+	migration := repair.MigrationFile{}
 	for _, schema := range userSchemas {
 		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
 		migration.Lines = append(migration.Lines, sql)

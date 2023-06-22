@@ -32,8 +32,6 @@ var dbConfig = pgconn.Config{
 
 func TestRunMigra(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg15Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -46,16 +44,16 @@ func TestRunMigra(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-shadow-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg15Sql).
-			Reply("CREATE SCHEMA")
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -106,7 +104,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{"\\_analytics",pgbouncer,realtime,"\\_realtime","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}') ORDER BY schema_name`).
+		conn.Query(`SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY('{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}') ORDER BY schema_name`).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := RunMigra(context.Background(), []string{}, "", dbConfig, fsys, conn.Intercept)
@@ -135,6 +133,8 @@ func TestRunMigra(t *testing.T) {
 }
 
 func TestMigrateShadow(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
 	t.Run("throws error on timeout", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		// Setup in-memory fs
@@ -143,7 +143,7 @@ func TestMigrateShadow(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		// Run test
-		err := MigrateShadowDatabase(ctx, fsys)
+		err := MigrateShadowDatabase(ctx, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation was canceled")
 	})
@@ -159,7 +159,7 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
@@ -178,14 +178,15 @@ func TestMigrateShadow(t *testing.T) {
 			Query(utils.InitialSchemaSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
 }
 
 func TestDiffDatabase(t *testing.T) {
-	utils.DbImage = utils.Pg15Image
+	utils.Config.Db.MajorVersion = 14
+	utils.DbImage = utils.Pg14Image
 	utils.Config.Db.ShadowPort = 54320
 	utils.GlobalsSql = "create schema public"
 	utils.InitialSchemaSql = "create schema private"
@@ -197,7 +198,7 @@ func TestDiffDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg14Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
@@ -213,7 +214,7 @@ func TestDiffDatabase(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
@@ -237,7 +238,7 @@ At statement 0: create schema public`)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)

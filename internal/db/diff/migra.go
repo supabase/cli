@@ -79,13 +79,16 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 }
 
 func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	// Include auth,storage,extensions by default for RLS policies
 	if len(exclude) == 0 {
+		// RLS policies in auth and storage schemas can be included with -s flag
 		exclude = append([]string{
-			"_analytics",
+			"auth",
+			// "extensions",
 			"pgbouncer",
 			"realtime",
 			"_realtime",
+			"storage",
+			"_analytics",
 			// Exclude functions because Webhooks support is early alpha
 			"supabase_functions",
 			"supabase_migrations",
@@ -96,12 +99,14 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
 	config := start.NewContainerConfig()
-	config.Entrypoint = nil
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		Tmpfs:        map[string]string{"/docker-entrypoint-initdb.d": ""},
 		AutoRemove:   true,
+	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = nil
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	return utils.DockerStart(ctx, config, hostConfig, "")
 }
@@ -121,12 +126,29 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return conn, err
 }
 
-func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	return MigrateShadowDatabaseVersions(ctx, container, nil, fsys, options...)
+}
+
+func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+	if utils.Config.Db.MajorVersion <= 14 {
+		if err := initShadow14(ctx, conn, fsys); err != nil {
+			return err
+		}
+	} else {
+		if err := initShadow15(ctx, conn, container[:12], fsys); err != nil {
+			return err
+		}
+	}
+	return apply.MigrateUp(ctx, conn, migrations, fsys)
+}
+
+func initShadow14(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
@@ -137,10 +159,41 @@ func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+}
+
+func initShadow15(ctx context.Context, conn *pgx.Conn, shadowHost string, fsys afero.Fs) error {
+	// Apply service migrations
+	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
+		"ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, shadowHost),
+		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+		"STORAGE_BACKEND=file",
+		"TENANT_ID=stub",
+		// TODO: https://github.com/supabase/storage-api/issues/55
+		"REGION=stub",
+		"GLOBAL_S3_BUCKET=stub",
+	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
 		return err
 	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
+	if err := utils.DockerRunOnceWithStream(ctx, utils.GotrueImage, []string{
+		"GOTRUE_LOG_LEVEL=error",
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, shadowHost),
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr); err != nil {
+		return err
+	}
+	// Apply user migrations
+	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
+		return apply.BatchExecDDL(ctx, conn, roles)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
@@ -176,7 +229,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
+	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))

@@ -47,7 +47,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := AssertRemoteInSync(ctx, conn, fsys); err != nil {
+	if err := assertRemoteInSync(ctx, conn, fsys); err != nil {
 		return err
 	}
 
@@ -64,8 +64,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	}
 
 	// 3. Insert a row to `schema_migrations`
-	_, err = conn.Exec(ctx, repair.INSERT_MIGRATION_VERSION, timestamp)
-	return err
+	return repair.UpdateMigrationTable(ctx, conn, timestamp, repair.Applied, fsys)
 }
 
 func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp string, config pgconn.Config, fsys afero.Fs) error {
@@ -75,7 +74,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 		return err
 	} else if len(migrations) == 0 {
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
-		return dump.Run(ctx, path, config, false, false, false, fsys)
+		return dump.Run(ctx, path, config, false, false, false, false, fsys)
 	}
 
 	w := utils.StatusWriter{Program: p}
@@ -90,14 +89,11 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 	return afero.WriteFile(fsys, path, []byte(output), 0644)
 }
 
-func AssertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UndefinedTable {
-			return err
-		}
-		if err := repair.CreateMigrationTable(ctx, conn); err != nil {
 			return err
 		}
 	}
