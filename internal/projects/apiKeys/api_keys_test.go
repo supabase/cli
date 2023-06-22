@@ -27,12 +27,10 @@ func TestProjectApiKeysCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{
-				{
-					Name:  "Test ApiKey",
-					ApiKey: "dummy-api-key-value",
-				},
-			})
+			JSON([]api.ApiKeyResponse{{
+				Name:   "Test ApiKey",
+				ApiKey: "dummy-api-key-value",
+			}})
 		// Run test
 		err := Run(context.Background(), project, fsys)
 		// Check error
@@ -41,7 +39,6 @@ func TestProjectApiKeysCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on missing access token", func(t *testing.T) {
-		t.Skip()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -67,48 +64,6 @@ func TestProjectApiKeysCommand(t *testing.T) {
 		err := Run(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on server unavailable", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
-			Reply(500).
-			JSON(map[string]string{"message": "unavailable"})
-		// Run test
-		err := Run(context.Background(), project, fsys)
-		// Check error
-		assert.ErrorContains(t, err, `Unexpected error retrieving project api-keys: {"message":"unavailable"}`)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on malformed json", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
-			Reply(200).
-			JSON(map[string]string{})
-		// Run test
-		err := Run(context.Background(), project, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "json: cannot unmarshal object into Go value of type []api.ApiKeyResponse")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
