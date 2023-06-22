@@ -2,7 +2,6 @@ package apiKeys
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -14,11 +13,11 @@ import (
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return utils.Red(err.Error())
 	}
 
 	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving project api-keys: " + string(resp.Body))
+		return utils.Red("Unexpected error retrieving project api-keys: " + string(resp.Body))
 	}
 
 	table := `|NAME|KEY VALUE|

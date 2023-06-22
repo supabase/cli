@@ -2,12 +2,11 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -19,11 +18,11 @@ type Organization struct {
 func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
 	if err != nil {
-		return err
+		return utils.Red(err.Error())
 	}
 
 	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving organizations: " + string(resp.Body))
+		return utils.Red("Unexpected error retrieving organizations: " + string(resp.Body))
 	}
 
 	table := `|ID|NAME|

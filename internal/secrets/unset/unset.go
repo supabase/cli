@@ -2,7 +2,6 @@ package unset
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -16,11 +15,11 @@ func Run(ctx context.Context, projectRef string, args []string, fsys afero.Fs) e
 	{
 		resp, err := utils.GetSupabase().DeleteSecretsWithResponse(ctx, projectRef, args)
 		if err != nil {
-			return err
+			return utils.Red(err.Error())
 		}
 
 		if resp.StatusCode() != http.StatusOK {
-			return errors.New("Unexpected error unsetting project secrets: " + string(resp.Body))
+			return utils.Red("Unexpected error unsetting project secrets: " + string(resp.Body))
 		}
 	}
 

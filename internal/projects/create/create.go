@@ -2,7 +2,6 @@ package create
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/spf13/afero"
@@ -17,11 +16,11 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 
 	resp, err := utils.GetSupabase().CreateProjectWithResponse(ctx, params)
 	if err != nil {
-		return err
+		return utils.Red(err.Error())
 	}
 
 	if resp.JSON201 == nil {
-		return errors.New("Unexpected error creating project: " + string(resp.Body))
+		return utils.Red("Unexpected error creating project: " + string(resp.Body))
 	}
 
 	// TODO: Poll until PostgREST is reachable.
