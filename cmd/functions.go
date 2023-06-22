@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/functions/list"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/functions/download"
@@ -21,6 +22,15 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "functions",
 		Short:   "Manage Supabase Edge functions",
+	}
+
+	functionsListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List all Functions in Supabase",
+		Long:  "List all Functions in the linked Supabase project.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return list.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+		},
 	}
 
 	functionsDeleteCmd = &cobra.Command{
@@ -95,6 +105,7 @@ var (
 )
 
 func init() {
+	functionsListCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
@@ -107,6 +118,7 @@ func init() {
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
 	functionsCmd.AddCommand(functionsNewCmd)
