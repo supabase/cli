@@ -11,9 +11,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
+	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -72,6 +74,14 @@ var (
 			return list.Run(cmd.Context(), afero.NewOsFs())
 		},
 	}
+
+	projectsApiKeysCmd = &cobra.Command{
+		Use:   "api-keys",
+		Short: "List all API keys for a Supabase project",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -90,9 +100,14 @@ func init() {
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
 	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))
+
+	apiKeysFlags := projectsApiKeysCmd.Flags()
+	apiKeysFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+
 	// Add commands to root
 	projectsCmd.AddCommand(projectsCreateCmd)
 	projectsCmd.AddCommand(projectsListCmd)
+	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)
 }
 
