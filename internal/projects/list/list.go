@@ -2,23 +2,24 @@ package list
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
 	if err != nil {
-		return utils.Red(err.Error())
+		return err
 	}
 
 	if resp.JSON200 == nil {
-		return utils.Red("Unexpected error retrieving projects: " + string(resp.Body))
+		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
 	}
 
 	table := `|ORG ID|ID|NAME|REGION|CREATED AT (UTC)|

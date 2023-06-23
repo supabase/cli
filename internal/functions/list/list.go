@@ -2,6 +2,7 @@ package list
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/afero"
@@ -12,11 +13,11 @@ import (
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetFunctionsWithResponse(ctx, projectRef)
 	if err != nil {
-		return utils.Red(err.Error())
+		return err
 	}
 
 	if resp.JSON200 == nil {
-		return utils.Red("Unexpected error retrieving functions: " + string(resp.Body))
+		return errors.New("Unexpected error retrieving functions: " + string(resp.Body))
 	}
 
 	table := `|ID|NAME|SLUG|UPDATED_AT|VERSION|STATUS|

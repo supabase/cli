@@ -22,20 +22,20 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
 	{
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
-			return utils.Red(err.Error())
+			return err
 		}
 		if _, err := fsys.Stat(funcDir); !errors.Is(err, os.ErrNotExist) {
-			return utils.Red("Function " + utils.Aqua(slug) + " already exists locally.")
+			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
 		}
 	}
 
 	// 2. Create new function.
 	{
 		if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
-			return utils.Red(err.Error())
+			return err
 		}
 		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "index.ts"), []byte(index), 0644); err != nil {
-			return utils.Red(err.Error())
+			return err
 		}
 	}
 

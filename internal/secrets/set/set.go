@@ -2,6 +2,7 @@ package set
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,7 +21,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 		if envFilePath != "" {
 			envMap, err := godotenv.Read(envFilePath)
 			if err != nil {
-				return utils.Red(err.Error())
+				return err
 			}
 			for name, value := range envMap {
 				secret := api.CreateSecretBody{
@@ -30,12 +31,12 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 				secrets = append(secrets, secret)
 			}
 		} else if len(args) == 0 {
-			return utils.Red("No arguments found. Use --env-file to read from a .env file.")
+			return errors.New("No arguments found. Use --env-file to read from a .env file.")
 		} else {
 			for _, pair := range args {
 				name, value, found := strings.Cut(pair, "=")
 				if !found {
-					return utils.Red("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
+					return errors.New("Invalid secret pair: " + utils.Aqua(pair) + ". Must be NAME=VALUE.")
 				}
 
 				secret := api.CreateSecretBody{
@@ -53,7 +54,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 
 		// TODO: remove the StatusOK case after 2022-08-20
 		if resp.StatusCode() != http.StatusCreated && resp.StatusCode() != http.StatusOK {
-			return utils.Red("Unexpected error setting project secrets: " + string(resp.Body))
+			return errors.New("Unexpected error setting project secrets: " + string(resp.Body))
 		}
 	}
 

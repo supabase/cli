@@ -3,22 +3,23 @@ package list
 import (
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetSecretsWithResponse(ctx, projectRef)
 	if err != nil {
-		return utils.Red(err.Error())
+		return err
 	}
 
 	if resp.JSON200 == nil {
-		return utils.Red("Unexpected error retrieving project secrets: " + string(resp.Body))
+		return errors.New("Unexpected error retrieving project secrets: " + string(resp.Body))
 	}
 
 	table := `|NAME|DIGEST|
