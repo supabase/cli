@@ -41,7 +41,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go run tools/selfhost/main.go "cli/${GITHUB_REF_NAME#v}"
+      - run: go run tools/selfhost/main.go "cli/$GITHUB_REF_NAME"
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
