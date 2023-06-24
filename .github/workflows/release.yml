@@ -31,3 +31,16 @@ jobs:
       - run: npm dist-tag add "supabase@${GITHUB_REF_NAME#v}" latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  compose:
+    name: Publish self-hosted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run tools/selfhost/main.go "cli/${GITHUB_REF_NAME#v}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
