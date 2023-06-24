@@ -43,10 +43,13 @@ type ComposeFile struct {
 
 func updateSelfHosted(ctx context.Context, branch string) error {
 	client := NewGtihubClient(ctx)
-	stable := getStableVersions()
 	if err := createGitBranch(ctx, client, branch); err != nil {
-		return err
+		// Allow updating existing branch
+		if r, ok := err.(*github.ErrorResponse); !ok || r.Message != "Reference already exists" {
+			return err
+		}
 	}
+	stable := getStableVersions()
 	if err := updateComposeVersion(ctx, client, "docker/docker-compose.yml", branch, stable); err != nil {
 		return err
 	}
@@ -94,6 +97,15 @@ func createPullRequest(ctx context.Context, client *github.Client, branch string
 		Base:  &master,
 	}
 	_, _, err := client.PullRequests.Create(ctx, SUPABASE_OWNER, SUPABASE_REPO, &pr)
+	if err, ok := err.(*github.ErrorResponse); ok {
+		for _, e := range err.Errors {
+			if strings.HasPrefix(e.Message, "No commits between") {
+				if _, err := client.Git.DeleteRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, "refs/heads/"+branch); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
+			}
+		}
+	}
 	return err
 }
 
