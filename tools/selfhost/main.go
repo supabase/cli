@@ -84,7 +84,10 @@ func createGitBranch(ctx context.Context, client *github.Client, branch string) 
 		return err
 	}
 	branchRef := "refs/heads/" + branch
-	_, _, err = client.Git.CreateRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, &github.Reference{Ref: &branchRef, Object: master.Object})
+	_, _, err = client.Git.CreateRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, &github.Reference{
+		Ref:    &branchRef,
+		Object: master.Object,
+	})
 	return err
 }
 
@@ -100,6 +103,7 @@ func createPullRequest(ctx context.Context, client *github.Client, branch string
 	if err, ok := err.(*github.ErrorResponse); ok {
 		for _, e := range err.Errors {
 			if strings.HasPrefix(e.Message, "No commits between") {
+				// Clean up PR branch
 				if _, err := client.Git.DeleteRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, "refs/heads/"+branch); err != nil {
 					fmt.Fprintln(os.Stderr, err)
 				}
