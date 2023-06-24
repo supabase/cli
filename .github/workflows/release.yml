@@ -44,3 +44,16 @@ jobs:
       - run: go run tools/selfhost/main.go "cli/${GITHUB_REF_NAME#v}"
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+  changelog:
+    name: Publish changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run tools/changelog/main.go
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
