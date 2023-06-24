@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/go-github/v53/github"
 	"github.com/supabase/cli/internal/utils"
-	"golang.org/x/oauth2"
+	"github.com/supabase/cli/tools/shared"
 	"gopkg.in/yaml.v2"
 )
 
@@ -42,7 +42,7 @@ type ComposeFile struct {
 }
 
 func updateSelfHosted(ctx context.Context, branch string) error {
-	client := NewGtihubClient(ctx)
+	client := shared.NewGtihubClient(ctx)
 	if err := createGitBranch(ctx, client, branch); err != nil {
 		// Allow updating existing branch
 		if r, ok := err.(*github.ErrorResponse); !ok || r.Message != "Reference already exists" {
@@ -57,14 +57,6 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 		return err
 	}
 	return createPullRequest(ctx, client, branch)
-}
-
-func NewGtihubClient(ctx context.Context) *github.Client {
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	return github.NewClient(tc)
 }
 
 func getStableVersions() map[string]string {
@@ -106,6 +98,7 @@ func createPullRequest(ctx context.Context, client *github.Client, branch string
 				// Clean up PR branch
 				if _, err := client.Git.DeleteRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, "refs/heads/"+branch); err != nil {
 					fmt.Fprintln(os.Stderr, err)
+					break
 				}
 			}
 		}
