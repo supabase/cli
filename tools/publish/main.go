@@ -6,7 +6,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -15,20 +14,24 @@ import (
 	"os/signal"
 	"strings"
 	"text/template"
+
+	"github.com/google/go-github/v53/github"
+	"github.com/supabase/cli/tools/shared"
+)
+
+const (
+	SUPABASE_OWNER = "supabase"
+	HOMEBREW_REPO  = "homebrew-tap"
+	SCOOP_REPO     = "scoop-bucket"
 )
 
 var (
-	apiHeaders = http.Header{
-		"Accept":               {"application/vnd.github+json"},
-		"Authorization":        {"Bearer " + os.Getenv("GITHUB_TOKEN")},
-		"X-GitHub-Api-Version": {"2022-11-28"},
-	}
 	//go:embed templates/supabase.rb
 	brewFormula         string
-	brewFormulaTemplate = template.Must(template.New("brewFormula").Parse(brewFormula))
+	brewFormulaTemplate = template.Must(template.New(HOMEBREW_REPO).Parse(brewFormula))
 	//go:embed templates/supabase.json
 	scoopBucket         string
-	scoopBucketTemplate = template.Must(template.New("scoopBucket").Parse(scoopBucket))
+	scoopBucketTemplate = template.Must(template.New(SCOOP_REPO).Parse(scoopBucket))
 )
 
 func main() {
@@ -43,20 +46,21 @@ func main() {
 	}
 }
 
-type PackageConfig struct {
-	Version  string
-	Checksum map[string]string
-}
-
 func publishPackages(ctx context.Context, version string) error {
 	config, err := fetchConfig(ctx, version)
 	if err != nil {
 		return err
 	}
-	if err := updateBrew(ctx, config); err != nil {
+	client := shared.NewGtihubClient(ctx)
+	if err := updatePackage(ctx, client, HOMEBREW_REPO, "supabase.rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}
-	return updateScoop(ctx, config)
+	return updatePackage(ctx, client, SCOOP_REPO, "supabase.json", scoopBucketTemplate, config)
+}
+
+type PackageConfig struct {
+	Version  string
+	Checksum map[string]string
 }
 
 func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
@@ -89,89 +93,6 @@ func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
 	return config, nil
 }
 
-func updateBrew(ctx context.Context, config PackageConfig) error {
-	// Render formula from template
-	var buf bytes.Buffer
-	if err := brewFormulaTemplate.Execute(&buf, config); err != nil {
-		return err
-	}
-	// Commit to git
-	url := "https://api.github.com/repos/supabase/homebrew-tap/contents/supabase.rb"
-	return commitGitHub(ctx, url, buf.Bytes())
-}
-
-func updateScoop(ctx context.Context, config PackageConfig) error {
-	// Render formula from template
-	var buf bytes.Buffer
-	if err := scoopBucketTemplate.Execute(&buf, config); err != nil {
-		return err
-	}
-	// Commit to git
-	url := "https://api.github.com/repos/supabase/scoop-bucket/contents/supabase.json"
-	return commitGitHub(ctx, url, buf.Bytes())
-}
-
-type UpdateContentsBody struct {
-	Message string `json:"message"`
-	Content string `json:"content"`
-	Sha     string `json:"sha,omitempty"`
-}
-
-type GetContentsResponse struct {
-	Sha string `json:"sha,omitempty"`
-}
-
-func commitGitHub(ctx context.Context, url string, contents []byte) (err error) {
-	body := UpdateContentsBody{
-		Message: "Update supabase stable release channel",
-		Content: base64.StdEncoding.EncodeToString(contents),
-	}
-	body.Sha, err = getFileSha(ctx, url)
-	if err != nil {
-		return err
-	}
-	var jsonBody bytes.Buffer
-	enc := json.NewEncoder(&jsonBody)
-	if err := enc.Encode(body); err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &jsonBody)
-	if err != nil {
-		return err
-	}
-	req.Header = apiHeaders
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return checkStatus(resp, http.StatusOK)
-}
-
-func getFileSha(ctx context.Context, url string) (string, error) {
-	log.Println(url)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header = apiHeaders
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if err := checkStatus(resp, http.StatusOK); err != nil {
-		return "", err
-	}
-	// Parse file sha
-	var file GetContentsResponse
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&file); err != nil {
-		return "", err
-	}
-	return file.Sha, nil
-}
-
 func checkStatus(resp *http.Response, status int) error {
 	if resp.StatusCode == status {
 		return nil
@@ -181,4 +102,39 @@ func checkStatus(resp *http.Response, status int) error {
 		return fmt.Errorf("status %d: %w", resp.StatusCode, err)
 	}
 	return fmt.Errorf("status %d: %s", resp.StatusCode, string(data))
+}
+
+func updatePackage(ctx context.Context, client *github.Client, repo, path string, tmpl *template.Template, config PackageConfig) error {
+	fmt.Fprintf(os.Stderr, "Updating %s: %s\n", repo, path)
+	// Render formula from template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, config); err != nil {
+		return err
+	}
+	// Get file SHA
+	file, _, _, err := client.Repositories.GetContents(ctx, SUPABASE_OWNER, repo, path, nil)
+	if err != nil {
+		return err
+	}
+	content, err := base64.StdEncoding.DecodeString(*file.Content)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(content, buf.Bytes()) {
+		fmt.Fprintln(os.Stderr, "All versions are up to date.")
+		return nil
+	}
+	// Update file content
+	message := "Update supabase stable release channel"
+	commit := github.RepositoryContentFileOptions{
+		Message: &message,
+		Content: buf.Bytes(),
+		SHA:     file.SHA,
+	}
+	resp, _, err := client.Repositories.UpdateFile(ctx, SUPABASE_OWNER, repo, path, &commit)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
+	return nil
 }
