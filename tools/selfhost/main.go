@@ -43,11 +43,9 @@ type ComposeFile struct {
 
 func updateSelfHosted(ctx context.Context, branch string) error {
 	client := shared.NewGtihubClient(ctx)
-	if err := createGitBranch(ctx, client, branch); err != nil {
-		// Allow updating existing branch
-		if r, ok := err.(*github.ErrorResponse); !ok || r.Message != "Reference already exists" {
-			return err
-		}
+	master := "master"
+	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, branch, master); err != nil {
+		return err
 	}
 	stable := getStableVersions()
 	if err := updateComposeVersion(ctx, client, "docker/docker-compose.yml", branch, stable); err != nil {
@@ -56,7 +54,12 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 	if err := updateComposeVersion(ctx, client, "docker/docker-compose-logging.yml", branch, stable); err != nil {
 		return err
 	}
-	return createPullRequest(ctx, client, branch)
+	pr := github.NewPullRequest{
+		Title: github.String("chore: update self-hosted image versions"),
+		Head:  &branch,
+		Base:  &master,
+	}
+	return shared.CreatePullRequest(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, pr)
 }
 
 func getStableVersions() map[string]string {
@@ -68,42 +71,6 @@ func getStableVersions() map[string]string {
 		result[key] = parts[1]
 	}
 	return result
-}
-
-func createGitBranch(ctx context.Context, client *github.Client, branch string) error {
-	master, _, err := client.Git.GetRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, "refs/heads/master")
-	if err != nil {
-		return err
-	}
-	branchRef := "refs/heads/" + branch
-	_, _, err = client.Git.CreateRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, &github.Reference{
-		Ref:    &branchRef,
-		Object: master.Object,
-	})
-	return err
-}
-
-func createPullRequest(ctx context.Context, client *github.Client, branch string) error {
-	title := "chore: update self-hosted image versions"
-	master := "master"
-	pr := github.NewPullRequest{
-		Title: &title,
-		Head:  &branch,
-		Base:  &master,
-	}
-	_, _, err := client.PullRequests.Create(ctx, SUPABASE_OWNER, SUPABASE_REPO, &pr)
-	if err, ok := err.(*github.ErrorResponse); ok {
-		for _, e := range err.Errors {
-			if strings.HasPrefix(e.Message, "No commits between") {
-				// Clean up PR branch
-				if _, err := client.Git.DeleteRef(ctx, SUPABASE_OWNER, SUPABASE_REPO, "refs/heads/"+branch); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					break
-				}
-			}
-		}
-	}
-	return err
 }
 
 func updateComposeVersion(ctx context.Context, client *github.Client, path, ref string, stable map[string]string) error {
