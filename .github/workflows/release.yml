@@ -54,6 +54,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go run tools/changelog/main.go
+      - run: go run tools/changelog/main.go ${{ secrets.SLACK_CHANNEL }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
