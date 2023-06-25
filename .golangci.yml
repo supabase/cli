@@ -1,0 +1,27 @@
+linters:
+  enable:
+    - dogsled
+    - dupl
+    - gofmt
+    - goimports
+    - gosec
+    - misspell
+    - nakedret
+    - stylecheck
+    - unconvert
+    - unparam
+    - whitespace
+    - errcheck
+    - gosimple
+    - staticcheck
+    - ineffassign
+    - unused
+issues:
+  exclude-rules:
+    - linters:
+        - stylecheck
+      text: "ST1003:"
+    - linters:
+        - staticcheck
+        - stylecheck
+      text: "ST1005:"
