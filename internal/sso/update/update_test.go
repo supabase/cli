@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
@@ -65,8 +66,8 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 
-		projectRef := "abcdefghijklmnopqrst"
-		providerId := "0b0d48f6-878b-4190-88d7-2ca33ed800bc"
+		projectRef := apitest.RandomProjectRef()
+		providerId := uuid.New().String()
 
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).
@@ -116,8 +117,8 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 
-		projectRef := "abcdefghijklmnopqrst"
-		providerId := "0b0d48f6-878b-4190-88d7-2ca33ed800bc"
+		projectRef := apitest.RandomProjectRef()
+		providerId := uuid.New().String()
 
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).
@@ -160,7 +161,6 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		assert.Equal(t, 1, observed)
-
 	})
 
 	t.Run("update provider that does not exist", func(t *testing.T) {
@@ -171,8 +171,8 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 
-		projectRef := "abcdefghijklmnopqrst"
-		providerId := "0b0d48f6-878b-4190-88d7-2ca33ed800bc"
+		projectRef := apitest.RandomProjectRef()
+		providerId := uuid.New().String()
 
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).

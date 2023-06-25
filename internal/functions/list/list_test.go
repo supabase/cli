@@ -24,7 +24,7 @@ func TestFunctionsListCommand(t *testing.T) {
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
-		
+
 		testEntrypointPath := "test-entrypoint-path"
 		testImportMapPath := "test-import-map-path"
 		testImportMap := false
@@ -34,17 +34,17 @@ func TestFunctionsListCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions").
 			Reply(200).
 			JSON([]api.FunctionResponse{{
-				Id:      "test-id",
-				Name:   "Test Function",
-				Slug:   "test-function",
-				Status: api.FunctionResponseStatusACTIVE,
-				UpdatedAt: 1687423025152.000000,
-				CreatedAt: 1687423025152.000000,
-				Version: 1.000000,
-				VerifyJwt: &testVerifyJwt,
+				Id:             "test-id",
+				Name:           "Test Function",
+				Slug:           "test-function",
+				Status:         api.FunctionResponseStatusACTIVE,
+				UpdatedAt:      1687423025152.000000,
+				CreatedAt:      1687423025152.000000,
+				Version:        1.000000,
+				VerifyJwt:      &testVerifyJwt,
 				EntrypointPath: &testEntrypointPath,
-				ImportMap: &testImportMap,
-				ImportMapPath: &testImportMapPath,
+				ImportMap:      &testImportMap,
+				ImportMapPath:  &testImportMapPath,
 			}})
 		// Run test
 		err := Run(context.Background(), project, fsys)

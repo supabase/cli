@@ -31,10 +31,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-// TODO: refactor to initialise lazily
 var Docker = NewDocker()
 
 func NewDocker() *client.Client {
+	// TODO: refactor to initialise lazily
 	docker, err := command.NewAPIClientFromFlags(&dockerFlags.ClientOptions{}, &configfile.ConfigFile{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)

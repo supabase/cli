@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+// Version is assigned using `-ldflags` https://stackoverflow.com/q/11354518.
 var Version string
 
 const (

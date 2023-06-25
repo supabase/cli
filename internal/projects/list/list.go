@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
