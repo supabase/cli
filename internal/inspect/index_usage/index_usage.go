@@ -26,9 +26,9 @@ SELECT relname,
 `
 
 type IndexUsageResult struct {
-	Relname  string
+	Relname                     string
 	Percent_of_times_index_used string
-	Rows_in_table string
+	Rows_in_table               string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

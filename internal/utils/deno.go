@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -146,7 +145,7 @@ func isScriptModified(fsys afero.Fs, destPath string, src []byte) (bool, error) 
 
 	// compare the md5 checksum of src bytes with user's copy.
 	// if the checksums doesn't match, script is modified.
-	return md5.Sum(dest) != md5.Sum(src), nil
+	return sha256.Sum256(dest) != sha256.Sum256(src), nil
 }
 
 type DenoScriptDir struct {

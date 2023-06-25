@@ -60,7 +60,6 @@ func TestMigrateDatabase(t *testing.T) {
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
-
 }
 
 func TestMigrateUp(t *testing.T) {

@@ -28,5 +28,4 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	}
 
 	return list.RenderTable(table)
-
 }

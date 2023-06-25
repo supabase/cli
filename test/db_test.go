@@ -50,13 +50,13 @@ func (suite *DBTestSuite) SetupTest() {
 			})
 			return
 		}
-		suite.addBody(c, body)
+		suite.addBody(body)
 
 		id := gonanoid.MustGenerate(docker.IDAlphabet, docker.IDLength)
 		c.JSON(http.StatusCreated, gin.H{
 			"Id": id,
 		})
-		suite.addID(c, id)
+		suite.addID(id)
 	}
 
 	DockerMock.ExecStartHandler = func(c *gin.Context) {
@@ -68,7 +68,7 @@ func (suite *DBTestSuite) SetupTest() {
 			})
 			return
 		}
-		suite.addBody(c, body)
+		suite.addBody(body)
 
 		docker.HijackedResponse(c, "0")
 	}
@@ -111,13 +111,13 @@ func (suite *DBTestSuite) addParams(c *gin.Context) {
 	suite.params = append(suite.params, c.Params)
 }
 
-func (suite *DBTestSuite) addBody(c *gin.Context, body []byte) {
+func (suite *DBTestSuite) addBody(body []byte) {
 	suite.mtx.Lock()
 	defer suite.mtx.Unlock()
 	suite.bodies = append(suite.bodies, string(body))
 }
 
-func (suite *DBTestSuite) addID(c *gin.Context, id string) {
+func (suite *DBTestSuite) addID(id string) {
 	suite.mtx.Lock()
 	defer suite.mtx.Unlock()
 	suite.ids = append(suite.ids, id)

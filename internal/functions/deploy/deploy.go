@@ -48,7 +48,7 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	return slugs, nil
 }
 
-func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScriptPath string, fsys afero.Fs) (*bytes.Buffer, error) {
+func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScriptPath string) (*bytes.Buffer, error) {
 	denoPath, err := utils.GetDenoPath()
 	if err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScript
 		return err
 	}
 	fmt.Println("Bundling " + utils.Bold(slug))
-	functionBody, err := bundleFunction(ctx, entrypointPath, importMapPath, buildScriptPath, fsys)
+	functionBody, err := bundleFunction(ctx, entrypointPath, importMapPath, buildScriptPath)
 	if err != nil {
 		return err
 	}
