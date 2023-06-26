@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -18,7 +19,6 @@ import (
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
 	dockerConfig "github.com/docker/cli/cli/config"
-	"github.com/docker/cli/cli/config/configfile"
 	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
@@ -35,12 +35,14 @@ var Docker = NewDocker()
 
 func NewDocker() *client.Client {
 	// TODO: refactor to initialise lazily
-	docker, err := command.NewAPIClientFromFlags(&dockerFlags.ClientOptions{}, &configfile.ConfigFile{})
+	cli, err := command.NewDockerCli()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
-		os.Exit(1)
+		log.Fatalln("Failed to create Docker client:", err)
 	}
-	return docker.(*client.Client)
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}); err != nil {
+		log.Fatalln("Failed to initialize Docker client:", err)
+	}
+	return cli.Client().(*client.Client)
 }
 
 func AssertDockerIsRunning(ctx context.Context) error {
