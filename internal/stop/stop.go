@@ -59,10 +59,9 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 		fmt.Fprintln(os.Stderr, "Postgres database saved to volume:", utils.DbId)
 		fmt.Fprintln(os.Stderr, "Postgres config saved to volume:", utils.ConfigId)
 		fmt.Fprintln(os.Stderr, "Storage directory saved to volume:", utils.StorageId)
-		fmt.Fprintln(os.Stderr, "Functions cache saved to volume:", utils.DenoRelayId)
 	} else {
 		// TODO: label named volumes to use VolumesPrune for branch support
-		volumes := []string{utils.ConfigId, utils.DbId, utils.StorageId, utils.DenoRelayId}
+		volumes := []string{utils.ConfigId, utils.DbId, utils.StorageId}
 		utils.WaitAll(volumes, func(name string) {
 			if err := utils.Docker.VolumeRemove(ctx, name, true); err != nil {
 				fmt.Fprintln(os.Stderr, "failed to remove volume:", name, err)
