@@ -60,6 +60,15 @@ async function verifyJWT(jwt: string): Promise<boolean> {
 serve(async (req: Request) => {
   const url = new URL(req.url);
   const { pathname } = url;
+
+  // handle health checks
+  if (pathname === "/_internal/health") {
+    return new Response(
+      JSON.stringify({ "message": "ok" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
   const pathParts = pathname.split("/");
   const functionName = pathParts[1];
 
