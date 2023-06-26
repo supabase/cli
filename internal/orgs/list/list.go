@@ -6,17 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
-type Organization struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
-}
-
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context) error {
 	resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
 	if err != nil {
 		return err
