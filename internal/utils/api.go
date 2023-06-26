@@ -277,7 +277,7 @@ func GetSupabaseAPIHost() string {
 func GetSupabaseDashboardURL() string {
 	switch GetSupabaseAPIHost() {
 	case DefaultApiHost, DeprecatedApiHost:
-		return "https://app.supabase.com"
+		return "https://supabase.com/dashboard"
 	case "https://api.supabase.green":
 		return "https://app.supabase.green"
 	default:
