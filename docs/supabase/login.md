@@ -1,6 +1,6 @@
 ## supabase-login
 
-Connect the Supabase CLI to your Supabase account by logging in with your [personal access token](https://app.supabase.com/account/tokens).
+Connect the Supabase CLI to your Supabase account by logging in with your [personal access token](https://supabase.com/dashboard/account/tokens).
 
 Your access token is stored securely in [native credentials storage](https://github.com/zalando/go-keyring#dependencies). If native credentials storage is unavailable, it will be written to a plain text file at `~/.supabase/access-token`.
 

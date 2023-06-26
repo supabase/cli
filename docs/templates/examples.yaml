@@ -12,7 +12,7 @@ supabase-login:
     name: Basic usage
     code: supabase login
     response: |
-      You can generate an access token from https://app.supabase.com/account/tokens
+      You can generate an access token from https://supabase.com/dashboard/account/tokens
       Enter your access token: sbp_****************************************
       Finished supabase login.
 supabase-link:
@@ -263,3 +263,87 @@ supabase-test-db:
       All tests successful.
       Files=2, Tests=2,  6 wallclock secs ( 0.03 usr  0.01 sys +  0.05 cusr  0.02 csys =  0.11 CPU)
       Result: PASS
+# TODO: use actual cli response for sso commands
+supabase-sso-show:
+  - id: basic-usage
+    name: Show information
+    code: |-
+      supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst
+    response: |-
+      Information about the identity provider in pretty output.
+  - id: metadata-output
+    name: Get raw SAML 2.0 Metadata XML
+    code: |-
+      supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst \
+        --metadata
+    response: |-
+      Raw SAML 2.0 XML assigned to this identity provider. This is the
+      version used in the authentication project, and if using a SAML 2.0
+      Metadata URL it may change depending on the caching information
+      contained within the metadata.
+supabase-sso-update:
+  - id: basic-usage
+    name: Replace domains
+    code: |-
+      supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst \
+        --domains new-company.com,new-company.net
+    response: |-
+      Information about the updated provider.
+  - id: add-domains
+    name: Add an additional domain
+    code: |-
+      supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst \
+        --add-domains company.net
+    response: |-
+      Information about the updated provider.
+  - id: remove-domains
+    name: Remove a domain
+    code: |-
+      supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst \
+        --remove-domains company.org
+    response: |-
+      Information about the updated provider.
+supabase-sso-remove:
+  - id: basic-usage
+    name: Remove a provider
+    code: |-
+      supabase sso remove 6df4d73f-bf21-405f-a084-b11adf19fea5 \
+        --project-ref abcdefghijklmnopqrst
+    response: |-
+      Information about the removed identity provider. It's a good idea to
+      save this in case you need it later on.
+supabase-sso-add:
+  - id: basic-usage
+    name: Add with Metadata URL
+    code: |-
+      supabase sso add \
+        --project-ref abcdefgijklmnopqrst \
+        --type saml \
+        --metadata-url 'https://...' \
+        --domains company.com
+    response: |-
+      Information about the added identity provider. You can use
+      company.com as the domain name on the frontend side to initiate a SSO
+      request to the identity provider.
+  - id: with-xml
+    name: Add with Metadata File
+    code: |-
+      supabase sso add \
+        --project-ref abcdefgijklmnopqrst \
+        --type saml \
+        --metadata-file /path/to/metadata/file.xml \
+        --domains company.com
+    response: |-
+      Information about the added identity provider. You can use
+      company.com as the domain name on the frontend side to initiate a SSO
+      request to the identity provider.
+supabase-sso-info:
+  - id: basic-usage
+    name: Show project information
+    code: supabase sso info --project-ref abcdefghijklmnopqrst
+    response: Information about your project's SAML 2.0 configuration.

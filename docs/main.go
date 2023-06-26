@@ -27,9 +27,20 @@ var (
 )
 
 func main() {
+	semver := "latest"
+	if len(os.Args) > 1 {
+		semver = os.Args[1]
+	}
+
+	if err := generate(semver); err != nil {
+		log.Fatalln(err)
+	}
+}
+
+func generate(version string) error {
 	dec := yaml.NewDecoder(strings.NewReader(exampleSpec))
 	if err := dec.Decode(&examples); err != nil {
-		log.Fatalln(err)
+		return err
 	}
 	root := cli.GetRootCmd()
 	root.InitDefaultCompletionCmd()
@@ -38,7 +49,7 @@ func main() {
 		Clispec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
-			Version:     "1.62.3",
+			Version:     version,
 			Title:       strings.TrimSpace(root.Short),
 			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
 			Language:    "sh",
@@ -64,9 +75,7 @@ func main() {
 	// Write to stdout
 	encoder := yaml.NewEncoder(os.Stdout)
 	encoder.SetIndent(2)
-	if err := encoder.Encode(spec); err != nil {
-		log.Fatalln(err)
-	}
+	return encoder.Encode(spec)
 }
 
 type TagDoc struct {

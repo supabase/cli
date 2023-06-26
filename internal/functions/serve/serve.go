@@ -272,7 +272,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	// 3. Parse custom import map
 	binds := []string{
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z",
-		utils.DenoRelayId + ":/root/.cache/deno:rw,z",
 	}
 	if importMapPath != "" {
 		modules, err := bindImportMap(importMapPath, dockerFlagImportMapPath, fsys)
