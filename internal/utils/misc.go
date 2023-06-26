@@ -95,7 +95,7 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
-	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_.*\.sql$`)
+	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)

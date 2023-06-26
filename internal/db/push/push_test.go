@@ -92,7 +92,8 @@ func TestMigrationPush(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(repair.ADD_STATEMENTS_COLUMN)
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Query(repair.ADD_NAME_COLUMN)
 		// Run test
 		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -115,7 +116,9 @@ func TestMigrationPush(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", "{}").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
 		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
