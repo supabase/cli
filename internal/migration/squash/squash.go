@@ -121,7 +121,7 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := pgx.Batch{}
-	batch.Queue(DELETE_MIGRATION_BEFORE, version)
-	batch.Queue(repair.INSERT_MIGRATION_VERSION, version, m.Lines)
+	batch.Queue(DELETE_MIGRATION_BEFORE, m.Version)
+	batch.Queue(repair.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Lines)
 	return conn.SendBatch(ctx, &batch).Close()
 }

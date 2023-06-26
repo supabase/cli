@@ -63,11 +63,13 @@ func TestSquashCommand(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
 			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", fmt.Sprintf("{%s}", sql)).
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 1").
-			Query(repair.INSERT_MIGRATION_VERSION, "1", "{}").
+			Query(repair.INSERT_MIGRATION_VERSION, "1", "target", "{}").
 			Reply("INSERT 1")
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{}, fsys, conn.Intercept)
@@ -98,7 +100,9 @@ func TestSquashCommand(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
-			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '%[1]d';INSERT INTO supabase_migrations.schema_migrations(version, statements) VALUES('%[1]d', '{%[2]s}')", 0, sql)).
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
 			Reply("INSERT 1")
 		// Run test
 		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept)
@@ -240,9 +244,11 @@ func TestSquashMigrations(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
 			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", fmt.Sprintf("{%s}", sql)).
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
@@ -272,7 +278,9 @@ func TestBaselineMigration(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
-			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '%[1]d';INSERT INTO supabase_migrations.schema_migrations(version, statements) VALUES('%[1]d', '{%[2]s}')", 0, sql)).
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
 			Reply("INSERT 1")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept)
@@ -299,7 +307,8 @@ func TestBaselineMigration(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(repair.ADD_STATEMENTS_COLUMN)
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Query(repair.ADD_NAME_COLUMN)
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error
@@ -317,6 +326,8 @@ func TestBaselineMigration(t *testing.T) {
 			Query(repair.CREATE_VERSION_TABLE).
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
 			Reply("ALTER TABLE")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)

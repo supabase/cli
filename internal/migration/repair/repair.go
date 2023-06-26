@@ -27,7 +27,8 @@ const (
 	CREATE_VERSION_SCHEMA    = "CREATE SCHEMA IF NOT EXISTS supabase_migrations"
 	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
 	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
-	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version, statements) VALUES($1, $2)"
+	ADD_NAME_COLUMN          = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text"
+	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3)"
 	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = $1"
 )
 
@@ -58,7 +59,7 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status s
 		if err != nil {
 			return err
 		}
-		InsertVersionSQL(&batch, version, f.Lines)
+		InsertVersionSQL(&batch, f.Version, f.Name, f.Lines)
 	case Reverted:
 		DeleteVersionSQL(&batch, version)
 	}
@@ -72,6 +73,7 @@ func batchCreateTable() pgconn.Batch {
 	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
 	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
+	batch.ExecParams(ADD_NAME_COLUMN, nil, nil, nil, nil)
 	return batch
 }
 
@@ -81,7 +83,7 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 	return err
 }
 
-func InsertVersionSQL(batch *pgconn.Batch, version string, stats []string) {
+func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
 	encoded := []byte{'{'}
 	for i, line := range stats {
 		if i > 0 {
@@ -92,9 +94,9 @@ func InsertVersionSQL(batch *pgconn.Batch, version string, stats []string) {
 	encoded = append(encoded, '}')
 	batch.ExecParams(
 		INSERT_MIGRATION_VERSION,
-		[][]byte{[]byte(version), encoded},
-		[]uint32{pgtype.TextOID, pgtype.TextArrayOID},
-		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode},
+		[][]byte{[]byte(version), []byte(name), encoded},
+		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
+		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
 		nil,
 	)
 }
@@ -111,7 +113,8 @@ func DeleteVersionSQL(batch *pgconn.Batch, version string) {
 
 type MigrationFile struct {
 	Lines   []string
-	version string
+	Version string
+	Name    string
 }
 
 func NewMigrationFromVersion(version string, fsys afero.Fs) (*MigrationFile, error) {
@@ -145,8 +148,9 @@ func NewMigrationFromFile(path string, fsys afero.Fs) (*MigrationFile, error) {
 		// Parse version from file name
 		filename := filepath.Base(path)
 		matches := utils.MigrateFilePattern.FindStringSubmatch(filename)
-		if len(matches) > 1 {
-			file.version = matches[1]
+		if len(matches) > 2 {
+			file.Version = matches[1]
+			file.Name = matches[2]
 		}
 	}
 	return file, err
@@ -167,8 +171,8 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		batch.ExecParams(line, nil, nil, nil, nil)
 	}
 	// Insert into migration history
-	if len(m.version) > 0 {
-		InsertVersionSQL(batch, m.version, m.Lines)
+	if len(m.Version) > 0 {
+		InsertVersionSQL(batch, m.Version, m.Name, m.Lines)
 	}
 	// ExecBatch is implicitly transactional
 	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
