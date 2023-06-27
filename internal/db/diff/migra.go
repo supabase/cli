@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -127,7 +128,11 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 }
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	return MigrateShadowDatabaseVersions(ctx, container, nil, fsys, options...)
+	migrations, err := list.LoadLocalMigrations(fsys)
+	if err != nil {
+		return err
+	}
+	return MigrateShadowDatabaseVersions(ctx, container, migrations, fsys, options...)
 }
 
 func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
