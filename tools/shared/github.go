@@ -2,7 +2,6 @@ package shared
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
@@ -39,13 +38,11 @@ func CreatePullRequest(ctx context.Context, client *github.Client, owner, repo s
 	branch := "refs/heads/" + *pr.Head
 	_, _, err := client.PullRequests.Create(ctx, owner, repo, &pr)
 	if err, ok := err.(*github.ErrorResponse); ok {
+		// Clean up PR branch if no change
 		for _, e := range err.Errors {
 			if strings.HasPrefix(e.Message, "No commits between") {
-				// Clean up PR branch
-				if _, err := client.Git.DeleteRef(ctx, owner, repo, "refs/heads/"+branch); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					break
-				}
+				_, err := client.Git.DeleteRef(ctx, owner, repo, "refs/heads/"+branch)
+				return err
 			}
 		}
 	}
