@@ -140,7 +140,7 @@ func Body(n *github.RepositoryReleaseNotes) string {
 	return strings.Join(result, "\n")
 }
 
-var linkPattern = regexp.MustCompile(`^(.*)\[(.*)\]\((.*)\)(.*)$`)
+var linkPattern = regexp.MustCompile(`^(.*)\[(.*?)\]\((.*?)\)(.*)$`)
 
 func toSlack(md string) string {
 	// Change link format
