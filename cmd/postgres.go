@@ -26,7 +26,7 @@ var (
 	postgresConfigUpdateCmd = &cobra.Command{
 		Use:   "update",
 		Short: "Update Postgres database config",
-		Long: `Overriding the default Postgres config could result in unstable database behaviour.
+		Long: `Overriding the default Postgres config could result in unstable database behavior.
 Custom configuration also overrides the optimizations generated based on the compute add-ons in use.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return update.Run(cmd.Context(), flags.ProjectRef, postgresConfigValues, postgresConfigUpdateReplaceMode, afero.NewOsFs())
