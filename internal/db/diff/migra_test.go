@@ -3,6 +3,7 @@ package diff
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -235,6 +237,9 @@ At statement 0: create schema public`)
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		sql := "create schema test"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -255,7 +260,19 @@ At statement 0: create schema public`)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
 		// Check error
