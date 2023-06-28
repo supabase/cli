@@ -141,11 +141,7 @@ func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrat
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.InitDatabase(ctx, container[:12], os.Stderr, options...); err != nil {
-		return err
-	}
-	// Apply user migrations
-	if err := start.CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
 	return apply.MigrateUp(ctx, conn, migrations, fsys)
