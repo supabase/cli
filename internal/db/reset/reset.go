@@ -64,25 +64,25 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 	if err := RecreateDatabase(ctx, options...); err != nil {
 		return err
 	}
-	defer RestartDatabase(context.Background(), os.Stderr)
-	return initDatabase(ctx, fsys, options...)
-}
-
-func initDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.Port)
-	conn, err := utils.ConnectByUrl(ctx, url, options...)
+	if err := initDatabase(ctx, options...); err != nil {
+		return err
+	}
+	RestartDatabase(context.Background(), os.Stderr)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(os.Stderr, "Initializing schema...")
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	if _, err := conn.Exec(ctx, SET_POSTGRES_ROLE); err != nil {
-		return err
-	}
 	return InitialiseDatabase(ctx, conn, fsys)
+}
+
+func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin"}, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
 }
 
 func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
@@ -94,8 +94,7 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 // Recreate postgres database by connecting to template1
 func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/template1?connect_timeout=2", utils.Config.Db.Port)
-	conn, err := utils.ConnectByUrl(ctx, url, options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin", Database: "template1"}, options...)
 	if err != nil {
 		return err
 	}
@@ -103,12 +102,14 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	if err := DisconnectClients(ctx, conn); err != nil {
 		return err
 	}
-	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
-	if _, err := conn.Exec(ctx, drop); err != nil {
-		return err
+	// We are not dropping roles here because they are cluster level entities. Use stop && start instead.
+	sql := repair.MigrationFile{
+		Lines: []string{
+			"DROP DATABASE IF EXISTS postgres WITH (FORCE)",
+			"CREATE DATABASE postgres WITH OWNER postgres",
+		},
 	}
-	_, err = conn.Exec(ctx, "CREATE DATABASE postgres WITH OWNER postgres;")
-	return err
+	return sql.ExecBatch(ctx, conn)
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
@@ -133,10 +134,8 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 		}
 	}
 	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")
-	if _, err := conn.Exec(ctx, term); err != nil {
-		return err
-	}
-	return nil
+	_, err := conn.Exec(ctx, term)
+	return err
 }
 
 func RestartDatabase(ctx context.Context, w io.Writer) {
@@ -229,7 +228,7 @@ func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]stri
 		}
 		schemas = append(schemas, name)
 	}
-	return schemas, nil
+	return schemas, rows.Err()
 }
 
 func likeEscapeSchema(schemas []string) (result []string) {
