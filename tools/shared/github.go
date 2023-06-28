@@ -41,8 +41,11 @@ func CreatePullRequest(ctx context.Context, client *github.Client, owner, repo s
 		// Clean up PR branch if no change
 		for _, e := range err.Errors {
 			if strings.HasPrefix(e.Message, "No commits between") {
-				_, err := client.Git.DeleteRef(ctx, owner, repo, "refs/heads/"+branch)
+				_, err := client.Git.DeleteRef(ctx, owner, repo, branch)
 				return err
+			}
+			if strings.HasPrefix(e.Message, "A pull request already exists") {
+				return nil
 			}
 		}
 	}
