@@ -55,7 +55,7 @@ func TestInitDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
 		// Run test
-		err := initDatabase(context.Background(), io.Discard)
+		err := InitDatabase(context.Background(), utils.DbId, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -69,7 +69,7 @@ func TestInitDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
 		// Run test
-		err := initDatabase(context.Background(), io.Discard, conn.Intercept)
+		err := InitDatabase(context.Background(), utils.DbId, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
