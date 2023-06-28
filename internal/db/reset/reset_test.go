@@ -75,25 +75,19 @@ func TestInitDatabase(t *testing.T) {
 	t.Run("initialises postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA").
-			Query(SET_POSTGRES_ROLE).
-			Reply("SET ROLE")
+			Reply("CREATE SCHEMA")
 		// Run test
-		assert.NoError(t, initDatabase(context.Background(), fsys, conn.Intercept))
+		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
 	})
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
 		// Run test
-		err := initDatabase(context.Background(), fsys)
+		err := initDatabase(context.Background())
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -101,54 +95,15 @@ func TestInitDatabase(t *testing.T) {
 	t.Run("throws error on duplicate schema", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := initDatabase(context.Background(), fsys, conn.Intercept)
+		err := initDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
-	})
-
-	t.Run("throws error on failure to switch role", func(t *testing.T) {
-		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA").
-			Query(SET_POSTGRES_ROLE).
-			Reply("SET ROLE").
-			ReplyError(pgerrcode.InvalidParameterValue, `role "test" does not exist`)
-		// Run test
-		err := initDatabase(context.Background(), fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: role "test" does not exist (SQLSTATE 22023)`)
-	})
-
-	t.Run("throws error on migration failure", func(t *testing.T) {
-		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA").
-			Query(SET_POSTGRES_ROLE).
-			Reply("SET ROLE")
-		// Run test
-		err := initDatabase(context.Background(), fsys, conn.Intercept)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
@@ -219,9 +174,9 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			Reply("DO").
-			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
+			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
-			Query("CREATE DATABASE postgres WITH OWNER postgres;").
+			Query("CREATE DATABASE postgres WITH OWNER postgres").
 			Reply("CREATE DATABASE")
 		// Run test
 		assert.NoError(t, RecreateDatabase(context.Background(), conn.Intercept))
@@ -269,8 +224,9 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			Reply("DO").
-			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE);").
-			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`)
+			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
+			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
+			Query("CREATE DATABASE postgres WITH OWNER postgres")
 		// Run test
 		err := RecreateDatabase(context.Background(), conn.Intercept)
 		// Check error
