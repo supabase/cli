@@ -137,6 +137,40 @@ func TestRunMigra(t *testing.T) {
 func TestMigrateShadow(t *testing.T) {
 	utils.Config.Db.MajorVersion = 14
 
+	t.Run("migrates shadow database", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaSql = "create schema private"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		sql := "create schema test"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
+		// Run test
+		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on timeout", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		// Setup in-memory fs
@@ -150,6 +184,15 @@ func TestMigrateShadow(t *testing.T) {
 		assert.ErrorContains(t, err, "operation was canceled")
 	})
 
+	t.Run("throws error on permission denied", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Run test
+		err := MigrateShadowDatabase(context.Background(), "", fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
 	t.Run("throws error on globals schema", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		utils.GlobalsSql = "create schema public"
@@ -161,26 +204,7 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
-	})
-
-	t.Run("throws error on initial schema", func(t *testing.T) {
-		utils.Config.Db.ShadowPort = 54320
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaSql = "create schema private"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
-		// Run test
-		err := MigrateShadowDatabase(context.Background(), "", fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})

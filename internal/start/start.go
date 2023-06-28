@@ -646,12 +646,7 @@ EOF
 		started = append(started, utils.StudioId)
 	}
 
-	if err := waitForServiceReady(ctx, started); err != nil {
-		return err
-	}
-
-	// Setup database after all services are up
-	return start.SetupDatabase(ctx, dbConfig, fsys, os.Stderr, options...)
+	return waitForServiceReady(ctx, started)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
