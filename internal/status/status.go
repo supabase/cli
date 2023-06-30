@@ -119,7 +119,7 @@ func IsServiceReady(ctx context.Context, container string) bool {
 	if container == utils.RestId {
 		return isPostgRESTHealthy(ctx)
 	}
-	if container == utils.DenoRelayId {
+	if container == utils.EdgeRuntimeId {
 		return isEdgeRuntimeHealthy(ctx)
 	}
 	return AssertContainerHealthy(ctx, container) == nil

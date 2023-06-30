@@ -16,32 +16,6 @@ import (
 )
 
 func TestServeCommand(t *testing.T) {
-	t.Run("serves function locally", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK)
-		utils.DenoRelayId = "test-deno"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DenoRelayImage), utils.DenoRelayId)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		err := Run(context.Background(), "test-func", "", nil, "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("serves all functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -55,7 +29,7 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
-		containerId := "supabase_deno_relay_test"
+		containerId := "supabase_edge_runtime_test"
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
@@ -63,7 +37,7 @@ func TestServeCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 		// Run test
 		noVerifyJWT := true
-		err := Run(context.Background(), "", ".env", &noVerifyJWT, "", fsys)
+		err := Run(context.Background(), ".env", &noVerifyJWT, "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -73,7 +47,7 @@ func TestServeCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", "", nil, "", fsys)
+		err := Run(context.Background(), "", nil, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open supabase/config.toml: file does not exist")
 	})
@@ -89,7 +63,7 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), "", "", nil, "", fsys)
+		err := Run(context.Background(), "", nil, "", fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
@@ -106,7 +80,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), "", ".env", nil, "", fsys)
+		err := Run(context.Background(), ".env", nil, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open .env: file does not exist")
 	})
@@ -124,7 +98,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), "", ".env", nil, "import_map.json", fsys)
+		err := Run(context.Background(), ".env", nil, "import_map.json", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Failed to read import map")
 		assert.ErrorContains(t, err, "file does not exist")

@@ -91,14 +91,14 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 }
 
 type kongConfig struct {
-	GotrueId    string
-	RestId      string
-	RealtimeId  string
-	StorageId   string
-	PgmetaId    string
-	DenoRelayId string
-	LogflareId  string
-	ApiPort     uint
+	GotrueId      string
+	RestId        string
+	RealtimeId    string
+	StorageId     string
+	PgmetaId      string
+	EdgeRuntimeId string
+	LogflareId    string
+	ApiPort       uint
 }
 
 var (
@@ -108,15 +108,15 @@ var (
 )
 
 type vectorConfig struct {
-	ApiKey      string
-	LogflareId  string
-	KongId      string
-	GotrueId    string
-	RestId      string
-	RealtimeId  string
-	StorageId   string
-	DenoRelayId string
-	DbId        string
+	ApiKey        string
+	LogflareId    string
+	KongId        string
+	GotrueId      string
+	RestId        string
+	RealtimeId    string
+	StorageId     string
+	EdgeRuntimeId string
+	DbId          string
 }
 
 var (
@@ -154,15 +154,15 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:      utils.Config.Analytics.ApiKey,
-			LogflareId:  utils.LogflareId,
-			KongId:      utils.KongId,
-			GotrueId:    utils.GotrueId,
-			RestId:      utils.RestId,
-			RealtimeId:  utils.RealtimeId,
-			StorageId:   utils.StorageId,
-			DenoRelayId: utils.DenoRelayId,
-			DbId:        utils.DbId,
+			ApiKey:        utils.Config.Analytics.ApiKey,
+			LogflareId:    utils.LogflareId,
+			KongId:        utils.KongId,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			DbId:          utils.DbId,
 		}); err != nil {
 			return err
 		}
@@ -271,14 +271,14 @@ EOF
 		var kongConfigBuf bytes.Buffer
 
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
-			GotrueId:    utils.GotrueId,
-			RestId:      utils.RestId,
-			RealtimeId:  utils.RealtimeId,
-			StorageId:   utils.StorageId,
-			PgmetaId:    utils.PgmetaId,
-			DenoRelayId: utils.DenoRelayId,
-			LogflareId:  utils.LogflareId,
-			ApiPort:     utils.Config.Api.Port,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			PgmetaId:      utils.PgmetaId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			LogflareId:    utils.LogflareId,
+			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
 			return err
 		}
@@ -576,7 +576,7 @@ EOF
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
 			return err
 		}
-		started = append(started, utils.DenoRelayId)
+		started = append(started, utils.EdgeRuntimeId)
 	}
 
 	// Start pg-meta.

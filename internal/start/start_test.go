@@ -177,8 +177,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.ImageProxyImage), utils.ImgProxyId)
 		utils.DifferId = "test-differ"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
-		utils.DenoRelayId = "test-edge-runtime"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), utils.DenoRelayId)
+		utils.EdgeRuntimeId = "test-edge-runtime"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), utils.EdgeRuntimeId)
 		utils.PgmetaId = "test-pgmeta"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgmetaImage), utils.PgmetaId)
 		utils.StudioId = "test-studio"
@@ -191,7 +191,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
-			utils.StorageId, utils.ImgProxyId, utils.DenoRelayId, utils.PgmetaId, utils.StudioId,
+			utils.StorageId, utils.ImgProxyId, utils.EdgeRuntimeId, utils.PgmetaId, utils.StudioId,
 			utils.LogflareId, utils.RestId,
 		}
 		for _, container := range started {

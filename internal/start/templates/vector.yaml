@@ -33,7 +33,7 @@ transforms:
       rest: '.appname == "{{ .RestId }}"'
       realtime: '.appname == "{{ .RealtimeId }}"'
       storage: '.appname == "{{ .StorageId }}"'
-      functions: '.appname == "{{ .DenoRelayId }}"'
+      functions: '.appname == "{{ .EdgeRuntimeId }}"'
       db: '.appname == "{{ .DbId }}"'
   # Kong logs only include api requests
   kong_logs:
