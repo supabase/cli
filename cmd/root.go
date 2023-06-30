@@ -89,11 +89,13 @@ var (
 			}
 			return nil
 		},
+		SilenceErrors: true,
 	}
 )
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, utils.Red(err.Error()))
 		if len(utils.CmdSuggestion) > 0 {
 			fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 		}
