@@ -73,8 +73,6 @@ EOF
 	return config
 }
 
-var noBackupVolume bool = true
-
 func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	config := NewContainerConfig()
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
@@ -93,7 +91,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	noBackupVolume = client.IsErrNotFound(err)
+	noBackupVolume := client.IsErrNotFound(err)
 	if noBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
 	} else {
@@ -106,8 +104,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		fmt.Fprintln(os.Stderr, "Database is not healthy.")
 	}
 	// Initialise if we are on PG14 and there's no existing db volume
-	if noBackupVolume && utils.Config.Db.MajorVersion <= 14 {
-		if err := initDatabase(ctx, w, options...); err != nil {
+	if noBackupVolume {
+		if err := setupDatabase(ctx, fsys, w, options...); err != nil {
 			return err
 		}
 	}
@@ -137,39 +135,68 @@ func initCurrentBranch(fsys afero.Fs) error {
 	return afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
 }
 
-func initDatabase(ctx context.Context, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	// Initialise globals
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
+func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {
 	fmt.Fprintln(w, "Setting up initial schema...")
+	if utils.Config.Db.MajorVersion <= 14 {
+		return initSchema14(ctx, conn)
+	}
+	return initSchema15(ctx, host)
+}
+
+func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
 	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
 }
 
-func SetupDatabase(ctx context.Context, dbConfig pgconn.Config, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	if !noBackupVolume {
-		return nil
+func initSchema15(ctx context.Context, host string) error {
+	// Apply service migrations
+	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
+		"ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+		"STORAGE_BACKEND=file",
+		"TENANT_ID=stub",
+		// TODO: https://github.com/supabase/storage-api/issues/55
+		"REGION=stub",
+		"GLOBAL_S3_BUCKET=stub",
+	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
+		return err
 	}
-	if dbConfig.Host != utils.DbId {
-		return nil
-	}
+	return utils.DockerRunOnceWithStream(ctx, utils.GotrueImage, []string{
+		"GOTRUE_LOG_LEVEL=error",
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
+}
+
+func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
 		return err
 	}
 	return reset.InitialiseDatabase(ctx, conn, fsys)
+}
+
+func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
+	if err := initSchema(ctx, conn, host, w); err != nil {
+		return err
+	}
+	roles, err := fsys.Open(utils.CustomRolesPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
+	return apply.BatchExecDDL(ctx, conn, roles)
 }

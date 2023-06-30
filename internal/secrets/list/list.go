@@ -2,13 +2,12 @@ package list
 
 import (
 	"context"
-	"crypto/md5"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -26,7 +25,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 |-|-|
 `
 	for _, secret := range *resp.JSON200 {
-		table += fmt.Sprintf("|`%s`|`%x`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), md5.Sum([]byte(secret.Value)))
+		table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(secret.Name, "|", "\\|"), secret.Value)
 	}
 
 	return list.RenderTable(table)

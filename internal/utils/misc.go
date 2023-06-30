@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+// Version is assigned using `-ldflags` https://stackoverflow.com/q/11354518.
 var Version string
 
 const (
@@ -34,7 +34,7 @@ const (
 	StudioImage      = "supabase/studio:20230622-d8395eb"
 	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.4.2"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.5.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
@@ -95,7 +95,7 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
-	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_.*\.sql$`)
+	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)

@@ -27,11 +27,11 @@ LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid);
 `
 
 type ReplicationSlotsResult struct {
-	Slot_name  string
-	Active string
-	State string
+	Slot_name                  string
+	Active                     string
+	State                      string
 	Replication_client_address string
-	Replication_lag_gb string
+	Replication_lag_gb         string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

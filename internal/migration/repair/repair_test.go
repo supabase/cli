@@ -42,7 +42,9 @@ func TestRepairCommand(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
-			Query(INSERT_MIGRATION_VERSION, "0", "{}").
+			Query(ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
@@ -61,6 +63,8 @@ func TestRepairCommand(t *testing.T) {
 			Query(CREATE_VERSION_TABLE).
 			Reply("CREATE TABLE").
 			Query(ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(ADD_NAME_COLUMN).
 			Reply("ALTER TABLE").
 			Query(DELETE_MIGRATION_VERSION, "0").
 			Reply("DELETE 1")
@@ -93,7 +97,9 @@ func TestRepairCommand(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
-			Query(INSERT_MIGRATION_VERSION, "0", "{}").
+			Query(ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
 		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
@@ -117,7 +123,7 @@ func TestMigrationFile(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Len(t, migration.Lines, 2)
-		assert.Equal(t, "20220727064247", migration.version)
+		assert.Equal(t, "20220727064247", migration.Version)
 	})
 
 	t.Run("new from reader errors on max token", func(t *testing.T) {
@@ -134,14 +140,14 @@ func TestMigrationFile(t *testing.T) {
 	t.Run("throws error on insert failure", func(t *testing.T) {
 		migration := MigrationFile{
 			Lines:   []string{"create schema public"},
-			version: "0",
+			Version: "0",
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.Lines[0]).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query(INSERT_MIGRATION_VERSION, "0", fmt.Sprintf("{%s}", migration.Lines[0]))
+			Query(INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0]))
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)

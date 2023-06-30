@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/functions/list"
 	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/functions/download"
+	"github.com/supabase/cli/internal/functions/list"
 	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/login"

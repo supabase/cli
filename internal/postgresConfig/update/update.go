@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/postgresConfig/get"
 	"github.com/supabase/cli/internal/utils"
-	"strconv"
-	"strings"
 )
 
 func Run(ctx context.Context, projectRef string, values []string, replaceOverrides bool, fsys afero.Fs) error {

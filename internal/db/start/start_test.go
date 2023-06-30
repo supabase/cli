@@ -10,8 +10,6 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,30 +49,6 @@ func TestInitBranch(t *testing.T) {
 	})
 }
 
-func TestInitDatabase(t *testing.T) {
-	t.Run("throws error on connect failure", func(t *testing.T) {
-		utils.Config.Db.Port = 0
-		// Run test
-		err := initDatabase(context.Background(), io.Discard)
-		// Check error
-		assert.ErrorContains(t, err, "invalid port (outside range)")
-	})
-
-	t.Run("throws error on exec failure", func(t *testing.T) {
-		utils.Config.Db.Port = 5432
-		utils.GlobalsSql = "create role postgres"
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
-		// Run test
-		err := initDatabase(context.Background(), io.Discard, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
-	})
-}
-
 func TestStartDatabase(t *testing.T) {
 	teardown := func() {
 		utils.Containers = []string{}
@@ -90,6 +64,10 @@ func TestStartDatabase(t *testing.T) {
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		roles := "create role test"
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		seed := "INSERT INTO employees(name) VALUES ('Alice')"
+		require.NoError(t, afero.WriteFile(fsys, utils.SeedDataPath, []byte(seed), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -107,8 +85,19 @@ func TestStartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(roles).
+			Reply("CREATE ROLE").
+			Query(seed).
+			Reply("INSERT 0 1")
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard)
+		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -121,8 +110,10 @@ func TestStartDatabase(t *testing.T) {
 	t.Run("recover from backup volume", func(t *testing.T) {
 		defer teardown()
 		utils.DbImage = utils.Pg15Image
-		utils.Config.Db.MajorVersion = 15
+		utils.Config.Db.MajorVersion = 14
 		utils.DbId = "supabase_db_test"
+		utils.ConfigId = "supabase_config_test"
+		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -214,13 +205,13 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
+		gock.New(utils.Docker.DaemonHost()).
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", utils.Docker.ClientVersion()).
 			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
@@ -237,17 +228,17 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
+		gock.New(utils.Docker.DaemonHost()).
 			Head("/_ping").
 			Reply(http.StatusOK).
 			SetHeader("API-Version", utils.Docker.ClientVersion()).
 			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusNotFound)
 		// Fail to start
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes/").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
@@ -265,68 +256,77 @@ func TestStartCommand(t *testing.T) {
 }
 
 func TestSetupDatabase(t *testing.T) {
-	config := pgconn.Config{Host: utils.DbId}
+	utils.Config.Db.MajorVersion = 15
 
-	t.Run("skips when backup exists", func(t *testing.T) {
-		noBackupVolume = false
-		// Run test
-		err := SetupDatabase(context.Background(), config, nil, io.Discard)
-		// Check error
-		assert.NoError(t, err)
-		// Reset variable
-		noBackupVolume = true
-	})
-
-	t.Run("initialises database", func(t *testing.T) {
+	t.Run("initialises database 14", func(t *testing.T) {
+		utils.Config.Db.MajorVersion = 14
+		defer func() {
+			utils.Config.Db.MajorVersion = 15
+		}()
 		utils.Config.Db.Port = 5432
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaSql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		roles := "create role postgres"
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA").
+			Query(roles).
+			Reply("CREATE ROLE")
 		// Run test
-		err := SetupDatabase(context.Background(), config, fsys, io.Discard, conn.Intercept)
+		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
 		// Run test
-		err := SetupDatabase(context.Background(), config, fsys, io.Discard)
+		err := setupDatabase(context.Background(), nil, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
+	})
+
+	t.Run("throws error on init failure", func(t *testing.T) {
+		utils.Config.Db.Port = 5432
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.StorageImage) + "/json").
+			ReplyError(errors.New("network error"))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Run test
+		err := setupDatabase(context.Background(), nil, io.Discard, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
 	})
 
 	t.Run("throws error on read failure", func(t *testing.T) {
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := SetupDatabase(context.Background(), config, fsys, io.Discard, conn.Intercept)
+		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
-	})
-
-	t.Run("throws error on exec failure", func(t *testing.T) {
-		utils.Config.Db.Port = 5432
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		sql := "create role postgres"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(sql), 0644))
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(sql).
-			ReplyError(pgerrcode.DuplicateObject, `role "postgres" already exists`)
-		// Run test
-		err := SetupDatabase(context.Background(), config, fsys, io.Discard, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: role "postgres" already exists (SQLSTATE 42710)`)
 	})
 }

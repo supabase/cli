@@ -42,6 +42,7 @@ var (
 	ssoAddCmd = &cobra.Command{
 		Use:     "add",
 		Short:   "Add a new SSO identity provider",
+		Long:    "Add and configure a new connection to a SSO identity provider to your Supabase project.",
 		Example: `  supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-url 'https://...' --domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return create.Run(cmd.Context(), create.RunParams{
@@ -60,6 +61,7 @@ var (
 	ssoRemoveCmd = &cobra.Command{
 		Use:     "remove <provider-id>",
 		Short:   "Remove an existing SSO identity provider",
+		Long:    "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from logging in. Please treat this command with care.",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,6 +76,7 @@ var (
 	ssoUpdateCmd = &cobra.Command{
 		Use:     "update <provider-id>",
 		Short:   "Update information about an SSO identity provider",
+		Long:    "Update the configuration settings of a already added SSO identity provider.",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -100,6 +103,7 @@ var (
 	ssoShowCmd = &cobra.Command{
 		Use:     "show <provider-id>",
 		Short:   "Show information about an SSO identity provider",
+		Long:    "Provides the information about an established connection to an identity provider. You can use --metadata to obtain the raw SAML 2.0 Metadata XML document stored in your project's configuration.",
 		Args:    cobra.ExactArgs(1),
 		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -119,6 +123,7 @@ var (
 	ssoListCmd = &cobra.Command{
 		Use:     "list",
 		Short:   "List all SSO identity providers for a project",
+		Long:    "List all connections to a SSO identity provider to your Supabase project.",
 		Example: `  supabase sso list --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(cmd.Context(), flags.ProjectRef, ssoOutput.Value)
@@ -128,6 +133,7 @@ var (
 	ssoInfoCmd = &cobra.Command{
 		Use:     "info",
 		Short:   "Returns the SAML SSO settings required for the identity provider",
+		Long:    "Returns all of the important SSO information necessary for your project to be registered with a SAML 2.0 compatible identity provider.",
 		Example: `  supabase sso info --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return info.Run(cmd.Context(), flags.ProjectRef, ssoOutput.Value)
