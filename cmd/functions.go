@@ -99,7 +99,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return serve.Run(ctx, "", envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return serve.Run(ctx, envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 )

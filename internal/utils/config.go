@@ -18,24 +18,23 @@ import (
 )
 
 var (
-	DbImage    string
-	NetId      string
-	DbId       string
-	ConfigId   string
-	KongId     string
-	GotrueId   string
-	InbucketId string
-	RealtimeId string
-	RestId     string
-	StorageId  string
-	ImgProxyId string
-	DifferId   string
-	PgmetaId   string
-	StudioId   string
-	// TODO: Rename to EdgeRuntimeId once we deprecate the relay.
-	DenoRelayId string
-	LogflareId  string
-	VectorId    string
+	DbImage       string
+	NetId         string
+	DbId          string
+	ConfigId      string
+	KongId        string
+	GotrueId      string
+	InbucketId    string
+	RealtimeId    string
+	RestId        string
+	StorageId     string
+	ImgProxyId    string
+	DifferId      string
+	PgmetaId      string
+	StudioId      string
+	EdgeRuntimeId string
+	LogflareId    string
+	VectorId      string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -218,7 +217,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			DifferId = "supabase_differ_" + Config.ProjectId
 			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
 			StudioId = "supabase_studio_" + Config.ProjectId
-			DenoRelayId = "supabase_deno_relay_" + Config.ProjectId
+			EdgeRuntimeId = "supabase_edge_runtime_" + Config.ProjectId
 			LogflareId = "supabase_analytics_" + Config.ProjectId
 			VectorId = "supabase_vector_" + Config.ProjectId
 		}
