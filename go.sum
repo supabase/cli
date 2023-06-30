@@ -128,10 +128,10 @@ github.com/cockroachdb/apd v1.1.0 h1:3LFP3629v+1aKXU5Q37mxmRxX/pIu1nijXydLShEq5I
 github.com/cockroachdb/apd v1.1.0/go.mod h1:8Sl8LxpKi29FqWXR16WEFZRNSz3SoPzUzeMeY4+DwBQ=
 github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 h1:q2hJAaP1k2wIvVRd/hEHD7lacgqrCPS+k8g1MndzfWY=
 github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81/go.mod h1:YynlIjWYF8myEu6sdkwKIvGQq+cOckRm6So2avqoYAk=
-github.com/containers/common v0.54.0 h1:jJ2QVuliTa/40QxyDe1ZS1U/7BsDea7qdBeZE0VPu3E=
-github.com/containers/common v0.54.0/go.mod h1:xbA3bUfth8p2xmqSg01oxHNDRJA71SAVUCqhyEISKic=
-github.com/containers/storage v1.47.0 h1:Tl/onL8yE/4QABc2kfPDaTSYijk3QrmXGrO21KXkj58=
-github.com/containers/storage v1.47.0/go.mod h1:pRp3lkRo2qodb/ltpnudoXggrviRmaCmU5a5GhTBae0=
+github.com/containers/common v0.55.0 h1:0z/INPFrc9NPcx2iqU3OA333BTNequU3GPCvuDKyHkg=
+github.com/containers/common v0.55.0/go.mod h1:JNNJY++mDJW7xTNeU08b6h11omV0FYl9diWLofkgaY0=
+github.com/containers/storage v1.48.0 h1:wiPs8J2xiFoOEAhxHDRtP6A90Jzj57VqzLRXOqeizns=
+github.com/containers/storage v1.48.0/go.mod h1:pRp3lkRo2qodb/ltpnudoXggrviRmaCmU5a5GhTBae0=
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/cpuguy83/go-md2man/v2 v2.0.2/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
