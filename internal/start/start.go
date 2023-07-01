@@ -268,6 +268,22 @@ EOF
 	// Start Kong.
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
+		env := []string{
+			"KONG_DATABASE=off",
+			"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
+			"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
+			"KONG_PLUGINS=request-transformer,cors",
+			// Need to increase the nginx buffers in kong to avoid it rejecting the rather
+			// sizeable response headers azure can generate
+			// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
+			"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
+			"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
+		}
+
+		if utils.Config.Kong.NginxWorkerProcesses != 0 {
+			env = append(env, fmt.Sprintf("KONG_NGINX_WORKER_PROCESSES=%d", utils.Config.Kong.NginxWorkerProcesses))
+		}
+
 		var kongConfigBuf bytes.Buffer
 
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
@@ -287,17 +303,7 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.KongImage,
-				Env: []string{
-					"KONG_DATABASE=off",
-					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
-					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
-					"KONG_PLUGINS=request-transformer,cors",
-					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
-					// sizeable response headers azure can generate
-					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
-					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
-					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
-				},
+				Env:   env,
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
 ` + kongConfigBuf.String() + `
 EOF
