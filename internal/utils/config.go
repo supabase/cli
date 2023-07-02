@@ -89,6 +89,7 @@ type (
 		Api       api                 `toml:"api"`
 		Db        db                  `toml:"db" mapstructure:"db"`
 		Studio    studio              `toml:"studio"`
+		Kong      kong                `toml:"kong"`
 		Inbucket  inbucket            `toml:"inbucket"`
 		Storage   storage             `toml:"storage"`
 		Auth      auth                `toml:"auth" mapstructure:"auth"`
@@ -114,6 +115,10 @@ type (
 
 	studio struct {
 		Port uint `toml:"port"`
+	}
+
+	kong struct {
+		NginxWorkerProcesses uint `toml:"nginx_worker_processes"`
 	}
 
 	inbucket struct {
