@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.24.2
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/charmbracelet/lipgloss v0.7.1
-	github.com/containers/common v0.55.0
+	github.com/containers/common v0.55.1
 	github.com/deepmap/oapi-codegen v1.13.0
 	github.com/docker/cli v24.0.2+incompatible
 	github.com/docker/docker v24.0.2+incompatible
