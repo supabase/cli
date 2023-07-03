@@ -275,13 +275,11 @@ EOF
 			"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 			"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 		}
-
-		if utils.Config.Kong.NginxWorkerProcesses != 0 {
-			env = append(env, fmt.Sprintf("KONG_NGINX_WORKER_PROCESSES=%d", utils.Config.Kong.NginxWorkerProcesses))
+		if utils.Config.Api.ConcurrentWorkers != 0 {
+			env = append(env, fmt.Sprintf("KONG_NGINX_WORKER_PROCESSES=%d", utils.Config.Api.ConcurrentWorkers))
 		}
 
 		var kongConfigBuf bytes.Buffer
-
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
@@ -329,7 +327,7 @@ EOF
 
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
-			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !*utils.Config.Auth.EnableSignup),
+			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
 
 			"GOTRUE_JWT_ADMIN_ROLES=service_role",
 			"GOTRUE_JWT_AUD=authenticated",
@@ -337,9 +335,9 @@ EOF
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 
-			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
-			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
-			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !*utils.Config.Auth.Email.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
+			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
+			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 
 			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
 			"GOTRUE_SMTP_PORT=2500",
@@ -351,11 +349,50 @@ EOF
 			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
-			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
-			"GOTRUE_SMS_AUTOCONFIRM=true",
+			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
+			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
+			"GOTRUE_SMS_MAX_FREQUENCY=5s",
+			"GOTRUE_SMS_OTP_EXP=6000",
+			"GOTRUE_SMS_OTP_LENGTH=6",
+			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
 
-			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", *utils.Config.Auth.EnableRefreshTokenRotation),
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		}
+
+		if utils.Config.Auth.Sms.Twilio != nil {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=twilio",
+				"GOTRUE_SMS_TWILIO_ACCOUNT_SID="+utils.Config.Auth.Sms.Twilio.AccountSid,
+				"GOTRUE_SMS_TWILIO_AUTH_TOKEN="+utils.Config.Auth.Sms.Twilio.AuthToken,
+				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
+			)
+		}
+		if utils.Config.Auth.Sms.Messagebird != nil {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=messagebird",
+				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY="+utils.Config.Auth.Sms.Messagebird.AccessKey,
+				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
+			)
+		}
+		if utils.Config.Auth.Sms.Textlocal != nil {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=textlocal",
+				"GOTRUE_SMS_TEXTLOCAL_API_KEY="+utils.Config.Auth.Sms.Textlocal.ApiKey,
+				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
+			)
+		}
+		if utils.Config.Auth.Sms.Vonage != nil {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=vonage",
+				"GOTRUE_SMS_VONAGE_API_KEY="+utils.Config.Auth.Sms.Vonage.ApiKey,
+				"GOTRUE_SMS_VONAGE_API_SECRET="+utils.Config.Auth.Sms.Vonage.ApiSecret,
+				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
+			)
 		}
 
 		for name, config := range utils.Config.Auth.External {
@@ -407,7 +444,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if !isContainerExcluded(utils.InbucketImage, excluded) {
+	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.InbucketImage, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -582,7 +619,7 @@ EOF
 	}
 
 	// Start pg-meta.
-	if !isContainerExcluded(utils.PgmetaImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -613,7 +650,7 @@ EOF
 	}
 
 	// Start Studio.
-	if !isContainerExcluded(utils.StudioImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.StudioImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
