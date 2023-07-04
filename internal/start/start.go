@@ -13,9 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -27,8 +25,6 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
-
-var errUnhealthy = errors.New("service not healthy")
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef, dbUrl string) error {
 	// Sanity checks.
@@ -77,7 +73,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
-		if ignoreHealthCheck && errors.Is(err, errUnhealthy) {
+		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
 			utils.DockerRemoveAll(context.Background())
@@ -199,7 +195,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := waitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+		if err := reset.WaitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
 			return err
 		}
 	}
@@ -260,7 +256,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := waitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
+		if err := reset.WaitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
 			return err
 		}
 	}
@@ -652,7 +648,7 @@ EOF
 		started = append(started, utils.StudioId)
 	}
 
-	return waitForServiceReady(ctx, started)
+	return reset.WaitForServiceReady(ctx, started)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
@@ -669,37 +665,4 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
-}
-
-func waitForServiceReady(ctx context.Context, started []string) error {
-	probe := func() bool {
-		var unhealthy []string
-		for _, container := range started {
-			if !status.IsServiceReady(ctx, container) {
-				unhealthy = append(unhealthy, container)
-			}
-		}
-		started = unhealthy
-		return len(started) == 0
-	}
-	if !reset.RetryEverySecond(ctx, probe, 30*time.Second) {
-		// Print container logs for easier debugging
-		for _, container := range started {
-			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-			})
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				continue
-			}
-			fmt.Fprintln(os.Stderr, container, "container logs:")
-			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-			}
-			logs.Close()
-		}
-		return fmt.Errorf("%w: %v", errUnhealthy, started)
-	}
-	return nil
 }
