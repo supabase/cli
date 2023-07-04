@@ -68,6 +68,7 @@ var (
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 	invalidProjectId   = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
+	envPattern         = regexp.MustCompile(`^env\((.*)\)$`)
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -164,31 +165,35 @@ type (
 	}
 
 	sms struct {
-		EnableSignup        bool               `toml:"enable_signup"`
-		EnableConfirmations bool               `toml:"enable_confirmations"`
-		Twilio              *twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		Messagebird         *messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           *textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              *vonageConfig      `toml:"vonage" mapstructure:"vonage"`
+		EnableSignup        bool              `toml:"enable_signup"`
+		EnableConfirmations bool              `toml:"enable_confirmations"`
+		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
+		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
+		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
+		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 	}
 
 	twilioConfig struct {
+		Enabled           bool   `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`
 		MessageServiceSid string `toml:"message_service_sid"`
 		AuthToken         string `toml:"auth_token" mapstructure:"auth_token"`
 	}
 
 	messagebirdConfig struct {
+		Enabled    bool   `toml:"enabled"`
 		Originator string `toml:"originator"`
 		AccessKey  string `toml:"access_key" mapstructure:"access_key"`
 	}
 
 	textlocalConfig struct {
-		Sender string `toml:"sender"`
-		ApiKey string `toml:"api_key" mapstructure:"api_key"`
+		Enabled bool   `toml:"enabled"`
+		Sender  string `toml:"sender"`
+		ApiKey  string `toml:"api_key" mapstructure:"api_key"`
 	}
 
 	vonageConfig struct {
+		Enabled   bool   `toml:"enabled"`
 		From      string `toml:"from"`
 		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
 		ApiSecret string `toml:"api_secret" mapstructure:"api_secret"`
@@ -315,7 +320,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			Config.Auth.ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 		}
 
-		if Config.Auth.Sms.Twilio != nil {
+		if Config.Auth.Sms.Twilio.Enabled {
 			if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
 			}
@@ -326,7 +331,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 			}
 		}
-		if Config.Auth.Sms.Messagebird != nil {
+		if Config.Auth.Sms.Messagebird.Enabled {
 			if len(Config.Auth.Sms.Messagebird.Originator) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 			}
@@ -334,7 +339,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
 			}
 		}
-		if Config.Auth.Sms.Textlocal != nil {
+		if Config.Auth.Sms.Textlocal.Enabled {
 			if len(Config.Auth.Sms.Textlocal.Sender) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 			}
@@ -342,7 +347,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
 			}
 		}
-		if Config.Auth.Sms.Vonage != nil {
+		if Config.Auth.Sms.Vonage.Enabled {
 			if len(Config.Auth.Sms.Vonage.From) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.from")
 			}
@@ -365,21 +370,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 					Secret:   "",
 				}
 			} else if Config.Auth.External[ext].Enabled {
-				maybeLoadEnv := func(s string) (string, error) {
-					matches := regexp.MustCompile(`^env\((.*)\)$`).FindStringSubmatch(s)
-					if len(matches) == 0 {
-						return s, nil
-					}
-
-					envName := matches[1]
-					value := os.Getenv(envName)
-					if value == "" {
-						return "", errors.New(`Error evaluating "env(` + envName + `)": environment variable ` + envName + " is unset.")
-					}
-
-					return value, nil
-				}
-
 				var clientId, secret, redirectUri, url string
 
 				if Config.Auth.External[ext].ClientId == "" {
@@ -400,7 +390,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 					}
 					secret = v
 				}
-
 				if Config.Auth.External[ext].RedirectUri != "" {
 					v, err := maybeLoadEnv(Config.Auth.External[ext].RedirectUri)
 					if err != nil {
@@ -408,7 +397,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 					}
 					redirectUri = v
 				}
-
 				if Config.Auth.External[ext].Url != "" {
 					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
 					if err != nil {
@@ -461,6 +449,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 
 	return nil
+}
+
+func maybeLoadEnv(s string) (string, error) {
+	matches := envPattern.FindStringSubmatch(s)
+	if len(matches) == 0 {
+		return s, nil
+	}
+
+	envName := matches[1]
+	if value := os.Getenv(envName); value != "" {
+		return value, nil
+	}
+
+	return "", fmt.Errorf(`Error evaluating "env(%s)": environment variable %s is unset.`, s, envName)
 }
 
 func sanitizeProjectId(src string) string {

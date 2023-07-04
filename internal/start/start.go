@@ -360,7 +360,7 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 		}
 
-		if utils.Config.Auth.Sms.Twilio != nil {
+		if utils.Config.Auth.Sms.Twilio.Enabled {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio",
@@ -369,7 +369,7 @@ EOF
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
 		}
-		if utils.Config.Auth.Sms.Messagebird != nil {
+		if utils.Config.Auth.Sms.Messagebird.Enabled {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=messagebird",
@@ -377,7 +377,7 @@ EOF
 				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
 			)
 		}
-		if utils.Config.Auth.Sms.Textlocal != nil {
+		if utils.Config.Auth.Sms.Textlocal.Enabled {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=textlocal",
@@ -385,7 +385,7 @@ EOF
 				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
 			)
 		}
-		if utils.Config.Auth.Sms.Vonage != nil {
+		if utils.Config.Auth.Sms.Vonage.Enabled {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=vonage",
