@@ -81,6 +81,8 @@ transforms:
     source: |-
       parsed, err = parse_json(.event_message)
       if err == null {
+          .metadata.path = "/"
+          .metadata.status = 200
           .metadata.timestamp = parsed.time
           .metadata = merge!(.metadata, parsed)
       }
