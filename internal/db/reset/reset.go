@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -28,6 +30,8 @@ const (
 )
 
 var (
+	ErrUnhealthy  = errors.New("service not healthy")
+	ErrDatabase   = errors.New("database is not healthy")
 	healthTimeout = 5 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
@@ -61,13 +65,15 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting local database...")
-	if err := RecreateDatabase(ctx, options...); err != nil {
+	if err := recreateDatabase(ctx, options...); err != nil {
 		return err
 	}
 	if err := initDatabase(ctx, options...); err != nil {
 		return err
 	}
-	RestartDatabase(context.Background(), os.Stderr)
+	if err := RestartDatabase(ctx, os.Stderr); err != nil {
+		return err
+	}
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
@@ -93,7 +99,7 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 }
 
 // Recreate postgres database by connecting to template1
-func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin", Database: "template1"}, options...)
 	if err != nil {
 		return err
@@ -138,34 +144,34 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	return err
 }
 
-func RestartDatabase(ctx context.Context, w io.Writer) {
+func RestartDatabase(ctx context.Context, w io.Writer) error {
 	fmt.Fprintln(w, "Restarting containers...")
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart database:", err)
-		return
+		return err
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
-		fmt.Fprintln(w, "Database is not healthy.")
-		return
+		return ErrDatabase
 	}
 	// TODO: update storage-api to handle postgres restarts
 	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart storage-api:", err)
+		return fmt.Errorf("failed to restart storage-api: %w", err)
 	}
 	// Reload PostgREST schema cache.
 	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		fmt.Fprintln(w, "Error reloading PostgREST schema cache:", err)
+		return fmt.Errorf("failed to reload PostgREST schema cache: %w", err)
 	}
 	// TODO: update gotrue to handle postgres restarts
 	if err := utils.Docker.ContainerRestart(ctx, utils.GotrueId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart gotrue:", err)
+		return fmt.Errorf("failed to restart gotrue: %w", err)
 	}
 	// TODO: update realtime to handle postgres restarts
 	if err := utils.Docker.ContainerRestart(ctx, utils.RealtimeId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart realtime:", err)
+		return fmt.Errorf("failed to restart realtime: %w", err)
 	}
+	// Wait for services with internal schema migrations
+	return WaitForServiceReady(ctx, []string{utils.StorageId, utils.GotrueId})
 }
 
 func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
@@ -186,6 +192,39 @@ func WaitForHealthyService(ctx context.Context, container string, timeout time.D
 		return status.AssertContainerHealthy(ctx, container) == nil
 	}
 	return RetryEverySecond(ctx, probe, timeout)
+}
+
+func WaitForServiceReady(ctx context.Context, started []string) error {
+	probe := func() bool {
+		var unhealthy []string
+		for _, container := range started {
+			if !status.IsServiceReady(ctx, container) {
+				unhealthy = append(unhealthy, container)
+			}
+		}
+		started = unhealthy
+		return len(started) == 0
+	}
+	if !RetryEverySecond(ctx, probe, 30*time.Second) {
+		// Print container logs for easier debugging
+		for _, container := range started {
+			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+			})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				continue
+			}
+			fmt.Fprintln(os.Stderr, container, "container logs:")
+			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			logs.Close()
+		}
+		return fmt.Errorf("%w: %v", ErrUnhealthy, started)
+	}
+	return nil
 }
 
 func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
