@@ -124,8 +124,9 @@ type (
 	}
 
 	studio struct {
-		Enabled bool `toml:"enabled"`
-		Port    uint `toml:"port"`
+		Enabled bool   `toml:"enabled"`
+		Port    uint   `toml:"port"`
+		ApiUrl  string `toml:"api_url"`
 	}
 
 	inbucket struct {
