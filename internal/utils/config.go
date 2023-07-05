@@ -44,26 +44,6 @@ var (
 	//go:embed templates/initial_schemas/15.sql
 	InitialSchemaPg15Sql string
 
-	authExternalProviders = []string{
-		"apple",
-		"azure",
-		"bitbucket",
-		"discord",
-		"facebook",
-		"github",
-		"gitlab",
-		"google",
-		"keycloak",
-		"linkedin",
-		"notion",
-		"twitch",
-		"twitter",
-		"slack",
-		"spotify",
-		"workos",
-		"zoom",
-	}
-
 	//go:embed templates/init_config.toml
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
@@ -82,17 +62,60 @@ func (s *sizeInBytes) UnmarshalText(text []byte) error {
 	return err
 }
 
-var Config config
+var Config = config{
+	Auth: auth{
+		External: map[string]provider{
+			"apple":     {},
+			"azure":     {},
+			"bitbucket": {},
+			"discord":   {},
+			"facebook":  {},
+			"github":    {},
+			"gitlab":    {},
+			"google":    {},
+			"keycloak":  {},
+			"linkedin":  {},
+			"notion":    {},
+			"twitch":    {},
+			"twitter":   {},
+			"slack":     {},
+			"spotify":   {},
+			"workos":    {},
+			"zoom":      {},
+		},
+		JwtSecret:      "super-secret-jwt-token-with-at-least-32-characters-long",
+		AnonKey:        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
+		ServiceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+	},
+	Db: db{
+		Password: "postgres",
+	},
+	Analytics: analytics{
+		ApiKey: "api-key",
+	},
+}
 
 // We follow these rules when adding new config:
 //  1. Update init_config.toml with the new key, default value, and comments to explain usage.
-//  2. Update config struct with new field and toml tag, written out in snake_case.
-//  3. Add custom validations to LoadConfigFS function for the new field, such as range checks.
+//  2. Update config struct with new field and toml tag (spelled in snake_case).
+//  3. Add custom field validations to LoadConfigFS function for eg. integer range checks.
 //
-// If you are adding new secrets, such as API keys, use env var instead of toml. For example,
-//  1. Config.Auth.AnonKey is tagged with `toml:"-" mapstructure:"anon_key"`. This tag prevents
-//     externalising to toml but allows reading from an env var named SUPABASE_AUTH_ANON_KEY.
-//  2. Default values should be added to LoadConfigFS function, after checking for empty value.
+// If you are adding new user defined secrets, such as OAuth provider secret, the default value in
+// init_config.toml should be an env var substitution. For example,
+//
+// > secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
+//
+// If you are adding an internal config or secret that doesn't need to be overridden by the user,
+// exclude the field from toml serialization. For example,
+//
+//	type auth struct {
+//		AnonKey string `toml:"-" mapstructure:"anon_key"`
+//	}
+//
+// Use `mapstructure:"anon_key"` tag only if you want inject values from a predictable environment
+// variable, such as SUPABASE_AUTH_ANON_KEY.
+//
+// Default values for internal configs should be added to `var Config` initialiser.
 type (
 	config struct {
 		ProjectId string              `toml:"project_id"`
@@ -273,12 +296,14 @@ func LoadConfigFS(fsys afero.Fs) error {
 			LogflareId = "supabase_analytics_" + Config.ProjectId
 			VectorId = "supabase_vector_" + Config.ProjectId
 		}
+		// Validate api config
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
 		}
 		// Append required schemas if they are missing
 		Config.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
 		Config.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
+		// Validate db config
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
 		}
@@ -299,28 +324,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
-		if Config.Db.Password == "" {
-			Config.Db.Password = "postgres"
-		}
+		// Validate studio config
 		if Config.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
 		}
+		// Validate email config
 		if Config.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
+		// Validate auth config
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
-		if Config.Auth.JwtSecret == "" {
-			Config.Auth.JwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
-		}
-		if Config.Auth.AnonKey == "" {
-			Config.Auth.AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
-		}
-		if Config.Auth.ServiceRoleKey == "" {
-			Config.Auth.ServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
-		}
-
+		// Validate sms config
+		var err error
 		if Config.Auth.Sms.Twilio.Enabled {
 			if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
@@ -331,6 +348,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if len(Config.Auth.Sms.Twilio.AuthToken) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 			}
+			if Config.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.Twilio.AuthToken); err != nil {
+				return err
+			}
 		}
 		if Config.Auth.Sms.Messagebird.Enabled {
 			if len(Config.Auth.Sms.Messagebird.Originator) == 0 {
@@ -339,6 +359,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if len(Config.Auth.Sms.Messagebird.AccessKey) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
 			}
+			if Config.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(Config.Auth.Sms.Messagebird.AccessKey); err != nil {
+				return err
+			}
 		}
 		if Config.Auth.Sms.Textlocal.Enabled {
 			if len(Config.Auth.Sms.Textlocal.Sender) == 0 {
@@ -346,6 +369,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			}
 			if len(Config.Auth.Sms.Textlocal.ApiKey) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
+			}
+			if Config.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Textlocal.ApiKey); err != nil {
+				return err
 			}
 		}
 		if Config.Auth.Sms.Vonage.Enabled {
@@ -358,82 +384,48 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if len(Config.Auth.Sms.Vonage.ApiSecret) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
 			}
-		}
-
-		if Config.Auth.External == nil {
-			Config.Auth.External = map[string]provider{}
-		}
-		for _, ext := range authExternalProviders {
-			if _, ok := Config.Auth.External[ext]; !ok {
-				Config.Auth.External[ext] = provider{
-					Enabled:  false,
-					ClientId: "",
-					Secret:   "",
-				}
-			} else if Config.Auth.External[ext].Enabled {
-				var clientId, secret, redirectUri, url string
-
-				if Config.Auth.External[ext].ClientId == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
-				} else {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].ClientId)
-					if err != nil {
-						return err
-					}
-					clientId = v
-				}
-				if Config.Auth.External[ext].Secret == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
-				} else {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].Secret)
-					if err != nil {
-						return err
-					}
-					secret = v
-				}
-				if Config.Auth.External[ext].RedirectUri != "" {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].RedirectUri)
-					if err != nil {
-						return err
-					}
-					redirectUri = v
-				}
-				if Config.Auth.External[ext].Url != "" {
-					v, err := maybeLoadEnv(Config.Auth.External[ext].Url)
-					if err != nil {
-						return err
-					}
-					url = v
-				}
-
-				Config.Auth.External[ext] = provider{
-					Enabled:     true,
-					ClientId:    clientId,
-					Secret:      secret,
-					RedirectUri: redirectUri,
-					Url:         url,
-				}
+			if Config.Auth.Sms.Vonage.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiKey); err != nil {
+				return err
+			}
+			if Config.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiSecret); err != nil {
+				return err
 			}
 		}
+		// Validate oauth config
+		for ext, provider := range Config.Auth.External {
+			if !provider.Enabled {
+				continue
+			}
+			if provider.ClientId == "" {
+				return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+			}
+			if provider.Secret == "" {
+				return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+			}
+			if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
+				return err
+			}
+			if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
+				return err
+			}
+			if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
+				return err
+			}
+			if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
+				return err
+			}
+			Config.Auth.External[ext] = provider
+		}
 	}
-
-	if Config.Functions == nil {
-		Config.Functions = map[string]function{}
-	}
+	// Validate functions config
 	for name, functionConfig := range Config.Functions {
-		verifyJWT := functionConfig.VerifyJWT
-
-		if verifyJWT == nil {
-			x := true
-			verifyJWT = &x
-		}
-
-		Config.Functions[name] = function{
-			VerifyJWT: verifyJWT,
-			ImportMap: functionConfig.ImportMap,
+		if functionConfig.VerifyJWT == nil {
+			verifyJWT := true
+			functionConfig.VerifyJWT = &verifyJWT
+			Config.Functions[name] = functionConfig
 		}
 	}
-
+	// Validate logflare config
 	if Config.Analytics.Enabled {
 		if len(Config.Analytics.GcpProjectId) == 0 {
 			return errors.New("Missing required field in config: analytics.gcp_project_id")
@@ -441,14 +433,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if len(Config.Analytics.GcpProjectNumber) == 0 {
 			return errors.New("Missing required field in config: analytics.gcp_project_number")
 		}
-		if len(Config.Analytics.GcpJwtPath) == 0 {
-			Config.Analytics.GcpJwtPath = "supabase/gcloud.json"
-		}
-		if len(Config.Analytics.ApiKey) == 0 {
-			Config.Analytics.ApiKey = "api-key"
-		}
 	}
-
 	return nil
 }
 
