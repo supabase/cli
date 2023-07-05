@@ -239,7 +239,7 @@ func init() {
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
 	diffFlags.StringVar(&dbUrl, "db-url", "", "Diffs local migration files against the database specified by the connection string (must be percent-encoded).")
 	diffFlags.BoolVar(&linked, "linked", false, "Diffs local migration files against the linked project.")
-	diffFlags.BoolVar(&local, "local", false, "Diffs local migration files against the local database.")
+	diffFlags.BoolVar(&local, "local", true, "Diffs local migration files against the local database.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
