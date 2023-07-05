@@ -13,9 +13,6 @@ extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
-# Number of workers for handling requests concurrently. Set this to 1 to minimize memory usage.
-# Omitting it or setting it to 0 will autodetect based on the number of CPU cores.
-concurrent_workers = 1
 
 [db]
 # Port to use for the local database URL.
