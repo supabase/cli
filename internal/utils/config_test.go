@@ -37,6 +37,7 @@ func TestConfigParsing(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, true))
 		// Run test
+		t.Setenv("TWILIO_AUTH_TOKEN", "token")
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
 		assert.NoError(t, LoadConfigFS(fsys))

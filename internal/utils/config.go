@@ -132,11 +132,10 @@ type (
 	}
 
 	api struct {
-		Port              uint     `toml:"port"`
-		Schemas           []string `toml:"schemas"`
-		ExtraSearchPath   []string `toml:"extra_search_path"`
-		MaxRows           uint     `toml:"max_rows"`
-		ConcurrentWorkers uint     `toml:"concurrent_workers"`
+		Port            uint     `toml:"port"`
+		Schemas         []string `toml:"schemas"`
+		ExtraSearchPath []string `toml:"extra_search_path"`
+		MaxRows         uint     `toml:"max_rows"`
 	}
 
 	db struct {
