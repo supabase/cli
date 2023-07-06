@@ -25,7 +25,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 |-|-|
 `
 	for _, entry := range *resp.JSON200 {
-		table += fmt.Sprintf("|`%s`|`%x`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+		table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
 	}
 
 	return list.RenderTable(table)
