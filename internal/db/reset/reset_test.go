@@ -25,6 +25,15 @@ import (
 )
 
 func TestResetCommand(t *testing.T) {
+	t.Run("throws error on connect failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), pgconn.Config{Password: "postgres"}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "invalid port (outside range)")
+	})
+
 	t.Run("throws error on missing config", func(t *testing.T) {
 		err := Run(context.Background(), pgconn.Config{}, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
@@ -253,37 +262,14 @@ func TestRestartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		// Restarts postgREST
-		utils.RestId = "test-rest"
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RestId + "/kill").
-			Reply(http.StatusOK)
-		// Restarts storage-api
+		// Restarts services
 		utils.StorageId = "test-storage"
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
-			Reply(http.StatusOK)
-		// Restarts gotrue
 		utils.GotrueId = "test-auth"
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.GotrueId + "/restart").
-			Reply(http.StatusOK)
-		// Restarts realtime
 		utils.RealtimeId = "test-realtime"
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RealtimeId + "/restart").
-			Reply(http.StatusOK)
-		// Wait for services ready
-		for _, container := range []string{utils.StorageId, utils.GotrueId} {
+		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
-				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/json").
-				Reply(http.StatusOK).
-				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-					State: &types.ContainerState{
-						Running: true,
-						Health:  &types.Health{Status: "healthy"},
-					},
-				}})
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
 		}
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
@@ -292,7 +278,43 @@ func TestRestartDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("logs error on restart failure", func(t *testing.T) {
+	t.Run("throws error on service restart failure", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
+			}})
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusServiceUnavailable)
+		}
+		// Run test
+		err := RestartDatabase(context.Background(), io.Discard)
+		// Check error
+		assert.ErrorContains(t, err, "Failed to restart "+utils.StorageId)
+		assert.ErrorContains(t, err, "Failed to restart "+utils.GotrueId)
+		assert.ErrorContains(t, err, "Failed to restart "+utils.RealtimeId)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on db restart failure", func(t *testing.T) {
 		utils.DbId = "test-db"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
@@ -308,7 +330,7 @@ func TestRestartDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("timeout health check", func(t *testing.T) {
+	t.Run("throws error on health check timeout", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		healthTimeout = 0 * time.Second
 		// Setup mock docker
