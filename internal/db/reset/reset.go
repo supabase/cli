@@ -293,7 +293,7 @@ func InitSchema15(ctx context.Context, host string) error {
 	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
 		return err
 	}
-	return utils.DockerRunOnceWithStream(ctx, utils.GotrueImage, []string{
+	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
 		"GOTRUE_LOG_LEVEL=error",
 		"GOTRUE_DB_DRIVER=postgres",
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),

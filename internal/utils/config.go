@@ -64,6 +64,7 @@ func (s *sizeInBytes) UnmarshalText(text []byte) error {
 
 var Config = config{
 	Auth: auth{
+		Image: GotrueImage,
 		External: map[string]provider{
 			"apple":     {},
 			"azure":     {},
@@ -163,6 +164,7 @@ type (
 	}
 
 	auth struct {
+		Image                  string   `toml:"-"`
 		SiteUrl                string   `toml:"site_url"`
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
 
@@ -334,6 +336,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 		// Validate auth config
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
+		}
+		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && Config.Db.MajorVersion > 14 {
+			index := strings.IndexByte(GotrueImage, ':')
+			Config.Auth.Image = GotrueImage[:index+1] + string(version)
 		}
 		// Validate sms config
 		var err error
