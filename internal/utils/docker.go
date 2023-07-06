@@ -99,27 +99,29 @@ var (
 	Volumes    []string
 )
 
-func WaitAll(containers []string, exec func(container string)) {
+func WaitAll(containers []string, exec func(container string) error) []error {
 	var wg sync.WaitGroup
-	for _, container := range containers {
+	result := make([]error, len(containers))
+	for i, container := range containers {
 		wg.Add(1)
-		go func(container string) {
+		go func(i int, container string) {
 			defer wg.Done()
-			exec(container)
-		}(container)
+			result[i] = exec(container)
+		}(i, container)
 	}
 	wg.Wait()
+	return result
 }
 
 func DockerRemoveAll(ctx context.Context) {
-	WaitAll(Containers, func(container string) {
-		_ = Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
+	_ = WaitAll(Containers, func(container string) error {
+		return Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		})
 	})
-	WaitAll(Volumes, func(name string) {
-		_ = Docker.VolumeRemove(ctx, name, true)
+	_ = WaitAll(Volumes, func(name string) error {
+		return Docker.VolumeRemove(ctx, name, true)
 	})
 	_ = Docker.NetworkRemove(ctx, NetId)
 }
@@ -240,12 +242,6 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 		return err
 	}
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
-}
-
-func DockerStop(containerID string) {
-	if err := Docker.ContainerStop(context.Background(), containerID, container.StopOptions{}); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
-	}
 }
 
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string) (string, error) {

@@ -162,27 +162,14 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	}
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
 	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
-	errCh := make(chan error, len(services))
-	utils.WaitAll(services, func(id string) {
+	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			errCh <- fmt.Errorf("Failed to restart %s: %w", id, err)
-		} else {
-			errCh <- nil
+			return fmt.Errorf("Failed to restart %s: %w", id, err)
 		}
+		return nil
 	})
-	// Combine errors
-	var err error
-	for range services {
-		if err == nil {
-			err = <-errCh
-			continue
-		}
-		if next := <-errCh; next != nil {
-			err = fmt.Errorf("%w\n%w", err, next)
-		}
-	}
 	// Do not wait for service healthy as those services may be excluded from starting
-	return err
+	return errors.Join(result...)
 }
 
 func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
