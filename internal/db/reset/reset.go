@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -70,6 +71,11 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 	}
 	if err := initDatabase(ctx, options...); err != nil {
 		return err
+	}
+	if utils.Config.Db.MajorVersion > 14 {
+		if err := InitSchema15(ctx, utils.DbId); err != nil {
+			return err
+		}
 	}
 	if err := RestartDatabase(ctx, os.Stderr); err != nil {
 		return err
@@ -154,24 +160,29 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
 		return ErrDatabase
 	}
-	// TODO: update storage-api to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, container.StopOptions{}); err != nil {
-		return fmt.Errorf("failed to restart storage-api: %w", err)
+	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
+	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
+	errCh := make(chan error, len(services))
+	utils.WaitAll(services, func(id string) {
+		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
+			errCh <- fmt.Errorf("Failed to restart %s: %w", id, err)
+		} else {
+			errCh <- nil
+		}
+	})
+	// Combine errors
+	var err error
+	for range services {
+		if err == nil {
+			err = <-errCh
+			continue
+		}
+		if next := <-errCh; next != nil {
+			err = fmt.Errorf("%w\n%w", err, next)
+		}
 	}
-	// Reload PostgREST schema cache.
-	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		return fmt.Errorf("failed to reload PostgREST schema cache: %w", err)
-	}
-	// TODO: update gotrue to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.GotrueId, container.StopOptions{}); err != nil {
-		return fmt.Errorf("failed to restart gotrue: %w", err)
-	}
-	// TODO: update realtime to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.RealtimeId, container.StopOptions{}); err != nil {
-		return fmt.Errorf("failed to restart realtime: %w", err)
-	}
-	// Wait for services with internal schema migrations
-	return WaitForServiceReady(ctx, []string{utils.StorageId, utils.GotrueId})
+	// Do not wait for service healthy as those services may be excluded from starting
+	return err
 }
 
 func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
@@ -277,4 +288,29 @@ func likeEscapeSchema(schemas []string) (result []string) {
 		result = append(result, replacer.Replace(sch))
 	}
 	return result
+}
+
+func InitSchema15(ctx context.Context, host string) error {
+	// Apply service migrations
+	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
+		"ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+		"STORAGE_BACKEND=file",
+		"TENANT_ID=stub",
+		// TODO: https://github.com/supabase/storage-api/issues/55
+		"REGION=stub",
+		"GLOBAL_S3_BUCKET=stub",
+	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
+		return err
+	}
+	return utils.DockerRunOnceWithStream(ctx, utils.GotrueImage, []string{
+		"GOTRUE_LOG_LEVEL=error",
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
 }
