@@ -159,11 +159,10 @@ func TestDatabaseStart(t *testing.T) {
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)
 		utils.GotrueId = "test-gotrue"
-		flag := true
-		utils.Config.Auth.EnableSignup = &flag
-		utils.Config.Auth.Email.EnableSignup = &flag
-		utils.Config.Auth.Email.DoubleConfirmChanges = &flag
-		utils.Config.Auth.Email.EnableConfirmations = &flag
+		utils.Config.Auth.EnableSignup = true
+		utils.Config.Auth.Email.EnableSignup = true
+		utils.Config.Auth.Email.DoubleConfirmChanges = true
+		utils.Config.Auth.Email.EnableConfirmations = true
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), utils.GotrueId)
 		utils.InbucketId = "test-inbucket"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.InbucketImage), utils.InbucketId)

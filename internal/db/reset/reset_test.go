@@ -1,7 +1,6 @@
 package reset
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/errdefs"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -179,12 +179,12 @@ func TestRecreateDatabase(t *testing.T) {
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
 			Reply("CREATE DATABASE")
 		// Run test
-		assert.NoError(t, RecreateDatabase(context.Background(), conn.Intercept))
+		assert.NoError(t, recreateDatabase(context.Background(), conn.Intercept))
 	})
 
 	t.Run("throws error on invalid port", func(t *testing.T) {
 		utils.Config.Db.Port = 0
-		assert.ErrorContains(t, RecreateDatabase(context.Background()), "invalid port")
+		assert.ErrorContains(t, recreateDatabase(context.Background()), "invalid port")
 	})
 
 	t.Run("continues on disconnecting missing database", func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestRecreateDatabase(t *testing.T) {
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			ReplyError(pgerrcode.UndefinedTable, `relation "pg_stat_activity" does not exist`)
 		// Run test
-		err := RecreateDatabase(context.Background(), conn.Intercept)
+		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "pg_stat_activity" does not exist (SQLSTATE 42P01)`)
 	})
@@ -210,7 +210,7 @@ func TestRecreateDatabase(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
 		// Run test
-		err := RecreateDatabase(context.Background(), conn.Intercept)
+		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
 	})
@@ -228,7 +228,7 @@ func TestRecreateDatabase(t *testing.T) {
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
 			Query("CREATE DATABASE postgres WITH OWNER postgres")
 		// Run test
-		err := RecreateDatabase(context.Background(), conn.Intercept)
+		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" is used by an active logical replication slot (SQLSTATE 55006)`)
 	})
@@ -257,25 +257,38 @@ func TestRestartDatabase(t *testing.T) {
 		utils.RestId = "test-rest"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RestId + "/kill").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusOK)
 		// Restarts storage-api
 		utils.StorageId = "test-storage"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/restart").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusOK)
 		// Restarts gotrue
 		utils.GotrueId = "test-auth"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.GotrueId + "/restart").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusOK)
 		// Restarts realtime
 		utils.RealtimeId = "test-realtime"
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.RealtimeId + "/restart").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusOK)
+		// Wait for services ready
+		for _, container := range []string{utils.StorageId, utils.GotrueId} {
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/json").
+				Reply(http.StatusOK).
+				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{
+						Running: true,
+						Health:  &types.Health{Status: "healthy"},
+					},
+				}})
+		}
 		// Run test
-		RestartDatabase(context.Background(), io.Discard)
+		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -289,11 +302,10 @@ func TestRestartDatabase(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		var stderr bytes.Buffer
-		RestartDatabase(context.Background(), &stderr)
+		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
+		assert.True(t, errdefs.IsUnavailable(err))
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		assert.Contains(t, stderr.String(), "Failed to restart database")
 	})
 
 	t.Run("timeout health check", func(t *testing.T) {
@@ -306,8 +318,9 @@ func TestRestartDatabase(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusOK)
 		// Run test
-		RestartDatabase(context.Background(), io.Discard)
+		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
+		assert.ErrorIs(t, err, ErrDatabase)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
