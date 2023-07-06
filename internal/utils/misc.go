@@ -162,9 +162,11 @@ var (
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
 	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	ImportMapsDir         = filepath.Join(SupabaseDirPath, ".temp", "import_maps")
-	ProjectRefPath        = filepath.Join(SupabaseDirPath, ".temp", "project-ref")
-	RemoteDbPath          = filepath.Join(SupabaseDirPath, ".temp", "remote-db-url")
+	TempDir               = ".temp"
+	ImportMapsDir         = filepath.Join(SupabaseDirPath, TempDir, "import_maps")
+	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
+	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
+	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")

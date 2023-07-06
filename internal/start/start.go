@@ -419,7 +419,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image:        utils.GotrueImage,
+				Image:        utils.Config.Auth.Image,
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
