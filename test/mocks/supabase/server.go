@@ -45,6 +45,9 @@ func (s *Server) NewRouter() *gin.Engine {
 	projects := router.Group("/projects")
 	projects.GET("/:id/functions", s.functions)
 	projects.GET("/:id/secrets", s.secrets)
+	projects.GET("/:id/api-keys", func(c *gin.Context) {
+		c.JSON(http.StatusOK, []gin.H{})
+	})
 
 	return root
 }
