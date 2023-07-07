@@ -10,8 +10,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.7.1
 	github.com/containers/common v0.55.1
 	github.com/deepmap/oapi-codegen v1.13.0
-	github.com/docker/cli v24.0.2+incompatible
-	github.com/docker/docker v24.0.2+incompatible
+	github.com/docker/cli v24.0.3+incompatible
+	github.com/docker/docker v24.0.3+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/go-git/go-git/v5 v5.7.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
@@ -175,7 +175,7 @@ require (
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0
 	golang.org/x/text v0.11.0 // indirect
-	google.golang.org/grpc v1.56.1
+	google.golang.org/grpc v1.56.2
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
