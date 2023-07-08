@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -126,67 +127,24 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return conn, err
 }
 
-func MigrateShadowFromBase(ctx context.Context, shadowHost string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	migrations, err := list.LoadLocalMigrations(fsys)
 	if err != nil {
 		return err
 	}
-	defer conn.Close(context.Background())
-	// Apply service migrations
-	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
-		"ANON_KEY=" + utils.Config.Auth.AnonKey,
-		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, shadowHost),
-		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
-		"STORAGE_BACKEND=file",
-		"TENANT_ID=stub",
-		// TODO: https://github.com/supabase/storage-api/issues/55
-		"REGION=stub",
-		"GLOBAL_S3_BUCKET=stub",
-	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
-		return err
-	}
-	if err := utils.DockerRunOnceWithStream(ctx, utils.GotrueImage, []string{
-		"GOTRUE_LOG_LEVEL=error",
-		"GOTRUE_DB_DRIVER=postgres",
-		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, shadowHost),
-		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
-		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr); err != nil {
-		return err
-	}
-	// Apply user migrations
-	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
+	return MigrateShadowDatabaseVersions(ctx, container, migrations, fsys, options...)
 }
 
-func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
-	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
+	return apply.MigrateUp(ctx, conn, migrations, fsys)
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
@@ -222,14 +180,8 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if utils.Config.Db.MajorVersion <= 14 {
-		if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
-			return "", err
-		}
-	} else {
-		if err := MigrateShadowFromBase(ctx, shadow[:12], fsys, options...); err != nil {
-			return "", err
-		}
+	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
+		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	source := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)

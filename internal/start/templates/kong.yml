@@ -99,8 +99,8 @@ services:
         paths:
           - /pg/
   - name: functions-v1
-    _comment: "Functions: /functions/v1/* -> http://deno-relay:8081/*"
-    url: http://{{ .DenoRelayId }}:8081/
+    _comment: "Functions: /functions/v1/* -> http://edge-runtime:8081/*"
+    url: http://{{ .EdgeRuntimeId }}:8081/
     routes:
       - name: functions-v1-all
         strip_path: true

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -87,7 +88,7 @@ var (
 				if err := parseDatabaseConfig(fsys); err != nil {
 					return err
 				}
-			}
+			} // else use --local, which is the default
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if usePgAdmin {
 				return diff.Run(ctx, schema, file, dbConfig, fsys)
@@ -111,6 +112,11 @@ var (
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, useCopy, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			if len(file) > 0 {
+				fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
+			}
 		},
 	}
 
@@ -231,7 +237,10 @@ func init() {
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
-	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against the linked project.")
+	diffFlags.StringVar(&dbUrl, "db-url", "", "Diffs local migration files against the database specified by the connection string (must be percent-encoded).")
+	diffFlags.BoolVar(&linked, "linked", false, "Diffs local migration files against the linked project.")
+	diffFlags.BoolVar(&local, "local", true, "Diffs local migration files against the local database.")
+	dbDiffCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
 	diffFlags.Lookup("schema").DefValue = "all"

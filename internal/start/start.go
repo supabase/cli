@@ -13,9 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -27,8 +25,6 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
-
-var errUnhealthy = errors.New("service not healthy")
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef, dbUrl string) error {
 	// Sanity checks.
@@ -77,7 +73,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
-		if ignoreHealthCheck && errors.Is(err, errUnhealthy) {
+		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
 			utils.DockerRemoveAll(context.Background())
@@ -91,14 +87,14 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 }
 
 type kongConfig struct {
-	GotrueId    string
-	RestId      string
-	RealtimeId  string
-	StorageId   string
-	PgmetaId    string
-	DenoRelayId string
-	LogflareId  string
-	ApiPort     uint
+	GotrueId      string
+	RestId        string
+	RealtimeId    string
+	StorageId     string
+	PgmetaId      string
+	EdgeRuntimeId string
+	LogflareId    string
+	ApiPort       uint
 }
 
 var (
@@ -108,15 +104,15 @@ var (
 )
 
 type vectorConfig struct {
-	ApiKey      string
-	LogflareId  string
-	KongId      string
-	GotrueId    string
-	RestId      string
-	RealtimeId  string
-	StorageId   string
-	DenoRelayId string
-	DbId        string
+	ApiKey        string
+	LogflareId    string
+	KongId        string
+	GotrueId      string
+	RestId        string
+	RealtimeId    string
+	StorageId     string
+	EdgeRuntimeId string
+	DbId          string
 }
 
 var (
@@ -154,15 +150,15 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:      utils.Config.Analytics.ApiKey,
-			LogflareId:  utils.LogflareId,
-			KongId:      utils.KongId,
-			GotrueId:    utils.GotrueId,
-			RestId:      utils.RestId,
-			RealtimeId:  utils.RealtimeId,
-			StorageId:   utils.StorageId,
-			DenoRelayId: utils.DenoRelayId,
-			DbId:        utils.DbId,
+			ApiKey:        utils.Config.Analytics.ApiKey,
+			LogflareId:    utils.LogflareId,
+			KongId:        utils.KongId,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			DbId:          utils.DbId,
 		}); err != nil {
 			return err
 		}
@@ -199,7 +195,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := waitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+		if err := reset.WaitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
 			return err
 		}
 	}
@@ -260,7 +256,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := waitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
+		if err := reset.WaitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
 			return err
 		}
 	}
@@ -269,16 +265,15 @@ EOF
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
-			GotrueId:    utils.GotrueId,
-			RestId:      utils.RestId,
-			RealtimeId:  utils.RealtimeId,
-			StorageId:   utils.StorageId,
-			PgmetaId:    utils.PgmetaId,
-			DenoRelayId: utils.DenoRelayId,
-			LogflareId:  utils.LogflareId,
-			ApiPort:     utils.Config.Api.Port,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			PgmetaId:      utils.PgmetaId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			LogflareId:    utils.LogflareId,
+			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
 			return err
 		}
@@ -297,6 +292,7 @@ EOF
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
+					"KONG_NGINX_WORKER_PROCESSES=1",
 				},
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
 ` + kongConfigBuf.String() + `
@@ -327,7 +323,7 @@ EOF
 
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
-			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !*utils.Config.Auth.EnableSignup),
+			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
 
 			"GOTRUE_JWT_ADMIN_ROLES=service_role",
 			"GOTRUE_JWT_AUD=authenticated",
@@ -335,9 +331,9 @@ EOF
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 
-			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", *utils.Config.Auth.Email.EnableSignup),
-			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", *utils.Config.Auth.Email.DoubleConfirmChanges),
-			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !*utils.Config.Auth.Email.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
+			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
+			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 
 			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
 			"GOTRUE_SMTP_PORT=2500",
@@ -349,11 +345,50 @@ EOF
 			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
-			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
-			"GOTRUE_SMS_AUTOCONFIRM=true",
+			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
+			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
+			"GOTRUE_SMS_MAX_FREQUENCY=5s",
+			"GOTRUE_SMS_OTP_EXP=6000",
+			"GOTRUE_SMS_OTP_LENGTH=6",
+			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
 
-			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", *utils.Config.Auth.EnableRefreshTokenRotation),
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		}
+
+		if utils.Config.Auth.Sms.Twilio.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=twilio",
+				"GOTRUE_SMS_TWILIO_ACCOUNT_SID="+utils.Config.Auth.Sms.Twilio.AccountSid,
+				"GOTRUE_SMS_TWILIO_AUTH_TOKEN="+utils.Config.Auth.Sms.Twilio.AuthToken,
+				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
+			)
+		}
+		if utils.Config.Auth.Sms.Messagebird.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=messagebird",
+				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY="+utils.Config.Auth.Sms.Messagebird.AccessKey,
+				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
+			)
+		}
+		if utils.Config.Auth.Sms.Textlocal.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=textlocal",
+				"GOTRUE_SMS_TEXTLOCAL_API_KEY="+utils.Config.Auth.Sms.Textlocal.ApiKey,
+				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
+			)
+		}
+		if utils.Config.Auth.Sms.Vonage.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=vonage",
+				"GOTRUE_SMS_VONAGE_API_KEY="+utils.Config.Auth.Sms.Vonage.ApiKey,
+				"GOTRUE_SMS_VONAGE_API_SECRET="+utils.Config.Auth.Sms.Vonage.ApiSecret,
+				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
+			)
 		}
 
 		for name, config := range utils.Config.Auth.External {
@@ -384,7 +419,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image:        utils.GotrueImage,
+				Image:        utils.Config.Auth.Image,
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
@@ -405,7 +440,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if !isContainerExcluded(utils.InbucketImage, excluded) {
+	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.InbucketImage, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -576,11 +611,11 @@ EOF
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
 			return err
 		}
-		started = append(started, utils.DenoRelayId)
+		started = append(started, utils.EdgeRuntimeId)
 	}
 
 	// Start pg-meta.
-	if !isContainerExcluded(utils.PgmetaImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -611,7 +646,7 @@ EOF
 	}
 
 	// Start Studio.
-	if !isContainerExcluded(utils.StudioImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.StudioImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -620,8 +655,8 @@ EOF
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					fmt.Sprintf("SUPABASE_REST_URL=http://localhost:%v/rest/v1/", utils.Config.Api.Port),
-					fmt.Sprintf("SUPABASE_PUBLIC_URL=http://localhost:%v/", utils.Config.Api.Port),
+					fmt.Sprintf("SUPABASE_REST_URL=%s:%v/rest/v1/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
+					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
@@ -646,12 +681,7 @@ EOF
 		started = append(started, utils.StudioId)
 	}
 
-	if err := waitForServiceReady(ctx, started); err != nil {
-		return err
-	}
-
-	// Setup database after all services are up
-	return start.SetupDatabase(ctx, dbConfig, fsys, os.Stderr, options...)
+	return reset.WaitForServiceReady(ctx, started)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
@@ -668,37 +698,4 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
-}
-
-func waitForServiceReady(ctx context.Context, started []string) error {
-	probe := func() bool {
-		var unhealthy []string
-		for _, container := range started {
-			if !status.IsServiceReady(ctx, container) {
-				unhealthy = append(unhealthy, container)
-			}
-		}
-		started = unhealthy
-		return len(started) == 0
-	}
-	if !reset.RetryEverySecond(ctx, probe, 30*time.Second) {
-		// Print container logs for easier debugging
-		for _, container := range started {
-			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-			})
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				continue
-			}
-			fmt.Fprintln(os.Stderr, container, "container logs:")
-			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-			}
-			logs.Close()
-		}
-		return fmt.Errorf("%w: %v", errUnhealthy, started)
-	}
-	return nil
 }

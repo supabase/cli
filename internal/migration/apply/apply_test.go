@@ -33,9 +33,11 @@ func TestMigrateDatabase(t *testing.T) {
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
 			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", fmt.Sprintf("{%s}", sql)).
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 1")
 		// Connect to mock
 		ctx := context.Background()
@@ -60,7 +62,6 @@ func TestMigrateDatabase(t *testing.T) {
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
-
 }
 
 func TestMigrateUp(t *testing.T) {
@@ -74,7 +75,8 @@ func TestMigrateUp(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(repair.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(repair.ADD_STATEMENTS_COLUMN)
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Query(repair.ADD_NAME_COLUMN)
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
@@ -97,6 +99,8 @@ func TestMigrateUp(t *testing.T) {
 			Query(repair.CREATE_VERSION_TABLE).
 			Reply("CREATE TABLE").
 			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
 			Reply("ALTER TABLE")
 		// Connect to mock
 		ctx := context.Background()

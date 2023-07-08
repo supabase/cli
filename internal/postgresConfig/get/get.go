@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
+
 	"github.com/charmbracelet/glamour"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"io"
-	"strings"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {

@@ -15,9 +15,8 @@ import (
 // Equal to `startBufSize` from `bufio/scan.go`
 const startBufSize = 4096
 
-// Default max capacity is 64 * 1024 which is not enough for certain lines
-// containing e.g. geographical data.
-// 256K ought to be enough for anybody...
+// MaxScannerCapacity defaults to 64 * 1024 which is not enough for certain lines
+// containing e.g. geographical data. 256K ought to be enough for anybody...
 var MaxScannerCapacity = 256 * 1024
 
 // State transition table for tokenizer:
@@ -90,7 +89,7 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 	if maxbuf == 0 {
 		maxbuf = MaxScannerCapacity
 	}
-	scanner.Buffer(buf, int(maxbuf))
+	scanner.Buffer(buf, maxbuf)
 	scanner.Split(t.ScanToken)
 
 	var token string

@@ -3,6 +3,7 @@ package stop
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -92,7 +93,7 @@ func TestStopServices(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
 		// Run test
-		err := stop(context.Background(), true)
+		err := stop(context.Background(), true, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -102,7 +103,7 @@ func TestStopServices(t *testing.T) {
 		utils.DbId = "test-db"
 		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
-		utils.DenoRelayId = "test-functions"
+		utils.EdgeRuntimeId = "test-functions"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -124,14 +125,14 @@ func TestStopServices(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.StorageId).
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DenoRelayId).
+			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.EdgeRuntimeId).
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
 		// Run test
-		err := stop(context.Background(), false)
+		err := stop(context.Background(), false, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -149,7 +150,7 @@ func TestStopServices(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := stop(context.Background(), true)
+		err := stop(context.Background(), true, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

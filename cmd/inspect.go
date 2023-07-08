@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/inspect/cache"
-	"github.com/supabase/cli/internal/inspect/replication_slots"
 	"github.com/supabase/cli/internal/inspect/index_usage"
+	"github.com/supabase/cli/internal/inspect/replication_slots"
 )
 
 var (
