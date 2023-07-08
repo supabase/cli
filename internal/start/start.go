@@ -238,6 +238,14 @@ EOF
 					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
 					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
 				},
+				// Original entrypoint conflicts with healthcheck due to 15 seconds sleep:
+				// https://github.com/Logflare/logflare/blob/staging/run.sh#L35
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > run.sh && sh run.sh
+./logflare eval Logflare.Release.migrate
+export RELEASE_COOKIE=$(cat /tmp/.magic_cookie 2>/dev/null || echo $RANDOM | md5sum | head -c 20)
+./logflare start --sname logflare
+EOF
+`},
 				Healthcheck: &container.HealthConfig{
 					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
 					Interval:    2 * time.Second,
