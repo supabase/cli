@@ -31,7 +31,7 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.66.3"
-	StudioImage      = "supabase/studio:20230621-7a24ddd"
+	StudioImage      = "supabase/studio:v0.23.06"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.5.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
@@ -40,7 +40,7 @@ const (
 	GotrueImage   = "supabase/gotrue:v2.62.1"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.40.4"
-	LogflareImage = "supabase/logflare:1.0.2"
+	LogflareImage = "supabase/logflare:1.3.17"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
 )
