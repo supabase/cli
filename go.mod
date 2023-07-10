@@ -11,7 +11,7 @@ require (
 	github.com/containers/common v0.55.1
 	github.com/deepmap/oapi-codegen v1.13.0
 	github.com/docker/cli v24.0.4+incompatible
-	github.com/docker/docker v24.0.3+incompatible
+	github.com/docker/docker v24.0.4+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/go-git/go-git/v5 v5.7.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
