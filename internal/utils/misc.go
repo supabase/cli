@@ -35,9 +35,10 @@ const (
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.5.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
+	GotrueEmailImage = "silentworks/gotrue-email:v0.0.2"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.62.1"
+	GotrueImage   = "supabase/gotrue:v2.82.0"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.40.4"
 	LogflareImage = "supabase/logflare:1.0.2"
@@ -47,6 +48,7 @@ const (
 
 var ServiceImages = []string{
 	GotrueImage,
+	GotrueEmailImage,
 	RealtimeImage,
 	StorageImage,
 	ImageProxyImage,
@@ -168,6 +170,7 @@ var (
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
+	EmailTemplatesDir     = filepath.Join(SupabaseDirPath, "templates")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
