@@ -24,6 +24,7 @@ var (
 	ConfigId      string
 	KongId        string
 	GotrueId      string
+	GotrueEmailId string
 	InbucketId    string
 	RealtimeId    string
 	RestId        string
@@ -285,6 +286,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			ConfigId = "supabase_config_" + Config.ProjectId
 			KongId = "supabase_kong_" + Config.ProjectId
 			GotrueId = "supabase_auth_" + Config.ProjectId
+			GotrueEmailId = "supabase_email_templates_" + Config.ProjectId
 			InbucketId = "supabase_inbucket_" + Config.ProjectId
 			RealtimeId = "realtime-dev.supabase_realtime_" + Config.ProjectId
 			RestId = "supabase_rest_" + Config.ProjectId

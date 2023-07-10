@@ -351,6 +351,11 @@ EOF
 			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
 			"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
 			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_INVITE=http://%s:8088/invite", utils.GotrueEmailId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://%s:8088/confirmation", utils.GotrueEmailId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_RECOVERY=http://%s:8088/recovery", utils.GotrueEmailId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=http://%s:8088/magic-link", utils.GotrueEmailId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE=http://%s:8088/email-change", utils.GotrueEmailId),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -439,12 +444,49 @@ EOF
 			},
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				ExtraHosts:    []string{"host.docker.internal:host-gateway"},
 			}),
 			utils.GotrueId,
 		); err != nil {
 			return err
 		}
 		started = append(started, utils.GotrueId)
+	}
+
+	// Start Gotrue Email template server
+	if !isContainerExcluded(utils.GotrueEmailImage, excluded) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		env := []string{
+			"GOTRUE_MAILER_TEMPLATES_RECOVERY=/home/templates/recovery.html",
+			"GOTRUE_MAILER_TEMPLATES_INVITE=/home/templates/invite.html",
+			"GOTRUE_MAILER_TEMPLATES_CONFIRMATION=/home/templates/confirmation.html",
+			"GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=/home/templates/magic-link.html",
+			"GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE=/home/templates/email-change.html",
+		}
+
+		binds := []string{
+			filepath.Join(cwd, utils.EmailTemplatesDir) + ":/home/templates:rw,z",
+		}
+
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.GotrueEmailImage,
+				Env:   env,
+			},
+			container.HostConfig{
+				Binds:         binds,
+				PortBindings:  nat.PortMap{"8088/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(54330), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.GotrueEmailId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.GotrueEmailId)
 	}
 
 	// Start Inbucket.
