@@ -33,12 +33,12 @@ WHERE NOT bl.granted
 `
 
 type BlockingResult struct {
-	Blocked_pid  string
+	Blocked_pid        string
 	Blocking_statement string
-	Blocking_duration string
-	Blocking_pid string
-	Blocked_statement string
-	Blocked_duration string
+	Blocking_duration  string
+	Blocking_pid       string
+	Blocked_statement  string
+	Blocked_duration   string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -59,13 +59,13 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	for _, r := range result {
 		// remove whitespace from query
 		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
-		blocking_statement := re.ReplaceAllString(r.Query, " ")
+		blocking_statement := re.ReplaceAllString(r.Blocking_statement, " ")
 		blocked_statement := re.ReplaceAllString(r.Blocked_statement, " ")
 
 		// escape pipes in query
 		re = regexp.MustCompile(`\|`)
-		blocking_statement := re.ReplaceAllString(r.Blocking_statement, `\|`)
-		blocked_statement := re.ReplaceAllString(r.Blocked_statement, `\|`)
+		blocking_statement = re.ReplaceAllString(r.Blocking_statement, `\|`)
+		blocked_statement = re.ReplaceAllString(r.Blocked_statement, `\|`)
 		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
 	return list.RenderTable(table)
