@@ -14,6 +14,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/table_index_sizes"
 	"github.com/supabase/cli/internal/inspect/table_sizes"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
 )
@@ -159,6 +160,19 @@ var (
 			return table_sizes.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectTableIndexSizesCmd = &cobra.Command{
+		Use:   "table-index-sizes",
+		Short: "Shows index sizes of individual tables",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return table_index_sizes.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -175,5 +189,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
 	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableSizesCmd)
+	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
