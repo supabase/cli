@@ -6,13 +6,14 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
-	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/index_usage"
 	"github.com/supabase/cli/internal/inspect/locks"
-	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/outliers"
-	"github.com/supabase/cli/internal/inspect/calls"
+	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/total_index_size"
 )
 
 var (
@@ -23,8 +24,8 @@ var (
 	}
 
 	inspectDBCmd = &cobra.Command{
-		Use:     "db",
-		Short:   "Tools to inspect your Supabase ds",
+		Use:   "db",
+		Short: "Tools to inspect your Supabase ds",
 	}
 
 	inspectCacheHitCmd = &cobra.Command{
@@ -117,6 +118,19 @@ var (
 			return calls.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectTotalIndexSizeCmd = &cobra.Command{
+		Use:   "total-index-size",
+		Short: "Shows total size of all indexes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return total_index_size.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -130,5 +144,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	inspectDBCmd.AddCommand(inspectCallsCmd)
+	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
