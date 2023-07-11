@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/replication_slots"
 	"github.com/supabase/cli/internal/inspect/seq_scans"
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
+	"github.com/supabase/cli/internal/inspect/table_record_counts"
 	"github.com/supabase/cli/internal/inspect/table_sizes"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
 	"github.com/supabase/cli/internal/inspect/total_table_sizes"
@@ -229,6 +230,19 @@ var (
 			return long_running_queries.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectTableRecordCountsCmd = &cobra.Command{
+		Use:   "table-record-counts",
+		Short: "Show estimated number of rows per table",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return table_record_counts.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -250,5 +264,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectUnusedIndexesCmd)
 	inspectDBCmd.AddCommand(inspectSeqScansCmd)
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
+	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
