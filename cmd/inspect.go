@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/table_sizes"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
 	"github.com/supabase/cli/internal/inspect/total_table_sizes"
+	"github.com/supabase/cli/internal/inspect/unused_indexes"
 )
 
 var (
@@ -187,6 +188,19 @@ var (
 			return total_table_sizes.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectUnusedIndexesCmd = &cobra.Command{
+		Use:   "unused-indexes",
+		Short: "Show indexes with low usage",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return unused_indexes.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -205,5 +219,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
+	inspectDBCmd.AddCommand(inspectUnusedIndexesCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
