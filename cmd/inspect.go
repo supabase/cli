@@ -9,6 +9,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
 	"github.com/supabase/cli/internal/inspect/calls"
+	"github.com/supabase/cli/internal/inspect/index_sizes"
 	"github.com/supabase/cli/internal/inspect/index_usage"
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/outliers"
@@ -131,6 +132,19 @@ var (
 			return total_index_size.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectIndexSizesCmd = &cobra.Command{
+		Use:   "index-sizes",
+		Short: "Shows total size of all indexes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return index_sizes.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -145,5 +159,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	inspectDBCmd.AddCommand(inspectCallsCmd)
 	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
+	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
