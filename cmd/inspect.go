@@ -23,6 +23,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/total_index_size"
 	"github.com/supabase/cli/internal/inspect/total_table_sizes"
 	"github.com/supabase/cli/internal/inspect/unused_indexes"
+	"github.com/supabase/cli/internal/inspect/vacuum_stats"
 )
 
 var (
@@ -257,6 +258,19 @@ var (
 			return bloat.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectVacuumStatsCmd = &cobra.Command{
+		Use:   "vacuum-stats",
+		Short: "Shows statistics related to vacuum operations per table",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return vacuum_stats.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -280,5 +294,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
 	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
+	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
