@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
 	"github.com/supabase/cli/internal/inspect/calls"
@@ -243,6 +244,19 @@ var (
 			return table_record_counts.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectBloatCmd = &cobra.Command{
+		Use:   "bloat",
+		Short: "Estimates space allocated to a relation that is full of dead tuples",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return bloat.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -265,5 +279,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectSeqScansCmd)
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
 	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
+	inspectDBCmd.AddCommand(inspectBloatCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
