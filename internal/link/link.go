@@ -178,7 +178,7 @@ func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys af
 	if err := dec.Decode(&data); err != nil {
 		return err
 	}
- if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err
 	}
 	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(data.Version), 0644)
