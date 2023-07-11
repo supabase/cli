@@ -12,8 +12,10 @@ import (
 	"github.com/supabase/cli/internal/inspect/index_sizes"
 	"github.com/supabase/cli/internal/inspect/index_usage"
 	"github.com/supabase/cli/internal/inspect/locks"
+	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/seq_scans"
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
 	"github.com/supabase/cli/internal/inspect/table_sizes"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
@@ -201,6 +203,32 @@ var (
 			return unused_indexes.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectSeqScansCmd = &cobra.Command{
+		Use:   "seq-scans",
+		Short: "Show number of sequential scans recorded against all tables",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return seq_scans.Run(ctx, dbConfig, fsys)
+		},
+	}
+
+	inspectLongRunningQueriesCmd = &cobra.Command{
+		Use:   "long-running-queries",
+		Short: "Show currently running queries running for longer than 5 minutes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return long_running_queries.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -220,5 +248,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
 	inspectDBCmd.AddCommand(inspectUnusedIndexesCmd)
+	inspectDBCmd.AddCommand(inspectSeqScansCmd)
+	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
