@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
 	"github.com/supabase/cli/internal/inspect/table_sizes"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
+	"github.com/supabase/cli/internal/inspect/total_table_sizes"
 )
 
 var (
@@ -150,7 +151,7 @@ var (
 
 	inspectTableSizesCmd = &cobra.Command{
 		Use:   "table-sizes",
-		Short: "Shows table sizes of individual tables",
+		Short: "Shows table sizes of individual tables without their index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -173,6 +174,19 @@ var (
 			return table_index_sizes.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectTotalTableSizesCmd = &cobra.Command{
+		Use:   "total-table-sizes",
+		Short: "Shows total table sizes, including table index sizes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return total_table_sizes.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -190,5 +204,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
+	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
