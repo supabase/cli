@@ -51,6 +51,7 @@ func NewContainerConfig() container.Config {
 			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
+			"POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8",
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
