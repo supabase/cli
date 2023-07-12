@@ -41,7 +41,7 @@ var (
 
 	inspectCacheHitCmd = &cobra.Command{
 		Use:   "cache-hit",
-		Short: "Shows cache hit rates for tables and indices",
+		Short: "Show cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -54,7 +54,7 @@ var (
 
 	inspectReplicationSlotsCmd = &cobra.Command{
 		Use:   "replication-slots",
-		Short: "Shows information about replication slots on the database",
+		Short: "Show information about replication slots on the database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -67,7 +67,7 @@ var (
 
 	inspectIndexUsageCmd = &cobra.Command{
 		Use:   "index-usage",
-		Short: "Shows information about the efficiency of indexes",
+		Short: "Show information about the efficiency of indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -80,7 +80,7 @@ var (
 
 	inspectLocksCmd = &cobra.Command{
 		Use:   "locks",
-		Short: "Shows queries which have taken out an exclusive lock on a relation",
+		Short: "Show queries which have taken out an exclusive lock on a relation",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -93,7 +93,7 @@ var (
 
 	inspectBlockingCmd = &cobra.Command{
 		Use:   "blocking",
-		Short: "Shows queries that are holding locks and the queries that are waiting for them to be released",
+		Short: "Show queries that are holding locks and the queries that are waiting for them to be released",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -106,7 +106,7 @@ var (
 
 	inspectOutliersCmd = &cobra.Command{
 		Use:   "outliers",
-		Short: "Shows queries from pg_stat_statements ordered by total execution time",
+		Short: "Show queries from pg_stat_statements ordered by total execution time",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -119,7 +119,7 @@ var (
 
 	inspectCallsCmd = &cobra.Command{
 		Use:   "calls",
-		Short: "Shows queries from pg_stat_statements ordered by total times called",
+		Short: "Show queries from pg_stat_statements ordered by total times called",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -132,7 +132,7 @@ var (
 
 	inspectTotalIndexSizeCmd = &cobra.Command{
 		Use:   "total-index-size",
-		Short: "Shows total size of all indexes",
+		Short: "Show total size of all indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -145,7 +145,7 @@ var (
 
 	inspectIndexSizesCmd = &cobra.Command{
 		Use:   "index-sizes",
-		Short: "Shows index sizes of individual indexes",
+		Short: "Show index sizes of individual indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -158,7 +158,7 @@ var (
 
 	inspectTableSizesCmd = &cobra.Command{
 		Use:   "table-sizes",
-		Short: "Shows table sizes of individual tables without their index sizes",
+		Short: "Show table sizes of individual tables without their index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -171,7 +171,7 @@ var (
 
 	inspectTableIndexSizesCmd = &cobra.Command{
 		Use:   "table-index-sizes",
-		Short: "Shows index sizes of individual tables",
+		Short: "Show index sizes of individual tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -184,7 +184,7 @@ var (
 
 	inspectTotalTableSizesCmd = &cobra.Command{
 		Use:   "total-table-sizes",
-		Short: "Shows total table sizes, including table index sizes",
+		Short: "Show total table sizes, including table index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {
@@ -262,7 +262,7 @@ var (
 
 	inspectVacuumStatsCmd = &cobra.Command{
 		Use:   "vacuum-stats",
-		Short: "Shows statistics related to vacuum operations per table",
+		Short: "Show statistics related to vacuum operations per table",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if err := parseDatabaseConfig(fsys); err != nil {

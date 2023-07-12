@@ -3,6 +3,7 @@ package vacuum_stats
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -51,7 +52,12 @@ SELECT
 FROM
   pg_stat_user_tables psut INNER JOIN pg_class ON psut.relid = pg_class.oid
 INNER JOIN vacuum_settings ON pg_class.oid = vacuum_settings.oid
-ORDER BY 1`
+ORDER BY
+  case
+    when pg_class.reltuples = -1 then 1
+    else 0
+  end,
+  1`
 
 type Result struct {
 	Schema               string
@@ -80,7 +86,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|Schema|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Schema, r.Table, r.Last_vacuum, r.Last_autovacuum, r.Rowcount, r.Dead_rowcount, r.Expect_autovacuum)
+		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
+		table += fmt.Sprintf("|`%s`|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Schema, r.Table, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
 	}
 	return list.RenderTable(table)
 }

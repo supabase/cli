@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const INDEX_USAGE_QUERY = `
+const QUERY = `
 SELECT c.relname AS name,
   pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
@@ -23,7 +23,7 @@ AND c.relkind='i'
 GROUP BY c.relname
 ORDER BY sum(c.relpages) DESC;`
 
-type IndexUsageResult struct {
+type Result struct {
 	Name string
 	Size string
 }
@@ -33,11 +33,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, INDEX_USAGE_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[IndexUsageResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}
