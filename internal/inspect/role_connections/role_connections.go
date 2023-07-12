@@ -64,8 +64,16 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 
 	if len(result) > 0 {
-		fmt.Printf("\nActive connections %d/%d\n", sum, result[0].Connection_limit)
+		fmt.Printf("\nActive connections %d/%d\n\n", sum, result[0].Connection_limit)
 	}
+
+	ref, err := utils.LoadProjectRef(fsys)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Go to the dashboard for more here:")
+	fmt.Printf("https://app.supabase.com/project/%s/database/roles\n", ref)
 
 	return nil
 }
