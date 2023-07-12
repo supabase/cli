@@ -16,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/role_connections"
 	"github.com/supabase/cli/internal/inspect/seq_scans"
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
 	"github.com/supabase/cli/internal/inspect/table_record_counts"
@@ -271,6 +272,19 @@ var (
 			return vacuum_stats.Run(ctx, dbConfig, fsys)
 		},
 	}
+
+	inspectRoleConnectionsCmd = &cobra.Command{
+		Use:   "role-connections",
+		Short: "Show number of active connections for all database roles",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return role_connections.Run(ctx, dbConfig, fsys)
+		},
+	}
 )
 
 func init() {
@@ -295,5 +309,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
+	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
