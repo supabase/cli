@@ -23,7 +23,7 @@ var (
 	dumpRoleScript string
 )
 
-func Run(ctx context.Context, path string, config pgconn.Config, schema []string, dataOnly, roleOnly, keepComments, useCopy bool, fsys afero.Fs) error {
+func Run(ctx context.Context, path string, config pgconn.Config, schema []string, dataOnly, roleOnly, keepComments, useCopy, dryRun bool, fsys afero.Fs) error {
 	// Initialise output stream
 	var outStream afero.File
 	if len(path) > 0 {
@@ -39,16 +39,16 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 	// Load the requested script
 	if dataOnly {
 		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
-		return dumpData(ctx, config, schema, useCopy, outStream)
+		return dumpData(ctx, config, schema, useCopy, dryRun, outStream)
 	} else if roleOnly {
 		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
-		return dumpRole(ctx, config, keepComments, outStream)
+		return dumpRole(ctx, config, keepComments, dryRun, outStream)
 	}
 	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
-	return DumpSchema(ctx, config, schema, keepComments, outStream)
+	return DumpSchema(ctx, config, schema, keepComments, dryRun, outStream)
 }
 
-func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments bool, stdout io.Writer) error {
+func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
 	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|")}
 	if len(schema) > 0 {
 		env[0] = "INCLUDED_SCHEMAS=" + strings.Join(schema, "|")
@@ -56,10 +56,10 @@ func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keep
 	if !keepComments {
 		env = append(env, "DELETE_COMMENTS=1")
 	}
-	return dump(ctx, config, dumpSchemaScript, env, stdout)
+	return dump(ctx, config, dumpSchemaScript, env, dryRun, stdout)
 }
 
-func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCopy bool, stdout io.Writer) error {
+func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCopy, dryRun bool, stdout io.Writer) error {
 	// We want to dump user data in auth, storage, etc. for migrating to new project
 	excludedSchemas := append([]string{
 		// "auth",
@@ -79,18 +79,23 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 	if !useCopy {
 		env = append(env, "COLUMN_INSERTS=1")
 	}
-	return dump(ctx, config, dumpDataScript, env, stdout)
+	return dump(ctx, config, dumpDataScript, env, dryRun, stdout)
 }
 
-func dumpRole(ctx context.Context, config pgconn.Config, keepComments bool, stdout io.Writer) error {
+func dumpRole(ctx context.Context, config pgconn.Config, keepComments, dryRun bool, stdout io.Writer) error {
 	env := []string{}
 	if !keepComments {
 		env = append(env, "DELETE_COMMENTS=1")
 	}
-	return dump(ctx, config, dumpRoleScript, env, stdout)
+	return dump(ctx, config, dumpRoleScript, env, dryRun, stdout)
 }
 
-func dump(ctx context.Context, config pgconn.Config, script string, env []string, stdout io.Writer) error {
+func dump(ctx context.Context, config pgconn.Config, script string, env []string, dryRun bool, stdout io.Writer) error {
+	if dryRun {
+		script = `cat <<EOF
+` + strings.ReplaceAll(script, "\\\n", "\\\\\n") + `
+EOF`
+	}
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
