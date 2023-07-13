@@ -16,13 +16,14 @@ set -euo pipefail
 pg_dump \
     --schema-only \
     --quote-all-identifier \
-    --exclude-schema "$EXCLUDED_SCHEMAS" \
+    ${INCLUDED_SCHEMAS:+--schema "$INCLUDED_SCHEMAS"} \
+    --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     --extension '*' \
     --no-comments \
     --dbname "$DB_URL" \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
-| sed -E "s/^GRANT (.+) ON (.+) \"($EXCLUDED_SCHEMAS)\"/-- &/" \
-| sed -E "s/^REVOKE (.+) ON (.+) \"($EXCLUDED_SCHEMAS)\"/-- &/" \
+| sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
+| sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E 's/^CREATE POLICY "cron_job_/-- &/' \
 | sed -E 's/^ALTER TABLE "cron"/-- &/' \
 | sed -E "${DELETE_COMMENTS:+/^--/d}" \

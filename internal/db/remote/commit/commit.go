@@ -74,7 +74,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 		return err
 	} else if len(migrations) == 0 {
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
-		return dump.Run(ctx, path, config, false, false, false, false, fsys)
+		return dump.Run(ctx, path, config, schema, false, false, false, false, fsys)
 	}
 
 	w := utils.StatusWriter{Program: p}
