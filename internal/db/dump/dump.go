@@ -37,6 +37,9 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 		outStream = os.Stdout
 	}
 	// Load the requested script
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
+	}
 	if dataOnly {
 		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
 		return dumpData(ctx, config, schema, useCopy, dryRun, outStream)
