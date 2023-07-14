@@ -252,13 +252,14 @@ type AuthorizationsApproveBody struct {
 
 // BranchDetailResponse defines model for BranchDetailResponse.
 type BranchDetailResponse struct {
-	DbHost    string                     `json:"db_host"`
-	DbPass    string                     `json:"db_pass"`
-	DbPort    float32                    `json:"db_port"`
-	DbUser    string                     `json:"db_user"`
-	JwtSecret string                     `json:"jwt_secret"`
-	Ref       string                     `json:"ref"`
-	Status    BranchDetailResponseStatus `json:"status"`
+	DbHost          string                     `json:"db_host"`
+	DbPass          *string                    `json:"db_pass,omitempty"`
+	DbPort          int                        `json:"db_port"`
+	DbUser          *string                    `json:"db_user,omitempty"`
+	JwtSecret       *string                    `json:"jwt_secret,omitempty"`
+	PostgresVersion string                     `json:"postgres_version"`
+	Ref             string                     `json:"ref"`
+	Status          BranchDetailResponseStatus `json:"status"`
 }
 
 // BranchDetailResponseStatus defines model for BranchDetailResponse.Status.

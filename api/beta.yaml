@@ -1817,7 +1817,11 @@ components:
     BranchDetailResponse:
       type: object
       properties:
+        db_port:
+          type: integer
         ref:
+          type: string
+        postgres_version:
           type: string
         status:
           type: string
@@ -1835,8 +1839,6 @@ components:
             - PAUSING
         db_host:
           type: string
-        db_port:
-          type: number
         db_user:
           type: string
         db_pass:
@@ -1844,13 +1846,11 @@ components:
         jwt_secret:
           type: string
       required:
+        - db_port
         - ref
+        - postgres_version
         - status
         - db_host
-        - db_port
-        - db_user
-        - db_pass
-        - jwt_secret
     UpdateBranchBody:
       type: object
       properties:

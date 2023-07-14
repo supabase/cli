@@ -38,7 +38,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			project.Id,
 			strings.ReplaceAll(project.Name, "|", "\\|"),
 			project.Region,
-			project.CreatedAt,
+			utils.FormatTimestamp(project.CreatedAt),
 		)
 	}
 

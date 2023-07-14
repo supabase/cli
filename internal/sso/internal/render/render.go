@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/go-xmlfmt/xmlfmt"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -43,13 +43,7 @@ func formatTimestamp(timestamp *string) string {
 		return ""
 	}
 
-	t, err := time.Parse(time.RFC3339, *timestamp)
-
-	if err != nil {
-		return *timestamp
-	}
-
-	return t.UTC().Format("2006-01-02 15:04:05")
+	return utils.FormatTimestamp(*timestamp)
 }
 
 func formatDomains(provider api.Provider) string {
