@@ -87,16 +87,19 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 }
 
 func GetGitBranch(fsys afero.Fs) string {
+	return GetGitBranchOrDefault("main", fsys)
+}
+
+func GetGitBranchOrDefault(def string, fsys afero.Fs) string {
 	head := os.Getenv("GITHUB_HEAD_REF")
 	if len(head) > 0 {
 		return head
 	}
-	branch := "main"
 	opts := &git.PlainOpenOptions{DetectDotGit: true}
 	if repo, err := git.PlainOpenWithOptions(".", opts); err == nil {
 		if ref, err := repo.Head(); err == nil {
-			branch = ref.Name().Short()
+			return ref.Name().Short()
 		}
 	}
-	return branch
+	return def
 }
