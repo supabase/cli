@@ -111,7 +111,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, useCopy, fsys)
+			return dump.Run(ctx, file, dbConfig, schema, dataOnly, roleOnly, keepComments, useCopy, dryRun, fsys)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
@@ -247,6 +247,7 @@ func init() {
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
+	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Print the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
@@ -255,6 +256,8 @@ func init() {
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
+	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	dumpFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
