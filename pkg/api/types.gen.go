@@ -15,6 +15,21 @@ const (
 	BearerScopes       = "bearer.Scopes"
 )
 
+// Defines values for BranchDetailResponseStatus.
+const (
+	BranchDetailResponseStatusACTIVEHEALTHY   BranchDetailResponseStatus = "ACTIVE_HEALTHY"
+	BranchDetailResponseStatusACTIVEUNHEALTHY BranchDetailResponseStatus = "ACTIVE_UNHEALTHY"
+	BranchDetailResponseStatusCOMINGUP        BranchDetailResponseStatus = "COMING_UP"
+	BranchDetailResponseStatusGOINGDOWN       BranchDetailResponseStatus = "GOING_DOWN"
+	BranchDetailResponseStatusINACTIVE        BranchDetailResponseStatus = "INACTIVE"
+	BranchDetailResponseStatusINITFAILED      BranchDetailResponseStatus = "INIT_FAILED"
+	BranchDetailResponseStatusPAUSING         BranchDetailResponseStatus = "PAUSING"
+	BranchDetailResponseStatusREMOVED         BranchDetailResponseStatus = "REMOVED"
+	BranchDetailResponseStatusRESTORING       BranchDetailResponseStatus = "RESTORING"
+	BranchDetailResponseStatusUNKNOWN         BranchDetailResponseStatus = "UNKNOWN"
+	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
+)
+
 // Defines values for CreateProjectBodyPlan.
 const (
 	Free CreateProjectBodyPlan = "free"
@@ -85,9 +100,9 @@ const (
 
 // Defines values for FunctionSlugResponseStatus.
 const (
-	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
-	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
-	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
+	ACTIVE    FunctionSlugResponseStatus = "ACTIVE"
+	REMOVED   FunctionSlugResponseStatus = "REMOVED"
+	THROTTLED FunctionSlugResponseStatus = "THROTTLED"
 )
 
 // Defines values for NetworkRestrictionsResponseEntitlement.
@@ -233,6 +248,38 @@ type AttributeValue_Default struct {
 // AuthorizationsApproveBody defines model for AuthorizationsApproveBody.
 type AuthorizationsApproveBody struct {
 	OrganizationId string `json:"organization_id"`
+}
+
+// BranchDetailResponse defines model for BranchDetailResponse.
+type BranchDetailResponse struct {
+	DbHost    string                     `json:"db_host"`
+	DbPass    string                     `json:"db_pass"`
+	DbPort    float32                    `json:"db_port"`
+	DbUser    string                     `json:"db_user"`
+	JwtSecret string                     `json:"jwt_secret"`
+	Ref       string                     `json:"ref"`
+	Status    BranchDetailResponseStatus `json:"status"`
+}
+
+// BranchDetailResponseStatus defines model for BranchDetailResponse.Status.
+type BranchDetailResponseStatus string
+
+// BranchResponse defines model for BranchResponse.
+type BranchResponse struct {
+	CreatedAt  string `json:"created_at"`
+	GitBranch  string `json:"git_branch"`
+	Id         string `json:"id"`
+	IsDefault  bool   `json:"is_default"`
+	Name       string `json:"name"`
+	ProjectRef string `json:"project_ref"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// CreateBranchBody defines model for CreateBranchBody.
+type CreateBranchBody struct {
+	BranchName string  `json:"branch_name"`
+	GitBranch  *string `json:"git_branch,omitempty"`
+	Region     *string `json:"region,omitempty"`
 }
 
 // CreateFunctionBody defines model for CreateFunctionBody.
@@ -477,7 +524,7 @@ type ProjectPgBouncerConfig struct {
 	DbPort                  float32                               `json:"db_port"`
 	DbSsl                   bool                                  `json:"db_ssl"`
 	DbUser                  string                                `json:"db_user"`
-	DefaultPoolSize         float32                               `json:"default_pool_size"`
+	DefaultPoolSize         *float32                              `json:"default_pool_size,omitempty"`
 	IgnoreStartupParameters string                                `json:"ignore_startup_parameters"`
 	InsertedAt              string                                `json:"inserted_at"`
 	MaxClientConn           *float32                              `json:"max_client_conn"`
@@ -548,6 +595,11 @@ type RemoveNetworkBanRequest struct {
 	Ipv4Addresses []string `json:"ipv4_addresses"`
 }
 
+// RunQueryBody defines model for RunQueryBody.
+type RunQueryBody struct {
+	Query string `json:"query"`
+}
+
 // SamlDescriptor defines model for SamlDescriptor.
 type SamlDescriptor struct {
 	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
@@ -589,6 +641,12 @@ type TypescriptResponse struct {
 	Types string `json:"types"`
 }
 
+// UpdateBranchBody defines model for UpdateBranchBody.
+type UpdateBranchBody struct {
+	BranchName *string `json:"branch_name,omitempty"`
+	GitBranch  *string `json:"git_branch,omitempty"`
+}
+
 // UpdateCustomHostnameBody defines model for UpdateCustomHostnameBody.
 type UpdateCustomHostnameBody struct {
 	CustomHostname string `json:"custom_hostname"`
@@ -613,7 +671,7 @@ type UpdateFunctionBody struct {
 
 // UpdatePgbouncerConfigBody defines model for UpdatePgbouncerConfigBody.
 type UpdatePgbouncerConfigBody struct {
-	DefaultPoolSize         int                               `json:"default_pool_size"`
+	DefaultPoolSize         *int                              `json:"default_pool_size,omitempty"`
 	IgnoreStartupParameters string                            `json:"ignore_startup_parameters"`
 	MaxClientConn           *int                              `json:"max_client_conn"`
 	PgbouncerEnabled        bool                              `json:"pgbouncer_enabled"`
@@ -630,7 +688,7 @@ type UpdatePgsodiumConfigBody struct {
 
 // UpdatePoolingConfigResponse defines model for UpdatePoolingConfigResponse.
 type UpdatePoolingConfigResponse struct {
-	DefaultPoolSize         int                                        `json:"default_pool_size"`
+	DefaultPoolSize         *int                                       `json:"default_pool_size,omitempty"`
 	IgnoreStartupParameters string                                     `json:"ignore_startup_parameters"`
 	MaxClientConn           *int                                       `json:"max_client_conn"`
 	PgbouncerEnabled        bool                                       `json:"pgbouncer_enabled"`
@@ -768,6 +826,9 @@ type GetTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
 }
 
+// UpdateBranchJSONRequestBody defines body for UpdateBranch for application/json ContentType.
+type UpdateBranchJSONRequestBody = UpdateBranchBody
+
 // ApproveAuthorizationRequestJSONRequestBody defines body for ApproveAuthorizationRequest for application/json ContentType.
 type ApproveAuthorizationRequestJSONRequestBody = AuthorizationsApproveBody
 
@@ -776,6 +837,9 @@ type CreateOrganizationJSONRequestBody = CreateOrganizationBody
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectBody
+
+// CreateBranchJSONRequestBody defines body for CreateBranch for application/json ContentType.
+type CreateBranchJSONRequestBody = CreateBranchBody
 
 // CreateProviderForProjectJSONRequestBody defines body for CreateProviderForProject for application/json ContentType.
 type CreateProviderForProjectJSONRequestBody = CreateProviderBody
@@ -809,6 +873,9 @@ type UpdatePgsodiumConfigJSONRequestBody = UpdatePgsodiumConfigBody
 
 // UpdatePostgRESTConfigJSONRequestBody defines body for UpdatePostgRESTConfig for application/json ContentType.
 type UpdatePostgRESTConfigJSONRequestBody = UpdatePostgrestConfigBody
+
+// RunQueryJSONRequestBody defines body for RunQuery for application/json ContentType.
+type RunQueryJSONRequestBody = RunQueryBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody

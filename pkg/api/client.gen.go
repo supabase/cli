@@ -89,6 +89,17 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// DeleteBranch request
+	DeleteBranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBranchDetails request
+	GetBranchDetails(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateBranch request with any body
+	UpdateBranchWithBody(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateBranch(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeclineAuthorizationRequest request
 	DeclineAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -124,6 +135,17 @@ type ClientInterface interface {
 
 	// GetProjectApiKeys request
 	GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisableBranch request
+	DisableBranch(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBranches request
+	GetBranches(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBranch request with any body
+	CreateBranchWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateBranch(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAllProviders request
 	ListAllProviders(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -231,6 +253,11 @@ type ClientInterface interface {
 
 	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RunQuery request with any body
+	RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RunQuery(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReadOnlyModeStatus request
 	GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -287,6 +314,54 @@ type ClientInterface interface {
 	CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) DeleteBranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteBranchRequest(c.Server, branchId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBranchDetails(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBranchDetailsRequest(c.Server, branchId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateBranchWithBody(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateBranchRequestWithBody(c.Server, branchId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateBranch(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateBranchRequest(c.Server, branchId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) DeclineAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -435,6 +510,54 @@ func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONReques
 
 func (c *Client) GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectApiKeysRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DisableBranch(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisableBranchRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBranches(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBranchesRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBranchWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBranchRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBranch(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBranchRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -913,6 +1036,30 @@ func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body Upd
 	return c.Client.Do(req)
 }
 
+func (c *Client) RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunQueryRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunQuery(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunQueryRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadOnlyModeStatusRequest(c.Server, ref)
 	if err != nil {
@@ -1163,6 +1310,121 @@ func (c *Client) CheckVanitySubdomainAvailability(ctx context.Context, ref strin
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewDeleteBranchRequest generates requests for DeleteBranch
+func NewDeleteBranchRequest(server string, branchId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBranchDetailsRequest generates requests for GetBranchDetails
+func NewGetBranchDetailsRequest(server string, branchId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateBranchRequest calls the generic UpdateBranch builder with application/json body
+func NewUpdateBranchRequest(server string, branchId string, body UpdateBranchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateBranchRequestWithBody(server, branchId, "application/json", bodyReader)
+}
+
+// NewUpdateBranchRequestWithBody generates requests for UpdateBranch with any type of body
+func NewUpdateBranchRequestWithBody(server string, branchId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
 }
 
 // NewDeclineAuthorizationRequestRequest generates requests for DeclineAuthorizationRequest
@@ -1722,6 +1984,121 @@ func NewGetProjectApiKeysRequest(server string, ref string) (*http.Request, erro
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewDisableBranchRequest generates requests for DisableBranch
+func NewDisableBranchRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/branches", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBranchesRequest generates requests for GetBranches
+func NewGetBranchesRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/branches", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBranchRequest calls the generic CreateBranch builder with application/json body
+func NewCreateBranchRequest(server string, ref string, body CreateBranchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateBranchRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCreateBranchRequestWithBody generates requests for CreateBranch with any type of body
+func NewCreateBranchRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/branches", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3074,6 +3451,53 @@ func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentT
 	return req, nil
 }
 
+// NewRunQueryRequest calls the generic RunQuery builder with application/json body
+func NewRunQueryRequest(server string, ref string, body RunQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRunQueryRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewRunQueryRequestWithBody generates requests for RunQuery with any type of body
+func NewRunQueryRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReadOnlyModeStatusRequest generates requests for GetReadOnlyModeStatus
 func NewGetReadOnlyModeStatusRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -3727,6 +4151,17 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// DeleteBranch request
+	DeleteBranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*DeleteBranchResponse, error)
+
+	// GetBranchDetails request
+	GetBranchDetailsWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*GetBranchDetailsResponse, error)
+
+	// UpdateBranch request with any body
+	UpdateBranchWithBodyWithResponse(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error)
+
+	UpdateBranchWithResponse(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error)
+
 	// DeclineAuthorizationRequest request
 	DeclineAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeclineAuthorizationRequestResponse, error)
 
@@ -3762,6 +4197,17 @@ type ClientWithResponsesInterface interface {
 
 	// GetProjectApiKeys request
 	GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetProjectApiKeysResponse, error)
+
+	// DisableBranch request
+	DisableBranchWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*DisableBranchResponse, error)
+
+	// GetBranches request
+	GetBranchesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBranchesResponse, error)
+
+	// CreateBranch request with any body
+	CreateBranchWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBranchResponse, error)
+
+	CreateBranchWithResponse(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBranchResponse, error)
 
 	// ListAllProviders request
 	ListAllProvidersWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListAllProvidersResponse, error)
@@ -3869,6 +4315,11 @@ type ClientWithResponsesInterface interface {
 
 	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
+	// RunQuery request with any body
+	RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunQueryResponse, error)
+
+	RunQueryWithResponse(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunQueryResponse, error)
+
 	// GetReadOnlyModeStatus request
 	GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error)
 
@@ -3925,6 +4376,71 @@ type ClientWithResponsesInterface interface {
 	CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
 
 	CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
+}
+
+type DeleteBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBranchDetailsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BranchDetailResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBranchDetailsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBranchDetailsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BranchResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type DeclineAuthorizationRequestResponse struct {
@@ -4137,6 +4653,71 @@ func (r GetProjectApiKeysResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetProjectApiKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DisableBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r DisableBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisableBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBranchesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]BranchResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBranchesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBranchesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *BranchResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBranchResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4755,6 +5336,28 @@ func (r UpdatePostgRESTConfigResponse) StatusCode() int {
 	return 0
 }
 
+type RunQueryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r RunQueryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunQueryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReadOnlyModeStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5081,6 +5684,41 @@ func (r CheckVanitySubdomainAvailabilityResponse) StatusCode() int {
 	return 0
 }
 
+// DeleteBranchWithResponse request returning *DeleteBranchResponse
+func (c *ClientWithResponses) DeleteBranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*DeleteBranchResponse, error) {
+	rsp, err := c.DeleteBranch(ctx, branchId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteBranchResponse(rsp)
+}
+
+// GetBranchDetailsWithResponse request returning *GetBranchDetailsResponse
+func (c *ClientWithResponses) GetBranchDetailsWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*GetBranchDetailsResponse, error) {
+	rsp, err := c.GetBranchDetails(ctx, branchId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBranchDetailsResponse(rsp)
+}
+
+// UpdateBranchWithBodyWithResponse request with arbitrary body returning *UpdateBranchResponse
+func (c *ClientWithResponses) UpdateBranchWithBodyWithResponse(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error) {
+	rsp, err := c.UpdateBranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateBranchResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateBranchWithResponse(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error) {
+	rsp, err := c.UpdateBranch(ctx, branchId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateBranchResponse(rsp)
+}
+
 // DeclineAuthorizationRequestWithResponse request returning *DeclineAuthorizationRequestResponse
 func (c *ClientWithResponses) DeclineAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeclineAuthorizationRequestResponse, error) {
 	rsp, err := c.DeclineAuthorizationRequest(ctx, id, reqEditors...)
@@ -5193,6 +5831,41 @@ func (c *ClientWithResponses) GetProjectApiKeysWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseGetProjectApiKeysResponse(rsp)
+}
+
+// DisableBranchWithResponse request returning *DisableBranchResponse
+func (c *ClientWithResponses) DisableBranchWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*DisableBranchResponse, error) {
+	rsp, err := c.DisableBranch(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisableBranchResponse(rsp)
+}
+
+// GetBranchesWithResponse request returning *GetBranchesResponse
+func (c *ClientWithResponses) GetBranchesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBranchesResponse, error) {
+	rsp, err := c.GetBranches(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBranchesResponse(rsp)
+}
+
+// CreateBranchWithBodyWithResponse request with arbitrary body returning *CreateBranchResponse
+func (c *ClientWithResponses) CreateBranchWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBranchResponse, error) {
+	rsp, err := c.CreateBranchWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBranchResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateBranchWithResponse(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBranchResponse, error) {
+	rsp, err := c.CreateBranch(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBranchResponse(rsp)
 }
 
 // ListAllProvidersWithResponse request returning *ListAllProvidersResponse
@@ -5535,6 +6208,23 @@ func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Cont
 	return ParseUpdatePostgRESTConfigResponse(rsp)
 }
 
+// RunQueryWithBodyWithResponse request with arbitrary body returning *RunQueryResponse
+func (c *ClientWithResponses) RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunQueryResponse, error) {
+	rsp, err := c.RunQueryWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunQueryResponse(rsp)
+}
+
+func (c *ClientWithResponses) RunQueryWithResponse(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunQueryResponse, error) {
+	rsp, err := c.RunQuery(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunQueryResponse(rsp)
+}
+
 // GetReadOnlyModeStatusWithResponse request returning *GetReadOnlyModeStatusResponse
 func (c *ClientWithResponses) GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error) {
 	rsp, err := c.GetReadOnlyModeStatus(ctx, ref, reqEditors...)
@@ -5716,6 +6406,74 @@ func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithResponse(ctx c
 		return nil, err
 	}
 	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
+}
+
+// ParseDeleteBranchResponse parses an HTTP response from a DeleteBranchWithResponse call
+func ParseDeleteBranchResponse(rsp *http.Response) (*DeleteBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetBranchDetailsResponse parses an HTTP response from a GetBranchDetailsWithResponse call
+func ParseGetBranchDetailsResponse(rsp *http.Response) (*GetBranchDetailsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBranchDetailsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateBranchResponse parses an HTTP response from a UpdateBranchWithResponse call
+func ParseUpdateBranchResponse(rsp *http.Response) (*UpdateBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseDeclineAuthorizationRequestResponse parses an HTTP response from a DeclineAuthorizationRequestWithResponse call
@@ -5929,6 +6687,74 @@ func ParseGetProjectApiKeysResponse(rsp *http.Response) (*GetProjectApiKeysRespo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDisableBranchResponse parses an HTTP response from a DisableBranchWithResponse call
+func ParseDisableBranchResponse(rsp *http.Response) (*DisableBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisableBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetBranchesResponse parses an HTTP response from a GetBranchesWithResponse call
+func ParseGetBranchesResponse(rsp *http.Response) (*GetBranchesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBranchesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []BranchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBranchResponse parses an HTTP response from a CreateBranchWithResponse call
+func ParseCreateBranchResponse(rsp *http.Response) (*CreateBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BranchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 
@@ -6617,6 +7443,32 @@ func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTCon
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunQueryResponse parses an HTTP response from a RunQueryWithResponse call
+func ParseRunQueryResponse(rsp *http.Response) (*RunQueryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunQueryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 
