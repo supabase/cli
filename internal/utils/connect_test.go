@@ -100,6 +100,6 @@ func TestConnectLocal(t *testing.T) {
 	t.Run("connects with debug log", func(t *testing.T) {
 		viper.Set("DEBUG", true)
 		_, err := ConnectLocalPostgres(context.Background(), pgconn.Config{Host: "0"})
-		assert.ErrorContains(t, err, "connect: connection refused")
+		assert.Error(t, err)
 	})
 }

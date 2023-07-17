@@ -40,6 +40,13 @@ npm i supabase@beta --save-dev
   brew install supabase/tap/supabase
   ```
 
+  To install the beta release channel:
+  
+  ```sh
+  brew install supabase/tap/supabase-beta
+  brew link --overwrite supabase-beta
+  ```
+  
   To upgrade:
 
   ```sh
@@ -147,7 +154,7 @@ The CLI is a WIP and we're still exploring the design, so expect a lot of breaki
 To run from source:
 
 ```sh
-# Go >= 1.18
+# Go >= 1.20
 go run . help
 ```
 

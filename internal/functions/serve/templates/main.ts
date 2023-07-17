@@ -60,6 +60,15 @@ async function verifyJWT(jwt: string): Promise<boolean> {
 serve(async (req: Request) => {
   const url = new URL(req.url);
   const { pathname } = url;
+
+  // handle health checks
+  if (pathname === "/_internal/health") {
+    return new Response(
+      JSON.stringify({ "message": "ok" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
   const pathParts = pathname.split("/");
   const functionName = pathParts[1];
 
@@ -91,7 +100,7 @@ serve(async (req: Request) => {
   console.error(`serving the request with ${servicePath}`);
 
   const memoryLimitMb = 150;
-  const workerTimeoutMs = 1 * 60 * 5000;
+  const workerTimeoutMs = 5 * 60 * 1000;
   const noModuleCache = false;
   const envVarsObj = Deno.env.toObject();
   const envVars = Object.entries(envVarsObj)
@@ -99,6 +108,10 @@ serve(async (req: Request) => {
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
   const forceCreate = true;
+  const customModuleRoot = ""; // empty string to allow any local path
+  const cpuTimeThresholdMs = 50;
+  const cpuBurstIntervalMs = 100;
+  const maxCpuBursts = 10;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
@@ -108,6 +121,10 @@ serve(async (req: Request) => {
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
       forceCreate,
+      customModuleRoot,
+      cpuTimeThresholdMs,
+      cpuBurstIntervalMs,
+      maxCpuBursts,
     });
     return await worker.fetch(req);
   } catch (e) {

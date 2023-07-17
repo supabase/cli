@@ -9,13 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	podman "github.com/containers/common/libnetwork/types"
+	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
 	dockerConfig "github.com/docker/cli/cli/config"
+	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -27,20 +31,18 @@ import (
 	"github.com/spf13/viper"
 )
 
-// TODO: refactor to initialise lazily
 var Docker = NewDocker()
 
 func NewDocker() *client.Client {
-	docker, err := client.NewClientWithOpts(
-		client.WithAPIVersionNegotiation(),
-		// Support env (e.g. for mock setup or rootless docker)
-		client.FromEnv,
-	)
+	// TODO: refactor to initialise lazily
+	cli, err := command.NewDockerCli()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to initialize Docker client:", err)
-		os.Exit(1)
+		log.Fatalln("Failed to create Docker client:", err)
 	}
-	return docker
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}); err != nil {
+		log.Fatalln("Failed to initialize Docker client:", err)
+	}
+	return cli.Client().(*client.Client)
 }
 
 func AssertDockerIsRunning(ctx context.Context) error {
@@ -64,7 +66,7 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 		},
 	)
 	// if error is network already exists, no need to propagate to user
-	if errdefs.IsConflict(err) {
+	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
 	}
 	return err
@@ -97,27 +99,29 @@ var (
 	Volumes    []string
 )
 
-func WaitAll(containers []string, exec func(container string)) {
+func WaitAll(containers []string, exec func(container string) error) []error {
 	var wg sync.WaitGroup
-	for _, container := range containers {
+	result := make([]error, len(containers))
+	for i, container := range containers {
 		wg.Add(1)
-		go func(container string) {
+		go func(i int, container string) {
 			defer wg.Done()
-			exec(container)
-		}(container)
+			result[i] = exec(container)
+		}(i, container)
 	}
 	wg.Wait()
+	return result
 }
 
 func DockerRemoveAll(ctx context.Context) {
-	WaitAll(Containers, func(container string) {
-		_ = Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
+	_ = WaitAll(Containers, func(container string) error {
+		return Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		})
 	})
-	WaitAll(Volumes, func(name string) {
-		_ = Docker.VolumeRemove(ctx, name, true)
+	_ = WaitAll(Volumes, func(name string) error {
+		return Docker.VolumeRemove(ctx, name, true)
 	})
 	_ = Docker.NetworkRemove(ctx, NetId)
 }
@@ -240,12 +244,6 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
-func DockerStop(containerID string) {
-	if err := Docker.ContainerStop(context.Background(), containerID, container.StopOptions{}); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to stop container:", containerID, err)
-	}
-}
-
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
@@ -360,15 +358,16 @@ func DockerExecOnce(ctx context.Context, container string, env []string, cmd []s
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerExecOnceWithStream(ctx, container, env, cmd, &out, stderr)
+	err := DockerExecOnceWithStream(ctx, container, "", env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerExecOnceWithStream(ctx context.Context, container string, env, cmd []string, stdout, stderr io.Writer) error {
+func DockerExecOnceWithStream(ctx context.Context, container, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
 	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
 		Env:          env,
 		Cmd:          cmd,
+		WorkingDir:   workdir,
 		AttachStderr: true,
 		AttachStdout: true,
 	})

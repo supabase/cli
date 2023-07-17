@@ -3,6 +3,7 @@ package diff
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -32,8 +34,6 @@ var dbConfig = pgconn.Config{
 
 func TestRunMigra(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg15Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -46,16 +46,16 @@ func TestRunMigra(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-shadow-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg15Sql).
-			Reply("CREATE SCHEMA")
 		// Run test
 		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -135,6 +135,42 @@ func TestRunMigra(t *testing.T) {
 }
 
 func TestMigrateShadow(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
+	t.Run("migrates shadow database", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaSql = "create schema private"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		sql := "create schema test"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaSql).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
+		// Run test
+		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on timeout", func(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		// Setup in-memory fs
@@ -143,9 +179,18 @@ func TestMigrateShadow(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		// Run test
-		err := MigrateShadowDatabase(ctx, fsys)
+		err := MigrateShadowDatabase(ctx, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation was canceled")
+	})
+
+	t.Run("throws error on permission denied", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Run test
+		err := MigrateShadowDatabase(context.Background(), "", fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
 	t.Run("throws error on globals schema", func(t *testing.T) {
@@ -159,33 +204,15 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
-	})
-
-	t.Run("throws error on initial schema", func(t *testing.T) {
-		utils.Config.Db.ShadowPort = 54320
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaSql = "create schema private"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
-		// Run test
-		err := MigrateShadowDatabase(context.Background(), fsys, conn.Intercept)
+		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
 	})
 }
 
 func TestDiffDatabase(t *testing.T) {
-	utils.DbImage = utils.Pg15Image
+	utils.Config.Db.MajorVersion = 14
+	utils.DbImage = utils.Pg14Image
 	utils.Config.Db.ShadowPort = 54320
 	utils.GlobalsSql = "create schema public"
 	utils.InitialSchemaSql = "create schema private"
@@ -197,7 +224,7 @@ func TestDiffDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg14Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
@@ -213,7 +240,7 @@ func TestDiffDatabase(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
@@ -234,10 +261,13 @@ At statement 0: create schema public`)
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		sql := "create schema test"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-shadow-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
@@ -254,7 +284,19 @@ At statement 0: create schema public`)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_SCHEMA).
+			Reply("CREATE SCHEMA").
+			Query(repair.CREATE_VERSION_TABLE).
+			Reply("CREATE TABLE").
+			Query(repair.ADD_STATEMENTS_COLUMN).
+			Reply("ALTER TABLE").
+			Query(repair.ADD_NAME_COLUMN).
+			Reply("ALTER TABLE").
+			Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
 		// Check error

@@ -151,15 +151,18 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound)
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		// Start services
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)
 		utils.GotrueId = "test-gotrue"
-		flag := true
-		utils.Config.Auth.EnableSignup = &flag
-		utils.Config.Auth.Email.EnableSignup = &flag
-		utils.Config.Auth.Email.DoubleConfirmChanges = &flag
-		utils.Config.Auth.Email.EnableConfirmations = &flag
+		utils.Config.Auth.EnableSignup = true
+		utils.Config.Auth.Email.EnableSignup = true
+		utils.Config.Auth.Email.DoubleConfirmChanges = true
+		utils.Config.Auth.Email.EnableConfirmations = true
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), utils.GotrueId)
 		utils.InbucketId = "test-inbucket"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.InbucketImage), utils.InbucketId)
@@ -173,8 +176,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.ImageProxyImage), utils.ImgProxyId)
 		utils.DifferId = "test-differ"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DifferImage), utils.DifferId)
-		utils.DenoRelayId = "test-edge-runtime"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), utils.DenoRelayId)
+		utils.EdgeRuntimeId = "test-edge-runtime"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), utils.EdgeRuntimeId)
 		utils.PgmetaId = "test-pgmeta"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgmetaImage), utils.PgmetaId)
 		utils.StudioId = "test-studio"
@@ -187,7 +190,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
-			utils.StorageId, utils.ImgProxyId, utils.DenoRelayId, utils.PgmetaId, utils.StudioId,
+			utils.StorageId, utils.ImgProxyId, utils.EdgeRuntimeId, utils.PgmetaId, utils.StudioId,
 			utils.LogflareId, utils.RestId,
 		}
 		for _, container := range started {

@@ -2,9 +2,11 @@ package link
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,8 +33,11 @@ func PreRun(projectRef string, fsys afero.Fs) error {
 }
 
 func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	// 1. Check postgrest config
+	// 1. Check service config
 	if err := linkPostgrest(ctx, projectRef); err != nil {
+		return err
+	}
+	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
 		return err
 	}
 
@@ -121,6 +126,62 @@ func sliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
+	}
+	keys := *resp.JSON200
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys); err != nil {
+		return err
+	}
+	return nil
+}
+
+type HealthResponse struct {
+	Version     string `json:"version"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys afero.Fs) error {
+	url := fmt.Sprintf("https://%s/auth/v1/health", utils.GetSupabaseHost(projectRef))
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("apikey", apiKey)
+	// Sends request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || len(body) == 0 {
+			body = []byte(fmt.Sprintf("status %d", resp.StatusCode))
+		}
+		return errors.New(string(body))
+	}
+	// Parses response
+	var data HealthResponse
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&data); err != nil {
+		return err
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(data.Version), 0644)
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {

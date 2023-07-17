@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -99,12 +100,14 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 
 func CreateShadowDatabase(ctx context.Context) (string, error) {
 	config := start.NewContainerConfig()
-	config.Entrypoint = nil
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		Tmpfs:        map[string]string{"/docker-entrypoint-initdb.d": ""},
 		AutoRemove:   true,
+	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = nil
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	return utils.DockerStart(ctx, config, hostConfig, "")
 }
@@ -124,26 +127,24 @@ func connectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return conn, err
 }
 
-func MigrateShadowDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	migrations, err := list.LoadLocalMigrations(fsys)
+	if err != nil {
+		return err
+	}
+	return MigrateShadowDatabaseVersions(ctx, container, migrations, fsys, options...)
+}
+
+func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
-	if roles, err := fsys.Open(utils.CustomRolesPath); err == nil {
-		if err := apply.BatchExecDDL(ctx, conn, roles); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	return apply.MigrateDatabase(ctx, conn, fsys)
+	return apply.MigrateUp(ctx, conn, migrations, fsys)
 }
 
 // Diffs local database schema against shadow, dumps output to stdout.
@@ -179,7 +180,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if err := MigrateShadowDatabase(ctx, fsys, options...); err != nil {
+	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -87,7 +88,7 @@ var (
 				if err := parseDatabaseConfig(fsys); err != nil {
 					return err
 				}
-			}
+			} // else use --local, which is the default
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if usePgAdmin {
 				return diff.Run(ctx, schema, file, dbConfig, fsys)
@@ -97,6 +98,7 @@ var (
 	}
 
 	dataOnly     bool
+	useCopy      bool
 	roleOnly     bool
 	keepComments bool
 
@@ -109,7 +111,12 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, fsys)
+			return dump.Run(ctx, file, dbConfig, schema, dataOnly, roleOnly, keepComments, useCopy, dryRun, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			if len(file) > 0 {
+				fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
+			}
 		},
 	}
 
@@ -230,20 +237,27 @@ func init() {
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
-	diffFlags.BoolVar(&linked, "linked", false, "Diffs local schema against the linked project.")
+	diffFlags.StringVar(&dbUrl, "db-url", "", "Diffs local migration files against the database specified by the connection string (must be percent-encoded).")
+	diffFlags.BoolVar(&linked, "linked", false, "Diffs local migration files against the linked project.")
+	diffFlags.BoolVar(&local, "local", true, "Diffs local migration files against the local database.")
+	dbDiffCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
 	diffFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
+	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Print the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
+	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
 	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
+	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	dumpFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()

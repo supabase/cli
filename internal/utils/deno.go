@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -69,24 +68,14 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	// 1. Determine OS triple
-	var assetFilename string
+	assetFilename, err := getDenoAssetFileName()
+	if err != nil {
+		return err
+	}
 	assetRepo := "denoland/deno"
-	{
-		if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-apple-darwin.zip"
-		} else if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-			assetFilename = "deno-aarch64-apple-darwin.zip"
-		} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-unknown-linux-gnu.zip"
-		} else if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
-			// TODO: version pin to official release once available https://github.com/denoland/deno/issues/1846
-			assetRepo = "LukeChannings/deno-arm64"
-			assetFilename = "deno-linux-arm64.zip"
-		} else if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
-			assetFilename = "deno-x86_64-pc-windows-msvc.zip"
-		} else {
-			return errors.New("Platform " + runtime.GOOS + "/" + runtime.GOARCH + " is currently unsupported for Functions.")
-		}
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		// TODO: version pin to official release once available https://github.com/denoland/deno/issues/1846
+		assetRepo = "LukeChannings/deno-arm64"
 	}
 
 	// 2. Download & install Deno binary.
@@ -146,7 +135,7 @@ func isScriptModified(fsys afero.Fs, destPath string, src []byte) (bool, error) 
 
 	// compare the md5 checksum of src bytes with user's copy.
 	// if the checksums doesn't match, script is modified.
-	return md5.Sum(dest) != md5.Sum(src), nil
+	return sha256.Sum256(dest) != sha256.Sum256(src), nil
 }
 
 type DenoScriptDir struct {

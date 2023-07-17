@@ -9,6 +9,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
+
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/index_sizes"
 	"github.com/supabase/cli/internal/inspect/index_usage"

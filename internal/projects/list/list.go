@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -42,18 +42,5 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		)
 	}
 
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-	out, err := r.Render(table)
-	if err != nil {
-		return err
-	}
-	fmt.Print(out)
-
-	return nil
+	return list.RenderTable(table)
 }

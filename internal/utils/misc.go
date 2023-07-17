@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Passed from `-ldflags`: https://stackoverflow.com/q/11354518.
+// Version is assigned using `-ldflags` https://stackoverflow.com/q/11354518.
 var Version string
 
 const (
@@ -27,22 +27,21 @@ const (
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v10.1.2"
+	PostgrestImage   = "postgrest/postgrest:v11.1.0"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage      = "supabase/postgres-meta:v0.66.0"
-	StudioImage      = "supabase/studio:20230605-c876cea"
-	DenoRelayImage   = "supabase/deno-relay:v1.6.0"
+	PgmetaImage      = "supabase/postgres-meta:v0.66.3"
+	StudioImage      = "supabase/studio:v0.23.06"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.4.2"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.6.6"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.62.1"
 	RealtimeImage = "supabase/realtime:v2.10.1"
-	StorageImage  = "supabase/storage-api:v0.37.4"
-	LogflareImage = "supabase/logflare:1.0.2"
-	// Should be kept in-sync with DenoRelayImage
+	StorageImage  = "supabase/storage-api:v0.40.4"
+	LogflareImage = "supabase/logflare:1.3.17"
+	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
 )
 
@@ -95,7 +94,7 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
-	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_.*\.sql$`)
+	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
@@ -163,9 +162,11 @@ var (
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
 	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	ImportMapsDir         = filepath.Join(SupabaseDirPath, ".temp", "import_maps")
-	ProjectRefPath        = filepath.Join(SupabaseDirPath, ".temp", "project-ref")
-	RemoteDbPath          = filepath.Join(SupabaseDirPath, ".temp", "remote-db-url")
+	TempDir               = ".temp"
+	ImportMapsDir         = filepath.Join(SupabaseDirPath, TempDir, "import_maps")
+	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
+	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
+	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")

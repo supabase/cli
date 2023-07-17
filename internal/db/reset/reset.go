@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -28,6 +31,8 @@ const (
 )
 
 var (
+	ErrUnhealthy  = errors.New("service not healthy")
+	ErrDatabase   = errors.New("database is not healthy")
 	healthTimeout = 5 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
@@ -61,28 +66,35 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting local database...")
-	if err := RecreateDatabase(ctx, options...); err != nil {
+	if err := recreateDatabase(ctx, options...); err != nil {
 		return err
 	}
-	defer RestartDatabase(context.Background(), os.Stderr)
-	return initDatabase(ctx, fsys, options...)
-}
-
-func initDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/postgres?connect_timeout=2", utils.Config.Db.Port)
-	conn, err := utils.ConnectByUrl(ctx, url, options...)
+	if err := initDatabase(ctx, options...); err != nil {
+		return err
+	}
+	if utils.Config.Db.MajorVersion > 14 {
+		if err := InitSchema15(ctx, utils.DbId); err != nil {
+			return err
+		}
+	}
+	if err := RestartDatabase(ctx, os.Stderr); err != nil {
+		return err
+	}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	fmt.Fprintln(os.Stderr, "Initializing schema...")
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql)); err != nil {
-		return err
-	}
-	if _, err := conn.Exec(ctx, SET_POSTGRES_ROLE); err != nil {
-		return err
-	}
 	return InitialiseDatabase(ctx, conn, fsys)
+}
+
+func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin"}, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
 }
 
 func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
@@ -93,9 +105,8 @@ func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 }
 
 // Recreate postgres database by connecting to template1
-func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	url := fmt.Sprintf("postgresql://supabase_admin:postgres@localhost:%d/template1?connect_timeout=2", utils.Config.Db.Port)
-	conn, err := utils.ConnectByUrl(ctx, url, options...)
+func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin", Database: "template1"}, options...)
 	if err != nil {
 		return err
 	}
@@ -103,12 +114,14 @@ func RecreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	if err := DisconnectClients(ctx, conn); err != nil {
 		return err
 	}
-	drop := "DROP DATABASE IF EXISTS postgres WITH (FORCE);"
-	if _, err := conn.Exec(ctx, drop); err != nil {
-		return err
+	// We are not dropping roles here because they are cluster level entities. Use stop && start instead.
+	sql := repair.MigrationFile{
+		Lines: []string{
+			"DROP DATABASE IF EXISTS postgres WITH (FORCE)",
+			"CREATE DATABASE postgres WITH OWNER postgres",
+		},
 	}
-	_, err = conn.Exec(ctx, "CREATE DATABASE postgres WITH OWNER postgres;")
-	return err
+	return sql.ExecBatch(ctx, conn)
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
@@ -133,40 +146,30 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 		}
 	}
 	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")
-	if _, err := conn.Exec(ctx, term); err != nil {
-		return err
-	}
-	return nil
+	_, err := conn.Exec(ctx, term)
+	return err
 }
 
-func RestartDatabase(ctx context.Context, w io.Writer) {
+func RestartDatabase(ctx context.Context, w io.Writer) error {
 	fmt.Fprintln(w, "Restarting containers...")
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart database:", err)
-		return
+		return err
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
-		fmt.Fprintln(w, "Database is not healthy.")
-		return
+		return ErrDatabase
 	}
-	// TODO: update storage-api to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.StorageId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart storage-api:", err)
-	}
-	// Reload PostgREST schema cache.
-	if err := utils.Docker.ContainerKill(ctx, utils.RestId, "SIGUSR1"); err != nil {
-		fmt.Fprintln(w, "Error reloading PostgREST schema cache:", err)
-	}
-	// TODO: update gotrue to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.GotrueId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart gotrue:", err)
-	}
-	// TODO: update realtime to handle postgres restarts
-	if err := utils.Docker.ContainerRestart(ctx, utils.RealtimeId, container.StopOptions{}); err != nil {
-		fmt.Fprintln(w, "Failed to restart realtime:", err)
-	}
+	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
+	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
+	result := utils.WaitAll(services, func(id string) error {
+		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
+			return fmt.Errorf("Failed to restart %s: %w", id, err)
+		}
+		return nil
+	})
+	// Do not wait for service healthy as those services may be excluded from starting
+	return errors.Join(result...)
 }
 
 func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
@@ -187,6 +190,39 @@ func WaitForHealthyService(ctx context.Context, container string, timeout time.D
 		return status.AssertContainerHealthy(ctx, container) == nil
 	}
 	return RetryEverySecond(ctx, probe, timeout)
+}
+
+func WaitForServiceReady(ctx context.Context, started []string) error {
+	probe := func() bool {
+		var unhealthy []string
+		for _, container := range started {
+			if !status.IsServiceReady(ctx, container) {
+				unhealthy = append(unhealthy, container)
+			}
+		}
+		started = unhealthy
+		return len(started) == 0
+	}
+	if !RetryEverySecond(ctx, probe, 30*time.Second) {
+		// Print container logs for easier debugging
+		for _, container := range started {
+			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+			})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				continue
+			}
+			fmt.Fprintln(os.Stderr, container, "container logs:")
+			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			logs.Close()
+		}
+		return fmt.Errorf("%w: %v", ErrUnhealthy, started)
+	}
+	return nil
 }
 
 func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -229,7 +265,7 @@ func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]stri
 		}
 		schemas = append(schemas, name)
 	}
-	return schemas, nil
+	return schemas, rows.Err()
 }
 
 func likeEscapeSchema(schemas []string) (result []string) {
@@ -239,4 +275,29 @@ func likeEscapeSchema(schemas []string) (result []string) {
 		result = append(result, replacer.Replace(sch))
 	}
 	return result
+}
+
+func InitSchema15(ctx context.Context, host string) error {
+	// Apply service migrations
+	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
+		"ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+		"STORAGE_BACKEND=file",
+		"TENANT_ID=stub",
+		// TODO: https://github.com/supabase/storage-api/issues/55
+		"REGION=stub",
+		"GLOBAL_S3_BUCKET=stub",
+	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
+		return err
+	}
+	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
+		"GOTRUE_LOG_LEVEL=error",
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
 }
