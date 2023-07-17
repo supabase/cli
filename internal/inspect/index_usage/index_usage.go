@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const INDEX_USAGE_QUERY = `
+const QUERY = `
 SELECT relname,
   CASE
     WHEN idx_scan IS NULL THEN 'Insufficient data'
@@ -31,7 +31,7 @@ ORDER BY
   n_live_tup DESC;
 `
 
-type IndexUsageResult struct {
+type Result struct {
 	Relname                     string
 	Percent_of_times_index_used string
 	Rows_in_table               string
@@ -42,11 +42,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, INDEX_USAGE_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[IndexUsageResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

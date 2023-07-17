@@ -13,7 +13,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const LOCKS_QUERY = `
+const QUERY = `
 SELECT
 	pg_stat_activity.pid,
 	COALESCE(pg_class.relname, 'null') AS relname,
@@ -28,13 +28,13 @@ AND pg_locks.mode = 'ExclusiveLock'
 ORDER BY query_start;
 `
 
-type LocksResult struct {
-	Pid  string
-	Relname string
+type Result struct {
+	Pid           string
+	Relname       string
 	Transactionid string
-	Granted string
-	Query string
-	Age string
+	Granted       string
+	Query         string
+	Age           string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -42,11 +42,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, LOCKS_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[LocksResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

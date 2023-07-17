@@ -13,7 +13,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const CALLS_QUERY = `
+const QUERY = `
 SELECT
 	query,
 	interval '1 millisecond' * total_exec_time AS total_exec_time,
@@ -25,12 +25,12 @@ ORDER BY calls DESC
 LIMIT 10
 `
 
-type CallsResult struct {
-	Total_exec_time  string
-	Prop_exec_time string
-	Ncalls string
-	Sync_io_time string
-	Query string
+type Result struct {
+	Total_exec_time string
+	Prop_exec_time  string
+	Ncalls          string
+	Sync_io_time    string
+	Query           string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -38,11 +38,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, CALLS_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[CallsResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

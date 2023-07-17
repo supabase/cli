@@ -14,7 +14,7 @@ import (
 )
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
-const BLOCKING_QUERY = `
+const QUERY = `
 SELECT
 	bl.pid AS blocked_pid,
 	ka.query AS blocking_statement,
@@ -32,7 +32,7 @@ JOIN pg_catalog.pg_stat_activity ka
 WHERE NOT bl.granted
 `
 
-type BlockingResult struct {
+type Result struct {
 	Blocked_pid        string
 	Blocking_statement string
 	Blocking_duration  string
@@ -46,11 +46,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, BLOCKING_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[BlockingResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

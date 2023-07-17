@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const REPLICATION_SLOTS_QUERY = `
+const QUERY = `
 SELECT
   s.slot_name,
   s.active,
@@ -26,12 +26,12 @@ FROM pg_control_checkpoint(), pg_replication_slots s
 LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid);
 `
 
-type ReplicationSlotsResult struct {
-	Slot_name  string
-	Active string
-	State string
+type Result struct {
+	Slot_name                  string
+	Active                     string
+	State                      string
 	Replication_client_address string
-	Replication_lag_gb string
+	Replication_lag_gb         string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -39,11 +39,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, REPLICATION_SLOTS_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[ReplicationSlotsResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

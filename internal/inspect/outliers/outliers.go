@@ -13,7 +13,7 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const OUTLIERS_QUERY = `
+const QUERY = `
 SELECT
 	interval '1 millisecond' * total_exec_time AS total_exec_time,
 	to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
@@ -25,12 +25,12 @@ ORDER BY total_exec_time DESC
 LIMIT 10
 `
 
-type OutliersResult struct {
-	Total_exec_time  string
-	Prop_exec_time string
-	Ncalls string
-	Sync_io_time string
-	Query string
+type Result struct {
+	Total_exec_time string
+	Prop_exec_time  string
+	Ncalls          string
+	Sync_io_time    string
+	Query           string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -38,11 +38,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, OUTLIERS_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[OutliersResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}
