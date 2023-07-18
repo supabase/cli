@@ -32,12 +32,12 @@ var (
 	inspectCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "inspect",
-		Short:   "Tools to inspect your Supabase Database",
+		Short:   "Tools to inspect your Supabase project",
 	}
 
 	inspectDBCmd = &cobra.Command{
 		Use:   "db",
-		Short: "Tools to inspect your Supabase ds",
+		Short: "Tools to inspect your Supabase database",
 	}
 
 	inspectCacheHitCmd = &cobra.Command{
@@ -289,7 +289,7 @@ var (
 )
 
 func init() {
-	inspectFlags := inspectCmd.PersistentFlags()
+	inspectFlags := inspectDBCmd.PersistentFlags()
 	inspectFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
 	inspectCmd.AddCommand(inspectDBCmd)
 	inspectDBCmd.AddCommand(inspectCacheHitCmd)

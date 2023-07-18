@@ -64,8 +64,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 		// escape pipes in query
 		re = regexp.MustCompile(`\|`)
-		blocking_statement = re.ReplaceAllString(r.Blocking_statement, `\|`)
-		blocked_statement = re.ReplaceAllString(r.Blocked_statement, `\|`)
+		blocking_statement = re.ReplaceAllString(blocking_statement, `\|`)
+		blocked_statement = re.ReplaceAllString(blocked_statement, `\|`)
 		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
 	return list.RenderTable(table)
