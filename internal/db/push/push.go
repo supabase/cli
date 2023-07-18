@@ -2,18 +2,21 @@ package push
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
@@ -22,6 +25,12 @@ func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, 
 		return err
 	}
 	defer conn.Close(context.Background())
+	// Create roles
+	if includeRoles {
+		if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
+			return err
+		}
+	}
 	pending, err := up.GetPendingMigrations(ctx, conn, fsys)
 	if err != nil {
 		return err
@@ -40,6 +49,23 @@ func Run(ctx context.Context, dryRun bool, config pgconn.Config, fsys afero.Fs, 
 			return err
 		}
 	}
+	// Seed database
+	if includeSeed {
+		if err := reset.SeedDatabase(ctx, conn, fsys); err != nil {
+			return err
+		}
+	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
+}
+
+func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, w io.Writer, fsys afero.Fs) error {
+	roles, err := fsys.Open(utils.CustomRolesPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
+	return apply.BatchExecDDL(ctx, conn, roles)
 }

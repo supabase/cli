@@ -125,13 +125,13 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
 	seed, err := repair.NewMigrationFromFile(utils.SeedDataPath, fsys)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
 	// Batch seed commands, safe to use statement cache
 	return seed.ExecBatchWithCache(ctx, conn)
 }
