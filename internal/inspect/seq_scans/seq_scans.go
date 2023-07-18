@@ -1,4 +1,4 @@
-package index_usage
+package seq_scans
 
 import (
 	"context"
@@ -13,28 +13,15 @@ import (
 )
 
 const QUERY = `
-SELECT relname,
-  CASE
-    WHEN idx_scan IS NULL THEN 'Insufficient data'
-    WHEN idx_scan = 0 THEN 'Insufficient data'
-    ELSE (100 * idx_scan / (seq_scan + idx_scan))::text
-  END percent_of_times_index_used,
-  n_live_tup rows_in_table
+SELECT relname AS name,
+       seq_scan as count
 FROM
   pg_stat_user_tables
-ORDER BY
-  CASE
-    WHEN idx_scan is null then 1
-    WHEN idx_scan = 0 then 1
-    ELSE 0
-  END,
-  n_live_tup DESC;
-`
+ORDER BY seq_scan DESC;`
 
 type Result struct {
-	Relname                     string
-	Percent_of_times_index_used string
-	Rows_in_table               string
+	Name  string
+	Count string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -50,10 +37,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	// TODO: implement a markdown table marshaller
-	table := "|Table name|Percentage of times index used|Rows in table|\n|-|-|-|\n"
+
+	table := "|Name|Count|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%v`|`%v`|\n", r.Relname, r.Percent_of_times_index_used, r.Rows_in_table)
+		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Count)
 	}
 	return list.RenderTable(table)
 }

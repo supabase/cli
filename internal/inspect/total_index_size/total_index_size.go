@@ -1,4 +1,4 @@
-package cache
+package total_index_size
 
 import (
 	"context"
@@ -12,22 +12,17 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
 const QUERY = `
-SELECT
-  'index hit rate' AS name,
-  (sum(idx_blks_hit)) / nullif(sum(idx_blks_hit + idx_blks_read),0) AS ratio
-FROM pg_statio_user_indexes
-UNION ALL
-SELECT
- 'table hit rate' AS name,
-  sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
-FROM pg_statio_user_tables;
+SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
+FROM pg_class c
+LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+AND n.nspname !~ '^pg_toast'
+AND c.relkind='i';
 `
 
 type Result struct {
-	Name  string
-	Ratio float64
+	Size string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -43,10 +38,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	// TODO: implement a markdown table marshaller
-	table := "|Name|Ratio|\n|-|-|\n"
+
+	table := "|Size|\n|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%.6f`|\n", r.Name, r.Ratio)
+		table += fmt.Sprintf("|`%s`|\n", r.Size)
 	}
 	return list.RenderTable(table)
 }
