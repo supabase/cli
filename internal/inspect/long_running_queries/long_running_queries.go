@@ -1,4 +1,4 @@
-package index_usage
+package long_running_queries
 
 import (
 	"context"
@@ -13,28 +13,23 @@ import (
 )
 
 const QUERY = `
-SELECT relname,
-  CASE
-    WHEN idx_scan IS NULL THEN 'Insufficient data'
-    WHEN idx_scan = 0 THEN 'Insufficient data'
-    ELSE (100 * idx_scan / (seq_scan + idx_scan))::text
-  END percent_of_times_index_used,
-  n_live_tup rows_in_table
+SELECT
+  pid,
+  now() - pg_stat_activity.query_start AS duration,
+  query AS query
 FROM
-  pg_stat_user_tables
+  pg_stat_activity
+WHERE
+  pg_stat_activity.query <> ''::text
+  AND state <> 'idle'
+  AND now() - pg_stat_activity.query_start > interval '5 minutes'
 ORDER BY
-  CASE
-    WHEN idx_scan is null then 1
-    WHEN idx_scan = 0 then 1
-    ELSE 0
-  END,
-  n_live_tup DESC;
-`
+  now() - pg_stat_activity.query_start DESC;`
 
 type Result struct {
-	Relname                     string
-	Percent_of_times_index_used string
-	Rows_in_table               string
+	Pid      string
+	Duration string
+	Query    string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -50,10 +45,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	// TODO: implement a markdown table marshaller
-	table := "|Table name|Percentage of times index used|Rows in table|\n|-|-|-|\n"
+
+	table := "|pid|Duration|Query|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%v`|`%v`|\n", r.Relname, r.Percent_of_times_index_used, r.Rows_in_table)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
 	}
 	return list.RenderTable(table)
 }
