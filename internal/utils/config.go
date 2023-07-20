@@ -337,7 +337,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
-		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && Config.Db.MajorVersion > 14 {
+		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 			index := strings.IndexByte(GotrueImage, ':')
 			Config.Auth.Image = GotrueImage[:index+1] + string(version)
 		}

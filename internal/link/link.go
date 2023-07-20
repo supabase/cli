@@ -178,6 +178,9 @@ func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys af
 	if err := dec.Decode(&data); err != nil {
 		return err
 	}
+	if len(data.Version) == 0 {
+		return nil
+	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err
 	}
