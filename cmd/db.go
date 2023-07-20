@@ -120,9 +120,10 @@ var (
 		},
 	}
 
-	dryRun       bool
-	includeRoles bool
-	includeSeed  bool
+	dryRun                bool
+	ignoreVersionMismatch bool
+	includeRoles          bool
+	includeSeed           bool
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
@@ -133,7 +134,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, includeRoles, includeSeed, dbConfig, fsys)
+			return push.Run(ctx, dryRun, ignoreVersionMismatch, includeRoles, includeSeed, dbConfig, fsys)
 		},
 	}
 
@@ -266,6 +267,7 @@ func init() {
 	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
 	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from "+utils.SeedDataPath+".")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	pushFlags.BoolVar(&ignoreVersionMismatch, "ignore-version-mismatch", false, "Force push migrations to the database without checking version mismatch.")
 	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPushCmd)

@@ -16,7 +16,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, dryRun, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
@@ -31,7 +31,7 @@ func Run(ctx context.Context, dryRun, includeRoles, includeSeed bool, config pgc
 			return err
 		}
 	}
-	pending, err := up.GetPendingMigrations(ctx, conn, fsys)
+	pending, err := up.GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys)
 	if err != nil {
 		return err
 	}
