@@ -15,7 +15,7 @@ import (
 
 var errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
 
-func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, ignoreVersionMismatch bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
@@ -24,14 +24,14 @@ func Run(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) e
 		return err
 	}
 	defer conn.Close(context.Background())
-	pending, err := GetPendingMigrations(ctx, conn, fsys)
+	pending, err := GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys)
 	if err != nil {
 		return err
 	}
 	return apply.MigrateUp(ctx, conn, pending, fsys)
 }
 
-func GetPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
+func GetPendingMigrations(ctx context.Context, ignoreVersionMismatch bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
 		return nil, err
@@ -44,6 +44,25 @@ func GetPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([
 	if len(remoteMigrations) > len(localMigrations) {
 		return nil, fmt.Errorf("%w; Found %d versions and %d migrations.", errConflict, len(remoteMigrations), len(localMigrations))
 	}
+
+	if ignoreVersionMismatch {
+		// If ignoreVersionMismatch is true, we need to find the difference between the two arrays
+		for _, num2 := range remoteMigrations {
+			// Iterate through the first array and remove matching elements
+			for i := 0; i < len(localMigrations); i++ {
+				if utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1] == num2 {
+					// Remove the element from the first array using append
+					localMigrations = append(localMigrations[:i], localMigrations[i+1:]...)
+					// Decrement the loop counter to avoid skipping elements
+					i--
+				}
+			}
+		}
+
+		// Return the difference
+		return localMigrations, nil
+	}
+
 	for i, remote := range remoteMigrations {
 		filename := localMigrations[i]
 		// LoadLocalMigrations guarantees we always have a match
@@ -52,5 +71,6 @@ func GetPendingMigrations(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) ([
 			return nil, fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", errConflict, remote, filename, i)
 		}
 	}
+
 	return localMigrations[len(remoteMigrations):], nil
 }
