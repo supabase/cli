@@ -1,6 +1,6 @@
 openapi: 3.0.0
 paths:
-  /v1/branch/{branch_id}:
+  /v1/branches/{branch_id}:
     get:
       operationId: getBranchDetails
       summary: Get database branch config
