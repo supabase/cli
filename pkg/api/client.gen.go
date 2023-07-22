@@ -1328,7 +1328,7 @@ func NewDeleteBranchRequest(server string, branchId string) (*http.Request, erro
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/branches/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1362,7 +1362,7 @@ func NewGetBranchDetailsRequest(server string, branchId string) (*http.Request, 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/branches/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1407,7 +1407,7 @@ func NewUpdateBranchRequestWithBody(server string, branchId string, contentType 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/branch/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/branches/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
