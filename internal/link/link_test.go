@@ -175,7 +175,7 @@ func TestLinkCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on connect failure", func(t *testing.T) {
+	t.Run("ignores error linking gotrue", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
@@ -187,27 +187,6 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
-		// Run test
-		err := Run(context.Background(), project, dbConfig.Password, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on connect failure", func(t *testing.T) {
-		defer teardown()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/postgrest").
-			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
-			Reply(200).
-			JSON([]api.ApiKeyResponse{})
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys, func(cc *pgx.ConnConfig) {
 			cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {

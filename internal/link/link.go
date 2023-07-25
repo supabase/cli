@@ -22,7 +22,11 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-var updatedConfig map[string]interface{} = make(map[string]interface{})
+var (
+	updatedConfig     = make(map[string]interface{})
+	errMissingKeys    = errors.New("No API keys found.")
+	errMissingVersion = errors.New("GoTrue version not found.")
+)
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
@@ -139,7 +143,7 @@ func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	}
 	keys := *resp.JSON200
 	if len(keys) == 0 {
-		return errors.New("No API keys found.")
+		return errMissingKeys
 	}
 	return updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys)
 }
@@ -177,7 +181,7 @@ func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys af
 		return err
 	}
 	if len(data.Version) == 0 {
-		return nil
+		return errMissingVersion
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err
