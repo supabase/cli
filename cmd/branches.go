@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"sort"
+
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/branches/create"
@@ -9,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/branches/get"
 	"github.com/supabase/cli/internal/branches/list"
 	"github.com/supabase/cli/internal/branches/update"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -19,13 +22,17 @@ var (
 		Short:   "Manage Supabase preview branches",
 	}
 
+	branchRegion = utils.EnumFlag{
+		Allowed: make([]string, len(utils.FlyRegions)),
+	}
+
 	branchCreateCmd = &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a preview branch",
 		Long:  "Create a preview branch for the linked project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(cmd.Context(), args[0], afero.NewOsFs())
+			return create.Run(cmd.Context(), args[0], branchRegion.Value, afero.NewOsFs())
 		},
 	}
 
@@ -90,6 +97,15 @@ var (
 
 func init() {
 	branchesCmd.AddCommand(branchCreateCmd)
+	// Setup enum flags
+	i := 0
+	for k := range utils.FlyRegions {
+		branchRegion.Allowed[i] = k
+		i++
+	}
+	sort.Strings(branchRegion.Allowed)
+	createFlags := branchCreateCmd.Flags()
+	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
 	updateFlags := branchUpdateCmd.Flags()
