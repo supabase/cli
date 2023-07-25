@@ -37,8 +37,9 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 	if err := linkPostgrest(ctx, projectRef); err != nil {
 		return err
 	}
+	// Ignore non-fatal errors linking other services
 	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, err)
 	}
 
 	// 2. Check database connection
@@ -138,12 +139,9 @@ func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	}
 	keys := *resp.JSON200
 	if len(keys) == 0 {
-		return nil
+		return errors.New("No API keys found.")
 	}
-	if err := updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys); err != nil {
-		return err
-	}
-	return nil
+	return updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys)
 }
 
 type HealthResponse struct {
