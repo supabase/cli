@@ -11,7 +11,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, name string, fsys afero.Fs) error {
+func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
 	ref, err := utils.LoadProjectRef(fsys)
 	if err != nil {
 		return err
@@ -20,6 +20,7 @@ func Run(ctx context.Context, name string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().CreateBranchWithResponse(ctx, ref, api.CreateBranchJSONRequestBody{
 		BranchName: name,
 		GitBranch:  &gitBranch,
+		Region:     &region,
 	})
 	if err != nil {
 		return err

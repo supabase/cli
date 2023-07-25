@@ -10,10 +10,10 @@ require (
 	github.com/charmbracelet/lipgloss v0.7.1
 	github.com/containers/common v0.55.2
 	github.com/deepmap/oapi-codegen v1.13.0
-	github.com/docker/cli v24.0.4+incompatible
-	github.com/docker/docker v24.0.4+incompatible
+	github.com/docker/cli v24.0.5+incompatible
+	github.com/docker/docker v24.0.5+incompatible
 	github.com/docker/go-connections v0.4.0
-	github.com/go-git/go-git/v5 v5.7.0
+	github.com/go-git/go-git/v5 v5.8.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/golang-jwt/jwt/v5 v5.0.0
 	github.com/google/go-github/v53 v53.2.0
@@ -137,7 +137,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
-	github.com/jackc/pgconn v1.14.0
+	github.com/jackc/pgconn v1.14.1
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgmock v0.0.0-20210724152146-4ad1a8207f65
