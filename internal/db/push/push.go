@@ -26,7 +26,7 @@ func Run(ctx context.Context, dryRun, includeRoles, includeSeed bool, config pgc
 	}
 	defer conn.Close(context.Background())
 	// Create roles
-	if includeRoles {
+	if !dryRun && includeRoles {
 		if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func Run(ctx context.Context, dryRun, includeRoles, includeSeed bool, config pgc
 		}
 	}
 	// Seed database
-	if includeSeed {
+	if !dryRun && includeSeed {
 		if err := reset.SeedDatabase(ctx, conn, fsys); err != nil {
 			return err
 		}
