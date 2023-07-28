@@ -37,7 +37,7 @@ const (
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.62.1"
+	GotrueImage   = "supabase/gotrue:v2.82.0"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.40.4"
 	LogflareImage = "supabase/logflare:1.3.17"
@@ -170,6 +170,7 @@ var (
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
+	EmailTemplatesDir     = filepath.Join(SupabaseDirPath, "templates", "email")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")

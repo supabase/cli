@@ -101,6 +101,9 @@ var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+
+	//go:embed templates/custom_nginx.template
+	nginxConfigEmbed string
 )
 
 type vectorConfig struct {
@@ -272,6 +275,10 @@ EOF
 	// Start Kong.
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
@@ -284,6 +291,10 @@ EOF
 			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
 			return err
+		}
+
+		binds := []string{
+			filepath.Join(cwd, utils.EmailTemplatesDir) + ":/home/kong/templates/email:rw,z",
 		}
 
 		if _, err := utils.DockerStart(
@@ -302,12 +313,16 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
+				ExposedPorts: nat.PortSet{"8088/tcp": {}},
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
+EOF
+` + nginxConfigEmbed + `
 EOF
 `},
 			},
 			start.WithSyslogConfig(container.HostConfig{
+				Binds:         binds,
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
@@ -351,6 +366,11 @@ EOF
 			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
 			"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
 			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_INVITE=http://%s:8088/email/invite.html", utils.KongId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://%s:8088/email/confirmation.html", utils.KongId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_RECOVERY=http://%s:8088/email/recovery.html", utils.KongId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=http://%s:8088/email/magic-link.html", utils.KongId),
+			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE=http://%s:8088/email/email-change.html", utils.KongId),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
