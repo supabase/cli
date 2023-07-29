@@ -184,9 +184,14 @@ type (
 	}
 
 	email struct {
-		EnableSignup         bool `toml:"enable_signup"`
-		DoubleConfirmChanges bool `toml:"double_confirm_changes"`
-		EnableConfirmations  bool `toml:"enable_confirmations"`
+		EnableSignup         bool   `toml:"enable_signup"`
+		DoubleConfirmChanges bool   `toml:"double_confirm_changes"`
+		EnableConfirmations  bool   `toml:"enable_confirmations"`
+		InviteSubject        string `toml:"invite_subject"`
+		ConfirmationSubject  string `toml:"confirmation_subject"`
+		RecoverySubject      string `toml:"recovery_subject"`
+		MagicLinkSubject     string `toml:"magic_link_subject"`
+		EmailChangeSubject   string `toml:"email_change_subject"`
 	}
 
 	sms struct {

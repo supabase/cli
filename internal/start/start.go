@@ -371,6 +371,11 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_RECOVERY=http://%s:8088/email/recovery.html", utils.KongId),
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=http://%s:8088/email/magic-link.html", utils.KongId),
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE=http://%s:8088/email/email-change.html", utils.KongId),
+			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_INVITE=%s", utils.Config.Auth.Email.InviteSubject),
+			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_CONFIRMATION=%s", utils.Config.Auth.Email.ConfirmationSubject),
+			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_RECOVERY=%s", utils.Config.Auth.Email.RecoverySubject),
+			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_MAGIC_LINK=%s", utils.Config.Auth.Email.MagicLinkSubject),
+			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE=%s", utils.Config.Auth.Email.EmailChangeSubject),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
