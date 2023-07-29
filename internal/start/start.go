@@ -216,33 +216,48 @@ EOF
 			return err
 		}
 		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
+		env := []string{
+			"DB_DATABASE=" + dbConfig.Database,
+			"DB_HOSTNAME=" + dbConfig.Host,
+			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
+			"DB_SCHEMA=_analytics",
+			"DB_USERNAME=supabase_admin",
+			"DB_PASSWORD=" + dbConfig.Password,
+			"LOGFLARE_MIN_CLUSTER_SIZE=1",
+			"LOGFLARE_SINGLE_TENANT=true",
+			"LOGFLARE_SUPABASE_MODE=true",
+			"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+			"LOGFLARE_LOG_LEVEL=warn",
+			"LOGFLARE_NODE_HOST=127.0.0.1",
+			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
+			"RELEASE_COOKIE=cookie",
+			// This is hardcoded in studio frontend
+			"GOOGLE_DATASET_ID_APPEND=_prod",
+			"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
+			"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
+		}
+
+		bind := []string{}
+		switch utils.Config.Analytics.Backend {
+		case "big_query":
+			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
+		case "postgres":
+			env = append(env, []string{
+				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+				"POSTGRES_BACKEND_SCHEMA=_analytics",
+			}...)
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Hostname: "127.0.0.1",
 				Image:    utils.LogflareImage,
-				Env: []string{
-					"DB_DATABASE=" + dbConfig.Database,
-					"DB_HOSTNAME=" + dbConfig.Host,
-					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
-					"DB_SCHEMA=_analytics",
-					"DB_USERNAME=supabase_admin",
-					"DB_PASSWORD=" + dbConfig.Password,
-					"LOGFLARE_MIN_CLUSTER_SIZE=1",
-					"LOGFLARE_SINGLE_TENANT=true",
-					"LOGFLARE_SUPABASE_MODE=true",
-					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
-					"LOGFLARE_LOG_LEVEL=warn",
-					// This is hardcoded in studio frontend
-					"GOOGLE_DATASET_ID_APPEND=_prod",
-					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
-				},
+				Env:      env,
 				// Original entrypoint conflicts with healthcheck due to 15 seconds sleep:
 				// https://github.com/Logflare/logflare/blob/staging/run.sh#L35
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > run.sh && sh run.sh
 ./logflare eval Logflare.Release.migrate
-export RELEASE_COOKIE=$(cat /tmp/.magic_cookie 2>/dev/null || echo $RANDOM | md5sum | head -c 20)
 ./logflare start --sname logflare
 EOF
 `},
@@ -256,7 +271,7 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         []string{hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"},
+				Binds:         bind,
 				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},

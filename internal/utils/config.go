@@ -92,7 +92,8 @@ var Config = config{
 		Password: "postgres",
 	},
 	Analytics: analytics{
-		ApiKey: "api-key",
+		ApiKey:  "api-key",
+		Backend: "big_query",
 	},
 }
 
@@ -240,6 +241,7 @@ type (
 	analytics struct {
 		Enabled          bool   `toml:"enabled"`
 		Port             uint16 `toml:"port"`
+		Backend          string `toml:"backend"`
 		VectorPort       uint16 `toml:"vector_port"`
 		GcpProjectId     string `toml:"gcp_project_id"`
 		GcpProjectNumber string `toml:"gcp_project_number"`
@@ -432,11 +434,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	// Validate logflare config
 	if Config.Analytics.Enabled {
-		if len(Config.Analytics.GcpProjectId) == 0 {
-			return errors.New("Missing required field in config: analytics.gcp_project_id")
-		}
-		if len(Config.Analytics.GcpProjectNumber) == 0 {
-			return errors.New("Missing required field in config: analytics.gcp_project_number")
+		if Config.Analytics.Backend == "big_query" {
+			if len(Config.Analytics.GcpProjectId) == 0 {
+				return errors.New("Missing required field in config: analytics.gcp_project_id")
+			}
+			if len(Config.Analytics.GcpProjectNumber) == 0 {
+				return errors.New("Missing required field in config: analytics.gcp_project_number")
+			}
 		}
 	}
 	return nil
