@@ -95,7 +95,7 @@ var (
 		Short: "Apply pending migrations to local database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return up.Run(ctx, ignoreVersionMismatch, afero.NewOsFs())
+			return up.Run(ctx, includeAll, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Local database is up to date.")
@@ -132,7 +132,7 @@ func init() {
 	migrationCmd.AddCommand(migrationSquashCmd)
 	// Build up command
 	upFlags := migrationUpCmd.Flags()
-	upFlags.BoolVar(&ignoreVersionMismatch, "ignore-version-mismatch", false, "Force push migrations to the database without checking version mismatch.")
+	upFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
 	migrationCmd.AddCommand(migrationUpCmd)
 	// Build new command
 	migrationCmd.AddCommand(migrationNewCmd)
