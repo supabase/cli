@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	errMissingRemote = errors.New("Found local migration files created before the last migration on remote database.")
+	errMissingRemote = errors.New("Found local migration files to be inserted before the last migration on remote database.")
 	errMissingLocal  = errors.New("Remote migration versions not found in " + utils.MigrationsDir + " directory.")
 )
 
@@ -72,7 +72,7 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 }
 
 func suggestRevertHistory(versions []string) string {
-	result := fmt.Sprintln("\nTry repairing the migration history table:")
+	result := fmt.Sprintln("\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:")
 	for _, ver := range versions {
 		result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + ver))
 	}
