@@ -22,7 +22,11 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-var updatedConfig map[string]interface{} = make(map[string]interface{})
+var (
+	updatedConfig     = make(map[string]interface{})
+	errMissingKeys    = errors.New("No API keys found.")
+	errMissingVersion = errors.New("GoTrue version not found.")
+)
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
@@ -37,8 +41,9 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 	if err := linkPostgrest(ctx, projectRef); err != nil {
 		return err
 	}
+	// Ignore non-fatal errors linking other services
 	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, err)
 	}
 
 	// 2. Check database connection
@@ -138,12 +143,9 @@ func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	}
 	keys := *resp.JSON200
 	if len(keys) == 0 {
-		return nil
+		return errMissingKeys
 	}
-	if err := updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys); err != nil {
-		return err
-	}
-	return nil
+	return updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys)
 }
 
 type HealthResponse struct {
@@ -177,6 +179,9 @@ func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys af
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&data); err != nil {
 		return err
+	}
+	if len(data.Version) == 0 {
+		return errMissingVersion
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err

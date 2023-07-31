@@ -23,7 +23,7 @@ var Version string
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.90"
+	Pg15Image = "supabase/postgres:15.1.0.103"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -37,7 +37,7 @@ const (
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.62.1"
+	GotrueImage   = "supabase/gotrue:v2.82.4"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.40.4"
 	LogflareImage = "supabase/logflare:1.3.17"
