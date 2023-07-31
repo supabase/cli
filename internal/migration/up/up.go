@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -13,7 +14,10 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var errConflict = errors.New("supabase_migrations.schema_migrations table conflicts with the contents of " + utils.Bold(utils.MigrationsDir) + ".")
+var (
+	errMissingRemote = errors.New("Local migration files not found on supabase_migrations.schema_migrations table.")
+	errMissingLocal  = errors.New("Remote migration versions not found in " + utils.MigrationsDir + " directory.")
+)
 
 func Run(ctx context.Context, ignoreVersionMismatch bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
@@ -40,37 +44,47 @@ func GetPendingMigrations(ctx context.Context, ignoreVersionMismatch bool, conn 
 	if err != nil {
 		return nil, err
 	}
-	// Check remote is in-sync or behind local
-	if len(remoteMigrations) > len(localMigrations) {
-		return nil, fmt.Errorf("%w; Found %d versions and %d migrations.", errConflict, len(remoteMigrations), len(localMigrations))
-	}
-
-	if ignoreVersionMismatch {
-		// If ignoreVersionMismatch is true, we need to find the difference between the two arrays
-		for _, num2 := range remoteMigrations {
-			// Iterate through the first array and remove matching elements
-			for i := 0; i < len(localMigrations); i++ {
-				if utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1] == num2 {
-					// Remove the element from the first array using append
-					localMigrations = append(localMigrations[:i], localMigrations[i+1:]...)
-					// Decrement the loop counter to avoid skipping elements
-					i--
-				}
-			}
-		}
-
-		// Return the difference
-		return localMigrations, nil
-	}
-
+	// Find unapplied local migrations
+	var unapplied []string
 	for i, remote := range remoteMigrations {
-		filename := localMigrations[i]
-		// LoadLocalMigrations guarantees we always have a match
-		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		if remote != local {
-			return nil, fmt.Errorf("%w; Expected version %s but found migration %s at index %d.", errConflict, remote, filename, i)
+		for _, filename := range localMigrations[i+len(unapplied):] {
+			// Check if migration has been applied before, LoadLocalMigrations guarantees a match
+			local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+			if remote == local {
+				break
+			}
+			// Include out-of-order local migrations
+			unapplied = append(unapplied, filename)
+		}
+		// Check if all remote versions exist in local
+		if i+len(unapplied) >= len(localMigrations) {
+			utils.CmdSuggestion = suggestRevertHistory(remoteMigrations[i:])
+			return nil, errMissingLocal
 		}
 	}
+	// Enforce linear history by default
+	if !ignoreVersionMismatch && len(unapplied) > 0 {
+		utils.CmdSuggestion = suggestIgnoreFlag(unapplied)
+		return nil, errMissingRemote
+	}
+	pending := localMigrations[len(remoteMigrations)+len(unapplied):]
+	return append(unapplied, pending...), nil
+}
 
-	return localMigrations[len(remoteMigrations):], nil
+func suggestRevertHistory(versions []string) string {
+	result := fmt.Sprintln("\nTry repairing the migration history table:")
+	for _, ver := range versions {
+		result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + ver))
+	}
+	result += fmt.Sprintln("\nAnd update local migrations to match remote database:")
+	result += fmt.Sprintln(utils.Bold("supabase db remote commit"))
+	return result
+}
+
+func suggestIgnoreFlag(filenames []string) string {
+	result := "\nRerun the command with --ignore-version-mismatch flag to apply these migrations:\n"
+	for _, name := range filenames {
+		result += fmt.Sprintln(utils.Bold(filepath.Join(utils.MigrationsDir, name)))
+	}
+	return result
 }
