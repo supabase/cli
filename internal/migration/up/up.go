@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	errMissingRemote = errors.New("Local migration files not found on supabase_migrations.schema_migrations table.")
+	errMissingRemote = errors.New("Found local migration files created before the last migration on remote database.")
 	errMissingLocal  = errors.New("Remote migration versions not found in " + utils.MigrationsDir + " directory.")
 )
 
-func Run(ctx context.Context, ignoreVersionMismatch bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, includeAll bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
@@ -28,14 +28,14 @@ func Run(ctx context.Context, ignoreVersionMismatch bool, fsys afero.Fs, options
 		return err
 	}
 	defer conn.Close(context.Background())
-	pending, err := GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys)
+	pending, err := GetPendingMigrations(ctx, includeAll, conn, fsys)
 	if err != nil {
 		return err
 	}
 	return apply.MigrateUp(ctx, conn, pending, fsys)
 }
 
-func GetPendingMigrations(ctx context.Context, ignoreVersionMismatch bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
+func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func GetPendingMigrations(ctx context.Context, ignoreVersionMismatch bool, conn 
 	if err != nil {
 		return nil, err
 	}
-	// Find unapplied local migrations
+	// Find local migrations older than the last migration on remote
 	var unapplied []string
 	for i, remote := range remoteMigrations {
 		for _, filename := range localMigrations[i+len(unapplied):] {
@@ -62,8 +62,8 @@ func GetPendingMigrations(ctx context.Context, ignoreVersionMismatch bool, conn 
 			return nil, errMissingLocal
 		}
 	}
-	// Enforce linear history by default
-	if !ignoreVersionMismatch && len(unapplied) > 0 {
+	// Enforce migrations are applied in chronological order by default
+	if !includeAll && len(unapplied) > 0 {
 		utils.CmdSuggestion = suggestIgnoreFlag(unapplied)
 		return nil, errMissingRemote
 	}
@@ -82,7 +82,7 @@ func suggestRevertHistory(versions []string) string {
 }
 
 func suggestIgnoreFlag(filenames []string) string {
-	result := "\nRerun the command with --ignore-version-mismatch flag to apply these migrations:\n"
+	result := "\nRerun the command with --include-all flag to apply these migrations:\n"
 	for _, name := range filenames {
 		result += fmt.Sprintln(utils.Bold(filepath.Join(utils.MigrationsDir, name)))
 	}
