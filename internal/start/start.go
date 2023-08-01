@@ -239,7 +239,7 @@ EOF
 
 		bind := []string{}
 		switch utils.Config.Analytics.Backend {
-		case "big_query":
+		case "bigquery":
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
 		case "postgres":
 			env = append(env, []string{

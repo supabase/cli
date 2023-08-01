@@ -93,7 +93,7 @@ var Config = config{
 	},
 	Analytics: analytics{
 		ApiKey:  "api-key",
-		Backend: "big_query",
+		Backend: "postgres",
 	},
 }
 
@@ -434,7 +434,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	// Validate logflare config
 	if Config.Analytics.Enabled {
-		if Config.Analytics.Backend == "big_query" {
+		if Config.Analytics.Backend == "bigquery" {
 			if len(Config.Analytics.GcpProjectId) == 0 {
 				return errors.New("Missing required field in config: analytics.gcp_project_id")
 			}
