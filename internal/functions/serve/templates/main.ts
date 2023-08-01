@@ -111,7 +111,7 @@ serve(async (req: Request) => {
   const customModuleRoot = ""; // empty string to allow any local path
   const cpuTimeThresholdMs = 50;
   const cpuBurstIntervalMs = 100;
-  const maxCpuBursts = 10;
+  const maxCpuBursts = 100;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
