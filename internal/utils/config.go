@@ -441,6 +441,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if len(Config.Analytics.GcpProjectNumber) == 0 {
 				return errors.New("Missing required field in config: analytics.gcp_project_number")
 			}
+			if len(Config.Analytics.GcpJwtPath) == 0 {
+				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
+			}
 		}
 	}
 	return nil
