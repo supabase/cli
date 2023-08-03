@@ -5,6 +5,7 @@ This command displays the size of each each index in the database. It is calcula
 ```
               NAME              │    SIZE
   ──────────────────────────────┼─────────────
+    user_events_index           │ 2082 MB
     job_run_details_pkey        │ 3856 kB
     schema_migrations_pkey      │ 16 kB
     refresh_tokens_token_unique │ 8192 bytes
