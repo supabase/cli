@@ -1,6 +1,6 @@
 ## total-table-sizes
 
-This command displays the total size of each table in the database. It is calculated by using the system administration function `pg_total_relation_size()`, which includes table size, total index size and TOAST data.
+This command displays the total size of each table in the database. It is the sum of the values that `pg_table_size()` and `pg_indexes_size()` gives for each table.
 
 ```
                 NAME               │    SIZE
