@@ -1,8 +1,6 @@
 # db-unused-indexes
 
-Think of your database as a library, and indexes are like the index cards that help you find books. Sometimes, you might have index cards for books that very few people borrow, and those index cards take up space in the library.
-
-This command helps you find these little-used index cards. It shows you the ones that have been looked at less than 50 times and are taking up more than 5 pages. Removing these unused index cards can help speed up writing new information to the library and make it easier to find popular books in the future. Just like cleaning out old files from your computer to make it run faster!
+This command displays indexes that have < 50 scans recorded against them, and are greater than 5 pages in size, ordered by size relative to the number of index scans. This command is generally useful for discovering indexes that are unused. Indexes can impact write performance, as well as read performance should they occupy space in memory, its a good idea to remove indexes that are not needed or being used.
 
 ```
         TABLE        │                   INDEX                    │ INDEX SIZE │ INDEX SCANS
