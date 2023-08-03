@@ -4,10 +4,10 @@ This command displays an estimated count of rows per table, descending by estima
 
 
 ```
-                  NAME               │ ESTIMATED COUNT
-  ───────────────────────────────────┼──────────────────
-    logs                             │          322943
-    emails                           │            1103
-    job                              │               1
-    migrations                       │               0
+       NAME    │ ESTIMATED COUNT
+  ─────────────┼──────────────────
+    logs       │          322943
+    emails     │            1103
+    job        │               1
+    migrations │               0
 ```

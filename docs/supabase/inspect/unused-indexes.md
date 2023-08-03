@@ -7,7 +7,5 @@ This command helps you find these little-used index cards. It shows you the ones
 ```
         TABLE        │                   INDEX                    │ INDEX SIZE │ INDEX SCANS
 ─────────────────────┼────────────────────────────────────────────┼────────────┼──────────────
- public.grade_levels | index_placement_attempts_on_grade_level_id | 97 MB      |           0
- public.observations | observations_attrs_grade_resources         | 33 MB      |           0
- public.messages     | user_resource_id_idx                       | 12 MB      |           0
+ public.users        │ user_id_created_at_idx                     │ 97 MB      │           0
 ```
