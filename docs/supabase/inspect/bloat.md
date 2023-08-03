@@ -5,10 +5,10 @@ This command displays an estimation of table "bloat" - Due to Postgres' [MVCC](h
 Tables with a high bloat ratio should be investigated to see if there are vacuuming is not quick enough or there are other issues.
 
 ```
-    TYPE  │ SCHEMA NAME │                         OBJECT NAME                          │ BLOAT │   WASTE
-  ────────┼─────────────┼──────────────────────────────────────────────────────────────┼───────┼─────────────
-    table │ public      │ very_bloated_table                                           │  41.0 │ 700 MB
-    table │ public      │ my_table                                                     │   4.0 │ 76 MB
-    table │ public      │ happy_table                                                  │   1.0 │ 1472 kB
-    index │ public      │ happy_table::my_nice_index                                   │   0.7 │ 880 kB
+    TYPE  │ SCHEMA NAME │        OBJECT NAME         │ BLOAT │ WASTE
+  ────────┼─────────────┼────────────────────────────┼───────┼─────────────
+    table │ public      │ very_bloated_table         │  41.0 │ 700 MB
+    table │ public      │ my_table                   │   4.0 │ 76 MB
+    table │ public      │ happy_table                │   1.0 │ 1472 kB
+    index │ public      │ happy_table::my_nice_index │   0.7 │ 880 kB
 ```
