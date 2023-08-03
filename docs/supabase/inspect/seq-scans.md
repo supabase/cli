@@ -9,8 +9,6 @@ This command displays the number of sequential scans recorded against all tables
     emails                           │ 182435
     users                            │  25063
     job_run_details                  │     60
-    schema_migrations                │      4
-    staging_resource_notifications   │      2
     schema_migrations                │      0
     migrations                       │      0
 ```
