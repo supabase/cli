@@ -1,6 +1,6 @@
 # db-table-index-sizes
 
-This command displays the total size of indexes for each table. It is calcualtes by using the system administration function `pg_indexes_size()`.
+This command displays the total size of indexes for each table. It is calculated by using the system administration function `pg_indexes_size()`.
 
 ```
                  TABLE               │ INDEX SIZE
