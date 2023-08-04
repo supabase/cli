@@ -1,4 +1,4 @@
-# calls
+# db-calls
 
 This command is much like the `supabase inspect db outliers` command, but ordered by the number of times a statement has been called.
 

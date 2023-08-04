@@ -1,4 +1,4 @@
-## vacuum-stats
+# db-vacuum-stats
 
 This shows you stats about the vacuum activities for each table. It estimates the number of rows that are no longer needed (dead rows) and tells you when the table was last automatically cleaned. It's handy for figuring out if the autovacuum settings need tweaking and spot if vacuum might have failed for some tables. Look out for tables with a large dead row count compared their actual number of rows.
 
