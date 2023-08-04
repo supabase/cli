@@ -231,16 +231,18 @@ EOF
 			"LOGFLARE_NODE_HOST=127.0.0.1",
 			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
 			"RELEASE_COOKIE=cookie",
-			// This is hardcoded in studio frontend
-			"GOOGLE_DATASET_ID_APPEND=_prod",
-			"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-			"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
 		}
 
 		bind := []string{}
 		switch utils.Config.Analytics.Backend {
 		case "bigquery":
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
+			// This is hardcoded in studio frontend
+			env = append(env, []string{
+				"GOOGLE_DATASET_ID_APPEND=_prod",
+				"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
+				"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
+			}...)
 		case "postgres":
 			env = append(env, []string{
 				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
@@ -685,6 +687,7 @@ EOF
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
+					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
