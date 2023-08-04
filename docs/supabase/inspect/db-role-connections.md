@@ -5,7 +5,7 @@ This command shows the number of active connections for each database roles to s
 This is a Supabase specific command. You can see this breakdown on the dashboard as well:
 https://app.supabase.com/project/_/database/roles
 
-The maximum number of active connections depends [on your instance size](https://supabase.com/docs/guides/platform/compute-add-ons).
+The maximum number of active connections depends [on your instance size](https://supabase.com/docs/guides/platform/compute-add-ons). You can [manually overwrite](https://supabase.com/docs/guides/platform/performance#allowing-higher-number-of-connections) the allowed number of connection but it is not advised.
 
 ```
 
