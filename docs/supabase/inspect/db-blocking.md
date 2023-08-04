@@ -1,4 +1,4 @@
-## blocking
+## db-blocking
 
 This command shows you staements that are currently holding locks and blocking, as well as the statement that is being blocked. This can be used in conjunction with `inspect db locks` to determine which statements need to be terminated in order to resolve lock contention.
 

@@ -1,4 +1,4 @@
-# index-usage
+# db-index-usage
 
 This command provides information on the efficiency of indexes, represented as what percentage of total scans were index scans. A low percentage can indicate under indexing, or wrong data being indexed.
 

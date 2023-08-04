@@ -1,4 +1,4 @@
-## unused-indexes
+# db-unused-indexes
 
 Think of your database as a library, and indexes are like the index cards that help you find books. Sometimes, you might have index cards for books that very few people borrow, and those index cards take up space in the library.
 
