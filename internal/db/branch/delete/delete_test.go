@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/docker/docker/client"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,10 +54,7 @@ func TestBranchDir(t *testing.T) {
 }
 
 func TestDeleteCommand(t *testing.T) {
-	const (
-		version = "1.41"
-		branch  = "test-branch"
-	)
+	const branch = "test-branch"
 
 	t.Run("throws error on missing config", func(t *testing.T) {
 		assert.Error(t, Run(branch, afero.NewMemMapFs()))
@@ -69,19 +65,15 @@ func TestDeleteCommand(t *testing.T) {
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(branch, fsys))
+		err := Run(branch, fsys)
 		// Validate api
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
