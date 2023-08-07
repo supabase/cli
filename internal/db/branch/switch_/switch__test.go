@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -21,8 +20,6 @@ import (
 )
 
 func TestSwitchCommand(t *testing.T) {
-	const version = "1.41"
-
 	t.Run("switches local branch", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -33,19 +30,14 @@ func TestSwitchCommand(t *testing.T) {
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
 		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -91,15 +83,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := Run(context.Background(), "target", fsys)
@@ -113,15 +100,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
@@ -136,15 +118,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
@@ -159,15 +136,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Setup target branch
@@ -188,15 +160,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Setup target branch
@@ -217,15 +184,10 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Setup target branch
@@ -241,8 +203,6 @@ func TestSwitchCommand(t *testing.T) {
 }
 
 func TestSwitchDatabase(t *testing.T) {
-	const version = "1.41"
-
 	t.Run("throws error on failure to connect", func(t *testing.T) {
 		// Setup invalid port
 		utils.Config.Db.Port = 0
@@ -281,15 +241,10 @@ func TestSwitchDatabase(t *testing.T) {
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "main" already exists`)
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
@@ -317,15 +272,10 @@ func TestSwitchDatabase(t *testing.T) {
 			Query("ALTER DATABASE main RENAME TO postgres;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "postgres" already exists`)
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/restart").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
