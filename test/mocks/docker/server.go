@@ -41,7 +41,7 @@ func (s *Server) NewRouter() *gin.Engine {
 	root.HEAD("/_ping", s.ping)
 	root.GET("/_ping", s.ping)
 
-	router := root.Group("/v1.41")
+	router := root.Group("/v1.42")
 
 	containers := router.Group("/containers")
 	containers.GET("/:id/json", s.inspectContainer)
