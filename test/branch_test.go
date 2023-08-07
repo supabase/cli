@@ -11,6 +11,7 @@ import (
 // this is the part of Database test suite - DBTestSuite
 // test functions
 func (suite *DBTestSuite) TestBranchCreate() {
+	suite.T().Skip("Local branching is deprecated")
 	// create branch
 	branch := "test-branch"
 	create, args, err := suite.cmd.Traverse([]string{"db", "branch", "create", branch})
