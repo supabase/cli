@@ -121,6 +121,7 @@ var (
 	}
 
 	dryRun       bool
+	includeAll   bool
 	includeRoles bool
 	includeSeed  bool
 
@@ -133,7 +134,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, includeRoles, includeSeed, dbConfig, fsys)
+			return push.Run(ctx, dryRun, includeAll, includeRoles, includeSeed, dbConfig, fsys)
 		},
 	}
 
@@ -263,6 +264,7 @@ func init() {
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
+	pushFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
 	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
 	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from "+utils.SeedDataPath+".")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
