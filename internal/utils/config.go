@@ -62,6 +62,13 @@ func (s *sizeInBytes) UnmarshalText(text []byte) error {
 	return err
 }
 
+type LogflareBackend string
+
+const (
+	LogflarePostgres LogflareBackend = "postgres"
+	LogflareBigQuery LogflareBackend = "bigquery"
+)
+
 var Config = config{
 	Auth: auth{
 		Image: GotrueImage,
@@ -92,8 +99,9 @@ var Config = config{
 		Password: "postgres",
 	},
 	Analytics: analytics{
-		ApiKey:  "api-key",
-		Backend: "postgres",
+		ApiKey: "api-key",
+		// Defaults to bigquery for backwards compatibility with existing config.toml
+		Backend: LogflareBigQuery,
 	},
 }
 
@@ -239,14 +247,14 @@ type (
 	}
 
 	analytics struct {
-		Enabled          bool   `toml:"enabled"`
-		Port             uint16 `toml:"port"`
-		Backend          string `toml:"backend"`
-		VectorPort       uint16 `toml:"vector_port"`
-		GcpProjectId     string `toml:"gcp_project_id"`
-		GcpProjectNumber string `toml:"gcp_project_number"`
-		GcpJwtPath       string `toml:"gcp_jwt_path"`
-		ApiKey           string `toml:"-" mapstructure:"api_key"`
+		Enabled          bool            `toml:"enabled"`
+		Port             uint16          `toml:"port"`
+		Backend          LogflareBackend `toml:"backend"`
+		VectorPort       uint16          `toml:"vector_port"`
+		GcpProjectId     string          `toml:"gcp_project_id"`
+		GcpProjectNumber string          `toml:"gcp_project_number"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path"`
+		ApiKey           string          `toml:"-" mapstructure:"api_key"`
 	}
 
 	// TODO
@@ -434,7 +442,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	// Validate logflare config
 	if Config.Analytics.Enabled {
-		if Config.Analytics.Backend == "bigquery" {
+		switch Config.Analytics.Backend {
+		case LogflareBigQuery:
 			if len(Config.Analytics.GcpProjectId) == 0 {
 				return errors.New("Missing required field in config: analytics.gcp_project_id")
 			}
@@ -444,6 +453,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if len(Config.Analytics.GcpJwtPath) == 0 {
 				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
 			}
+		case LogflarePostgres:
+			break
+		default:
+			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
+			return fmt.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
 	return nil

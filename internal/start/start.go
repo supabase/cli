@@ -211,11 +211,6 @@ EOF
 	var started []string
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
-		workdir, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 		env := []string{
 			"DB_DATABASE=" + dbConfig.Database,
 			"DB_HOSTNAME=" + dbConfig.Host,
@@ -232,22 +227,27 @@ EOF
 			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
 			"RELEASE_COOKIE=cookie",
 		}
-
 		bind := []string{}
+
 		switch utils.Config.Analytics.Backend {
-		case "bigquery":
+		case utils.LogflareBigQuery:
+			workdir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
 			// This is hardcoded in studio frontend
-			env = append(env, []string{
+			env = append(env,
 				"GOOGLE_DATASET_ID_APPEND=_prod",
-				"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-				"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
-			}...)
-		case "postgres":
-			env = append(env, []string{
+				"GOOGLE_PROJECT_ID="+utils.Config.Analytics.GcpProjectId,
+				"GOOGLE_PROJECT_NUMBER="+utils.Config.Analytics.GcpProjectNumber,
+			)
+		case utils.LogflarePostgres:
+			env = append(env,
 				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 				"POSTGRES_BACKEND_SCHEMA=_analytics",
-			}...)
+			)
 		}
 
 		if _, err := utils.DockerStart(
