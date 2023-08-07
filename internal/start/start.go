@@ -362,10 +362,6 @@ EOF
 			"GOTRUE_SMTP_PORT=2500",
 			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
 			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
-			"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_INVITE=http://%s:8088/email/invite.html", utils.KongId),
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://%s:8088/email/confirmation.html", utils.KongId),
 			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_RECOVERY=http://%s:8088/email/recovery.html", utils.KongId),
@@ -376,6 +372,13 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_RECOVERY=%s", utils.Config.Auth.Email.RecoverySubject),
 			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_MAGIC_LINK=%s", utils.Config.Auth.Email.MagicLinkSubject),
 			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE=%s", utils.Config.Auth.Email.EmailChangeSubject),
+			// TODO: To be reverted to `/auth/v1/verify` once
+			// https://github.com/supabase/supabase/issues/16100
+			// is fixed on upstream GoTrue.
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
