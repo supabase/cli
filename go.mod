@@ -177,7 +177,7 @@ require (
 	golang.org/x/term v0.11.0
 	golang.org/x/text v0.12.0 // indirect
 	google.golang.org/grpc v1.57.0
-	google.golang.org/protobuf v1.31.0 // indirect
+	google.golang.org/protobuf my v1.31.0 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0
