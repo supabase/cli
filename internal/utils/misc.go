@@ -170,7 +170,6 @@ var (
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
-	EmailTemplatesDir     = filepath.Join(SupabaseDirPath, "auth", "email")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
