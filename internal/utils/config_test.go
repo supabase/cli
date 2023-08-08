@@ -35,6 +35,7 @@ func TestConfigParsing(t *testing.T) {
 		initConfigTemplate = testInitConfigTemplate
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		assert.NoError(t, afero.WriteFile(fsys, "supabase/templates/invite.html", nil, 0644))
 		assert.NoError(t, WriteConfig(fsys, true))
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
