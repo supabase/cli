@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -104,6 +105,9 @@ var (
 
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
+	// Hardcoded configs which match nginxConfigEmbed
+	nginxEmailTemplateDir   = "/home/kong/templates/email"
+	nginxTemplateServerPort = 8088
 )
 
 type vectorConfig struct {
@@ -292,10 +296,6 @@ EOF
 	// Start Kong.
 	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
@@ -310,8 +310,21 @@ EOF
 			return err
 		}
 
-		binds := []string{
-			filepath.Join(cwd, utils.EmailTemplatesDir) + ":/home/kong/templates/email:rw,z",
+		binds := []string{}
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) == 0 {
+				continue
+			}
+			hostPath := tmpl.ContentPath
+			if !filepath.IsAbs(tmpl.ContentPath) {
+				var err error
+				hostPath, err = filepath.Abs(hostPath)
+				if err != nil {
+					return err
+				}
+			}
+			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw,z", hostPath, dockerPath))
 		}
 
 		if _, err := utils.DockerStart(
@@ -330,7 +343,6 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
 				},
-				ExposedPorts: nat.PortSet{"8088/tcp": {}},
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
 EOF
@@ -379,16 +391,6 @@ EOF
 			"GOTRUE_SMTP_PORT=2500",
 			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
 			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
-			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_INVITE=http://%s:8088/email/invite.html", utils.KongId),
-			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://%s:8088/email/confirmation.html", utils.KongId),
-			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_RECOVERY=http://%s:8088/email/recovery.html", utils.KongId),
-			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=http://%s:8088/email/magic-link.html", utils.KongId),
-			fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE=http://%s:8088/email/email-change.html", utils.KongId),
-			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_INVITE=%s", utils.Config.Auth.Email.InviteSubject),
-			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_CONFIRMATION=%s", utils.Config.Auth.Email.ConfirmationSubject),
-			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_RECOVERY=%s", utils.Config.Auth.Email.RecoverySubject),
-			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_MAGIC_LINK=%s", utils.Config.Auth.Email.MagicLinkSubject),
-			fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE=%s", utils.Config.Auth.Email.EmailChangeSubject),
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100
 			// is fixed on upstream GoTrue.
@@ -407,6 +409,23 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",
+					strings.ToUpper(id),
+					utils.KongId,
+					nginxTemplateServerPort,
+					id+filepath.Ext(tmpl.ContentPath),
+				))
+			}
+			if len(tmpl.Subject) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
+					strings.ToUpper(id),
+					tmpl.Subject,
+				))
+			}
 		}
 
 		if utils.Config.Auth.Sms.Twilio.Enabled {

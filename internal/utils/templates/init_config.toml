@@ -68,12 +68,11 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
-# Email subject
-invite_subject = "You have been invited"
-confirmation_subject = "Confirm Your Email"
-recovery_subject = "Reset Your Password"
-magic_link_subject = "Your Magic Link"
-email_change_subject = "Confirm Email Change"
+
+# Uncomment to customize email template
+# [auth.email.template.invite]
+# subject = "You have been invited"
+# content_path = "./supabase/templates/invite.html"
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
