@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -101,6 +102,12 @@ var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+
+	//go:embed templates/custom_nginx.template
+	nginxConfigEmbed string
+	// Hardcoded configs which match nginxConfigEmbed
+	nginxEmailTemplateDir   = "/home/kong/templates/email"
+	nginxTemplateServerPort = 8088
 )
 
 type vectorConfig struct {
@@ -303,6 +310,23 @@ EOF
 			return err
 		}
 
+		binds := []string{}
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) == 0 {
+				continue
+			}
+			hostPath := tmpl.ContentPath
+			if !filepath.IsAbs(tmpl.ContentPath) {
+				var err error
+				hostPath, err = filepath.Abs(hostPath)
+				if err != nil {
+					return err
+				}
+			}
+			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw,z", hostPath, dockerPath))
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -319,12 +343,15 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
+EOF
+` + nginxConfigEmbed + `
 EOF
 `},
 			},
 			start.WithSyslogConfig(container.HostConfig{
+				Binds:         binds,
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
@@ -382,6 +409,23 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",
+					strings.ToUpper(id),
+					utils.KongId,
+					nginxTemplateServerPort,
+					id+filepath.Ext(tmpl.ContentPath),
+				))
+			}
+			if len(tmpl.Subject) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
+					strings.ToUpper(id),
+					tmpl.Subject,
+				))
+			}
 		}
 
 		if utils.Config.Auth.Sms.Twilio.Enabled {
