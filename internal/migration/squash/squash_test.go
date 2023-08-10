@@ -54,6 +54,8 @@ func TestSquashCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
