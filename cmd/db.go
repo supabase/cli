@@ -106,14 +106,26 @@ var (
 	useCopy      bool
 	roleOnly     bool
 	keepComments bool
+	dumpLocal    bool
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
 		Short: "Dumps data or schemas from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
+			if dumpLocal {
+				if err := utils.LoadConfigFS(fsys); err != nil {
+					return err
+				}
+				dbConfig.Host = "localhost"
+				dbConfig.Port = uint16(utils.Config.Db.Port)
+				dbConfig.User = "postgres"
+				dbConfig.Password = utils.Config.Db.Password
+				dbConfig.Database = "postgres"
+			} else {
+				if err := parseDatabaseConfig(fsys); err != nil {
+					return err
+				}
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return dump.Run(ctx, file, dbConfig, schema, dataOnly, roleOnly, keepComments, useCopy, dryRun, fsys)
@@ -273,7 +285,8 @@ func init() {
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
-	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Print the pg_dump script that would be executed.")
+	dumpFlags.BoolVar(&dumpLocal, "local", false, "Dumps from the local database.")
+	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Prints the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
