@@ -38,6 +38,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, "Postgres database is already running.")
 		return nil
 	}
+	// Skip logflare container in db start
+	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
 		utils.DockerRemoveAll(context.Background())
