@@ -175,6 +175,7 @@ var (
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
+		Args:  cobra.ExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if linked || len(dbUrl) > 0 {
@@ -183,7 +184,7 @@ var (
 				}
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return reset.Run(ctx, dbConfig, fsys)
+			return reset.Run(ctx, version, dbConfig, fsys)
 		},
 	}
 
@@ -283,6 +284,7 @@ func init() {
 	// Build reset command
 	resetFlags := dbResetCmd.Flags()
 	resetFlags.BoolVar(&linked, "linked", false, "Resets the linked project to current migrations.")
+	resetFlags.StringVar(&version, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()

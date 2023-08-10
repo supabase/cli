@@ -45,20 +45,20 @@ func TestMigrateDatabase(t *testing.T) {
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
-		err = MigrateDatabase(ctx, mock, fsys)
+		err = MigrateDatabase(ctx, "", mock, fsys)
 		// Check error
 		assert.NoError(t, err)
 	})
 
 	t.Run("ignores empty local directory", func(t *testing.T) {
-		assert.NoError(t, MigrateDatabase(context.Background(), nil, afero.NewMemMapFs()))
+		assert.NoError(t, MigrateDatabase(context.Background(), "", nil, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on write failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := MigrateDatabase(context.Background(), nil, afero.NewReadOnlyFs(fsys))
+		err := MigrateDatabase(context.Background(), "", nil, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
