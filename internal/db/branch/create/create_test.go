@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,52 +48,40 @@ func TestBranchValidation(t *testing.T) {
 }
 
 func TestBranchCreation(t *testing.T) {
-	const version = "1.41"
 	utils.DbId = "test-db"
 
 	t.Run("docker exec failure", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/exec").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/exec").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, createBranch(context.Background(), "test-branch"))
+		err := createBranch(context.Background(), "test-branch")
 		// Validate api
+		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("docker attach failure", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Post("/v" + version + "/containers/" + utils.DbId + "/exec").
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/exec").
 			Reply(http.StatusCreated).
 			JSON(types.ContainerJSON{})
 		// Run test
-		assert.Error(t, createBranch(context.Background(), "test-branch"))
+		err := createBranch(context.Background(), "test-branch")
 		// Validate api
+		assert.ErrorContains(t, err, "cannot connect to the Docker daemon.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestCreateCommand(t *testing.T) {
-	const (
-		version = "1.41"
-		branch  = "test-branch"
-	)
+	const branch = "test-branch"
 
 	t.Run("throws error on missing config", func(t *testing.T) {
 		assert.Error(t, Run(branch, afero.NewMemMapFs()))
@@ -105,19 +92,15 @@ func TestCreateCommand(t *testing.T) {
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, client.WithHTTPClient(http.DefaultClient)(utils.Docker))
+		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", version).
-			SetHeader("OSType", "linux")
-		gock.New("http:///var/run/docker.sock").
-			Get("/v" + version + "/containers").
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(branch, fsys))
+		err := Run(branch, fsys)
 		// Validate api
+		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

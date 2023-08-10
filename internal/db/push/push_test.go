@@ -36,7 +36,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), true, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -50,7 +50,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -59,7 +59,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, pgconn.Config{}, fsys)
+		err := Run(context.Background(), false, false, false, false, pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -73,7 +73,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "target" does not exist (SQLSTATE 3D000)`)
 	})
@@ -95,7 +95,7 @@ func TestMigrationPush(t *testing.T) {
 			Query(repair.ADD_STATEMENTS_COLUMN).
 			Query(repair.ADD_NAME_COLUMN)
 		// Run test
-		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)`)
 	})
@@ -121,7 +121,7 @@ func TestMigrationPush(t *testing.T) {
 			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
-		err := Run(context.Background(), false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
 		assert.ErrorContains(t, err, "At statement 0: "+repair.INSERT_MIGRATION_VERSION)

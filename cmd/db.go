@@ -111,7 +111,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return dump.Run(ctx, file, dbConfig, dataOnly, roleOnly, keepComments, useCopy, fsys)
+			return dump.Run(ctx, file, dbConfig, schema, dataOnly, roleOnly, keepComments, useCopy, dryRun, fsys)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
@@ -120,7 +120,10 @@ var (
 		},
 	}
 
-	dryRun bool
+	dryRun       bool
+	includeAll   bool
+	includeRoles bool
+	includeSeed  bool
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
@@ -131,7 +134,7 @@ var (
 				return err
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return push.Run(ctx, dryRun, dbConfig, fsys)
+			return push.Run(ctx, dryRun, includeAll, includeRoles, includeSeed, dbConfig, fsys)
 		},
 	}
 
@@ -247,6 +250,7 @@ func init() {
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
 	dumpFlags := dbDumpCmd.Flags()
+	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Print the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
@@ -255,9 +259,14 @@ func init() {
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
+	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	dumpFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
+	pushFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
+	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
+	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from "+utils.SeedDataPath+".")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))

@@ -13,7 +13,7 @@ import (
 )
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
-const CACHE_HIT_QUERY = `
+const QUERY = `
 SELECT
   'index hit rate' AS name,
   (sum(idx_blks_hit)) / nullif(sum(idx_blks_hit + idx_blks_read),0) AS ratio
@@ -25,7 +25,7 @@ SELECT
 FROM pg_statio_user_tables;
 `
 
-type CacheHitResult struct {
+type Result struct {
 	Name  string
 	Ratio float64
 }
@@ -35,11 +35,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, CACHE_HIT_QUERY)
+	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
 		return err
 	}
-	result, err := pgxv5.CollectRows[CacheHitResult](rows)
+	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
 		return err
 	}

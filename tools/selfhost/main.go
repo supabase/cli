@@ -51,9 +51,6 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 	if err := updateComposeVersion(ctx, client, "docker/docker-compose.yml", branch, stable); err != nil {
 		return err
 	}
-	if err := updateComposeVersion(ctx, client, "docker/docker-compose-logging.yml", branch, stable); err != nil {
-		return err
-	}
 	pr := github.NewPullRequest{
 		Title: github.String("chore: update self-hosted image versions"),
 		Head:  &branch,

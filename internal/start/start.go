@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -101,6 +102,12 @@ var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
 	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+
+	//go:embed templates/custom_nginx.template
+	nginxConfigEmbed string
+	// Hardcoded configs which match nginxConfigEmbed
+	nginxEmailTemplateDir   = "/home/kong/templates/email"
+	nginxTemplateServerPort = 8088
 )
 
 type vectorConfig struct {
@@ -211,38 +218,55 @@ EOF
 	var started []string
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
-		workdir, err := os.Getwd()
-		if err != nil {
-			return err
+		env := []string{
+			"DB_DATABASE=" + dbConfig.Database,
+			"DB_HOSTNAME=" + dbConfig.Host,
+			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
+			"DB_SCHEMA=_analytics",
+			"DB_USERNAME=supabase_admin",
+			"DB_PASSWORD=" + dbConfig.Password,
+			"LOGFLARE_MIN_CLUSTER_SIZE=1",
+			"LOGFLARE_SINGLE_TENANT=true",
+			"LOGFLARE_SUPABASE_MODE=true",
+			"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+			"LOGFLARE_LOG_LEVEL=warn",
+			"LOGFLARE_NODE_HOST=127.0.0.1",
+			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
+			"RELEASE_COOKIE=cookie",
 		}
-		hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
+		bind := []string{}
+
+		switch utils.Config.Analytics.Backend {
+		case utils.LogflareBigQuery:
+			workdir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
+			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
+			// This is hardcoded in studio frontend
+			env = append(env,
+				"GOOGLE_DATASET_ID_APPEND=_prod",
+				"GOOGLE_PROJECT_ID="+utils.Config.Analytics.GcpProjectId,
+				"GOOGLE_PROJECT_NUMBER="+utils.Config.Analytics.GcpProjectNumber,
+			)
+		case utils.LogflarePostgres:
+			env = append(env,
+				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+				"POSTGRES_BACKEND_SCHEMA=_analytics",
+			)
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Hostname: "127.0.0.1",
 				Image:    utils.LogflareImage,
-				Env: []string{
-					"DB_DATABASE=" + dbConfig.Database,
-					"DB_HOSTNAME=" + dbConfig.Host,
-					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
-					"DB_SCHEMA=_analytics",
-					"DB_USERNAME=supabase_admin",
-					"DB_PASSWORD=" + dbConfig.Password,
-					"LOGFLARE_MIN_CLUSTER_SIZE=1",
-					"LOGFLARE_SINGLE_TENANT=true",
-					"LOGFLARE_SUPABASE_MODE=true",
-					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
-					"LOGFLARE_LOG_LEVEL=warn",
-					// This is hardcoded in studio frontend
-					"GOOGLE_DATASET_ID_APPEND=_prod",
-					"GOOGLE_PROJECT_ID=" + utils.Config.Analytics.GcpProjectId,
-					"GOOGLE_PROJECT_NUMBER=" + utils.Config.Analytics.GcpProjectNumber,
-				},
+				Env:      env,
 				// Original entrypoint conflicts with healthcheck due to 15 seconds sleep:
 				// https://github.com/Logflare/logflare/blob/staging/run.sh#L35
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > run.sh && sh run.sh
 ./logflare eval Logflare.Release.migrate
-export RELEASE_COOKIE=$(cat /tmp/.magic_cookie 2>/dev/null || echo $RANDOM | md5sum | head -c 20)
 ./logflare start --sname logflare
 EOF
 `},
@@ -256,7 +280,7 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         []string{hostJwtPath + ":/opt/app/rel/logflare/bin/gcloud.json"},
+				Binds:         bind,
 				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
@@ -286,6 +310,23 @@ EOF
 			return err
 		}
 
+		binds := []string{}
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) == 0 {
+				continue
+			}
+			hostPath := tmpl.ContentPath
+			if !filepath.IsAbs(tmpl.ContentPath) {
+				var err error
+				hostPath, err = filepath.Abs(hostPath)
+				if err != nil {
+					return err
+				}
+			}
+			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw,z", hostPath, dockerPath))
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -302,12 +343,15 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && ./docker-entrypoint.sh kong docker-start
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
+EOF
+` + nginxConfigEmbed + `
 EOF
 `},
 			},
 			start.WithSyslogConfig(container.HostConfig{
+				Binds:         binds,
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
@@ -347,10 +391,13 @@ EOF
 			"GOTRUE_SMTP_PORT=2500",
 			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
 			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
-			"GOTRUE_MAILER_URLPATHS_INVITE=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_RECOVERY=/auth/v1/verify",
-			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify",
+			// TODO: To be reverted to `/auth/v1/verify` once
+			// https://github.com/supabase/supabase/issues/16100
+			// is fixed on upstream GoTrue.
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -362,6 +409,23 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",
+					strings.ToUpper(id),
+					utils.KongId,
+					nginxTemplateServerPort,
+					id+filepath.Ext(tmpl.ContentPath),
+				))
+			}
+			if len(tmpl.Subject) > 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
+					strings.ToUpper(id),
+					tmpl.Subject,
+				))
+			}
 		}
 
 		if utils.Config.Auth.Sms.Twilio.Enabled {
@@ -670,6 +734,7 @@ EOF
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
+					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},

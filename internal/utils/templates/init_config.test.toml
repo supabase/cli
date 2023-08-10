@@ -69,6 +69,11 @@ double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
 
+# Uncomment to customize email template
+[auth.email.template.invite]
+subject = "You have been invited"
+content_path = "./supabase/templates/invite.html"
+
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
 enable_signup = true
@@ -98,8 +103,5 @@ url = "https://login.microsoftonline.com/tenant"
 enabled = false
 port = 54327
 vector_port = 54328
-# Setup BigQuery project to enable log viewer on local development stack.
-# See: https://supabase.com/docs/guides/getting-started/local-development#enabling-local-logging
-gcp_project_id = ""
-gcp_project_number = ""
-gcp_jwt_path = "supabase/gcloud.json"
+# Configure one of the supported backends: `postgres`, `bigquery`
+backend = "postgres"

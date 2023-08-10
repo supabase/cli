@@ -62,9 +62,25 @@ func (s *sizeInBytes) UnmarshalText(text []byte) error {
 	return err
 }
 
+type LogflareBackend string
+
+const (
+	LogflarePostgres LogflareBackend = "postgres"
+	LogflareBigQuery LogflareBackend = "bigquery"
+)
+
 var Config = config{
 	Auth: auth{
 		Image: GotrueImage,
+		Email: email{
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+		},
 		External: map[string]provider{
 			"apple":     {},
 			"azure":     {},
@@ -93,6 +109,8 @@ var Config = config{
 	},
 	Analytics: analytics{
 		ApiKey: "api-key",
+		// Defaults to bigquery for backwards compatibility with existing config.toml
+		Backend: LogflareBigQuery,
 	},
 }
 
@@ -184,9 +202,15 @@ type (
 	}
 
 	email struct {
-		EnableSignup         bool `toml:"enable_signup"`
-		DoubleConfirmChanges bool `toml:"double_confirm_changes"`
-		EnableConfirmations  bool `toml:"enable_confirmations"`
+		EnableSignup         bool                     `toml:"enable_signup"`
+		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
+		EnableConfirmations  bool                     `toml:"enable_confirmations"`
+		Template             map[string]emailTemplate `toml:"template"`
+	}
+
+	emailTemplate struct {
+		Subject     string `toml:"subject"`
+		ContentPath string `toml:"content_path"`
 	}
 
 	sms struct {
@@ -238,13 +262,14 @@ type (
 	}
 
 	analytics struct {
-		Enabled          bool   `toml:"enabled"`
-		Port             uint16 `toml:"port"`
-		VectorPort       uint16 `toml:"vector_port"`
-		GcpProjectId     string `toml:"gcp_project_id"`
-		GcpProjectNumber string `toml:"gcp_project_number"`
-		GcpJwtPath       string `toml:"gcp_jwt_path"`
-		ApiKey           string `toml:"-" mapstructure:"api_key"`
+		Enabled          bool            `toml:"enabled"`
+		Port             uint16          `toml:"port"`
+		Backend          LogflareBackend `toml:"backend"`
+		VectorPort       uint16          `toml:"vector_port"`
+		GcpProjectId     string          `toml:"gcp_project_id"`
+		GcpProjectNumber string          `toml:"gcp_project_number"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path"`
+		ApiKey           string          `toml:"-" mapstructure:"api_key"`
 	}
 
 	// TODO
@@ -337,9 +362,17 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
-		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && Config.Db.MajorVersion > 14 {
+		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 			index := strings.IndexByte(GotrueImage, ':')
 			Config.Auth.Image = GotrueImage[:index+1] + string(version)
+		}
+		// Validate email template
+		for _, tmpl := range Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) > 0 {
+				if _, err := fsys.Stat(tmpl.ContentPath); err != nil {
+					return err
+				}
+			}
 		}
 		// Validate sms config
 		var err error
@@ -432,11 +465,22 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	// Validate logflare config
 	if Config.Analytics.Enabled {
-		if len(Config.Analytics.GcpProjectId) == 0 {
-			return errors.New("Missing required field in config: analytics.gcp_project_id")
-		}
-		if len(Config.Analytics.GcpProjectNumber) == 0 {
-			return errors.New("Missing required field in config: analytics.gcp_project_number")
+		switch Config.Analytics.Backend {
+		case LogflareBigQuery:
+			if len(Config.Analytics.GcpProjectId) == 0 {
+				return errors.New("Missing required field in config: analytics.gcp_project_id")
+			}
+			if len(Config.Analytics.GcpProjectNumber) == 0 {
+				return errors.New("Missing required field in config: analytics.gcp_project_number")
+			}
+			if len(Config.Analytics.GcpJwtPath) == 0 {
+				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
+			}
+		case LogflarePostgres:
+			break
+		default:
+			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
+			return fmt.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
 	return nil

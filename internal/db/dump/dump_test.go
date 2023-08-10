@@ -35,7 +35,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", dbConfig, false, false, false, false, fsys)
+		err := Run(context.Background(), "schema.sql", dbConfig, nil, false, false, false, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -54,7 +54,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "", dbConfig, false, false, false, false, fsys)
+		err := Run(context.Background(), "", dbConfig, []string{"public"}, false, false, false, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -70,7 +70,7 @@ func TestPullCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "", dbConfig, false, false, false, false, fsys)
+		err := Run(context.Background(), "", dbConfig, nil, false, false, false, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -85,7 +85,7 @@ func TestPullCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		err := Run(context.Background(), "schema.sql", dbConfig, false, false, false, false, fsys)
+		err := Run(context.Background(), "schema.sql", dbConfig, nil, false, false, false, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

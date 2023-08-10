@@ -108,6 +108,10 @@ serve(async (req: Request) => {
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
   const forceCreate = true;
+  const customModuleRoot = ""; // empty string to allow any local path
+  const cpuTimeThresholdMs = 50;
+  const cpuBurstIntervalMs = 100;
+  const maxCpuBursts = 100;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
@@ -117,6 +121,10 @@ serve(async (req: Request) => {
       importMapPath: functionsConfig[functionName].importMapPath,
       envVars,
       forceCreate,
+      customModuleRoot,
+      cpuTimeThresholdMs,
+      cpuBurstIntervalMs,
+      maxCpuBursts,
     });
     return await worker.fetch(req);
   } catch (e) {

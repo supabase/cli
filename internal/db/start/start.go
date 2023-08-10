@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
@@ -51,6 +52,7 @@ func NewContainerConfig() container.Config {
 			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
+			"POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8",
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
@@ -166,12 +168,5 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
-	roles, err := fsys.Open(utils.CustomRolesPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
-	return apply.BatchExecDDL(ctx, conn, roles)
+	return push.CreateCustomRoles(ctx, conn, w, fsys)
 }
