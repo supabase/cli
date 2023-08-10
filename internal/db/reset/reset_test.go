@@ -29,13 +29,13 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), pgconn.Config{Password: "postgres"}, fsys)
+		err := Run(context.Background(), "", pgconn.Config{Password: "postgres"}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), pgconn.Config{}, afero.NewMemMapFs())
+		err := Run(context.Background(), "", pgconn.Config{}, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -50,7 +50,7 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), pgconn.Config{}, fsys)
+		err := Run(context.Background(), "", pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -73,7 +73,7 @@ func TestResetCommand(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
 		// Run test
-		err := Run(context.Background(), pgconn.Config{}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{}, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -371,7 +371,7 @@ func TestResetRemote(t *testing.T) {
 			Query(dropObjects).
 			Reply("INSERT 0")
 		// Run test
-		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -380,7 +380,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := resetRemote(context.Background(), pgconn.Config{}, fsys)
+		err := resetRemote(context.Background(), "", pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -394,7 +394,7 @@ func TestResetRemote(t *testing.T) {
 		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
 		// Run test
-		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation information_schema (SQLSTATE 42501)")
 	})
@@ -411,7 +411,7 @@ func TestResetRemote(t *testing.T) {
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
 			Query(dropObjects)
 		// Run test
-		err := resetRemote(context.Background(), dbConfig, fsys, conn.Intercept)
+		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})

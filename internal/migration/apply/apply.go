@@ -14,8 +14,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	migrations, err := list.LoadLocalMigrations(fsys)
+func MigrateDatabase(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
 	}
