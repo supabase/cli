@@ -72,6 +72,15 @@ const (
 var Config = config{
 	Auth: auth{
 		Image: GotrueImage,
+		Email: email{
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+		},
 		External: map[string]provider{
 			"apple":     {},
 			"azure":     {},
@@ -193,9 +202,15 @@ type (
 	}
 
 	email struct {
-		EnableSignup         bool `toml:"enable_signup"`
-		DoubleConfirmChanges bool `toml:"double_confirm_changes"`
-		EnableConfirmations  bool `toml:"enable_confirmations"`
+		EnableSignup         bool                     `toml:"enable_signup"`
+		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
+		EnableConfirmations  bool                     `toml:"enable_confirmations"`
+		Template             map[string]emailTemplate `toml:"template"`
+	}
+
+	emailTemplate struct {
+		Subject     string `toml:"subject"`
+		ContentPath string `toml:"content_path"`
 	}
 
 	sms struct {
@@ -350,6 +365,14 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 			index := strings.IndexByte(GotrueImage, ':')
 			Config.Auth.Image = GotrueImage[:index+1] + string(version)
+		}
+		// Validate email template
+		for _, tmpl := range Config.Auth.Email.Template {
+			if len(tmpl.ContentPath) > 0 {
+				if _, err := fsys.Stat(tmpl.ContentPath); err != nil {
+					return err
+				}
+			}
 		}
 		// Validate sms config
 		var err error
