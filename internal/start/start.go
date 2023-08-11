@@ -771,6 +771,12 @@ EOF
 					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
 					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
 				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
 			},
 			container.HostConfig{
 				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
