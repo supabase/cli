@@ -23,6 +23,14 @@ shadow_port = 54320
 # server_version;` on the remote database to check.
 major_version = 15
 
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+ignore_startup_parameters = ["extra_float_digits"]
+max_client_conn = 100
+
 [studio]
 enabled = true
 # Port to use for Supabase Studio.
