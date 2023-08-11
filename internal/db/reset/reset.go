@@ -44,6 +44,9 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		if _, err := strconv.Atoi(version); err != nil {
 			return repair.ErrInvalidVersion
 		}
+		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
+			return err
+		}
 	}
 	if len(config.Password) > 0 {
 		return resetRemote(ctx, version, config, fsys, options...)
