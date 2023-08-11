@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -155,6 +156,12 @@ EOF
 			Env:          append(env, userEnv...),
 			Entrypoint:   entrypoint,
 			ExposedPorts: nat.PortSet{"8081/tcp": {}},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/8081"},
+				Interval: 2 * time.Second,
+				Timeout:  2 * time.Second,
+				Retries:  10,
+			},
 		},
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
