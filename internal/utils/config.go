@@ -35,6 +35,7 @@ var (
 	EdgeRuntimeId string
 	LogflareId    string
 	VectorId      string
+	PoolerId      string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -338,6 +339,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			EdgeRuntimeId = "supabase_edge_runtime_" + Config.ProjectId
 			LogflareId = "supabase_analytics_" + Config.ProjectId
 			VectorId = "supabase_vector_" + Config.ProjectId
+			PoolerId = "supabase_pooler_" + Config.ProjectId
 		}
 		// Validate api config
 		if Config.Api.Port == 0 {

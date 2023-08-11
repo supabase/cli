@@ -754,6 +754,35 @@ EOF
 		started = append(started, utils.StudioId)
 	}
 
+	// Start pooler.
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.PgbouncerImage, excluded) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.PgbouncerImage,
+				Env: []string{
+					"POSTGRESQL_HOST=" + dbConfig.Host,
+					"POSTGRESQL_NAME=" + dbConfig.Database,
+					"POSTGRESQL_USER=" + dbConfig.User,
+					fmt.Sprintf("POSTGRESQL_PORT=%d", dbConfig.Port),
+					"POSTGRESQL_PASSWORD=" + dbConfig.Password,
+					fmt.Sprintf("PGBOUNCER_POOL_MODE=%s", utils.Config.Db.Pooler.PoolMode),
+					fmt.Sprintf("PGBOUNCER_IGNORE_STARTUP_PARAMETERS=%s", strings.Join(utils.Config.Db.Pooler.IgnoreStartupParameters, ",")),
+					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
+					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
+				},
+			},
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.PoolerId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.PoolerId)
+	}
+
 	return reset.WaitForServiceReady(ctx, started)
 }
 
