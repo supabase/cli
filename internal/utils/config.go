@@ -69,6 +69,13 @@ const (
 	LogflareBigQuery LogflareBackend = "bigquery"
 )
 
+type PoolMode string
+
+const (
+	TransactionMode PoolMode = "transaction"
+	SessionMode     PoolMode = "session"
+)
+
 var Config = config{
 	Auth: auth{
 		Image: GotrueImage,
@@ -162,6 +169,16 @@ type (
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
 		Password     string `toml:"-"`
+		Pooler       pooler `toml:"pooler"`
+	}
+
+	pooler struct {
+		Enabled                 bool     `toml:"enabled"`
+		Port                    uint16   `toml:"port"`
+		PoolMode                PoolMode `toml:"pool_mode"`
+		DefaultPoolSize         uint     `toml:"default_pool_size"`
+		IgnoreStartupParameters []string `toml:"ignore_startup_parameters"`
+		MaxClientConn           uint     `toml:"max_client_conn"`
 	}
 
 	studio struct {
@@ -349,6 +366,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			InitialSchemaSql = InitialSchemaPg15Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
+		}
+		// Validate pooler config
+		if Config.Db.Pooler.Enabled {
+			allowed := []PoolMode{TransactionMode, SessionMode}
+			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
+				return fmt.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
+			}
 		}
 		// Validate studio config
 		if Config.Studio.Port == 0 {
