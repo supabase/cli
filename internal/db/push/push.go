@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
@@ -51,7 +50,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	// Seed database
 	if !dryRun && includeSeed {
-		if err := reset.SeedDatabase(ctx, conn, fsys); err != nil {
+		if err := apply.SeedDatabase(ctx, conn, fsys); err != nil {
 			return err
 		}
 	}
