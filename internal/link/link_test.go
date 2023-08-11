@@ -301,10 +301,6 @@ func TestLinkPostgrest(t *testing.T) {
 	})
 }
 
-func TestSliceEqual(t *testing.T) {
-	assert.False(t, sliceEqual([]string{"a"}, []string{"b"}))
-}
-
 func TestLinkDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		defer teardown()
