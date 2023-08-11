@@ -175,7 +175,6 @@ var (
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
-		Args:  cobra.ExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if linked || len(dbUrl) > 0 {
