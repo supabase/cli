@@ -35,6 +35,7 @@ const (
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.8.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
+	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.82.4"
@@ -60,6 +61,7 @@ var ServiceImages = []string{
 	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
+	PgbouncerImage,
 }
 
 func ShortContainerImageName(imageName string) string {
