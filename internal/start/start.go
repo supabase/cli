@@ -767,9 +767,10 @@ EOF
 					fmt.Sprintf("POSTGRESQL_PORT=%d", dbConfig.Port),
 					"POSTGRESQL_PASSWORD=" + dbConfig.Password,
 					fmt.Sprintf("PGBOUNCER_POOL_MODE=%s", utils.Config.Db.Pooler.PoolMode),
-					fmt.Sprintf("PGBOUNCER_IGNORE_STARTUP_PARAMETERS=%s", strings.Join(utils.Config.Db.Pooler.IgnoreStartupParameters, ",")),
 					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
 					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
+					// Default platform config: https://github.com/supabase/postgres/blob/develop/ansible/files/pgbouncer_config/pgbouncer.ini.j2
+					"PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
