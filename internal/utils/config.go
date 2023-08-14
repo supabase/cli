@@ -174,12 +174,11 @@ type (
 	}
 
 	pooler struct {
-		Enabled                 bool     `toml:"enabled"`
-		Port                    uint16   `toml:"port"`
-		PoolMode                PoolMode `toml:"pool_mode"`
-		DefaultPoolSize         uint     `toml:"default_pool_size"`
-		IgnoreStartupParameters []string `toml:"ignore_startup_parameters"`
-		MaxClientConn           uint     `toml:"max_client_conn"`
+		Enabled         bool     `toml:"enabled"`
+		Port            uint16   `toml:"port"`
+		PoolMode        PoolMode `toml:"pool_mode"`
+		DefaultPoolSize uint     `toml:"default_pool_size"`
+		MaxClientConn   uint     `toml:"max_client_conn"`
 	}
 
 	studio struct {

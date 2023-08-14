@@ -219,7 +219,6 @@ func linkPooler(ctx context.Context, projectRef string) error {
 func updatePoolerConfig(config api.ProjectPgBouncerConfig) {
 	copy := utils.Config.Db.Pooler
 	copy.PoolMode = utils.PoolMode(config.PoolMode)
-	copy.IgnoreStartupParameters = readCsv(config.IgnoreStartupParameters)
 	if config.DefaultPoolSize != nil {
 		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)
 	}
@@ -227,7 +226,6 @@ func updatePoolerConfig(config api.ProjectPgBouncerConfig) {
 		copy.MaxClientConn = uint(*config.MaxClientConn)
 	}
 	changed := utils.Config.Db.Pooler.PoolMode != copy.PoolMode ||
-		!utils.SliceEqual(utils.Config.Db.Pooler.IgnoreStartupParameters, copy.IgnoreStartupParameters) ||
 		utils.Config.Db.Pooler.DefaultPoolSize != copy.DefaultPoolSize ||
 		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
 	if changed {
