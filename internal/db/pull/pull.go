@@ -19,6 +19,15 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+var (
+	errConflict = errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold(utils.MigrationsDir) + `. Resolve this by:
+- Updating the project from version control to get the latest ` + utils.Bold(utils.MigrationsDir) + `,
+- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
+- Or failing that, manually editing supabase_migrations.schema_migrations table with ` + utils.Aqua("supabase migration repair") + ".")
+	errMissing = errors.New("no migrations found")
+	errInSync  = errors.New("no schema changes found")
+)
+
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks.
 	if err := utils.AssertDockerIsRunning(ctx); err != nil {
@@ -54,7 +63,7 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); err == errMissing {
-		return dumpRemote(p, ctx, path, config, fsys)
+		return dumpRemoteSchema(p, ctx, path, config, fsys)
 	} else if err != nil {
 		return err
 	}
@@ -66,10 +75,10 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 			return err
 		}
 	}
-	return diffRemote(p, ctx, schema, path, config, fsys)
+	return diffRemoteSchema(p, ctx, schema, path, config, fsys)
 }
 
-func dumpRemote(p utils.Program, ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
+func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Special case if this is the first migration
 	p.Send(utils.StatusMsg("Dumping schema from remote database..."))
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -80,7 +89,7 @@ func dumpRemote(p utils.Program, ctx context.Context, path string, config pgconn
 	return dump.DumpSchema(ctx, config, nil, false, false, f)
 }
 
-func diffRemote(p utils.Program, ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
+func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
 	w := utils.StatusWriter{Program: p}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys)
@@ -88,18 +97,10 @@ func diffRemote(p utils.Program, ctx context.Context, schema []string, path stri
 		return err
 	}
 	if len(output) == 0 {
-		return errors.New("no schema changes found")
+		return errInSync
 	}
 	return afero.WriteFile(fsys, path, []byte(output), 0644)
 }
-
-var (
-	errConflict = errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold(utils.MigrationsDir) + `. Resolve this by:
-- Updating the project from version control to get the latest ` + utils.Bold(utils.MigrationsDir) + `,
-- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
-- Or failing that, manually editing supabase_migrations.schema_migrations table with ` + utils.Aqua("supabase migration repair") + ".")
-	errMissing = errors.New("no migrations found")
-)
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
