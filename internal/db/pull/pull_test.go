@@ -135,7 +135,7 @@ func TestPullSchema(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
-		apitest.MockDockerLogs(utils.Docker, "test-db", "test")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", "test"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
