@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +39,17 @@ var (
 	dropObjects string
 )
 
-func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if len(version) > 0 {
+		if _, err := strconv.Atoi(version); err != nil {
+			return repair.ErrInvalidVersion
+		}
+		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
+			return err
+		}
+	}
 	if len(config.Password) > 0 {
-		fmt.Fprintln(os.Stderr, "Resetting remote database...")
-		return resetRemote(ctx, config, fsys, options...)
+		return resetRemote(ctx, version, config, fsys, options...)
 	}
 
 	// Sanity checks.
@@ -55,7 +63,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
-	if err := resetDatabase(ctx, fsys, options...); err != nil {
+	if err := resetDatabase(ctx, version, fsys, options...); err != nil {
 		return err
 	}
 
@@ -64,8 +72,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	return nil
 }
 
-func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	fmt.Fprintln(os.Stderr, "Resetting local database...")
+func resetDatabase(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Resetting local database"+toLogMessage(version))
 	if err := recreateDatabase(ctx, options...); err != nil {
 		return err
 	}
@@ -85,7 +93,14 @@ func resetDatabase(ctx context.Context, fsys afero.Fs, options ...func(*pgx.Conn
 		return err
 	}
 	defer conn.Close(context.Background())
-	return InitialiseDatabase(ctx, conn, fsys)
+	return apply.MigrateAndSeed(ctx, version, conn, fsys)
+}
+
+func toLogMessage(version string) string {
+	if len(version) > 0 {
+		return " to version: " + version
+	}
+	return "..."
 }
 
 func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
@@ -95,13 +110,6 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 	}
 	defer conn.Close(context.Background())
 	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
-}
-
-func InitialiseDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	if err := apply.MigrateDatabase(ctx, conn, fsys); err != nil {
-		return err
-	}
-	return SeedDatabase(ctx, conn, fsys)
 }
 
 // Recreate postgres database by connecting to template1
@@ -122,18 +130,6 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 		},
 	}
 	return sql.ExecBatch(ctx, conn)
-}
-
-func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	seed, err := repair.NewMigrationFromFile(utils.SeedDataPath, fsys)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	// Batch seed commands, safe to use statement cache
-	return seed.ExecBatchWithCache(ctx, conn)
 }
 
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
@@ -225,7 +221,8 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 	return nil
 }
 
-func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
 	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
 	if err != nil {
 		return err
@@ -248,7 +245,7 @@ func resetRemote(ctx context.Context, config pgconn.Config, fsys afero.Fs, optio
 	if err := migration.ExecBatch(ctx, conn); err != nil {
 		return err
 	}
-	return InitialiseDatabase(ctx, conn, fsys)
+	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
 func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {

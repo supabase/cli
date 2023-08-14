@@ -111,6 +111,18 @@ func DeleteVersionSQL(batch *pgconn.Batch, version string) {
 	)
 }
 
+func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
+	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
+	matches, err := afero.Glob(fsys, path)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("glob %s: %w", path, os.ErrNotExist)
+	}
+	return matches[0], nil
+}
+
 type MigrationFile struct {
 	Lines   []string
 	Version string
@@ -118,15 +130,11 @@ type MigrationFile struct {
 }
 
 func NewMigrationFromVersion(version string, fsys afero.Fs) (*MigrationFile, error) {
-	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
-	matches, err := afero.Glob(fsys, path)
+	name, err := GetMigrationFile(version, fsys)
 	if err != nil {
 		return nil, err
 	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("glob %s: %w", path, os.ErrNotExist)
-	}
-	return NewMigrationFromFile(matches[0], fsys)
+	return NewMigrationFromFile(name, fsys)
 }
 
 func NewMigrationFromFile(path string, fsys afero.Fs) (*MigrationFile, error) {

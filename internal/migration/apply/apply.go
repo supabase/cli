@@ -2,6 +2,7 @@ package apply
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,12 +15,27 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func MigrateDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	migrations, err := list.LoadLocalMigrations(fsys)
+func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
 	}
-	return MigrateUp(ctx, conn, migrations, fsys)
+	if err := MigrateUp(ctx, conn, migrations, fsys); err != nil {
+		return err
+	}
+	return SeedDatabase(ctx, conn, fsys)
+}
+
+func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	seed, err := repair.NewMigrationFromFile(utils.SeedDataPath, fsys)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
+	// Batch seed commands, safe to use statement cache
+	return seed.ExecBatchWithCache(ctx, conn)
 }
 
 func MigrateUp(ctx context.Context, conn *pgx.Conn, pending []string, fsys afero.Fs) error {

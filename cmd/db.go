@@ -15,6 +15,7 @@ import (
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/lint"
+	"github.com/supabase/cli/internal/db/pull"
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/db/remote/changes"
 	"github.com/supabase/cli/internal/db/remote/commit"
@@ -138,9 +139,26 @@ var (
 		},
 	}
 
+	dbPullCmd = &cobra.Command{
+		Use:   "pull",
+		Short: "Pull schema from the remote database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fsys := afero.NewOsFs()
+			if err := parseDatabaseConfig(fsys); err != nil {
+				return err
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			return pull.Run(ctx, schema, dbConfig, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
+		},
+	}
+
 	dbRemoteCmd = &cobra.Command{
-		Use:   "remote",
-		Short: "Manage remote databases",
+		Hidden: true,
+		Use:    "remote",
+		Short:  "Manage remote databases",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
 				return err
@@ -163,8 +181,9 @@ var (
 	}
 
 	dbRemoteCommitCmd = &cobra.Command{
-		Use:   "commit",
-		Short: "Commit remote changes as a new migration",
+		Deprecated: "use \"db pull\" instead.\n",
+		Use:        "commit",
+		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -183,7 +202,7 @@ var (
 				}
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return reset.Run(ctx, dbConfig, fsys)
+			return reset.Run(ctx, version, dbConfig, fsys)
 		},
 	}
 
@@ -271,6 +290,13 @@ func init() {
 	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPushCmd)
+	// Build pull command
+	pullFlags := dbPullCmd.Flags()
+	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	pullFlags.Lookup("schema").DefValue = "all"
+	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
+	dbCmd.AddCommand(dbPullCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
@@ -283,6 +309,7 @@ func init() {
 	// Build reset command
 	resetFlags := dbResetCmd.Flags()
 	resetFlags.BoolVar(&linked, "linked", false, "Resets the linked project to current migrations.")
+	resetFlags.StringVar(&version, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
