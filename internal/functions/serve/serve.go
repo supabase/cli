@@ -155,6 +155,7 @@ EOF
 			Env:          append(env, userEnv...),
 			Entrypoint:   entrypoint,
 			ExposedPorts: nat.PortSet{"8081/tcp": {}},
+			// No tcp health check because edge runtime logs them as client connection error
 		},
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:      binds,
