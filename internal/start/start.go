@@ -737,10 +737,11 @@ EOF
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  10,
+					Test:        []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Interval:    2 * time.Second,
+					Timeout:     2 * time.Second,
+					Retries:     10,
+					StartPeriod: 10 * time.Second,
 				},
 			},
 			container.HostConfig{
