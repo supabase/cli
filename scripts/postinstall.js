@@ -128,22 +128,23 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
+
+  // checksum verification
   resp.body
-    .pipe(ungz) // Un-GZip
     .pipe(hash) // Pipe to the hash calculator
-    .pipe(untar) // Untar
-    .on("error", (error) => {
-      console.error("Error:", error.message);
+    .on("data", (data) => {
+      // Update the hash calculation while reading the data
+      hash.update(data);
     })
     .on("end", () => {
-      const calculatedChecksum = hash.digest("hex");
-
-      if (calculatedChecksum === expectedChecksum) {
-        console.log("Checksum verification successful.");
-      } else {
+      const calculatedChecksum = hasher.digest("hex");
+      if (calculatedChecksum !== expectedChecksum) {
         throw checksumError;
       }
     });
+
+  resp.body.pipe(ungz).pipe(untar);
+
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
     untar.on("end", () => resolve());
