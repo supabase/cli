@@ -70,7 +70,7 @@ const parseCheckSumFile = async (packageJson) => {
 
   // Fetch the checksum file
   const response = await fetch(checksumFileUrl);
-  if (!response.ok) {
+  if (response.ok) {
     const checkSumContent = await response.text();
     const lines = checkSumContent.split("\n");
 
