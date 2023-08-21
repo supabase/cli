@@ -131,9 +131,9 @@ async function main() {
   const resp = await fetch(url);
 
   try {
-    await pipeline(resp.body, hash);
     await pipeline(resp.body, ungz);
     await pipeline(resp.body, untar);
+    await pipeline(resp.body, hash);
   } catch (error) {
     console.error("Error:", error);
     return;
