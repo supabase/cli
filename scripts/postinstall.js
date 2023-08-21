@@ -91,7 +91,11 @@ const parseCheckSumFile = async (packageJson) => {
       console.error("Error finding checksum for package", pkgNameWithPlatform);
     }
   } else {
-    console.error("Error:", response.status, response.statusText);
+    console.error(
+      "Could not fetch checksum file",
+      response.status,
+      response.statusText
+    );
   }
 };
 
