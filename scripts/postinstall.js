@@ -10,7 +10,6 @@ import fetch from "node-fetch";
 import path from "path";
 import tar from "tar";
 import zlib from "zlib";
-
 // Mapping from Node's `process.arch` to Golang's `$GOARCH`
 const ARCH_MAPPING = {
   x64: "amd64",
@@ -24,6 +23,10 @@ const PLATFORM_MAPPING = {
   win32: "windows",
 };
 
+const arch = ARCH_MAPPING[process.arch];
+
+const platform = PLATFORM_MAPPING[process.platform];
+
 // TODO: import pkg from "../package.json" assert { type: "json" };
 const readPackageJson = async () => {
   const packageJsonPath = path.join(".", "package.json");
@@ -32,14 +35,12 @@ const readPackageJson = async () => {
 };
 
 const parsePackageJson = (packageJson) => {
-  const arch = ARCH_MAPPING[process.arch];
   if (!arch) {
     throw Error(
       "Installation is not supported for this architecture: " + process.arch
     );
   }
 
-  const platform = PLATFORM_MAPPING[process.platform];
   if (!platform) {
     throw Error(
       "Installation is not supported for this platform: " + process.platform
@@ -60,10 +61,44 @@ const parsePackageJson = (packageJson) => {
   return { binPath, url };
 };
 
+const parseCheckSumFile = async (packageJson) => {
+  const version = packageJson.version;
+  const pkgName = packageJson.name;
+  const pkgNameWithPlatform = `${pkgName}_${platform}_${arch}.tar.gz`;
+  const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_checksums.txt`;
+
+  // Fetch the checksum file
+  const response = await fetch(checksumFileUrl);
+  if (!response.ok) {
+    const checkSumContent = await response.text();
+    const lines = checkSumContent.split("\n");
+
+    let checksumForRequiredPackage = null;
+
+    // Find the checksum for the required package
+    for (const line of lines) {
+      const [checksum, packageName] = line.split(/\s+/);
+      if (packageName === pkgNameWithPlatform) {
+        checksumForRequiredPackage = checksum;
+        break;
+      }
+    }
+
+    if (checksumForRequiredPackage) {
+      return checksumForRequiredPackage;
+    } else {
+      console.error("Error finding checksum for package", pkgNameWithPlatform);
+    }
+  } else {
+    console.error("Error:", response.status, response.statusText);
+  }
+};
+
 const errGlobal = `Installing Supabase CLI as a global module is not supported.
 Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
 `;
 
+const checksumError = `Checksum verification failed. File may have been tampered with.`;
 /**
  * Reads the configuration from application's package.json,
  * downloads the binary from package url and stores at
@@ -78,8 +113,9 @@ async function main() {
   if (process.env.npm_config_global || yarnGlobal) {
     throw errGlobal;
   }
-
   const pkg = await readPackageJson();
+  const hash = createHash("sha256");
+  const expectedChecksum = await parseCheckSumFile(pkg);
   const { binPath, url } = parsePackageJson(pkg);
   const binDir = path.dirname(binPath);
   await fs.promises.mkdir(binDir, { recursive: true });
@@ -91,7 +127,22 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
-  resp.body.pipe(ungz).pipe(untar);
+  resp.body
+    .pipe(ungz) // Un-GZip
+    .pipe(hash) // Pipe to the hash calculator
+    .pipe(untar) // Untar
+    .on("error", (error) => {
+      console.error("Error:", error.message);
+    })
+    .on("end", () => {
+      const calculatedChecksum = hash.digest("hex");
+
+      if (calculatedChecksum === expectedChecksum) {
+        console.log("Checksum verification successful.");
+      } else {
+        throw checksumError;
+      }
+    });
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
     untar.on("end", () => resolve());
@@ -103,7 +154,6 @@ async function main() {
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
   });
 
-  // TODO: verify checksums
   console.info("Installed Supabase CLI successfully");
 }
 
