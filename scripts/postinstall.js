@@ -9,6 +9,7 @@ import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
+import { pipeline } from "stream/promises";
 import tar from "tar";
 import zlib from "zlib";
 // Mapping from Node's `process.arch` to Golang's `$GOARCH`
@@ -129,19 +130,17 @@ async function main() {
   console.info("Downloading", url);
   const resp = await fetch(url);
 
-  // checksum verification
-  resp.body
-    .pipe(hash) // Pipe to the hash calculator
-    .on("data", (data) => {
-      // Update the hash calculation while reading the data
-      hash.update(data);
-    })
-    .on("end", () => {
-      const calculatedChecksum = hash.digest("hex");
-      if (calculatedChecksum !== expectedChecksum) {
-        throw checksumError;
-      }
-    });
+  try {
+    await pipeline(resp.body, hash);
+  } catch (error) {
+    console.error("Error:", error);
+    return;
+  }
+
+  const calculatedChecksum = hash.digest("hex");
+  if (calculatedChecksum !== expectedChecksum) {
+    throw checksumError;
+  }
 
   resp.body.pipe(ungz).pipe(untar);
 
