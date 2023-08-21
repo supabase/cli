@@ -69,6 +69,9 @@ const parseCheckSumFile = async (packageJson) => {
   const pkgNameWithPlatform = `${pkgName}_${platform}_${arch}.tar.gz`;
   const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_checksums.txt`;
 
+  console.log("Fetching checksum file from", checksumFileUrl);
+  console.log("Looking for checksum for", pkgNameWithPlatform);
+
   // Fetch the checksum file
   const response = await fetch(checksumFileUrl);
   if (response.ok) {
