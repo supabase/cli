@@ -24,13 +24,13 @@ import (
 )
 
 func TestResetCommand(t *testing.T) {
-	t.Run("throws error on connect failure", func(t *testing.T) {
+	t.Run("throws error on context canceled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{Password: "postgres"}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "invalid port (outside range)")
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
