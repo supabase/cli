@@ -132,17 +132,19 @@ async function main() {
 
   try {
     await pipeline(resp.body, hash);
+    await pipeline(resp.body, ungz);
+    await pipeline(resp.body, untar);
   } catch (error) {
     console.error("Error:", error);
     return;
   }
 
   const calculatedChecksum = hash.digest("hex");
-  if (calculatedChecksum !== expectedChecksum) {
+  if (calculatedChecksum === expectedChecksum) {
+    console.info("Checksum verified");
+  } else {
     throw checksumError;
   }
-
-  resp.body.pipe(ungz).pipe(untar);
 
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
