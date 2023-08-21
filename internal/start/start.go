@@ -437,6 +437,15 @@ EOF
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
 		}
+		if utils.Config.Auth.Sms.TwilioVerify.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=twilio_verify",
+				"GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID="+utils.Config.Auth.Sms.TwilioVerify.AccountSid,
+				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN="+utils.Config.Auth.Sms.TwilioVerify.AuthToken,
+				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.TwilioVerify.MessageServiceSid,
+			)
+		}
 		if utils.Config.Auth.Sms.Messagebird.Enabled {
 			env = append(
 				env,

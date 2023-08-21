@@ -234,6 +234,7 @@ type (
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
 		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
 		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
@@ -412,6 +413,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 			}
 			if Config.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.Twilio.AuthToken); err != nil {
+				return err
+			}
+		}
+		if Config.Auth.Sms.TwilioVerify.Enabled {
+			if len(Config.Auth.Sms.TwilioVerify.AccountSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+			}
+			if len(Config.Auth.Sms.TwilioVerify.MessageServiceSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
+			}
+			if len(Config.Auth.Sms.TwilioVerify.AuthToken) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
+			}
+			if Config.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.TwilioVerify.AuthToken); err != nil {
 				return err
 			}
 		}
