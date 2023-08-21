@@ -18,24 +18,26 @@ import (
 )
 
 var (
-	DbImage       string
-	NetId         string
-	DbId          string
-	ConfigId      string
-	KongId        string
-	GotrueId      string
-	InbucketId    string
-	RealtimeId    string
-	RestId        string
-	StorageId     string
-	ImgProxyId    string
-	DifferId      string
-	PgmetaId      string
-	StudioId      string
-	EdgeRuntimeId string
-	LogflareId    string
-	VectorId      string
-	PoolerId      string
+	DbImage                 string
+	NetId                   string
+	DbId                    string
+	ConfigId                string
+	KongId                  string
+	GotrueId                string
+	InbucketId              string
+	InbucketConfigVolumeId  string
+	InbucketStorageVolumeId string
+	RealtimeId              string
+	RestId                  string
+	StorageId               string
+	ImgProxyId              string
+	DifferId                string
+	PgmetaId                string
+	StudioId                string
+	EdgeRuntimeId           string
+	LogflareId              string
+	VectorId                string
+	PoolerId                string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -329,6 +331,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 			KongId = "supabase_kong_" + Config.ProjectId
 			GotrueId = "supabase_auth_" + Config.ProjectId
 			InbucketId = "supabase_inbucket_" + Config.ProjectId
+			InbucketConfigVolumeId = "supabase_inbucket_config_" + Config.ProjectId
+			InbucketStorageVolumeId = "supabase_inbucket_storage_" + Config.ProjectId
 			RealtimeId = "realtime-dev.supabase_realtime_" + Config.ProjectId
 			RestId = "supabase_rest_" + Config.ProjectId
 			StorageId = "supabase_storage_" + Config.ProjectId

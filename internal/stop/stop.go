@@ -69,7 +69,7 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 		fmt.Fprintln(os.Stderr, "Storage directory saved to volume:", utils.StorageId)
 	} else {
 		// TODO: label named volumes to use VolumesPrune for branch support
-		volumes := []string{utils.ConfigId, utils.DbId, utils.StorageId}
+		volumes := []string{utils.ConfigId, utils.DbId, utils.StorageId, utils.InbucketConfigVolumeId, utils.InbucketStorageVolumeId}
 		result = utils.WaitAll(volumes, func(name string) error {
 			if err := utils.Docker.VolumeRemove(ctx, name, true); err != nil && !errdefs.IsNotFound(err) {
 				return fmt.Errorf("Failed to remove volume %s: %w", name, err)
