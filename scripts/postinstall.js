@@ -132,7 +132,7 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
-  const clonedResp = resp;
+  const clonedResp = resp.clone();
   const respBuffer = Buffer.from(await clonedResp.arrayBuffer());
 
   hash.update(respBuffer);
