@@ -133,6 +133,17 @@ async function main() {
   console.info("Downloading", url);
   const resp = await fetch(url);
 
+  const respBuffer = Buffer.from(await resp.arrayBuffer());
+
+  hash.update(respBuffer);
+  const calculatedChecksum = hash.digest("hex");
+
+  if (calculatedChecksum !== expectedChecksum) {
+    throw checksumError;
+  } else {
+    console.info("Checksum verified");
+  }
+
   resp.body.pipe(ungz).pipe(untar);
 
   await new Promise((resolve, reject) => {
@@ -140,25 +151,6 @@ async function main() {
     untar.on("end", () => resolve());
   });
 
-  // read the tar file and calculate the checksum
-  const tarFileStream = fs.createReadStream(path.join(binDir, binName));
-
-  await new Promise((resolve, reject) => {
-    tarFileStream.on("data", (chunk) => {
-      hash.update(chunk);
-    });
-
-    tarFileStream.on("end", () => {
-      const calculatedChecksum = hash.digest("hex");
-      if (calculatedChecksum === expectedChecksum) {
-        console.info("Checksum verified successfully");
-        resolve();
-      } else {
-        reject();
-        throw checksumError;
-      }
-    });
-  });
   // Link the binaries in postinstall to support yarn
   await binLinks({
     path: path.resolve("."),
