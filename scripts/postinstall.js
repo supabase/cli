@@ -132,8 +132,8 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
-
-  const respBuffer = Buffer.from(await resp.arrayBuffer());
+  const clonedResp = resp;
+  const respBuffer = Buffer.from(await clonedResp.arrayBuffer());
 
   hash.update(respBuffer);
   const calculatedChecksum = hash.digest("hex");
