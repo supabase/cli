@@ -9,7 +9,6 @@ import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
-import { pipeline } from "stream/promises";
 import tar from "tar";
 import zlib from "zlib";
 // Mapping from Node's `process.arch` to Golang's `$GOARCH`
@@ -67,7 +66,7 @@ const parseCheckSumFile = async (packageJson) => {
   const version = packageJson.version;
   const pkgName = packageJson.name;
   const pkgNameWithPlatform = `${pkgName}_${platform}_${arch}.tar.gz`;
-  const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_${version}_checksums.txt`;
+  const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_checksums.txt`;
 
   // Fetch the checksum file
   const response = await fetch(checksumFileUrl);
@@ -130,27 +129,32 @@ async function main() {
   console.info("Downloading", url);
   const resp = await fetch(url);
 
-  try {
-    await pipeline(resp.body, ungz);
-    await pipeline(resp.body, untar);
-    await pipeline(resp.body, hash);
-  } catch (error) {
-    console.error("Error:", error);
-    return;
-  }
-
-  const calculatedChecksum = hash.digest("hex");
-  if (calculatedChecksum === expectedChecksum) {
-    console.info("Checksum verified");
-  } else {
-    throw checksumError;
-  }
+  resp.body.pipe(ungz).pipe(untar);
 
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
     untar.on("end", () => resolve());
   });
 
+  // read the tar file and calculate the checksum
+  const tarFileStream = fs.createReadStream(path.join(binDir, binName));
+
+  await new Promise((resolve, reject) => {
+    tarFileStream.on("data", (chunk) => {
+      hash.update(chunk);
+    });
+
+    tarFileStream.on("end", () => {
+      const calculatedChecksum = hash.digest("hex");
+      if (calculatedChecksum === expectedChecksum) {
+        console.info("Checksum verified successfully");
+        resolve();
+      } else {
+        reject();
+        throw checksumError;
+      }
+    });
+  });
   // Link the binaries in postinstall to support yarn
   await binLinks({
     path: path.resolve("."),
