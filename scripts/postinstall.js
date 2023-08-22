@@ -135,21 +135,21 @@ async function main() {
     })
     .pipe(ungz);
 
-  ungz.on("end", () => {
-    const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
-    // Skip verification if we can't find the file checksum
-    if (!expectedChecksum) {
-      console.warn("Skipping checksum verification");
-      return;
-    }
-    const calculatedChecksum = hash.digest("hex");
-    if (calculatedChecksum !== expectedChecksum) {
-      throw errChecksum;
-    }
-    console.info("Checksum verified.");
-  });
-
-  ungz.pipe(untar);
+  ungz
+    .on("end", () => {
+      const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
+      // Skip verification if we can't find the file checksum
+      if (!expectedChecksum) {
+        console.warn("Skipping checksum verification");
+        return;
+      }
+      const calculatedChecksum = hash.digest("hex");
+      if (calculatedChecksum !== expectedChecksum) {
+        throw errChecksum;
+      }
+      console.info("Checksum verified.");
+    })
+    .pipe(untar);
 
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
