@@ -5,6 +5,7 @@
 "use strict";
 
 import binLinks from "bin-links";
+import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
@@ -24,6 +25,10 @@ const PLATFORM_MAPPING = {
   win32: "windows",
 };
 
+const arch = ARCH_MAPPING[process.arch];
+
+const platform = PLATFORM_MAPPING[process.platform];
+
 // TODO: import pkg from "../package.json" assert { type: "json" };
 const readPackageJson = async () => {
   const packageJsonPath = path.join(".", "package.json");
@@ -32,14 +37,12 @@ const readPackageJson = async () => {
 };
 
 const parsePackageJson = (packageJson) => {
-  const arch = ARCH_MAPPING[process.arch];
   if (!arch) {
     throw Error(
       "Installation is not supported for this architecture: " + process.arch
     );
   }
 
-  const platform = PLATFORM_MAPPING[process.platform];
   if (!platform) {
     throw Error(
       "Installation is not supported for this platform: " + process.platform
@@ -60,9 +63,39 @@ const parsePackageJson = (packageJson) => {
   return { binPath, url };
 };
 
+const fetchAndParseCheckSumFile = async (packageJson) => {
+  const version = packageJson.version;
+  const pkgName = packageJson.name;
+  const repo = packageJson.repository;
+  const checksumFileUrl = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${version}_checksums.txt`;
+
+  // Fetch the checksum file
+  console.info("Downloading", checksumFileUrl);
+  const response = await fetch(checksumFileUrl);
+  if (response.ok) {
+    const checkSumContent = await response.text();
+    const lines = checkSumContent.split("\n");
+
+    const checksums = {};
+    for (const line of lines) {
+      const [checksum, packageName] = line.split(/\s+/);
+      checksums[packageName] = checksum;
+    }
+
+    return checksums;
+  } else {
+    console.error(
+      "Could not fetch checksum file",
+      response.status,
+      response.statusText
+    );
+  }
+};
+
 const errGlobal = `Installing Supabase CLI as a global module is not supported.
 Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
 `;
+const errChecksum = "Checksum mismatch. Downloaded data might be corrupted.";
 
 /**
  * Reads the configuration from application's package.json,
@@ -91,7 +124,33 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
-  resp.body.pipe(ungz).pipe(untar);
+
+  const hash = createHash("sha256");
+  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
+  const checksumMap = await fetchAndParseCheckSumFile(pkg);
+
+  resp.body
+    .on("data", (chunk) => {
+      hash.update(chunk);
+    })
+    .pipe(ungz);
+
+  ungz
+    .on("end", () => {
+      const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
+      // Skip verification if we can't find the file checksum
+      if (!expectedChecksum) {
+        console.warn("Skipping checksum verification");
+        return;
+      }
+      const calculatedChecksum = hash.digest("hex");
+      if (calculatedChecksum !== expectedChecksum) {
+        throw errChecksum;
+      }
+      console.info("Checksum verified.");
+    })
+    .pipe(untar);
+
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
     untar.on("end", () => resolve());
@@ -103,7 +162,6 @@ async function main() {
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
   });
 
-  // TODO: verify checksums
   console.info("Installed Supabase CLI successfully");
 }
 
