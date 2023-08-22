@@ -11,6 +11,7 @@ import fetch from "node-fetch";
 import path from "path";
 import tar from "tar";
 import zlib from "zlib";
+
 // Mapping from Node's `process.arch` to Golang's `$GOARCH`
 const ARCH_MAPPING = {
   x64: "amd64",
@@ -143,7 +144,7 @@ async function main() {
     if (calculatedChecksum === expectedChecksum) {
       console.info("Checksum verified.");
     } else {
-      console.error("Checksum mismatch. Downloaded data might be corrupted.");
+      throw "Checksum mismatch. Downloaded data might be corrupted.";
     }
   });
 
