@@ -165,8 +165,6 @@ func TestDatabaseStart(t *testing.T) {
 		utils.Config.Auth.Email.EnableConfirmations = true
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), utils.GotrueId)
 		utils.InbucketId = "test-inbucket"
-		utils.InbucketConfigVolumeId = "test-inbucket-config"
-		utils.InbucketStorageVolumeId = "test-inbucket-storage"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.InbucketImage), utils.InbucketId)
 		utils.RealtimeId = "test-realtime"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), utils.RealtimeId)

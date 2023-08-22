@@ -104,8 +104,7 @@ func TestStopServices(t *testing.T) {
 		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
 		utils.EdgeRuntimeId = "test-functions"
-		utils.InbucketConfigVolumeId = "test-inbucket-config"
-		utils.InbucketStorageVolumeId = "test-inbucket-storage"
+		utils.InbucketId = "test-inbucket"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -130,10 +129,7 @@ func TestStopServices(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.EdgeRuntimeId).
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.InbucketConfigVolumeId).
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.InbucketStorageVolumeId).
+			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.InbucketId).
 			Reply(http.StatusNotFound)
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
