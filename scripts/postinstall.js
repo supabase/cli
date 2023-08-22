@@ -62,34 +62,26 @@ const parsePackageJson = (packageJson) => {
   return { binPath, url };
 };
 
-const parseCheckSumFile = async (packageJson) => {
+const fetchAndParseCheckSumFile = async (packageJson) => {
   const version = packageJson.version;
   const pkgName = packageJson.name;
-  const pkgNameWithPlatform = `${pkgName}_${platform}_${arch}.tar.gz`;
   const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_${version}_checksums.txt`;
 
   // Fetch the checksum file
+  console.info("Downloading", checksumFileUrl);
   const response = await fetch(checksumFileUrl);
   if (response.ok) {
     const checkSumContent = await response.text();
     const lines = checkSumContent.split("\n");
 
-    let checksumForRequiredPackage = null;
+    let checksums = {};
 
-    // Find the checksum for the required package
     for (const line of lines) {
       const [checksum, packageName] = line.split(/\s+/);
-      if (packageName === pkgNameWithPlatform) {
-        checksumForRequiredPackage = checksum;
-        break;
-      }
+      checksums[packageName] = checksum;
     }
 
-    if (checksumForRequiredPackage) {
-      return checksumForRequiredPackage;
-    } else {
-      console.error("Error finding checksum for package", pkgNameWithPlatform);
-    }
+    return checksums;
   } else {
     console.error(
       "Could not fetch checksum file",
@@ -119,11 +111,12 @@ async function main() {
   }
 
   const pkg = await readPackageJson();
-  const hash = createHash("sha256");
-  const expectedChecksum = await parseCheckSumFile(pkg);
   const { binPath, url } = parsePackageJson(pkg);
   const binDir = path.dirname(binPath);
   await fs.promises.mkdir(binDir, { recursive: true });
+
+  const hash = createHash("sha256");
+  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
 
   // First we will Un-GZip, then we will untar.
   const ungz = zlib.createGunzip();
@@ -132,6 +125,13 @@ async function main() {
 
   console.info("Downloading", url);
   const resp = await fetch(url);
+
+  const checksumMap = await fetchAndParseCheckSumFile(pkg);
+  // skip checksum verification if we can't fetch the checksum file
+  if (!checksumMap) {
+    console.warn("Skipping checksum verification");
+  }
+
   resp.body
     .on("data", (chunk) => {
       hash.update(chunk);
@@ -139,6 +139,9 @@ async function main() {
     .pipe(ungz);
 
   ungz.on("end", () => {
+    // return early if checksum file is not available
+    if (!checksumMap) return;
+    const expectedChecksum = checksumMap[pkgNameWithPlatform];
     const calculatedChecksum = hash.digest("hex");
 
     if (calculatedChecksum === expectedChecksum) {
