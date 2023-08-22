@@ -129,7 +129,11 @@ async function main() {
   const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
   const checksumMap = await fetchAndParseCheckSumFile(pkg);
 
-  resp.body.on("data", hash.update).pipe(ungz);
+  resp.body
+    .on("data", (chunk) => {
+      hash.update(chunk);
+    })
+    .pipe(ungz);
 
   ungz.on("end", () => {
     const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
