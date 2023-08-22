@@ -28,6 +28,7 @@ const PLATFORM_MAPPING = {
 const arch = ARCH_MAPPING[process.arch];
 
 const platform = PLATFORM_MAPPING[process.platform];
+
 // TODO: import pkg from "../package.json" assert { type: "json" };
 const readPackageJson = async () => {
   const packageJsonPath = path.join(".", "package.json");
@@ -65,7 +66,8 @@ const parsePackageJson = (packageJson) => {
 const fetchAndParseCheckSumFile = async (packageJson) => {
   const version = packageJson.version;
   const pkgName = packageJson.name;
-  const checksumFileUrl = `https://github.com/supabase/cli/releases/download/v${version}/${pkgName}_${version}_checksums.txt`;
+  const repo = packageJson.repository;
+  const checksumFileUrl = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${version}_checksums.txt`;
 
   // Fetch the checksum file
   console.info("Downloading", checksumFileUrl);
@@ -74,8 +76,7 @@ const fetchAndParseCheckSumFile = async (packageJson) => {
     const checkSumContent = await response.text();
     const lines = checkSumContent.split("\n");
 
-    let checksums = {};
-
+    const checksums = {};
     for (const line of lines) {
       const [checksum, packageName] = line.split(/\s+/);
       checksums[packageName] = checksum;
@@ -94,6 +95,7 @@ const fetchAndParseCheckSumFile = async (packageJson) => {
 const errGlobal = `Installing Supabase CLI as a global module is not supported.
 Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
 `;
+const errChecksum = "Checksum mismatch. Downloaded data might be corrupted.";
 
 /**
  * Reads the configuration from application's package.json,
@@ -115,9 +117,6 @@ async function main() {
   const binDir = path.dirname(binPath);
   await fs.promises.mkdir(binDir, { recursive: true });
 
-  const hash = createHash("sha256");
-  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
-
   // First we will Un-GZip, then we will untar.
   const ungz = zlib.createGunzip();
   const binName = path.basename(binPath);
@@ -126,29 +125,24 @@ async function main() {
   console.info("Downloading", url);
   const resp = await fetch(url);
 
+  const hash = createHash("sha256");
+  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
   const checksumMap = await fetchAndParseCheckSumFile(pkg);
-  // skip checksum verification if we can't fetch the checksum file
-  if (!checksumMap) {
-    console.warn("Skipping checksum verification");
-  }
 
-  resp.body
-    .on("data", (chunk) => {
-      hash.update(chunk);
-    })
-    .pipe(ungz);
+  resp.body.on("data", hash.update).pipe(ungz);
 
   ungz.on("end", () => {
-    // return early if checksum file is not available
-    if (!checksumMap) return;
-    const expectedChecksum = checksumMap[pkgNameWithPlatform];
-    const calculatedChecksum = hash.digest("hex");
-
-    if (calculatedChecksum === expectedChecksum) {
-      console.info("Checksum verified.");
-    } else {
-      throw "Checksum mismatch. Downloaded data might be corrupted.";
+    const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
+    // Skip verification if we can't find the file checksum
+    if (!expectedChecksum) {
+      console.warn("Skipping checksum verification");
+      return;
     }
+    const calculatedChecksum = hash.digest("hex");
+    if (calculatedChecksum !== expectedChecksum) {
+      throw errChecksum;
+    }
+    console.info("Checksum verified.");
   });
 
   ungz.pipe(untar);
