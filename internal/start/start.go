@@ -535,7 +535,12 @@ EOF
 				Image: utils.InbucketImage,
 			},
 			container.HostConfig{
-				Binds:         []string{utils.InbucketId + ":/storage"},
+				Binds: []string{
+					// Override default mount points to avoid creating multiple anonymous volumes
+					// Ref: https://github.com/inbucket/inbucket/blob/v3.0.4/Dockerfile#L52
+					utils.InbucketId + ":/config",
+					utils.InbucketId + ":/storage",
+				},
 				PortBindings:  inbucketPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
