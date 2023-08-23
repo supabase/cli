@@ -35,6 +35,7 @@ var (
 	EdgeRuntimeId string
 	LogflareId    string
 	VectorId      string
+	PoolerId      string
 
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
@@ -67,6 +68,13 @@ type LogflareBackend string
 const (
 	LogflarePostgres LogflareBackend = "postgres"
 	LogflareBigQuery LogflareBackend = "bigquery"
+)
+
+type PoolMode string
+
+const (
+	TransactionMode PoolMode = "transaction"
+	SessionMode     PoolMode = "session"
 )
 
 var Config = config{
@@ -162,6 +170,15 @@ type (
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
 		Password     string `toml:"-"`
+		Pooler       pooler `toml:"pooler"`
+	}
+
+	pooler struct {
+		Enabled         bool     `toml:"enabled"`
+		Port            uint16   `toml:"port"`
+		PoolMode        PoolMode `toml:"pool_mode"`
+		DefaultPoolSize uint     `toml:"default_pool_size"`
+		MaxClientConn   uint     `toml:"max_client_conn"`
 	}
 
 	studio struct {
@@ -217,6 +234,7 @@ type (
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
 		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
 		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
@@ -321,6 +339,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			EdgeRuntimeId = "supabase_edge_runtime_" + Config.ProjectId
 			LogflareId = "supabase_analytics_" + Config.ProjectId
 			VectorId = "supabase_vector_" + Config.ProjectId
+			PoolerId = "supabase_pooler_" + Config.ProjectId
 		}
 		// Validate api config
 		if Config.Api.Port == 0 {
@@ -349,6 +368,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			InitialSchemaSql = InitialSchemaPg15Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
+		}
+		// Validate pooler config
+		if Config.Db.Pooler.Enabled {
+			allowed := []PoolMode{TransactionMode, SessionMode}
+			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
+				return fmt.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
+			}
 		}
 		// Validate studio config
 		if Config.Studio.Port == 0 {
@@ -387,6 +413,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 			}
 			if Config.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.Twilio.AuthToken); err != nil {
+				return err
+			}
+		}
+		if Config.Auth.Sms.TwilioVerify.Enabled {
+			if len(Config.Auth.Sms.TwilioVerify.AccountSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+			}
+			if len(Config.Auth.Sms.TwilioVerify.MessageServiceSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
+			}
+			if len(Config.Auth.Sms.TwilioVerify.AuthToken) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
+			}
+			if Config.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.TwilioVerify.AuthToken); err != nil {
 				return err
 			}
 		}

@@ -23,6 +23,13 @@ shadow_port = 54320
 # server_version;` on the remote database to check.
 major_version = 15
 
+[db.pooler]
+enabled = true
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
 [studio]
 enabled = true
 # Port to use for Supabase Studio.
@@ -80,7 +87,7 @@ enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
 
-# Configure one of the supported SMS providers: `twilio`, `messagebird`, `textlocal`, `vonage`.
+# Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
 enabled = true
 account_sid = "account_sid"

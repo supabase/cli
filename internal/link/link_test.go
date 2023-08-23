@@ -138,6 +138,10 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Reply(200).
+			JSON(api.ProjectPgBouncerConfig{})
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
@@ -185,6 +189,10 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Reply(200).
+			JSON(api.ProjectPgBouncerConfig{})
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
 		// Run test
@@ -208,6 +216,10 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Reply(200).
+			JSON(api.ProjectPgBouncerConfig{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -299,10 +311,6 @@ func TestLinkPostgrest(t *testing.T) {
 		assert.ErrorContains(t, err, `Authorization failed for the access token and project ref pair: {"message":"unavailable"}`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
-}
-
-func TestSliceEqual(t *testing.T) {
-	assert.False(t, sliceEqual([]string{"a"}, []string{"b"}))
 }
 
 func TestLinkDatabase(t *testing.T) {

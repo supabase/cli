@@ -45,6 +45,9 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
+	if err := linkPooler(ctx, projectRef); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 
 	// 2. Check database connection
 	if len(password) > 0 {
@@ -94,17 +97,14 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	maxRows := uint(config.MaxRows)
-	searchPath := readCsv(config.DbExtraSearchPath)
-	dbSchema := readCsv(config.DbSchema)
-	changed := utils.Config.Api.MaxRows != maxRows ||
-		!sliceEqual(utils.Config.Api.ExtraSearchPath, searchPath) ||
-		!sliceEqual(utils.Config.Api.Schemas, dbSchema)
+	copy := utils.Config.Api
+	copy.MaxRows = uint(config.MaxRows)
+	copy.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
+	copy.Schemas = readCsv(config.DbSchema)
+	changed := utils.Config.Api.MaxRows != copy.MaxRows ||
+		!utils.SliceEqual(utils.Config.Api.ExtraSearchPath, copy.ExtraSearchPath) ||
+		!utils.SliceEqual(utils.Config.Api.Schemas, copy.Schemas)
 	if changed {
-		copy := utils.Config.Api
-		copy.MaxRows = maxRows
-		copy.ExtraSearchPath = searchPath
-		copy.Schemas = dbSchema
 		updatedConfig["api"] = copy
 	}
 }
@@ -119,18 +119,6 @@ func readCsv(line string) []string {
 		}
 	}
 	return result
-}
-
-func sliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -213,6 +201,35 @@ func updatePostgresConfig(conn *pgx.Conn) {
 		copy := utils.Config.Db
 		copy.MajorVersion = uint(dbMajorVersion)
 		updatedConfig["db"] = copy
+	}
+}
+
+func linkPooler(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().GetPgbouncerConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
+	}
+	updatePoolerConfig(*resp.JSON200)
+	return nil
+}
+
+func updatePoolerConfig(config api.ProjectPgBouncerConfig) {
+	copy := utils.Config.Db.Pooler
+	copy.PoolMode = utils.PoolMode(config.PoolMode)
+	if config.DefaultPoolSize != nil {
+		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)
+	}
+	if config.MaxClientConn != nil {
+		copy.MaxClientConn = uint(*config.MaxClientConn)
+	}
+	changed := utils.Config.Db.Pooler.PoolMode != copy.PoolMode ||
+		utils.Config.Db.Pooler.DefaultPoolSize != copy.DefaultPoolSize ||
+		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
+	if changed {
+		updatedConfig["db.pooler"] = copy
 	}
 }
 

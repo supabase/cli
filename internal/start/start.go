@@ -437,6 +437,15 @@ EOF
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
 		}
+		if utils.Config.Auth.Sms.TwilioVerify.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SMS_PROVIDER=twilio_verify",
+				"GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID="+utils.Config.Auth.Sms.TwilioVerify.AccountSid,
+				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN="+utils.Config.Auth.Sms.TwilioVerify.AuthToken,
+				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.TwilioVerify.MessageServiceSid,
+			)
+		}
 		if utils.Config.Auth.Sms.Messagebird.Enabled {
 			env = append(
 				env,
@@ -526,6 +535,12 @@ EOF
 				Image: utils.InbucketImage,
 			},
 			container.HostConfig{
+				Binds: []string{
+					// Override default mount points to avoid creating multiple anonymous volumes
+					// Ref: https://github.com/inbucket/inbucket/blob/v3.0.4/Dockerfile#L52
+					utils.InbucketId + ":/config",
+					utils.InbucketId + ":/storage",
+				},
 				PortBindings:  inbucketPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
@@ -737,10 +752,11 @@ EOF
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  10,
+					Test:        []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Interval:    2 * time.Second,
+					Timeout:     2 * time.Second,
+					Retries:     10,
+					StartPeriod: 10 * time.Second,
 				},
 			},
 			container.HostConfig{
@@ -752,6 +768,42 @@ EOF
 			return err
 		}
 		started = append(started, utils.StudioId)
+	}
+
+	// Start pooler.
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.PgbouncerImage, excluded) {
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.PgbouncerImage,
+				Env: []string{
+					"POSTGRESQL_HOST=" + dbConfig.Host,
+					"POSTGRESQL_NAME=" + dbConfig.Database,
+					"POSTGRESQL_USER=" + dbConfig.User,
+					fmt.Sprintf("POSTGRESQL_PORT=%d", dbConfig.Port),
+					"POSTGRESQL_PASSWORD=" + dbConfig.Password,
+					fmt.Sprintf("PGBOUNCER_POOL_MODE=%s", utils.Config.Db.Pooler.PoolMode),
+					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
+					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
+					// Default platform config: https://github.com/supabase/postgres/blob/develop/ansible/files/pgbouncer_config/pgbouncer.ini.j2
+					"PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits",
+				},
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
+					Interval: 2 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  10,
+				},
+			},
+			container.HostConfig{
+				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			utils.PoolerId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.PoolerId)
 	}
 
 	return reset.WaitForServiceReady(ctx, started)

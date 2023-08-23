@@ -28,31 +28,22 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
 		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@localhost:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
 	}
-	if !sliceContains(exclude, utils.RestId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
+	if !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
 		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://localhost:%d/graphql/v1", utils.Config.Api.Port)
 	}
-	if !sliceContains(exclude, utils.StudioId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
+	if !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
 	}
-	if !sliceContains(exclude, utils.GotrueId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.GotrueImage)) {
+	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.GotrueImage)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
-	if !sliceContains(exclude, utils.InbucketId) && !sliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
+	if !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Inbucket.Port)
 	}
 	return values
-}
-
-func sliceContains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
 }
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {

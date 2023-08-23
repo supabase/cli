@@ -30,11 +30,12 @@ const (
 	PostgrestImage   = "postgrest/postgrest:v11.1.0"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
-	PgmetaImage      = "supabase/postgres-meta:v0.66.3"
-	StudioImage      = "supabase/studio:v0.23.06"
+	PgmetaImage      = "supabase/postgres-meta:v0.68.0"
+	StudioImage      = "supabase/studio:20230803-15c6762"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.8.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
+	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
 	GotrueImage   = "supabase/gotrue:v2.82.4"
@@ -60,6 +61,7 @@ var ServiceImages = []string{
 	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
+	PgbouncerImage,
 }
 
 func ShortContainerImageName(imageName string) string {

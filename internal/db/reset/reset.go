@@ -49,6 +49,9 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		}
 	}
 	if len(config.Password) > 0 {
+		if shouldReset := utils.PromptYesNo("Confirm resetting the remote database?", false, os.Stdin); !shouldReset {
+			return context.Canceled
+		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
 
@@ -291,6 +294,7 @@ func InitSchema15(ctx context.Context, host string) error {
 		return err
 	}
 	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
+		fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 		"GOTRUE_LOG_LEVEL=error",
 		"GOTRUE_DB_DRIVER=postgres",
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
