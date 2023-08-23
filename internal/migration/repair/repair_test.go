@@ -133,7 +133,7 @@ func TestMigrationFile(t *testing.T) {
 		migration, err := NewMigrationFromReader(strings.NewReader(sql))
 		// Check error
 		assert.ErrorIs(t, err, bufio.ErrTooLong)
-		assert.ErrorContains(t, err, "After statement 1: \tBEGIN;")
+		assert.ErrorContains(t, err, "After statement 1:     BEGIN;")
 		assert.Nil(t, migration)
 	})
 
