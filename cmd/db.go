@@ -29,7 +29,7 @@ var (
 	dbCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "db",
-		Short:   "Manage local Postgres databases",
+		Short:   "Manage Postgres databases",
 	}
 
 	dbBranchCmd = &cobra.Command{
@@ -40,35 +40,39 @@ var (
 	}
 
 	dbBranchCreateCmd = &cobra.Command{
-		Use:   "create <branch name>",
-		Short: "Create a branch",
-		Args:  cobra.ExactArgs(1),
+		Deprecated: "use \"branches create <name>\" instead.\n",
+		Use:        "create <branch name>",
+		Short:      "Create a branch",
+		Args:       cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return create.Run(args[0], afero.NewOsFs())
 		},
 	}
 
 	dbBranchDeleteCmd = &cobra.Command{
-		Use:   "delete <branch name>",
-		Short: "Delete a branch",
-		Args:  cobra.ExactArgs(1),
+		Deprecated: "use \"branches delete <branch-id>\" instead.\n",
+		Use:        "delete <branch name>",
+		Short:      "Delete a branch",
+		Args:       cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return delete.Run(args[0], afero.NewOsFs())
 		},
 	}
 
 	dbBranchListCmd = &cobra.Command{
-		Use:   "list",
-		Short: "List branches",
+		Deprecated: "use \"branches list\" instead.\n",
+		Use:        "list",
+		Short:      "List branches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(afero.NewOsFs(), os.Stdout)
 		},
 	}
 
 	dbSwitchCmd = &cobra.Command{
-		Use:   "switch <branch name>",
-		Short: "Switch the active branch",
-		Args:  cobra.ExactArgs(1),
+		Deprecated: "use \"branches create <name>\" instead.\n",
+		Use:        "switch <branch name>",
+		Short:      "Switch the active branch",
+		Args:       cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			return switch_.Run(ctx, args[0], afero.NewOsFs())
