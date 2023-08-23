@@ -3,6 +3,7 @@
 project_id = "{{ .ProjectId }}"
 
 [api]
+enabled = true
 # Port to use for the API URL.
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
@@ -48,10 +49,12 @@ port = 54324
 # pop3_port = 54326
 
 [storage]
+enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
 [auth]
+enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
 site_url = "http://localhost:3000"

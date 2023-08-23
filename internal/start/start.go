@@ -363,7 +363,7 @@ EOF
 	}
 
 	// Start GoTrue.
-	if !isContainerExcluded(utils.GotrueImage, excluded) {
+	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.GotrueImage, excluded) {
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
@@ -598,7 +598,7 @@ EOF
 	}
 
 	// Start PostgREST.
-	if !isContainerExcluded(utils.PostgrestImage, excluded) {
+	if utils.Config.Api.Enabled && !isContainerExcluded(utils.PostgrestImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -607,6 +607,7 @@ EOF
 					fmt.Sprintf("PGRST_DB_URI=postgresql://authenticator:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
@@ -623,7 +624,7 @@ EOF
 	}
 
 	// Start Storage.
-	if !isContainerExcluded(utils.StorageImage, excluded) {
+	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.StorageImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -664,7 +665,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{

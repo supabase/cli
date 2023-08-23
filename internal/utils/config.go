@@ -78,8 +78,19 @@ const (
 )
 
 var Config = config{
+	Api: api{
+		// Defaults to true for backwards compatibility with existing config.toml
+		Enabled: true,
+	},
+	Db: db{
+		Password: "postgres",
+	},
+	Storage: storage{
+		Enabled: true,
+	},
 	Auth: auth{
-		Image: GotrueImage,
+		Enabled: true,
+		Image:   GotrueImage,
 		Email: email{
 			Template: map[string]emailTemplate{
 				"invite":       {},
@@ -111,9 +122,6 @@ var Config = config{
 		JwtSecret:      "super-secret-jwt-token-with-at-least-32-characters-long",
 		AnonKey:        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
 		ServiceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
-	},
-	Db: db{
-		Password: "postgres",
 	},
 	Analytics: analytics{
 		ApiKey: "api-key",
@@ -159,6 +167,7 @@ type (
 	}
 
 	api struct {
+		Enabled         bool     `toml:"enabled"`
 		Port            uint     `toml:"port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
@@ -195,10 +204,12 @@ type (
 	}
 
 	storage struct {
+		Enabled       bool        `toml:"enabled"`
 		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
 	}
 
 	auth struct {
+		Enabled                bool     `toml:"enabled"`
 		Image                  string   `toml:"-"`
 		SiteUrl                string   `toml:"site_url"`
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
@@ -377,122 +388,128 @@ func LoadConfigFS(fsys afero.Fs) error {
 			}
 		}
 		// Validate studio config
-		if Config.Studio.Port == 0 {
-			return errors.New("Missing required field in config: studio.port")
+		if Config.Studio.Enabled {
+			if Config.Studio.Port == 0 {
+				return errors.New("Missing required field in config: studio.port")
+			}
 		}
 		// Validate email config
-		if Config.Inbucket.Port == 0 {
-			return errors.New("Missing required field in config: inbucket.port")
+		if Config.Inbucket.Enabled {
+			if Config.Inbucket.Port == 0 {
+				return errors.New("Missing required field in config: inbucket.port")
+			}
 		}
 		// Validate auth config
-		if Config.Auth.SiteUrl == "" {
-			return errors.New("Missing required field in config: auth.site_url")
-		}
-		if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-			index := strings.IndexByte(GotrueImage, ':')
-			Config.Auth.Image = GotrueImage[:index+1] + string(version)
-		}
-		// Validate email template
-		for _, tmpl := range Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 {
-				if _, err := fsys.Stat(tmpl.ContentPath); err != nil {
+		if Config.Auth.Enabled {
+			if Config.Auth.SiteUrl == "" {
+				return errors.New("Missing required field in config: auth.site_url")
+			}
+			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
+				index := strings.IndexByte(GotrueImage, ':')
+				Config.Auth.Image = GotrueImage[:index+1] + string(version)
+			}
+			// Validate email template
+			for _, tmpl := range Config.Auth.Email.Template {
+				if len(tmpl.ContentPath) > 0 {
+					if _, err := fsys.Stat(tmpl.ContentPath); err != nil {
+						return err
+					}
+				}
+			}
+			// Validate sms config
+			var err error
+			if Config.Auth.Sms.Twilio.Enabled {
+				if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
+				}
+				if len(Config.Auth.Sms.Twilio.MessageServiceSid) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
+				}
+				if len(Config.Auth.Sms.Twilio.AuthToken) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
+				}
+				if Config.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.Twilio.AuthToken); err != nil {
 					return err
 				}
 			}
-		}
-		// Validate sms config
-		var err error
-		if Config.Auth.Sms.Twilio.Enabled {
-			if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
+			if Config.Auth.Sms.TwilioVerify.Enabled {
+				if len(Config.Auth.Sms.TwilioVerify.AccountSid) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+				}
+				if len(Config.Auth.Sms.TwilioVerify.MessageServiceSid) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
+				}
+				if len(Config.Auth.Sms.TwilioVerify.AuthToken) == 0 {
+					return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
+				}
+				if Config.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.TwilioVerify.AuthToken); err != nil {
+					return err
+				}
 			}
-			if len(Config.Auth.Sms.Twilio.MessageServiceSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
+			if Config.Auth.Sms.Messagebird.Enabled {
+				if len(Config.Auth.Sms.Messagebird.Originator) == 0 {
+					return errors.New("Missing required field in config: auth.sms.messagebird.originator")
+				}
+				if len(Config.Auth.Sms.Messagebird.AccessKey) == 0 {
+					return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
+				}
+				if Config.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(Config.Auth.Sms.Messagebird.AccessKey); err != nil {
+					return err
+				}
 			}
-			if len(Config.Auth.Sms.Twilio.AuthToken) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
+			if Config.Auth.Sms.Textlocal.Enabled {
+				if len(Config.Auth.Sms.Textlocal.Sender) == 0 {
+					return errors.New("Missing required field in config: auth.sms.textlocal.sender")
+				}
+				if len(Config.Auth.Sms.Textlocal.ApiKey) == 0 {
+					return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
+				}
+				if Config.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Textlocal.ApiKey); err != nil {
+					return err
+				}
 			}
-			if Config.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.Twilio.AuthToken); err != nil {
-				return err
+			if Config.Auth.Sms.Vonage.Enabled {
+				if len(Config.Auth.Sms.Vonage.From) == 0 {
+					return errors.New("Missing required field in config: auth.sms.vonage.from")
+				}
+				if len(Config.Auth.Sms.Vonage.ApiKey) == 0 {
+					return errors.New("Missing required field in config: auth.sms.vonage.api_key")
+				}
+				if len(Config.Auth.Sms.Vonage.ApiSecret) == 0 {
+					return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
+				}
+				if Config.Auth.Sms.Vonage.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiKey); err != nil {
+					return err
+				}
+				if Config.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiSecret); err != nil {
+					return err
+				}
 			}
-		}
-		if Config.Auth.Sms.TwilioVerify.Enabled {
-			if len(Config.Auth.Sms.TwilioVerify.AccountSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+			// Validate oauth config
+			for ext, provider := range Config.Auth.External {
+				if !provider.Enabled {
+					continue
+				}
+				if provider.ClientId == "" {
+					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+				}
+				if provider.Secret == "" {
+					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+				}
+				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
+					return err
+				}
+				if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
+					return err
+				}
+				if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
+					return err
+				}
+				if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
+					return err
+				}
+				Config.Auth.External[ext] = provider
 			}
-			if len(Config.Auth.Sms.TwilioVerify.MessageServiceSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
-			}
-			if len(Config.Auth.Sms.TwilioVerify.AuthToken) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
-			}
-			if Config.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(Config.Auth.Sms.TwilioVerify.AuthToken); err != nil {
-				return err
-			}
-		}
-		if Config.Auth.Sms.Messagebird.Enabled {
-			if len(Config.Auth.Sms.Messagebird.Originator) == 0 {
-				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
-			}
-			if len(Config.Auth.Sms.Messagebird.AccessKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
-			}
-			if Config.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(Config.Auth.Sms.Messagebird.AccessKey); err != nil {
-				return err
-			}
-		}
-		if Config.Auth.Sms.Textlocal.Enabled {
-			if len(Config.Auth.Sms.Textlocal.Sender) == 0 {
-				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
-			}
-			if len(Config.Auth.Sms.Textlocal.ApiKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
-			}
-			if Config.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Textlocal.ApiKey); err != nil {
-				return err
-			}
-		}
-		if Config.Auth.Sms.Vonage.Enabled {
-			if len(Config.Auth.Sms.Vonage.From) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.from")
-			}
-			if len(Config.Auth.Sms.Vonage.ApiKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.api_key")
-			}
-			if len(Config.Auth.Sms.Vonage.ApiSecret) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
-			}
-			if Config.Auth.Sms.Vonage.ApiKey, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiKey); err != nil {
-				return err
-			}
-			if Config.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiSecret); err != nil {
-				return err
-			}
-		}
-		// Validate oauth config
-		for ext, provider := range Config.Auth.External {
-			if !provider.Enabled {
-				continue
-			}
-			if provider.ClientId == "" {
-				return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
-			}
-			if provider.Secret == "" {
-				return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
-			}
-			if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
-				return err
-			}
-			if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
-				return err
-			}
-			if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
-				return err
-			}
-			if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
-				return err
-			}
-			Config.Auth.External[ext] = provider
 		}
 	}
 	// Validate functions config
