@@ -554,7 +554,7 @@ func maybeLoadEnv(s string) (string, error) {
 		return value, nil
 	}
 
-	return "", fmt.Errorf(`Error evaluating "env(%s)": environment variable %s is unset.`, s, envName)
+	return "", fmt.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
 func sanitizeProjectId(src string) string {
