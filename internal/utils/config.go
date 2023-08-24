@@ -313,13 +313,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 	if _, err := toml.Decode(initConfigEmbed, &Config); err != nil {
 		return err
 	}
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
+	if metadata, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
 		CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
 		cwd, osErr := os.Getwd()
 		if osErr != nil {
 			cwd = "current directory"
 		}
 		return fmt.Errorf("cannot read config in %s: %w", cwd, err)
+	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 	}
 	// Load secrets from .env file
 	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
