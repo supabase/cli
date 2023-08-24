@@ -28,11 +28,11 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
 		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@localhost:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
 	}
-	if !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
+	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
 		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://localhost:%d/graphql/v1", utils.Config.Api.Port)
 	}
-	if !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
+	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
 	}
 	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.GotrueImage)) {
@@ -40,7 +40,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
-	if !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
+	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Inbucket.Port)
 	}
 	return values
