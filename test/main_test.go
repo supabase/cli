@@ -37,8 +37,10 @@ func TestMain(m *testing.M) {
 	TempDir = NewTempDir(Logger, "")
 
 	// redirect clients to mock servers
-	err := client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker)
-	if err != nil {
+	if err := client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker); err != nil {
+		Logger.Fatal(err)
+	}
+	if err := client.WithVersion(docker.APIVersion)(utils.Docker); err != nil {
 		Logger.Fatal(err)
 	}
 	viper.Set("INTERNAL_API_HOST", "http://127.0.0.1"+SupabasePort)
