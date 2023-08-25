@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	APIVersion = "1.41"
 	IDAlphabet = "abcdef0123456789"
 	IDLength   = 12
 )
@@ -41,7 +42,7 @@ func (s *Server) NewRouter() *gin.Engine {
 	root.HEAD("/_ping", s.ping)
 	root.GET("/_ping", s.ping)
 
-	router := root.Group("/v1.42")
+	router := root.Group("/v" + APIVersion)
 
 	containers := router.Group("/containers")
 	containers.GET("/:id/json", s.inspectContainer)
@@ -57,7 +58,7 @@ func (s *Server) NewRouter() *gin.Engine {
 // ping
 func (s *Server) ping(c *gin.Context) {
 	if s.PingHandler == nil {
-		c.Header("API-Version", "1.41")
+		c.Header("API-Version", APIVersion)
 		c.Header("OSType", "linux")
 		c.Status(http.StatusOK)
 	} else {
