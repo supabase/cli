@@ -26,6 +26,7 @@ import (
 )
 
 var (
+	healthTimeout = 20 * time.Second
 	//go:embed templates/migra.sh
 	diffSchemaScript string
 )
@@ -180,6 +181,9 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
+	if !reset.WaitForHealthyService(ctx, shadow, healthTimeout) {
+		return "", reset.ErrDatabase
+	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err
 	}
