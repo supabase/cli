@@ -34,7 +34,7 @@ const (
 var (
 	ErrUnhealthy  = errors.New("service not healthy")
 	ErrDatabase   = errors.New("database is not healthy")
-	healthTimeout = 5 * time.Second
+	healthTimeout = 10 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
 )
