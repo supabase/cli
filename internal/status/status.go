@@ -70,10 +70,10 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 		utils.LogflareId,
 	}
 	stopped := checkServiceHealth(ctx, services, os.Stderr)
-	if len(stopped) > 0 {
-		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
-	}
 	if format == utils.OutputPretty {
+		if len(stopped) > 0 {
+			fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
+		}
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
 		PrettyPrint(os.Stdout, stopped...)
 		return nil
