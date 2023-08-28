@@ -43,7 +43,9 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	var slugs []string
 	for _, path := range paths {
 		slug := filepath.Base(filepath.Dir(path))
-		slugs = append(slugs, slug)
+		if utils.FuncSlugPattern.MatchString(slug) {
+			slugs = append(slugs, slug)
+		}
 	}
 	return slugs, nil
 }
