@@ -533,7 +533,7 @@ EOF
 	}
 
 	// Start Realtime.
-	if !isContainerExcluded(utils.RealtimeImage, excluded) {
+	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.RealtimeImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -555,6 +555,7 @@ EOF
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
 					"RLIMIT_NOFILE=",
+					"REALTIME_IP_VERSION=" + string(utils.Config.Realtime.IpVersion),
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",

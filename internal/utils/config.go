@@ -77,6 +77,13 @@ const (
 	SessionMode     PoolMode = "session"
 )
 
+type AddressFamily string
+
+const (
+	AddressIPv6 AddressFamily = "IPv6"
+	AddressIPv4 AddressFamily = "IPv4"
+)
+
 var Config = config{
 	Api: api{
 		// Defaults to true for backwards compatibility with existing config.toml
@@ -84,6 +91,10 @@ var Config = config{
 	},
 	Db: db{
 		Password: "postgres",
+	},
+	Realtime: realtime{
+		Enabled:   true,
+		IpVersion: AddressIPv6,
 	},
 	Storage: storage{
 		Enabled: true,
@@ -156,6 +167,7 @@ type (
 		ProjectId string              `toml:"project_id"`
 		Api       api                 `toml:"api"`
 		Db        db                  `toml:"db"`
+		Realtime  realtime            `toml:"realtime"`
 		Studio    studio              `toml:"studio"`
 		Inbucket  inbucket            `toml:"inbucket"`
 		Storage   storage             `toml:"storage"`
@@ -188,6 +200,11 @@ type (
 		PoolMode        PoolMode `toml:"pool_mode"`
 		DefaultPoolSize uint     `toml:"default_pool_size"`
 		MaxClientConn   uint     `toml:"max_client_conn"`
+	}
+
+	realtime struct {
+		Enabled   bool          `toml:"enabled"`
+		IpVersion AddressFamily `toml:"ip_version"`
 	}
 
 	studio struct {
@@ -387,6 +404,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			allowed := []PoolMode{TransactionMode, SessionMode}
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
 				return fmt.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
+			}
+		}
+		// Validate realtime config
+		if Config.Realtime.Enabled {
+			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
+			if !SliceContains(allowed, Config.Realtime.IpVersion) {
+				return fmt.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
 			}
 		}
 		// Validate studio config
