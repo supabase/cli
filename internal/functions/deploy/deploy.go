@@ -27,6 +27,12 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 			return err
 		}
 		slugs = allSlugs
+	} else {
+		for _, slug := range slugs {
+			if err := utils.ValidateFunctionSlug(slug); err != nil {
+				return err
+			}
+		}
 	}
 	if len(slugs) == 0 {
 		return errors.New("No Functions specified or found in " + utils.Bold(utils.FunctionsDir))
@@ -111,11 +117,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 }
 
 func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScriptPath string, noVerifyJWT *bool, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	if err := utils.ValidateFunctionSlug(slug); err != nil {
-		return err
-	}
-	// Ensure noVerifyJWT is not nil.
+	// 1. Ensure noVerifyJWT is not nil.
 	if noVerifyJWT == nil {
 		x := false
 		if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
