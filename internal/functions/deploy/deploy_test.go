@@ -106,18 +106,6 @@ func TestDeployOne(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on malformed slug", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Run test
-		noVerifyJWT := true
-		err := deployOne(context.Background(), "@", project, "", "", &noVerifyJWT, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Invalid Function name.")
-	})
-
 	t.Run("throws error on missing import map", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -288,6 +276,15 @@ func TestDeployCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on malformed slug", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), []string{"_invalid"}, "", nil, "", fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
 
 	t.Run("throws error on empty functions", func(t *testing.T) {
