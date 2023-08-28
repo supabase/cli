@@ -262,6 +262,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup function entrypoint
 		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		ignorePath := filepath.Join(utils.FunctionsDir, "_ignore", "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, ignorePath, []byte{}, 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
