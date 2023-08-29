@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -61,6 +62,9 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer utils.DockerRemove(shadow)
+	if !reset.WaitForHealthyService(ctx, shadow, healthTimeout) {
+		return reset.ErrDatabase
+	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
 		return err
 	}

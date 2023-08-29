@@ -55,6 +55,8 @@ func NewContainerConfig() container.Config {
 			"POSTGRES_HOST=/var/run/postgresql",
 			"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 			"POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8",
+			"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
