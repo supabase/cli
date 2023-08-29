@@ -606,6 +606,7 @@ EOF
 
 	// Start Storage.
 	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.StorageImage, excluded) {
+		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -618,7 +619,7 @@ EOF
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
-					"FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
+					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"REGION=stub",
@@ -636,7 +637,7 @@ EOF
 			},
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-				Binds:         []string{utils.StorageId + ":/var/lib/storage"},
+				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
 			}),
 			utils.StorageId,
 		); err != nil {
