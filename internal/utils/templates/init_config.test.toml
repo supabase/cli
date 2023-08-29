@@ -26,10 +26,20 @@ major_version = 15
 
 [db.pooler]
 enabled = true
+# Port to use for the local connection pooler.
 port = 54329
+# Specifies when a server connection can be reused by other clients.
+# Configure one of the supported pooler modes: `transaction`, `session`.
 pool_mode = "transaction"
+# How many server connections to allow per user/database pair.
 default_pool_size = 20
+# Maximum number of client connections allowed.
 max_client_conn = 100
+
+[realtime]
+enabled = true
+# Bind realtime via either IPv4 or IPv6. (default: IPv6)
+ip_version = "IPv4"
 
 [studio]
 enabled = true
@@ -113,5 +123,5 @@ url = "https://login.microsoftonline.com/tenant"
 enabled = false
 port = 54327
 vector_port = 54328
-# Configure one of the supported backends: `postgres`, `bigquery`
+# Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
