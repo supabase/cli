@@ -1,6 +1,6 @@
 # db-total-table-sizes
 
-This command displays the total size of each table in the database. It is the sum of the values that `pg_table_size()` and `pg_indexes_size()` gives for each table.
+This command displays the total size of each table in the database. It is the sum of the values that `pg_table_size()` and `pg_indexes_size()` gives for each table. System tables inside `pg_catalog` and `information_schema` are not included.
 
 ```
                 NAME               │    SIZE
