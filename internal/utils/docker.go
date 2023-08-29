@@ -265,6 +265,21 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 			return "", err
 		}
 	}
+	// Skip named volume for BitBucket pipeline
+	bitbucket := os.Getenv("BITBUCKET_CLONE_DIR")
+	if len(bitbucket) > 0 {
+		var binds []string
+		for _, bind := range hostConfig.Binds {
+			spec, err := loader.ParseVolume(bind)
+			if err != nil {
+				return "", err
+			}
+			if spec.Type != string(mount.TypeVolume) {
+				binds = append(binds, bind)
+			}
+		}
+		hostConfig.Binds = binds
+	}
 	// Create container from image
 	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, nil, nil, containerName)
 	if err != nil {
