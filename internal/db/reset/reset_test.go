@@ -30,7 +30,7 @@ func TestResetCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{Password: "postgres"}, fsys)
 		// Check error
-		assert.ErrorIs(t, err, context.Canceled)
+		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
