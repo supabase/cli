@@ -29,12 +29,16 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 |-|-|-|-|-|-|
 `
 	for _, branch := range *resp.JSON200 {
+		gitBranch := " "
+		if branch.GitBranch != nil {
+			gitBranch = *branch.GitBranch
+		}
 		table += fmt.Sprintf(
 			"|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
 			branch.Id,
 			strings.ReplaceAll(branch.Name, "|", "\\|"),
 			branch.IsDefault,
-			strings.ReplaceAll(branch.GitBranch, "|", "\\|"),
+			strings.ReplaceAll(gitBranch, "|", "\\|"),
 			utils.FormatTimestamp(branch.CreatedAt),
 			utils.FormatTimestamp(branch.UpdatedAt),
 		)

@@ -100,22 +100,13 @@ type ClientInterface interface {
 
 	UpdateBranch(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeclineAuthorizationRequest request
-	DeclineAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetAuthorizationRequest request
-	GetAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ApproveAuthorizationRequestWithBody request with any body
-	ApproveAuthorizationRequestWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	ApproveAuthorizationRequest(ctx context.Context, id string, body ApproveAuthorizationRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// Authorize request
 	Authorize(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Token request
-	Token(ctx context.Context, params *TokenParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// TokenWithBody request with any body
+	TokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	TokenWithFormdataBody(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetOrganizations request
 	GetOrganizations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -124,6 +115,9 @@ type ClientInterface interface {
 	CreateOrganizationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CreateOrganization(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ListOrganizationMembers request
+	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetProjects request
 	GetProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -147,6 +141,14 @@ type ClientInterface interface {
 
 	CreateBranch(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetV1AuthConfig request
+	GetV1AuthConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateV1AuthConfigWithBody request with any body
+	UpdateV1AuthConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateV1AuthConfig(ctx context.Context, ref string, body UpdateV1AuthConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListAllProviders request
 	ListAllProviders(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -166,13 +168,8 @@ type ClientInterface interface {
 
 	UpdateProviderById(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPgbouncerConfig request
-	GetPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdatePgbouncerConfigWithBody request with any body
-	UpdatePgbouncerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	UpdatePgbouncerConfig(ctx context.Context, ref string, body UpdatePgbouncerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPgbouncerConfig request
+	V1GetPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConfig request
 	GetConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -198,6 +195,14 @@ type ClientInterface interface {
 
 	// Reverify request
 	Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1RunQueryWithBody request with any body
+	V1RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1RunQuery(ctx context.Context, ref string, body V1RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1EnableDatabaseWebhooks request
+	V1EnableDatabaseWebhooks(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetFunctions request
 	GetFunctions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -252,11 +257,6 @@ type ClientInterface interface {
 	UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunQueryWithBody request with any body
-	RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	RunQuery(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadOnlyModeStatus request
 	GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -364,54 +364,6 @@ func (c *Client) UpdateBranch(ctx context.Context, branchId string, body UpdateB
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeclineAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeclineAuthorizationRequestRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetAuthorizationRequest(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAuthorizationRequestRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ApproveAuthorizationRequestWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewApproveAuthorizationRequestRequestWithBody(c.Server, id, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ApproveAuthorizationRequest(ctx context.Context, id string, body ApproveAuthorizationRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewApproveAuthorizationRequestRequest(c.Server, id, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) Authorize(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeRequest(c.Server, params)
 	if err != nil {
@@ -424,8 +376,20 @@ func (c *Client) Authorize(ctx context.Context, params *AuthorizeParams, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) Token(ctx context.Context, params *TokenParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewTokenRequest(c.Server, params)
+func (c *Client) TokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TokenWithFormdataBody(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTokenRequestWithFormdataBody(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +426,18 @@ func (c *Client) CreateOrganizationWithBody(ctx context.Context, contentType str
 
 func (c *Client) CreateOrganization(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateOrganizationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListOrganizationMembersRequest(c.Server, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -568,6 +544,42 @@ func (c *Client) CreateBranch(ctx context.Context, ref string, body CreateBranch
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetV1AuthConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV1AuthConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateV1AuthConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateV1AuthConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateV1AuthConfig(ctx context.Context, ref string, body UpdateV1AuthConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateV1AuthConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ListAllProviders(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAllProvidersRequest(c.Server, ref)
 	if err != nil {
@@ -652,32 +664,8 @@ func (c *Client) UpdateProviderById(ctx context.Context, ref string, providerId 
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPgbouncerConfigRequest(c.Server, ref)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) UpdatePgbouncerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePgbouncerConfigRequestWithBody(c.Server, ref, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) UpdatePgbouncerConfig(ctx context.Context, ref string, body UpdatePgbouncerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePgbouncerConfigRequest(c.Server, ref, body)
+func (c *Client) V1GetPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPgbouncerConfigRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -786,6 +774,42 @@ func (c *Client) CreateCustomHostnameConfig(ctx context.Context, ref string, bod
 
 func (c *Client) Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReverifyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RunQueryRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RunQuery(ctx context.Context, ref string, body V1RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RunQueryRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1EnableDatabaseWebhooks(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1EnableDatabaseWebhooksRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,30 +1050,6 @@ func (c *Client) UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, 
 
 func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdatePostgRESTConfigRequest(c.Server, ref, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunQueryRequestWithBody(c.Server, ref, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RunQuery(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunQueryRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1427,121 +1427,6 @@ func NewUpdateBranchRequestWithBody(server string, branchId string, contentType 
 	return req, nil
 }
 
-// NewDeclineAuthorizationRequestRequest generates requests for DeclineAuthorizationRequest
-func NewDeclineAuthorizationRequestRequest(server string, id string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/oauth/authorizations/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetAuthorizationRequestRequest generates requests for GetAuthorizationRequest
-func NewGetAuthorizationRequestRequest(server string, id string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/oauth/authorizations/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewApproveAuthorizationRequestRequest calls the generic ApproveAuthorizationRequest builder with application/json body
-func NewApproveAuthorizationRequestRequest(server string, id string, body ApproveAuthorizationRequestJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewApproveAuthorizationRequestRequestWithBody(server, id, "application/json", bodyReader)
-}
-
-// NewApproveAuthorizationRequestRequestWithBody generates requests for ApproveAuthorizationRequest with any type of body
-func NewApproveAuthorizationRequestRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/oauth/authorizations/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewAuthorizeRequest generates requests for Authorize
 func NewAuthorizeRequest(server string, params *AuthorizeParams) (*http.Request, error) {
 	var err error
@@ -1600,16 +1485,20 @@ func NewAuthorizeRequest(server string, params *AuthorizeParams) (*http.Request,
 			}
 		}
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "scope", runtime.ParamLocationQuery, params.Scope); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Scope != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "scope", runtime.ParamLocationQuery, *params.Scope); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
 		}
 
 		if params.State != nil {
@@ -1687,8 +1576,19 @@ func NewAuthorizeRequest(server string, params *AuthorizeParams) (*http.Request,
 	return req, nil
 }
 
-// NewTokenRequest generates requests for Token
-func NewTokenRequest(server string, params *TokenParams) (*http.Request, error) {
+// NewTokenRequestWithFormdataBody calls the generic Token builder with application/x-www-form-urlencoded body
+func NewTokenRequestWithFormdataBody(server string, body TokenFormdataRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	bodyStr, err := runtime.MarshalForm(body, nil)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = strings.NewReader(bodyStr.Encode())
+	return NewTokenRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
+}
+
+// NewTokenRequestWithBody generates requests for Token with any type of body
+func NewTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1706,116 +1606,12 @@ func NewTokenRequest(server string, params *TokenParams) (*http.Request, error) 
 		return nil, err
 	}
 
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "grant_type", runtime.ParamLocationQuery, params.GrantType); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "client_id", runtime.ParamLocationQuery, params.ClientId); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "client_secret", runtime.ParamLocationQuery, params.ClientSecret); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
-		}
-
-		if params.Code != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code", runtime.ParamLocationQuery, *params.Code); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.CodeVerifier != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_verifier", runtime.ParamLocationQuery, *params.CodeVerifier); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.RedirectUri != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "redirect_uri", runtime.ParamLocationQuery, *params.RedirectUri); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.RefreshToken != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "refresh_token", runtime.ParamLocationQuery, *params.RefreshToken); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1883,6 +1679,40 @@ func NewCreateOrganizationRequestWithBody(server string, contentType string, bod
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ListOrganizationMembersRequest generates requests for V1ListOrganizationMembers
+func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/members", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -2094,6 +1924,87 @@ func NewCreateBranchRequestWithBody(server string, ref string, contentType strin
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetV1AuthConfigRequest generates requests for GetV1AuthConfig
+func NewGetV1AuthConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateV1AuthConfigRequest calls the generic UpdateV1AuthConfig builder with application/json body
+func NewUpdateV1AuthConfigRequest(server string, ref string, body UpdateV1AuthConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateV1AuthConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewUpdateV1AuthConfigRequestWithBody generates requests for UpdateV1AuthConfig with any type of body
+func NewUpdateV1AuthConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -2320,8 +2231,8 @@ func NewUpdateProviderByIdRequestWithBody(server string, ref string, providerId 
 	return req, nil
 }
 
-// NewGetPgbouncerConfigRequest generates requests for GetPgbouncerConfig
-func NewGetPgbouncerConfigRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetPgbouncerConfigRequest generates requests for V1GetPgbouncerConfig
+func NewV1GetPgbouncerConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2350,53 +2261,6 @@ func NewGetPgbouncerConfigRequest(server string, ref string) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewUpdatePgbouncerConfigRequest calls the generic UpdatePgbouncerConfig builder with application/json body
-func NewUpdatePgbouncerConfigRequest(server string, ref string, body UpdatePgbouncerConfigJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdatePgbouncerConfigRequestWithBody(server, ref, "application/json", bodyReader)
-}
-
-// NewUpdatePgbouncerConfigRequestWithBody generates requests for UpdatePgbouncerConfig with any type of body
-func NewUpdatePgbouncerConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/config/database/pgbouncer", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PATCH", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2648,6 +2512,87 @@ func NewReverifyRequest(server string, ref string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/custom-hostname/reverify", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1RunQueryRequest calls the generic V1RunQuery builder with application/json body
+func NewV1RunQueryRequest(server string, ref string, body V1RunQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1RunQueryRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1RunQueryRequestWithBody generates requests for V1RunQuery with any type of body
+func NewV1RunQueryRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1EnableDatabaseWebhooksRequest generates requests for V1EnableDatabaseWebhooks
+func NewV1EnableDatabaseWebhooksRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/webhooks/enable", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3451,53 +3396,6 @@ func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentT
 	return req, nil
 }
 
-// NewRunQueryRequest calls the generic RunQuery builder with application/json body
-func NewRunQueryRequest(server string, ref string, body RunQueryJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRunQueryRequestWithBody(server, ref, "application/json", bodyReader)
-}
-
-// NewRunQueryRequestWithBody generates requests for RunQuery with any type of body
-func NewRunQueryRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/query", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetReadOnlyModeStatusRequest generates requests for GetReadOnlyModeStatus
 func NewGetReadOnlyModeStatusRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -4162,22 +4060,13 @@ type ClientWithResponsesInterface interface {
 
 	UpdateBranchWithResponse(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error)
 
-	// DeclineAuthorizationRequestWithResponse request
-	DeclineAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeclineAuthorizationRequestResponse, error)
-
-	// GetAuthorizationRequestWithResponse request
-	GetAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAuthorizationRequestResponse, error)
-
-	// ApproveAuthorizationRequestWithBodyWithResponse request with any body
-	ApproveAuthorizationRequestWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveAuthorizationRequestResponse, error)
-
-	ApproveAuthorizationRequestWithResponse(ctx context.Context, id string, body ApproveAuthorizationRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveAuthorizationRequestResponse, error)
-
 	// AuthorizeWithResponse request
 	AuthorizeWithResponse(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*AuthorizeResponse, error)
 
-	// TokenWithResponse request
-	TokenWithResponse(ctx context.Context, params *TokenParams, reqEditors ...RequestEditorFn) (*TokenResponse, error)
+	// TokenWithBodyWithResponse request with any body
+	TokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenResponse, error)
+
+	TokenWithFormdataBodyWithResponse(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenResponse, error)
 
 	// GetOrganizationsWithResponse request
 	GetOrganizationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOrganizationsResponse, error)
@@ -4186,6 +4075,9 @@ type ClientWithResponsesInterface interface {
 	CreateOrganizationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOrganizationResponse, error)
 
 	CreateOrganizationWithResponse(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOrganizationResponse, error)
+
+	// V1ListOrganizationMembersWithResponse request
+	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
 	// GetProjectsWithResponse request
 	GetProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetProjectsResponse, error)
@@ -4209,6 +4101,14 @@ type ClientWithResponsesInterface interface {
 
 	CreateBranchWithResponse(ctx context.Context, ref string, body CreateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBranchResponse, error)
 
+	// GetV1AuthConfigWithResponse request
+	GetV1AuthConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetV1AuthConfigResponse, error)
+
+	// UpdateV1AuthConfigWithBodyWithResponse request with any body
+	UpdateV1AuthConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateV1AuthConfigResponse, error)
+
+	UpdateV1AuthConfigWithResponse(ctx context.Context, ref string, body UpdateV1AuthConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateV1AuthConfigResponse, error)
+
 	// ListAllProvidersWithResponse request
 	ListAllProvidersWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListAllProvidersResponse, error)
 
@@ -4228,13 +4128,8 @@ type ClientWithResponsesInterface interface {
 
 	UpdateProviderByIdWithResponse(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error)
 
-	// GetPgbouncerConfigWithResponse request
-	GetPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPgbouncerConfigResponse, error)
-
-	// UpdatePgbouncerConfigWithBodyWithResponse request with any body
-	UpdatePgbouncerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePgbouncerConfigResponse, error)
-
-	UpdatePgbouncerConfigWithResponse(ctx context.Context, ref string, body UpdatePgbouncerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePgbouncerConfigResponse, error)
+	// V1GetPgbouncerConfigWithResponse request
+	V1GetPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPgbouncerConfigResponse, error)
 
 	// GetConfigWithResponse request
 	GetConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetConfigResponse, error)
@@ -4260,6 +4155,14 @@ type ClientWithResponsesInterface interface {
 
 	// ReverifyWithResponse request
 	ReverifyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ReverifyResponse, error)
+
+	// V1RunQueryWithBodyWithResponse request with any body
+	V1RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error)
+
+	V1RunQueryWithResponse(ctx context.Context, ref string, body V1RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error)
+
+	// V1EnableDatabaseWebhooksWithResponse request
+	V1EnableDatabaseWebhooksWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1EnableDatabaseWebhooksResponse, error)
 
 	// GetFunctionsWithResponse request
 	GetFunctionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetFunctionsResponse, error)
@@ -4314,11 +4217,6 @@ type ClientWithResponsesInterface interface {
 	UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
 	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
-
-	// RunQueryWithBodyWithResponse request with any body
-	RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunQueryResponse, error)
-
-	RunQueryWithResponse(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunQueryResponse, error)
 
 	// GetReadOnlyModeStatusWithResponse request
 	GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error)
@@ -4443,69 +4341,6 @@ func (r UpdateBranchResponse) StatusCode() int {
 	return 0
 }
 
-type DeclineAuthorizationRequestResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r DeclineAuthorizationRequestResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeclineAuthorizationRequestResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetAuthorizationRequestResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetAuthorizationRequestResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetAuthorizationRequestResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ApproveAuthorizationRequestResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r ApproveAuthorizationRequestResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ApproveAuthorizationRequestResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type AuthorizeResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4530,6 +4365,7 @@ func (r AuthorizeResponse) StatusCode() int {
 type TokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON201      *OAuthTokenResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -4586,6 +4422,28 @@ func (r CreateOrganizationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateOrganizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListOrganizationMembersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]V1OrganizationMemberResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListOrganizationMembersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListOrganizationMembersResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4724,6 +4582,50 @@ func (r CreateBranchResponse) StatusCode() int {
 	return 0
 }
 
+type GetV1AuthConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AuthConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV1AuthConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV1AuthConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateV1AuthConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AuthConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateV1AuthConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateV1AuthConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListAllProvidersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4834,14 +4736,14 @@ func (r UpdateProviderByIdResponse) StatusCode() int {
 	return 0
 }
 
-type GetPgbouncerConfigResponse struct {
+type V1GetPgbouncerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectPgBouncerConfig
+	JSON200      *V1PgbouncerConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetPgbouncerConfigResponse) Status() string {
+func (r V1GetPgbouncerConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -4849,29 +4751,7 @@ func (r GetPgbouncerConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetPgbouncerConfigResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type UpdatePgbouncerConfigResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *UpdatePoolingConfigResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdatePgbouncerConfigResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdatePgbouncerConfigResponse) StatusCode() int {
+func (r V1GetPgbouncerConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5025,6 +4905,49 @@ func (r ReverifyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ReverifyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1RunQueryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RunQueryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RunQueryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1EnableDatabaseWebhooksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1EnableDatabaseWebhooksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1EnableDatabaseWebhooksResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5330,28 +5253,6 @@ func (r UpdatePostgRESTConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdatePostgRESTConfigResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type RunQueryResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *map[string]interface{}
-}
-
-// Status returns HTTPResponse.Status
-func (r RunQueryResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RunQueryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5719,41 +5620,6 @@ func (c *ClientWithResponses) UpdateBranchWithResponse(ctx context.Context, bran
 	return ParseUpdateBranchResponse(rsp)
 }
 
-// DeclineAuthorizationRequestWithResponse request returning *DeclineAuthorizationRequestResponse
-func (c *ClientWithResponses) DeclineAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeclineAuthorizationRequestResponse, error) {
-	rsp, err := c.DeclineAuthorizationRequest(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeclineAuthorizationRequestResponse(rsp)
-}
-
-// GetAuthorizationRequestWithResponse request returning *GetAuthorizationRequestResponse
-func (c *ClientWithResponses) GetAuthorizationRequestWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAuthorizationRequestResponse, error) {
-	rsp, err := c.GetAuthorizationRequest(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetAuthorizationRequestResponse(rsp)
-}
-
-// ApproveAuthorizationRequestWithBodyWithResponse request with arbitrary body returning *ApproveAuthorizationRequestResponse
-func (c *ClientWithResponses) ApproveAuthorizationRequestWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveAuthorizationRequestResponse, error) {
-	rsp, err := c.ApproveAuthorizationRequestWithBody(ctx, id, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseApproveAuthorizationRequestResponse(rsp)
-}
-
-func (c *ClientWithResponses) ApproveAuthorizationRequestWithResponse(ctx context.Context, id string, body ApproveAuthorizationRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveAuthorizationRequestResponse, error) {
-	rsp, err := c.ApproveAuthorizationRequest(ctx, id, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseApproveAuthorizationRequestResponse(rsp)
-}
-
 // AuthorizeWithResponse request returning *AuthorizeResponse
 func (c *ClientWithResponses) AuthorizeWithResponse(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*AuthorizeResponse, error) {
 	rsp, err := c.Authorize(ctx, params, reqEditors...)
@@ -5763,9 +5629,17 @@ func (c *ClientWithResponses) AuthorizeWithResponse(ctx context.Context, params 
 	return ParseAuthorizeResponse(rsp)
 }
 
-// TokenWithResponse request returning *TokenResponse
-func (c *ClientWithResponses) TokenWithResponse(ctx context.Context, params *TokenParams, reqEditors ...RequestEditorFn) (*TokenResponse, error) {
-	rsp, err := c.Token(ctx, params, reqEditors...)
+// TokenWithBodyWithResponse request with arbitrary body returning *TokenResponse
+func (c *ClientWithResponses) TokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenResponse, error) {
+	rsp, err := c.TokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) TokenWithFormdataBodyWithResponse(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenResponse, error) {
+	rsp, err := c.TokenWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -5796,6 +5670,15 @@ func (c *ClientWithResponses) CreateOrganizationWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseCreateOrganizationResponse(rsp)
+}
+
+// V1ListOrganizationMembersWithResponse request returning *V1ListOrganizationMembersResponse
+func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error) {
+	rsp, err := c.V1ListOrganizationMembers(ctx, slug, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListOrganizationMembersResponse(rsp)
 }
 
 // GetProjectsWithResponse request returning *GetProjectsResponse
@@ -5868,6 +5751,32 @@ func (c *ClientWithResponses) CreateBranchWithResponse(ctx context.Context, ref 
 	return ParseCreateBranchResponse(rsp)
 }
 
+// GetV1AuthConfigWithResponse request returning *GetV1AuthConfigResponse
+func (c *ClientWithResponses) GetV1AuthConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetV1AuthConfigResponse, error) {
+	rsp, err := c.GetV1AuthConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV1AuthConfigResponse(rsp)
+}
+
+// UpdateV1AuthConfigWithBodyWithResponse request with arbitrary body returning *UpdateV1AuthConfigResponse
+func (c *ClientWithResponses) UpdateV1AuthConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateV1AuthConfigResponse, error) {
+	rsp, err := c.UpdateV1AuthConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateV1AuthConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateV1AuthConfigWithResponse(ctx context.Context, ref string, body UpdateV1AuthConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateV1AuthConfigResponse, error) {
+	rsp, err := c.UpdateV1AuthConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateV1AuthConfigResponse(rsp)
+}
+
 // ListAllProvidersWithResponse request returning *ListAllProvidersResponse
 func (c *ClientWithResponses) ListAllProvidersWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListAllProvidersResponse, error) {
 	rsp, err := c.ListAllProviders(ctx, ref, reqEditors...)
@@ -5929,30 +5838,13 @@ func (c *ClientWithResponses) UpdateProviderByIdWithResponse(ctx context.Context
 	return ParseUpdateProviderByIdResponse(rsp)
 }
 
-// GetPgbouncerConfigWithResponse request returning *GetPgbouncerConfigResponse
-func (c *ClientWithResponses) GetPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPgbouncerConfigResponse, error) {
-	rsp, err := c.GetPgbouncerConfig(ctx, ref, reqEditors...)
+// V1GetPgbouncerConfigWithResponse request returning *V1GetPgbouncerConfigResponse
+func (c *ClientWithResponses) V1GetPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPgbouncerConfigResponse, error) {
+	rsp, err := c.V1GetPgbouncerConfig(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetPgbouncerConfigResponse(rsp)
-}
-
-// UpdatePgbouncerConfigWithBodyWithResponse request with arbitrary body returning *UpdatePgbouncerConfigResponse
-func (c *ClientWithResponses) UpdatePgbouncerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePgbouncerConfigResponse, error) {
-	rsp, err := c.UpdatePgbouncerConfigWithBody(ctx, ref, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePgbouncerConfigResponse(rsp)
-}
-
-func (c *ClientWithResponses) UpdatePgbouncerConfigWithResponse(ctx context.Context, ref string, body UpdatePgbouncerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePgbouncerConfigResponse, error) {
-	rsp, err := c.UpdatePgbouncerConfig(ctx, ref, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdatePgbouncerConfigResponse(rsp)
+	return ParseV1GetPgbouncerConfigResponse(rsp)
 }
 
 // GetConfigWithResponse request returning *GetConfigResponse
@@ -6032,6 +5924,32 @@ func (c *ClientWithResponses) ReverifyWithResponse(ctx context.Context, ref stri
 		return nil, err
 	}
 	return ParseReverifyResponse(rsp)
+}
+
+// V1RunQueryWithBodyWithResponse request with arbitrary body returning *V1RunQueryResponse
+func (c *ClientWithResponses) V1RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error) {
+	rsp, err := c.V1RunQueryWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RunQueryResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1RunQueryWithResponse(ctx context.Context, ref string, body V1RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error) {
+	rsp, err := c.V1RunQuery(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RunQueryResponse(rsp)
+}
+
+// V1EnableDatabaseWebhooksWithResponse request returning *V1EnableDatabaseWebhooksResponse
+func (c *ClientWithResponses) V1EnableDatabaseWebhooksWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1EnableDatabaseWebhooksResponse, error) {
+	rsp, err := c.V1EnableDatabaseWebhooks(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1EnableDatabaseWebhooksResponse(rsp)
 }
 
 // GetFunctionsWithResponse request returning *GetFunctionsResponse
@@ -6206,23 +6124,6 @@ func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseUpdatePostgRESTConfigResponse(rsp)
-}
-
-// RunQueryWithBodyWithResponse request with arbitrary body returning *RunQueryResponse
-func (c *ClientWithResponses) RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunQueryResponse, error) {
-	rsp, err := c.RunQueryWithBody(ctx, ref, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunQueryResponse(rsp)
-}
-
-func (c *ClientWithResponses) RunQueryWithResponse(ctx context.Context, ref string, body RunQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunQueryResponse, error) {
-	rsp, err := c.RunQuery(ctx, ref, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunQueryResponse(rsp)
 }
 
 // GetReadOnlyModeStatusWithResponse request returning *GetReadOnlyModeStatusResponse
@@ -6476,54 +6377,6 @@ func ParseUpdateBranchResponse(rsp *http.Response) (*UpdateBranchResponse, error
 	return response, nil
 }
 
-// ParseDeclineAuthorizationRequestResponse parses an HTTP response from a DeclineAuthorizationRequestWithResponse call
-func ParseDeclineAuthorizationRequestResponse(rsp *http.Response) (*DeclineAuthorizationRequestResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeclineAuthorizationRequestResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParseGetAuthorizationRequestResponse parses an HTTP response from a GetAuthorizationRequestWithResponse call
-func ParseGetAuthorizationRequestResponse(rsp *http.Response) (*GetAuthorizationRequestResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetAuthorizationRequestResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParseApproveAuthorizationRequestResponse parses an HTTP response from a ApproveAuthorizationRequestWithResponse call
-func ParseApproveAuthorizationRequestResponse(rsp *http.Response) (*ApproveAuthorizationRequestResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ApproveAuthorizationRequestResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
 // ParseAuthorizeResponse parses an HTTP response from a AuthorizeWithResponse call
 func ParseAuthorizeResponse(rsp *http.Response) (*AuthorizeResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6551,6 +6404,16 @@ func ParseTokenResponse(rsp *http.Response) (*TokenResponse, error) {
 	response := &TokenResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest OAuthTokenResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	}
 
 	return response, nil
@@ -6602,6 +6465,32 @@ func ParseCreateOrganizationResponse(rsp *http.Response) (*CreateOrganizationRes
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ListOrganizationMembersResponse parses an HTTP response from a V1ListOrganizationMembersWithResponse call
+func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganizationMembersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListOrganizationMembersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []V1OrganizationMemberResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -6761,6 +6650,58 @@ func ParseCreateBranchResponse(rsp *http.Response) (*CreateBranchResponse, error
 	return response, nil
 }
 
+// ParseGetV1AuthConfigResponse parses an HTTP response from a GetV1AuthConfigWithResponse call
+func ParseGetV1AuthConfigResponse(rsp *http.Response) (*GetV1AuthConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV1AuthConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuthConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateV1AuthConfigResponse parses an HTTP response from a UpdateV1AuthConfigWithResponse call
+func ParseUpdateV1AuthConfigResponse(rsp *http.Response) (*UpdateV1AuthConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateV1AuthConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuthConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListAllProvidersResponse parses an HTTP response from a ListAllProvidersWithResponse call
 func ParseListAllProvidersResponse(rsp *http.Response) (*ListAllProvidersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6891,48 +6832,22 @@ func ParseUpdateProviderByIdResponse(rsp *http.Response) (*UpdateProviderByIdRes
 	return response, nil
 }
 
-// ParseGetPgbouncerConfigResponse parses an HTTP response from a GetPgbouncerConfigWithResponse call
-func ParseGetPgbouncerConfigResponse(rsp *http.Response) (*GetPgbouncerConfigResponse, error) {
+// ParseV1GetPgbouncerConfigResponse parses an HTTP response from a V1GetPgbouncerConfigWithResponse call
+func ParseV1GetPgbouncerConfigResponse(rsp *http.Response) (*V1GetPgbouncerConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetPgbouncerConfigResponse{
+	response := &V1GetPgbouncerConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectPgBouncerConfig
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdatePgbouncerConfigResponse parses an HTTP response from a UpdatePgbouncerConfigWithResponse call
-func ParseUpdatePgbouncerConfigResponse(rsp *http.Response) (*UpdatePgbouncerConfigResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdatePgbouncerConfigResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdatePoolingConfigResponse
+		var dest V1PgbouncerConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7110,6 +7025,48 @@ func ParseReverifyResponse(rsp *http.Response) (*ReverifyResponse, error) {
 		}
 		response.JSON201 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1RunQueryResponse parses an HTTP response from a V1RunQueryWithResponse call
+func ParseV1RunQueryResponse(rsp *http.Response) (*V1RunQueryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RunQueryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1EnableDatabaseWebhooksResponse parses an HTTP response from a V1EnableDatabaseWebhooksWithResponse call
+func ParseV1EnableDatabaseWebhooksResponse(rsp *http.Response) (*V1EnableDatabaseWebhooksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1EnableDatabaseWebhooksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -7443,32 +7400,6 @@ func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTCon
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRunQueryResponse parses an HTTP response from a RunQueryWithResponse call
-func ParseRunQueryResponse(rsp *http.Response) (*RunQueryResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RunQueryResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	}
 
