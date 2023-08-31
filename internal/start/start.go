@@ -387,6 +387,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
+			fmt.Sprintf("GOTRUE_SMS_TEST_OTP=%v", utils.Config.Auth.Sms.TestOTP),
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
