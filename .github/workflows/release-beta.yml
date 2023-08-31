@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - id: semantic-release
-        uses: cycjimmy/semantic-release-action@v3
+        uses: cycjimmy/semantic-release-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
