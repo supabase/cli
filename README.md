@@ -80,15 +80,57 @@ npm i supabase@beta --save-dev
 
   To install:
 
+<summary><b>First you need to have Homebrew on your Linux machine</b></summary>
+
+# Open your terminal and run the following command to install Homebrew:
+
+run: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+
+if you already had brew run:brew update // This will update brew
+
+<b>Add Homebrew to Your Shell:</b>
+
+run: nano ~/.bashrc
+
+<!-- this will open up your environment variable path inside your terminal-->
+
+<b>Add the following line at the end of the file to include Homebrew in your PATH:</b>
+
+ copy and paste: export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH" at the end of your environment file inside your terminal.
+
+ <b>Reload Your Shell Configuration:</b>
+
+ run: source ~/.bashrc
+
+
+<b> Now run</b>
+
   ```sh
-  brew install supabase/tap/supabase
+  brew tap supabase/tap
   ```
+  <b>Next run</b>
+   ```sh
+ brew install supabase/tap/supabase
+
+<!-- If you encounter an error you might need to install Clang using the apt package manager. Open your terminal and run:-->
+  sudo apt update
+  sudo apt install clang
+
+<b>Retry the Supabase CLI Installation:</b>
+run: 
+
+```sh 
+  brew install supabase/tap/supabase
+
 
   To upgrade:
 
   ```sh
   brew upgrade supabase
   ```
+<b>Finally To check the version of your supabase<b>
+run:
+supabase --version
 
   #### via Linux packages
 
