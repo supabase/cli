@@ -100,6 +100,10 @@ enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
 
+# Use pre-defined map of phone number to OTP for testing.
+[auth.sms.test_otp]
+4152127777 = "123456"
+
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
 enabled = true

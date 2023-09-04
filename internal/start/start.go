@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -345,6 +346,13 @@ EOF
 
 	// Start GoTrue.
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.GotrueImage, excluded) {
+		var testOTP bytes.Buffer
+		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
+			encoder := json.NewEncoder(&testOTP)
+			if err := encoder.Encode(utils.Config.Auth.Sms.TestOTP); err != nil {
+				return err
+			}
+		}
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
@@ -387,7 +395,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
-			fmt.Sprintf("GOTRUE_SMS_TEST_OTP=%v", utils.Config.Auth.Sms.TestOTP),
+			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
@@ -790,6 +798,7 @@ EOF
 		started = append(started, utils.PoolerId)
 	}
 
+	p.Send(utils.StatusMsg("Waiting for health checks..."))
 	return reset.WaitForServiceReady(ctx, started)
 }
 
