@@ -9,6 +9,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
+	"github.com/supabase/cli/internal/utils/flags"
 
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/index_sizes"
@@ -38,18 +39,18 @@ var (
 	inspectDBCmd = &cobra.Command{
 		Use:   "db",
 		Short: "Tools to inspect your Supabase database",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			cmd.SetContext(ctx)
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 	}
 
 	inspectCacheHitCmd = &cobra.Command{
 		Use:   "cache-hit",
 		Short: "Show cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return cache.Run(ctx, dbConfig, fsys)
+			return cache.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -57,12 +58,7 @@ var (
 		Use:   "replication-slots",
 		Short: "Show information about replication slots on the database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return replication_slots.Run(ctx, dbConfig, fsys)
+			return replication_slots.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -70,12 +66,7 @@ var (
 		Use:   "index-usage",
 		Short: "Show information about the efficiency of indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return index_usage.Run(ctx, dbConfig, fsys)
+			return index_usage.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -83,12 +74,7 @@ var (
 		Use:   "locks",
 		Short: "Show queries which have taken out an exclusive lock on a relation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return locks.Run(ctx, dbConfig, fsys)
+			return locks.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -96,12 +82,7 @@ var (
 		Use:   "blocking",
 		Short: "Show queries that are holding locks and the queries that are waiting for them to be released",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return blocking.Run(ctx, dbConfig, fsys)
+			return blocking.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -109,12 +90,7 @@ var (
 		Use:   "outliers",
 		Short: "Show queries from pg_stat_statements ordered by total execution time",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return outliers.Run(ctx, dbConfig, fsys)
+			return outliers.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -122,12 +98,7 @@ var (
 		Use:   "calls",
 		Short: "Show queries from pg_stat_statements ordered by total times called",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return calls.Run(ctx, dbConfig, fsys)
+			return calls.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -135,12 +106,7 @@ var (
 		Use:   "total-index-size",
 		Short: "Show total size of all indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return total_index_size.Run(ctx, dbConfig, fsys)
+			return total_index_size.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -148,12 +114,7 @@ var (
 		Use:   "index-sizes",
 		Short: "Show index sizes of individual indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return index_sizes.Run(ctx, dbConfig, fsys)
+			return index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -161,12 +122,7 @@ var (
 		Use:   "table-sizes",
 		Short: "Show table sizes of individual tables without their index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return table_sizes.Run(ctx, dbConfig, fsys)
+			return table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -174,12 +130,7 @@ var (
 		Use:   "table-index-sizes",
 		Short: "Show index sizes of individual tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return table_index_sizes.Run(ctx, dbConfig, fsys)
+			return table_index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -187,12 +138,7 @@ var (
 		Use:   "total-table-sizes",
 		Short: "Show total table sizes, including table index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return total_table_sizes.Run(ctx, dbConfig, fsys)
+			return total_table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -200,12 +146,7 @@ var (
 		Use:   "unused-indexes",
 		Short: "Show indexes with low usage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return unused_indexes.Run(ctx, dbConfig, fsys)
+			return unused_indexes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -213,12 +154,7 @@ var (
 		Use:   "seq-scans",
 		Short: "Show number of sequential scans recorded against all tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return seq_scans.Run(ctx, dbConfig, fsys)
+			return seq_scans.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -226,12 +162,7 @@ var (
 		Use:   "long-running-queries",
 		Short: "Show currently running queries running for longer than 5 minutes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return long_running_queries.Run(ctx, dbConfig, fsys)
+			return long_running_queries.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -239,12 +170,7 @@ var (
 		Use:   "table-record-counts",
 		Short: "Show estimated number of rows per table",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return table_record_counts.Run(ctx, dbConfig, fsys)
+			return table_record_counts.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -252,12 +178,7 @@ var (
 		Use:   "bloat",
 		Short: "Estimates space allocated to a relation that is full of dead tuples",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return bloat.Run(ctx, dbConfig, fsys)
+			return bloat.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -265,12 +186,7 @@ var (
 		Use:   "vacuum-stats",
 		Short: "Show statistics related to vacuum operations per table",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return vacuum_stats.Run(ctx, dbConfig, fsys)
+			return vacuum_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -278,19 +194,17 @@ var (
 		Use:   "role-connections",
 		Short: "Show number of active connections for all database roles",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := parseDatabaseConfig(fsys); err != nil {
-				return err
-			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return role_connections.Run(ctx, dbConfig, fsys)
+			return role_connections.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
 	inspectFlags := inspectDBCmd.PersistentFlags()
-	inspectFlags.StringVar(&dbUrl, "db-url", "", "connect using the specified database url")
+	inspectFlags.String("db-url", "", "Inspect the database specified by the connection string (must be percent-encoded).")
+	inspectFlags.Bool("linked", true, "Inspect the linked project.")
+	inspectFlags.Bool("local", false, "Inspect the local database.")
+	inspectDBCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	inspectCmd.AddCommand(inspectDBCmd)
 	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)

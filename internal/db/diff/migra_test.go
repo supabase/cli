@@ -27,7 +27,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "localhost",
+	Host:     "db.supabase.co",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",
@@ -102,7 +102,7 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{Host: "localhost"}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
