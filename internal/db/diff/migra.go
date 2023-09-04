@@ -33,18 +33,13 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if len(config.Password) > 0 {
+	if config.Host != "localhost" {
 		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
 	} else {
 		fmt.Fprintln(os.Stderr, "Connecting to local database...")
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
-		config.Host = "localhost"
-		config.Port = uint16(utils.Config.Db.Port)
-		config.User = "postgres"
-		config.Password = "postgres"
-		config.Database = "postgres"
 	}
 	// 1. Load all user defined schemas
 	if len(schema) == 0 {
