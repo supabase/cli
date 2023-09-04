@@ -205,7 +205,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().GetPgbouncerConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPgbouncerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return err
 	}
@@ -216,9 +216,11 @@ func linkPooler(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func updatePoolerConfig(config api.ProjectPgBouncerConfig) {
+func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
 	copy := utils.Config.Db.Pooler
-	copy.PoolMode = utils.PoolMode(config.PoolMode)
+	if config.PoolMode != nil {
+		copy.PoolMode = utils.PoolMode(*config.PoolMode)
+	}
 	if config.DefaultPoolSize != nil {
 		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)
 	}
