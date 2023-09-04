@@ -8,6 +8,7 @@ import binLinks from "bin-links";
 import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
+import { ProxyAgent } from "proxy-agent";
 import path from "path";
 import tar from "tar";
 import zlib from "zlib";
@@ -71,7 +72,7 @@ const fetchAndParseCheckSumFile = async (packageJson) => {
 
   // Fetch the checksum file
   console.info("Downloading", checksumFileUrl);
-  const response = await fetch(checksumFileUrl);
+  const response = await fetch(checksumFileUrl, {agent: new ProxyAgent()});
   if (response.ok) {
     const checkSumContent = await response.text();
     const lines = checkSumContent.split("\n");
