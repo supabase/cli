@@ -267,6 +267,7 @@ type (
 		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
+		TestOTP             map[string]string `toml:"test_otp"`
 	}
 
 	twilioConfig struct {
