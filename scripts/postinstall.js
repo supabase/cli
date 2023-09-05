@@ -8,6 +8,7 @@ import binLinks from "bin-links";
 import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
+import { ProxyAgent } from "proxy-agent";
 import path from "path";
 import tar from "tar";
 import zlib from "zlib";
@@ -63,7 +64,7 @@ const parsePackageJson = (packageJson) => {
   return { binPath, url };
 };
 
-const fetchAndParseCheckSumFile = async (packageJson) => {
+const fetchAndParseCheckSumFile = async (packageJson, agent) => {
   const version = packageJson.version;
   const pkgName = packageJson.name;
   const repo = packageJson.repository;
@@ -71,7 +72,7 @@ const fetchAndParseCheckSumFile = async (packageJson) => {
 
   // Fetch the checksum file
   console.info("Downloading", checksumFileUrl);
-  const response = await fetch(checksumFileUrl);
+  const response = await fetch(checksumFileUrl, { agent });
   if (response.ok) {
     const checkSumContent = await response.text();
     const lines = checkSumContent.split("\n");
@@ -123,11 +124,12 @@ async function main() {
   const untar = tar.x({ cwd: binDir }, [binName]);
 
   console.info("Downloading", url);
-  const resp = await fetch(url);
+  const agent = new ProxyAgent();
+  const resp = await fetch(url, { agent });
 
   const hash = createHash("sha256");
   const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
-  const checksumMap = await fetchAndParseCheckSumFile(pkg);
+  const checksumMap = await fetchAndParseCheckSumFile(pkg, agent);
 
   resp.body
     .on("data", (chunk) => {
