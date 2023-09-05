@@ -17,7 +17,7 @@ jobs:
       new-release-version: ${{ steps.semantic-release.outputs.new_release_version }}
       new-release-channel: ${{ steps.semantic-release.outputs.new_release_channel }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - id: semantic-release
         uses: cycjimmy/semantic-release-action@v4
         env:
@@ -32,7 +32,7 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -63,7 +63,7 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v3
         with:
           node-version: "16.x"
