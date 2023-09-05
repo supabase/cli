@@ -25,11 +25,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var (
-	healthTimeout = 20 * time.Second
-	//go:embed templates/migra.sh
-	diffSchemaScript string
-)
+//go:embed templates/migra.sh
+var diffSchemaScript string
 
 func RunMigra(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
@@ -176,7 +173,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if !reset.WaitForHealthyService(ctx, shadow, healthTimeout) {
+	if !reset.WaitForHealthyService(ctx, shadow, reset.HealthTimeout) {
 		return "", reset.ErrDatabase
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {

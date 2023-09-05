@@ -106,7 +106,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
-	if !reset.WaitForHealthyService(ctx, utils.DbId, 20*time.Second) {
+	if !reset.WaitForHealthyService(ctx, utils.DbId, reset.HealthTimeout) {
 		return reset.ErrDatabase
 	}
 	// Initialise if we are on PG14 and there's no existing db volume

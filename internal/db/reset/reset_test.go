@@ -274,7 +274,7 @@ func TestRestartDatabase(t *testing.T) {
 
 	t.Run("throws error on health check timeout", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		healthTimeout = 0 * time.Second
+		HealthTimeout = 0 * time.Second
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

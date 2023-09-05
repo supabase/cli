@@ -246,7 +246,7 @@ func TestDiffDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on health check failure", func(t *testing.T) {
-		healthTimeout = time.Second
+		reset.HealthTimeout = time.Second
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
