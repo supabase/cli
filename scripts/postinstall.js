@@ -124,7 +124,7 @@ async function main() {
   const untar = tar.x({ cwd: binDir }, [binName]);
 
   console.info("Downloading", url);
-  const resp = await fetch(url);
+  const resp = await fetch(url, {agent: new ProxyAgent()});
 
   const hash = createHash("sha256");
   const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
