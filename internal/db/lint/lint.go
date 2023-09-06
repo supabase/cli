@@ -58,7 +58,7 @@ func Run(ctx context.Context, schema []string, level string, config pgconn.Confi
 }
 
 func connect(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	if len(config.Password) > 0 {
+	if config.Host != "localhost" {
 		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
 		return utils.ConnectRemotePostgres(ctx, config, options...)
 	}
