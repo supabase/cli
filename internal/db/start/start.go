@@ -60,9 +60,9 @@ func NewContainerConfig() container.Config {
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "5432"},
-			Interval: 2 * time.Second,
+			Interval: 10 * time.Second,
 			Timeout:  2 * time.Second,
-			Retries:  10,
+			Retries:  3,
 		},
 		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && docker-entrypoint.sh postgres -D /etc/postgresql
 ` + initialSchema + `

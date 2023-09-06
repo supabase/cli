@@ -170,9 +170,9 @@ EOF
 						"--tries=1",
 						"--spider",
 						"http://localhost:9001/health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 				ExposedPorts: nat.PortSet{"9000/tcp": {}},
 			},
@@ -254,9 +254,9 @@ EOF
 `},
 				Healthcheck: &container.HealthConfig{
 					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
-					Interval:    2 * time.Second,
+					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
-					Retries:     10,
+					Retries:     3,
 					StartPeriod: 10 * time.Second,
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
@@ -495,9 +495,9 @@ EOF
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -573,9 +573,9 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -640,9 +640,9 @@ EOF
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -669,9 +669,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "imgproxy", "health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -710,9 +710,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -746,9 +746,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -782,9 +782,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
