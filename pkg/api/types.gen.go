@@ -135,6 +135,32 @@ const (
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
 )
 
+// Defines values for SnippetMetaType.
+const (
+	SnippetMetaTypeSql SnippetMetaType = "sql"
+)
+
+// Defines values for SnippetMetaVisibility.
+const (
+	SnippetMetaVisibilityOrg     SnippetMetaVisibility = "org"
+	SnippetMetaVisibilityProject SnippetMetaVisibility = "project"
+	SnippetMetaVisibilityPublic  SnippetMetaVisibility = "public"
+	SnippetMetaVisibilityUser    SnippetMetaVisibility = "user"
+)
+
+// Defines values for SnippetResponseType.
+const (
+	SnippetResponseTypeSql SnippetResponseType = "sql"
+)
+
+// Defines values for SnippetResponseVisibility.
+const (
+	SnippetResponseVisibilityOrg     SnippetResponseVisibility = "org"
+	SnippetResponseVisibilityProject SnippetResponseVisibility = "project"
+	SnippetResponseVisibilityPublic  SnippetResponseVisibility = "public"
+	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
+)
+
 // Defines values for UpdateCustomHostnameResponseStatus.
 const (
 	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
@@ -600,6 +626,71 @@ type SecretResponse struct {
 	Value string `json:"value"`
 }
 
+// SnippetContent defines model for SnippetContent.
+type SnippetContent struct {
+	Favorite      bool   `json:"favorite"`
+	SchemaVersion string `json:"schema_version"`
+	Sql           string `json:"sql"`
+}
+
+// SnippetList defines model for SnippetList.
+type SnippetList struct {
+	Data []SnippetMeta `json:"data"`
+}
+
+// SnippetMeta defines model for SnippetMeta.
+type SnippetMeta struct {
+	Description *string               `json:"description"`
+	Id          string                `json:"id"`
+	InsertedAt  string                `json:"inserted_at"`
+	Name        string                `json:"name"`
+	Owner       SnippetUser           `json:"owner"`
+	Project     SnippetProject        `json:"project"`
+	Type        SnippetMetaType       `json:"type"`
+	UpdatedAt   string                `json:"updated_at"`
+	UpdatedBy   SnippetUser           `json:"updated_by"`
+	Visibility  SnippetMetaVisibility `json:"visibility"`
+}
+
+// SnippetMetaType defines model for SnippetMeta.Type.
+type SnippetMetaType string
+
+// SnippetMetaVisibility defines model for SnippetMeta.Visibility.
+type SnippetMetaVisibility string
+
+// SnippetProject defines model for SnippetProject.
+type SnippetProject struct {
+	Id   float32 `json:"id"`
+	Name string  `json:"name"`
+}
+
+// SnippetResponse defines model for SnippetResponse.
+type SnippetResponse struct {
+	Content     SnippetContent            `json:"content"`
+	Description *string                   `json:"description"`
+	Id          string                    `json:"id"`
+	InsertedAt  string                    `json:"inserted_at"`
+	Name        string                    `json:"name"`
+	Owner       SnippetUser               `json:"owner"`
+	Project     SnippetProject            `json:"project"`
+	Type        SnippetResponseType       `json:"type"`
+	UpdatedAt   string                    `json:"updated_at"`
+	UpdatedBy   SnippetUser               `json:"updated_by"`
+	Visibility  SnippetResponseVisibility `json:"visibility"`
+}
+
+// SnippetResponseType defines model for SnippetResponse.Type.
+type SnippetResponseType string
+
+// SnippetResponseVisibility defines model for SnippetResponse.Visibility.
+type SnippetResponseVisibility string
+
+// SnippetUser defines model for SnippetUser.
+type SnippetUser struct {
+	Id       float32 `json:"id"`
+	Username string  `json:"username"`
+}
+
 // SslEnforcementRequest defines model for SslEnforcementRequest.
 type SslEnforcementRequest struct {
 	RequestedConfig SslEnforcements `json:"requestedConfig"`
@@ -798,6 +889,11 @@ type CreateSecretsJSONBody = []CreateSecretBody
 // GetTypescriptTypesParams defines parameters for GetTypescriptTypes.
 type GetTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+}
+
+// ListSnippetsParams defines parameters for ListSnippets.
+type ListSnippetsParams struct {
+	ProjectRef *string `form:"project_ref,omitempty" json:"project_ref,omitempty"`
 }
 
 // UpdateBranchJSONRequestBody defines body for UpdateBranch for application/json ContentType.

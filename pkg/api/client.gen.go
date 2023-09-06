@@ -314,6 +314,12 @@ type ClientInterface interface {
 	CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSnippets request
+	ListSnippets(ctx context.Context, params *ListSnippetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSnippet request
+	GetSnippet(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) DeleteBranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1302,6 +1308,30 @@ func (c *Client) CheckVanitySubdomainAvailabilityWithBody(ctx context.Context, r
 
 func (c *Client) CheckVanitySubdomainAvailability(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckVanitySubdomainAvailabilityRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSnippets(ctx context.Context, params *ListSnippetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSnippetsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSnippet(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSnippetRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4006,6 +4036,89 @@ func NewCheckVanitySubdomainAvailabilityRequestWithBody(server string, ref strin
 	return req, nil
 }
 
+// NewListSnippetsRequest generates requests for ListSnippets
+func NewListSnippetsRequest(server string, params *ListSnippetsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/snippets")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.ProjectRef != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSnippetRequest generates requests for GetSnippet
+func NewGetSnippetRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/snippets/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -4274,6 +4387,12 @@ type ClientWithResponsesInterface interface {
 	CheckVanitySubdomainAvailabilityWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
 
 	CheckVanitySubdomainAvailabilityWithResponse(ctx context.Context, ref string, body CheckVanitySubdomainAvailabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckVanitySubdomainAvailabilityResponse, error)
+
+	// ListSnippetsWithResponse request
+	ListSnippetsWithResponse(ctx context.Context, params *ListSnippetsParams, reqEditors ...RequestEditorFn) (*ListSnippetsResponse, error)
+
+	// GetSnippetWithResponse request
+	GetSnippetWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSnippetResponse, error)
 }
 
 type DeleteBranchResponse struct {
@@ -5585,6 +5704,50 @@ func (r CheckVanitySubdomainAvailabilityResponse) StatusCode() int {
 	return 0
 }
 
+type ListSnippetsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SnippetList
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSnippetsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSnippetsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetSnippetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SnippetResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSnippetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSnippetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // DeleteBranchWithResponse request returning *DeleteBranchResponse
 func (c *ClientWithResponses) DeleteBranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*DeleteBranchResponse, error) {
 	rsp, err := c.DeleteBranch(ctx, branchId, reqEditors...)
@@ -6307,6 +6470,24 @@ func (c *ClientWithResponses) CheckVanitySubdomainAvailabilityWithResponse(ctx c
 		return nil, err
 	}
 	return ParseCheckVanitySubdomainAvailabilityResponse(rsp)
+}
+
+// ListSnippetsWithResponse request returning *ListSnippetsResponse
+func (c *ClientWithResponses) ListSnippetsWithResponse(ctx context.Context, params *ListSnippetsParams, reqEditors ...RequestEditorFn) (*ListSnippetsResponse, error) {
+	rsp, err := c.ListSnippets(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSnippetsResponse(rsp)
+}
+
+// GetSnippetWithResponse request returning *GetSnippetResponse
+func (c *ClientWithResponses) GetSnippetWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSnippetResponse, error) {
+	rsp, err := c.GetSnippet(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSnippetResponse(rsp)
 }
 
 // ParseDeleteBranchResponse parses an HTTP response from a DeleteBranchWithResponse call
@@ -7750,6 +7931,58 @@ func ParseCheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*CheckVa
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSnippetsResponse parses an HTTP response from a ListSnippetsWithResponse call
+func ParseListSnippetsResponse(rsp *http.Response) (*ListSnippetsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSnippetsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnippetList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSnippetResponse parses an HTTP response from a GetSnippetWithResponse call
+func ParseGetSnippetResponse(rsp *http.Response) (*GetSnippetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSnippetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnippetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
