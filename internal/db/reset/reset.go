@@ -48,7 +48,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 			return err
 		}
 	}
-	if len(config.Password) > 0 {
+	if config.Host != "localhost" {
 		if shouldReset := utils.PromptYesNo("Confirm resetting the remote database?", true, os.Stdin); !shouldReset {
 			return context.Canceled
 		}

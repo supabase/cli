@@ -72,15 +72,8 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
 
 	// 2. Diff local db (source) with shadow db (target), print it.
-	source := "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
-	if len(config.Password) == 0 {
-		config.Host = shadow[:12]
-		config.Port = 5432
-		config.User = "postgres"
-		config.Password = "postgres"
-		config.Database = "postgres"
-	}
-	target := utils.ToPostgresURL(config)
+	source := utils.ToPostgresURL(config)
+	target := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)
 	output, err = DiffSchema(ctx, source, target, schema, p)
 	return err
 }
