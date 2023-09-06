@@ -34,7 +34,7 @@ const (
 var (
 	ErrUnhealthy  = errors.New("service not healthy")
 	ErrDatabase   = errors.New("database is not healthy")
-	healthTimeout = 10 * time.Second
+	HealthTimeout = 30 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
 )
@@ -156,7 +156,7 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
 		return err
 	}
-	if !WaitForHealthyService(ctx, utils.DbId, healthTimeout) {
+	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
 		return ErrDatabase
 	}
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
@@ -202,7 +202,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 		started = unhealthy
 		return len(started) == 0
 	}
-	if !RetryEverySecond(ctx, probe, 30*time.Second) {
+	if !RetryEverySecond(ctx, probe, HealthTimeout) {
 		// Print container logs for easier debugging
 		for _, container := range started {
 			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{

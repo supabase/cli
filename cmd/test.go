@@ -40,6 +40,11 @@ var (
 )
 
 func init() {
+	dbFlags := testDbCmd.Flags()
+	dbFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
+	dbFlags.Bool("linked", false, "Tests the linked project with pgTAP.")
+	dbFlags.Bool("local", true, "Tests the local database with pgTAP.")
+	testDbCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	testCmd.AddCommand(testDbCmd)
 	newFlags := testNewCmd.Flags()
 	newFlags.VarP(&template, "template", "t", "Template framework to generate.")
