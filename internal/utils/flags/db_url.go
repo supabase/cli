@@ -26,7 +26,9 @@ var DbConfig pgconn.Config
 func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Changed flags take precedence over default values
 	var connType connection
-	if flag := flagSet.Lookup("local"); flag != nil && flag.Changed {
+	if flag := flagSet.Lookup("db-url"); flag != nil && flag.Changed {
+		connType = direct
+	} else if flag := flagSet.Lookup("local"); flag != nil && flag.Changed {
 		connType = local
 	} else if flag := flagSet.Lookup("linked"); flag != nil && flag.Changed {
 		connType = linked
