@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
@@ -246,7 +247,7 @@ func TestDiffDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on health check failure", func(t *testing.T) {
-		reset.HealthTimeout = time.Second
+		start.HealthTimeout = time.Second
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -263,7 +264,7 @@ func TestDiffDatabase(t *testing.T) {
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
 		// Check error
 		assert.Empty(t, diff)
-		assert.ErrorIs(t, err, reset.ErrDatabase)
+		assert.ErrorIs(t, err, start.ErrDatabase)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
