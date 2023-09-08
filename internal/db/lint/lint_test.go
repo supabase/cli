@@ -19,6 +19,14 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
+var dbConfig = pgconn.Config{
+	Host:     "localhost",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
+
 func TestLintCommand(t *testing.T) {
 	// Setup in-memory fs
 	fsys := afero.NewMemMapFs()
@@ -56,7 +64,7 @@ func TestLintCommand(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
-	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", pgconn.Config{}, fsys, conn.Intercept))
+	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", dbConfig, fsys, conn.Intercept))
 	// Validate api
 	assert.Empty(t, apitest.ListUnmatchedRequests())
 }
@@ -113,7 +121,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -159,7 +167,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -179,7 +187,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -199,7 +207,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
+		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

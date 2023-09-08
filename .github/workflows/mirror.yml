@@ -31,7 +31,7 @@ jobs:
       tags: ${{ steps.list.outputs.tags }}
       curr: ${{ steps.curr.outputs.tags }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
           go-version-file: go.mod

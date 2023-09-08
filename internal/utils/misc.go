@@ -31,7 +31,7 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.68.0"
-	StudioImage      = "supabase/studio:20230803-15c6762"
+	StudioImage      = "supabase/studio:20230905-f8c8a8e"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.15.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"

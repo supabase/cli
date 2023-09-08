@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -169,9 +170,9 @@ EOF
 						"--tries=1",
 						"--spider",
 						"http://localhost:9001/health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 				ExposedPorts: nat.PortSet{"9000/tcp": {}},
 			},
@@ -253,9 +254,9 @@ EOF
 `},
 				Healthcheck: &container.HealthConfig{
 					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
-					Interval:    2 * time.Second,
+					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
-					Retries:     10,
+					Retries:     3,
 					StartPeriod: 10 * time.Second,
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
@@ -345,6 +346,13 @@ EOF
 
 	// Start GoTrue.
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.GotrueImage, excluded) {
+		var testOTP bytes.Buffer
+		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
+			encoder := json.NewEncoder(&testOTP)
+			if err := encoder.Encode(utils.Config.Auth.Sms.TestOTP); err != nil {
+				return err
+			}
+		}
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
 
@@ -387,6 +395,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
+			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
@@ -486,9 +495,9 @@ EOF
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -564,9 +573,9 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -631,9 +640,9 @@ EOF
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			start.WithSyslogConfig(container.HostConfig{
@@ -660,9 +669,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "imgproxy", "health"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -701,9 +710,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -737,9 +746,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -773,9 +782,9 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
-					Interval: 2 * time.Second,
+					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
-					Retries:  10,
+					Retries:  3,
 				},
 			},
 			container.HostConfig{
@@ -789,6 +798,7 @@ EOF
 		started = append(started, utils.PoolerId)
 	}
 
+	p.Send(utils.StatusMsg("Waiting for health checks..."))
 	return reset.WaitForServiceReady(ctx, started)
 }
 

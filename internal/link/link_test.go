@@ -140,7 +140,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
-			JSON(api.ProjectPgBouncerConfig{})
+			JSON(api.V1PgbouncerConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -191,7 +191,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
-			JSON(api.ProjectPgBouncerConfig{})
+			JSON(api.V1PgbouncerConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
@@ -219,7 +219,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
-			JSON(api.ProjectPgBouncerConfig{})
+			JSON(api.V1PgbouncerConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).

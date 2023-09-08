@@ -81,6 +81,9 @@ var (
 				}
 				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 			}
+			if err := flags.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
+				return err
+			}
 			// Prepare context
 			if viper.GetBool("DEBUG") {
 				cmd.SetContext(utils.WithTraceContext(ctx))

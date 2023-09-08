@@ -10,8 +10,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.8.0
 	github.com/containers/common v0.55.4
 	github.com/deepmap/oapi-codegen v1.13.4
-	github.com/docker/cli v24.0.5+incompatible
-	github.com/docker/docker v24.0.5+incompatible
+	github.com/docker/cli v24.0.6+incompatible
+	github.com/docker/docker v24.0.6+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/go-git/go-git/v5 v5.8.1
 	github.com/go-xmlfmt/xmlfmt v1.1.2
@@ -171,13 +171,13 @@ require (
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/yuin/goldmark v1.5.2 // indirect
 	github.com/yuin/goldmark-emoji v1.0.1 // indirect
-	golang.org/x/crypto v0.12.0 // indirect
-	golang.org/x/net v0.14.0 // indirect
-	golang.org/x/oauth2 v0.11.0
-	golang.org/x/sys v0.11.0 // indirect
-	golang.org/x/term v0.11.0
-	golang.org/x/text v0.12.0 // indirect
-	google.golang.org/grpc v1.57.0
+	golang.org/x/crypto v0.13.0 // indirect
+	golang.org/x/net v0.15.0 // indirect
+	golang.org/x/oauth2 v0.12.0
+	golang.org/x/sys v0.12.0 // indirect
+	golang.org/x/term v0.12.0
+	golang.org/x/text v0.13.0 // indirect
+	google.golang.org/grpc v1.58.0
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/ini.v1 v1.67.0 // indirect
