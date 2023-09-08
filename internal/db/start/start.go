@@ -19,13 +19,17 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/push"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
 
-//go:embed templates/schema.sql
-var initialSchema string
+var (
+	ErrDatabase   = errors.New("database is not healthy")
+	HealthTimeout = 40 * time.Second
+	//go:embed templates/schema.sql
+	initialSchema string
+)
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
@@ -79,8 +83,7 @@ EOF
 	return config
 }
 
-func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	config := NewContainerConfig()
+func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
 	hostConfig := WithSyslogConfig(container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
@@ -91,6 +94,12 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		},
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	})
+	return hostConfig
+}
+
+func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	config := NewContainerConfig()
+	hostConfig := NewHostConfig()
 	if utils.Config.Db.MajorVersion <= 14 {
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
@@ -106,8 +115,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
 		return err
 	}
-	if !reset.WaitForHealthyService(ctx, utils.DbId, reset.HealthTimeout) {
-		return reset.ErrDatabase
+	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
+		return ErrDatabase
 	}
 	// Initialise if we are on PG14 and there's no existing db volume
 	if noBackupVolume {
@@ -116,6 +125,26 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		}
 	}
 	return initCurrentBranch(fsys)
+}
+
+func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
+	now := time.Now()
+	expiry := now.Add(timeout)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for t := now; t.Before(expiry) && ctx.Err() == nil; t = <-ticker.C {
+		if callback() {
+			return true
+		}
+	}
+	return false
+}
+
+func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
+	probe := func() bool {
+		return status.AssertContainerHealthy(ctx, container) == nil
+	}
+	return RetryEverySecond(ctx, probe, timeout)
 }
 
 func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
@@ -146,7 +175,7 @@ func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) e
 	if utils.Config.Db.MajorVersion <= 14 {
 		return initSchema14(ctx, conn)
 	}
-	return reset.InitSchema15(ctx, host)
+	return initSchema15(ctx, host)
 }
 
 func initSchema14(ctx context.Context, conn *pgx.Conn) error {
@@ -154,6 +183,32 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 		return err
 	}
 	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+}
+
+func initSchema15(ctx context.Context, host string) error {
+	// Apply service migrations
+	if err := utils.DockerRunOnceWithStream(ctx, utils.StorageImage, []string{
+		"ANON_KEY=" + utils.Config.Auth.AnonKey,
+		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+		"STORAGE_BACKEND=file",
+		"TENANT_ID=stub",
+		// TODO: https://github.com/supabase/storage-api/issues/55
+		"REGION=stub",
+		"GLOBAL_S3_BUCKET=stub",
+	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
+		return err
+	}
+	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
+		fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
+		"GOTRUE_LOG_LEVEL=error",
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
 }
 
 func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
