@@ -42,8 +42,6 @@ var (
 	InitialSchemaPg13Sql string
 	//go:embed templates/initial_schemas/14.sql
 	InitialSchemaPg14Sql string
-	//go:embed templates/initial_schemas/15.sql
-	InitialSchemaPg15Sql string
 
 	//go:embed templates/init_config.toml
 	initConfigEmbed    string
@@ -397,7 +395,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 			InitialSchemaSql = InitialSchemaPg14Sql
 		case 15:
 			DbImage = Pg15Image
-			InitialSchemaSql = InitialSchemaPg15Sql
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
