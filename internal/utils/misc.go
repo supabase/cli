@@ -38,7 +38,7 @@ const (
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
 	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.82.4"
+	GotrueImage   = "supabase/gotrue:v2.92.1"
 	RealtimeImage = "supabase/realtime:v2.10.1"
 	StorageImage  = "supabase/storage-api:v0.40.4"
 	LogflareImage = "supabase/logflare:1.4.0"
