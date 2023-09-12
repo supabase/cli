@@ -184,7 +184,6 @@ func TestPullSchema(t *testing.T) {
 	})
 
 	t.Run("throws error on diff failure", func(t *testing.T) {
-		utils.DbImage = utils.Pg15Image
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
@@ -193,7 +192,7 @@ func TestPullSchema(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.DbImage) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()

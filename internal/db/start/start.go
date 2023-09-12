@@ -53,7 +53,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 
 func NewContainerConfig() container.Config {
 	config := container.Config{
-		Image: utils.DbImage,
+		Image: utils.Config.Db.Image,
 		Env: []string{
 			"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 			"POSTGRES_HOST=/var/run/postgresql",

@@ -57,8 +57,8 @@ func TestStartDatabase(t *testing.T) {
 
 	t.Run("initialise main branch", func(t *testing.T) {
 		defer teardown()
-		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
+		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
@@ -75,7 +75,7 @@ func TestStartDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound).
 			JSON(volume.Volume{})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DbImage), utils.DbId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), utils.DbId)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
@@ -109,8 +109,8 @@ func TestStartDatabase(t *testing.T) {
 
 	t.Run("recover from backup volume", func(t *testing.T) {
 		defer teardown()
-		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 14
+		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
@@ -123,7 +123,7 @@ func TestStartDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusOK).
 			JSON(volume.Volume{})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.DbImage), utils.DbId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), utils.DbId)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
@@ -146,8 +146,8 @@ func TestStartDatabase(t *testing.T) {
 
 	t.Run("throws error on start failure", func(t *testing.T) {
 		defer teardown()
-		utils.DbImage = utils.Pg15Image
 		utils.Config.Db.MajorVersion = 15
+		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -158,7 +158,7 @@ func TestStartDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			ReplyError(errors.New("network error"))
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.DbImage) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			Reply(http.StatusInternalServerError)
 		// Run test
 		err := StartDatabase(context.Background(), fsys, io.Discard)
