@@ -23,10 +23,10 @@ import (
 )
 
 var (
-	updatedConfig       = make(map[string]interface{})
-	errMissingKeys      = errors.New("No API keys found.")
-	errGotrueVersion    = errors.New("GoTrue version not found.")
-	errPostgrestVersion = errors.New("PostgREST version not found.")
+	updatedConfig    = make(map[string]interface{})
+	errMissingKeys   = errors.New("No API keys found.")
+	errGotrueVersion = errors.New("GoTrue version not found.")
+	errRestVersion   = errors.New("PostgREST version not found.")
 )
 
 func PreRun(projectRef string, fsys afero.Fs) error {
@@ -102,7 +102,7 @@ func linkPostgrest(ctx context.Context, projectRef string, fsys afero.Fs) error 
 	if err != nil {
 		return err
 	}
-	return updatePostgrestVersion(ctx, data.Info.Version, fsys)
+	return updatePostgrestVersion(data.Info.Version, fsys)
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
@@ -141,9 +141,9 @@ type SwaggerResponse struct {
 	Info    SwaggerInfo `json:"info"`
 }
 
-func updatePostgrestVersion(ctx context.Context, version string, fsys afero.Fs) error {
+func updatePostgrestVersion(version string, fsys afero.Fs) error {
 	if len(version) == 0 {
-		return errPostgrestVersion
+		return errRestVersion
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RestVersionPath)); err != nil {
 		return err
@@ -173,7 +173,7 @@ func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	return updateGotrueVersion(ctx, data.Version, fsys)
+	return updateGotrueVersion(data.Version, fsys)
 }
 
 type HealthResponse struct {
@@ -210,7 +210,7 @@ func getJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error)
 	return &data, nil
 }
 
-func updateGotrueVersion(ctx context.Context, version string, fsys afero.Fs) error {
+func updateGotrueVersion(version string, fsys afero.Fs) error {
 	if len(version) == 0 {
 		return errGotrueVersion
 	}
