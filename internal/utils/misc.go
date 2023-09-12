@@ -36,12 +36,10 @@ const (
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.16.0"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
-	// Update initial schemas in internal/utils/templates/initial_schemas when
-	// updating any one of these.
-	GotrueImage   = "supabase/gotrue:v2.92.1"
-	RealtimeImage = "supabase/realtime:v2.10.1"
-	StorageImage  = "supabase/storage-api:v0.40.4"
-	LogflareImage = "supabase/logflare:1.4.0"
+	GotrueImage      = "supabase/gotrue:v2.92.1"
+	RealtimeImage    = "supabase/realtime:v2.10.1"
+	StorageImage     = "supabase/storage-api:v0.40.4"
+	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
 )
@@ -169,6 +167,7 @@ var (
 	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
 	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
 	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
+	RestVersionPath       = filepath.Join(SupabaseDirPath, TempDir, "rest-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")

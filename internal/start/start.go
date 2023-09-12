@@ -589,11 +589,11 @@ EOF
 	}
 
 	// Start PostgREST.
-	if utils.Config.Api.Enabled && !isContainerExcluded(utils.PostgrestImage, excluded) {
+	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PostgrestImage,
+				Image: utils.Config.Api.Image,
 				Env: []string{
 					fmt.Sprintf("PGRST_DB_URI=postgresql://authenticator:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),

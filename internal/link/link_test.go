@@ -244,6 +244,7 @@ func TestLinkPostgrest(t *testing.T) {
 
 	t.Run("ignores matching config", func(t *testing.T) {
 		defer teardown()
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -251,7 +252,7 @@ func TestLinkPostgrest(t *testing.T) {
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
 		// Run test
-		err := linkPostgrest(context.Background(), project)
+		err := linkPostgrest(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -260,6 +261,7 @@ func TestLinkPostgrest(t *testing.T) {
 
 	t.Run("updates api on newer config", func(t *testing.T) {
 		defer teardown()
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -271,7 +273,7 @@ func TestLinkPostgrest(t *testing.T) {
 				MaxRows:           1000,
 			})
 		// Run test
-		err := linkPostgrest(context.Background(), project)
+		err := linkPostgrest(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -285,13 +287,14 @@ func TestLinkPostgrest(t *testing.T) {
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		defer teardown()
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := linkPostgrest(context.Background(), project)
+		err := linkPostgrest(context.Background(), project, fsys)
 		// Validate api
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -299,6 +302,7 @@ func TestLinkPostgrest(t *testing.T) {
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
 		defer teardown()
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -306,7 +310,7 @@ func TestLinkPostgrest(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		err := linkPostgrest(context.Background(), project)
+		err := linkPostgrest(context.Background(), project, fsys)
 		// Validate api
 		assert.ErrorContains(t, err, `Authorization failed for the access token and project ref pair: {"message":"unavailable"}`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

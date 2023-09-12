@@ -86,8 +86,10 @@ var Config = config{
 	Api: api{
 		// Defaults to true for backwards compatibility with existing config.toml
 		Enabled: true,
+		Image:   PostgrestImage,
 	},
 	Db: db{
+		Image:    Pg15Image,
 		Password: "postgres",
 	},
 	Realtime: realtime{
@@ -179,6 +181,7 @@ type (
 
 	api struct {
 		Enabled         bool     `toml:"enabled"`
+		Image           string   `toml:"-"`
 		Port            uint     `toml:"port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
@@ -186,6 +189,7 @@ type (
 	}
 
 	db struct {
+		Image        string `toml:"-"`
 		Port         uint   `toml:"port"`
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
@@ -375,6 +379,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
 		}
+		if Config.Api.Enabled {
+			if version, err := afero.ReadFile(fsys, RestVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
+				index := strings.IndexByte(PostgrestImage, ':')
+				Config.Api.Image = PostgrestImage[:index+1] + string(version)
+			}
+		}
 		// Append required schemas if they are missing
 		Config.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
 		Config.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
@@ -389,9 +399,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
 			DbImage = Pg13Image
+			Config.Db.Image = Pg13Image
 			InitialSchemaSql = InitialSchemaPg13Sql
 		case 14:
 			DbImage = Pg14Image
+			Config.Db.Image = Pg14Image
 			InitialSchemaSql = InitialSchemaPg14Sql
 		case 15:
 			DbImage = Pg15Image
