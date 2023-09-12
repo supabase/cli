@@ -145,11 +145,16 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
-		health := HealthResponse{Version: "v2.74.2"}
+		rest := SwaggerResponse{Info: SwaggerInfo{Version: "11.1.0"}}
+		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+			Get("/rest/v1/").
+			Reply(200).
+			JSON(rest)
+		auth := HealthResponse{Version: "v2.74.2"}
 		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
 			Get("/auth/v1/health").
 			Reply(200).
-			JSON(health)
+			JSON(auth)
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys, conn.Intercept)
 		// Check error
@@ -159,9 +164,12 @@ func TestLinkCommand(t *testing.T) {
 		content, err := afero.ReadFile(fsys, utils.ProjectRefPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(project), content)
-		version, err := afero.ReadFile(fsys, utils.GotrueVersionPath)
+		restVersion, err := afero.ReadFile(fsys, utils.RestVersionPath)
 		assert.NoError(t, err)
-		assert.Equal(t, []byte(health.Version), version)
+		assert.Equal(t, []byte("v"+rest.Info.Version), restVersion)
+		authVersion, err := afero.ReadFile(fsys, utils.GotrueVersionPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte(auth.Version), authVersion)
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
@@ -170,7 +178,7 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/postgrest").
+			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys)
@@ -179,21 +187,23 @@ func TestLinkCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("ignores error linking gotrue", func(t *testing.T) {
+	t.Run("ignores error linking services", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/postgrest").
+			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
+			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/postgrest").
+			ReplyError(errors.New("network error"))
+		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+			Get("/auth/v1/health").
+			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
-			Reply(200).
-			JSON(api.V1PgbouncerConfigResponse{})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys, func(cc *pgx.ConnConfig) {
@@ -213,17 +223,18 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/postgrest").
-			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/config/database/pgbouncer").
-			Reply(200).
-			JSON(api.V1PgbouncerConfigResponse{})
-		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{})
+			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/postgrest").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			ReplyError(errors.New("network error"))
+		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+			Get("/auth/v1/health").
+			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, "", fsys)
 		// Check error
@@ -251,6 +262,11 @@ func TestLinkPostgrest(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
+		rest := SwaggerResponse{Info: SwaggerInfo{Version: "11.1.0"}}
+		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+			Get("/rest/v1/").
+			Reply(200).
+			JSON(rest)
 		// Run test
 		err := linkPostgrest(context.Background(), project, fsys)
 		// Check error
@@ -272,6 +288,11 @@ func TestLinkPostgrest(t *testing.T) {
 				DbExtraSearchPath: "public, extensions",
 				MaxRows:           1000,
 			})
+		rest := SwaggerResponse{Info: SwaggerInfo{Version: "11.1.0"}}
+		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+			Get("/rest/v1/").
+			Reply(200).
+			JSON(rest)
 		// Run test
 		err := linkPostgrest(context.Background(), project, fsys)
 		// Check error
