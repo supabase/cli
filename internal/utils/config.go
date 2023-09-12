@@ -18,7 +18,6 @@ import (
 )
 
 var (
-	DbImage       string
 	NetId         string
 	DbId          string
 	ConfigId      string
@@ -398,15 +397,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		case 12:
 			return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 		case 13:
-			DbImage = Pg13Image
 			Config.Db.Image = Pg13Image
 			InitialSchemaSql = InitialSchemaPg13Sql
 		case 14:
-			DbImage = Pg14Image
 			Config.Db.Image = Pg14Image
 			InitialSchemaSql = InitialSchemaPg14Sql
 		case 15:
-			DbImage = Pg15Image
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}

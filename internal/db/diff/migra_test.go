@@ -224,7 +224,7 @@ func TestMigrateShadow(t *testing.T) {
 
 func TestDiffDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 14
-	utils.DbImage = utils.Pg14Image
+	utils.Config.Db.Image = utils.Pg14Image
 	utils.Config.Db.ShadowPort = 54320
 	utils.GlobalsSql = "create schema public"
 	utils.InitialSchemaSql = "create schema private"
