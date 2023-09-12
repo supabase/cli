@@ -145,7 +145,7 @@ func TestServiceHealth(t *testing.T) {
 func TestPrintStatus(t *testing.T) {
 	utils.Config.Db.Port = 0
 	exclude := []string{
-		utils.ShortContainerImageName(utils.PostgrestImage),
+		utils.ShortContainerImageName(utils.Config.Api.Image),
 		utils.ShortContainerImageName(utils.StudioImage),
 		utils.GotrueId,
 		utils.InbucketId,

@@ -23,9 +23,10 @@ import (
 )
 
 var (
-	updatedConfig     = make(map[string]interface{})
-	errMissingKeys    = errors.New("No API keys found.")
-	errMissingVersion = errors.New("GoTrue version not found.")
+	updatedConfig       = make(map[string]interface{})
+	errMissingKeys      = errors.New("No API keys found.")
+	errGotrueVersion    = errors.New("GoTrue version not found.")
+	errPostgrestVersion = errors.New("PostgREST version not found.")
 )
 
 func PreRun(projectRef string, fsys afero.Fs) error {
@@ -38,10 +39,13 @@ func PreRun(projectRef string, fsys afero.Fs) error {
 
 func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
-	if err := linkPostgrest(ctx, projectRef); err != nil {
+	if err := loadAnonKey(ctx, projectRef); err != nil {
 		return err
 	}
-	// Ignore non-fatal errors linking other services
+	// Ignore non-fatal errors linking services
+	if err := linkPostgrest(ctx, projectRef, fsys); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -84,7 +88,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return enc.Encode(updatedConfig)
 }
 
-func linkPostgrest(ctx context.Context, projectRef string) error {
+func linkPostgrest(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return err
@@ -93,7 +97,12 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
 	}
 	updateApiConfig(*resp.JSON200)
-	return nil
+	url := fmt.Sprintf("https://%s/rest/v1/", utils.GetSupabaseHost(projectRef))
+	data, err := getJsonResponse[SwaggerResponse](ctx, url, utils.Config.Auth.AnonKey)
+	if err != nil {
+		return err
+	}
+	return updatePostgrestVersion(ctx, data.Info.Version, fsys)
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
@@ -121,7 +130,28 @@ func readCsv(line string) []string {
 	return result
 }
 
-func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
+type SwaggerInfo struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+}
+
+type SwaggerResponse struct {
+	Swagger string      `json:"swagger"`
+	Info    SwaggerInfo `json:"info"`
+}
+
+func updatePostgrestVersion(ctx context.Context, version string, fsys afero.Fs) error {
+	if len(version) == 0 {
+		return errPostgrestVersion
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RestVersionPath)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.RestVersionPath, []byte("v"+version), 0644)
+}
+
+func loadAnonKey(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
 	if err != nil {
 		return err
@@ -133,7 +163,17 @@ func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	if len(keys) == 0 {
 		return errMissingKeys
 	}
-	return updateGotrueVersion(ctx, projectRef, keys[0].ApiKey, fsys)
+	utils.Config.Auth.AnonKey = keys[0].ApiKey
+	return nil
+}
+
+func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	url := fmt.Sprintf("https://%s/auth/v1/health", utils.GetSupabaseHost(projectRef))
+	data, err := getJsonResponse[HealthResponse](ctx, url, utils.Config.Auth.AnonKey)
+	if err != nil {
+		return err
+	}
+	return updateGotrueVersion(ctx, data.Version, fsys)
 }
 
 type HealthResponse struct {
@@ -142,39 +182,42 @@ type HealthResponse struct {
 	Description string `json:"description"`
 }
 
-func updateGotrueVersion(ctx context.Context, projectRef, apiKey string, fsys afero.Fs) error {
-	url := fmt.Sprintf("https://%s/auth/v1/health", utils.GetSupabaseHost(projectRef))
+func getJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Add("apikey", apiKey)
 	// Sends request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil || len(body) == 0 {
-			body = []byte(fmt.Sprintf("status %d", resp.StatusCode))
+			body = []byte(fmt.Sprintf("Error status %d", resp.StatusCode))
 		}
-		return errors.New(string(body))
+		return nil, errors.New(string(body))
 	}
 	// Parses response
-	var data HealthResponse
+	var data T
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&data); err != nil {
-		return err
+		return nil, err
 	}
-	if len(data.Version) == 0 {
-		return errMissingVersion
+	return &data, nil
+}
+
+func updateGotrueVersion(ctx context.Context, version string, fsys afero.Fs) error {
+	if len(version) == 0 {
+		return errGotrueVersion
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err
 	}
-	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(data.Version), 0644)
+	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(version), 0644)
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {

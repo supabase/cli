@@ -28,7 +28,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
 		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@localhost:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
 	}
-	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.PostgrestImage)) {
+	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
 		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://localhost:%d/graphql/v1", utils.Config.Api.Port)
 	}
