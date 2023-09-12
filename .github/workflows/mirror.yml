@@ -31,7 +31,7 @@ jobs:
       tags: ${{ steps.list.outputs.tags }}
       curr: ${{ steps.curr.outputs.tags }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
@@ -65,7 +65,7 @@ jobs:
           TAG=${{ matrix.src }}
           echo "dst=${TAG##*/}" >> $GITHUB_OUTPUT
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v3.0.1
+        uses: aws-actions/configure-aws-credentials@v3.0.2
         with:
           role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
           aws-region: us-east-1

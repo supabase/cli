@@ -2,6 +2,7 @@ package reset
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -24,17 +26,25 @@ import (
 )
 
 func TestResetCommand(t *testing.T) {
+	var dbConfig = pgconn.Config{
+		Host:     "localhost",
+		Port:     5432,
+		User:     "admin",
+		Password: "password",
+		Database: "postgres",
+	}
+
 	t.Run("throws error on context canceled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Password: "postgres"}, fsys)
+		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), "", pgconn.Config{}, afero.NewMemMapFs())
+		err := Run(context.Background(), "", dbConfig, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -49,7 +59,7 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{}, fsys)
+		err := Run(context.Background(), "", dbConfig, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -66,15 +76,13 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
-			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers").
+			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", dbConfig, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "ERROR: cannot disallow connections for current database (SQLSTATE 22023)")
+		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -274,7 +282,7 @@ func TestRestartDatabase(t *testing.T) {
 
 	t.Run("throws error on health check timeout", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		healthTimeout = 0 * time.Second
+		start.HealthTimeout = 0 * time.Second
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -284,14 +292,14 @@ func TestRestartDatabase(t *testing.T) {
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorIs(t, err, ErrDatabase)
+		assert.ErrorIs(t, err, start.ErrDatabase)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestResetRemote(t *testing.T) {
 	dbConfig := pgconn.Config{
-		Host:     "localhost",
+		Host:     "db.supabase.co",
 		Port:     5432,
 		User:     "admin",
 		Password: "password",

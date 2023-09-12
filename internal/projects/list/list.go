@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -22,8 +23,13 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
 	}
 
-	table := `|ORG ID|ID|NAME|REGION|CREATED AT (UTC)|
-|-|-|-|-|-|
+	projectRef, err := utils.LoadProjectRef(fsys)
+	if err != nil && err != utils.ErrNotLinked {
+		fmt.Fprintln(os.Stderr, err)
+	}
+
+	table := `LINKED|ORG ID|ID|NAME|REGION|CREATED AT (UTC)
+|-|-|-|-|-|-|
 `
 	for _, project := range *resp.JSON200 {
 		if t, err := time.Parse(time.RFC3339, project.CreatedAt); err == nil {
@@ -32,8 +38,13 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		if region, ok := utils.RegionMap[project.Region]; ok {
 			project.Region = region
 		}
+		linked := " "
+		if project.Id == projectRef {
+			linked = "  ●"
+		}
 		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+			"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+			linked,
 			project.OrganizationId,
 			project.Id,
 			strings.ReplaceAll(project.Name, "|", "\\|"),

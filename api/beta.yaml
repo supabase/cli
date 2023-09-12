@@ -182,7 +182,7 @@ paths:
           schema:
             type: string
         - name: scope
-          required: true
+          required: false
           in: query
           schema:
             type: string
@@ -208,9 +208,10 @@ paths:
             enum:
               - plain
               - sha256
+              - S256
             type: string
       responses:
-        '200':
+        '303':
           description: ''
       tags: &ref_6
         - oauth (beta)
@@ -218,88 +219,48 @@ paths:
     post:
       operationId: token
       summary: Exchange auth code for user's access and refresh token
-      parameters:
-        - name: grant_type
-          required: true
-          in: query
-          schema:
-            enum:
-              - authorization_code
-              - refresh_token
-            type: string
-        - name: client_id
-          required: true
-          in: query
-          schema:
-            type: string
-        - name: client_secret
-          required: true
-          in: query
-          schema:
-            type: string
-        - name: code
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: code_verifier
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: redirect_uri
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: refresh_token
-          required: false
-          in: query
-          schema:
-            type: string
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OAuthTokenBody'
       responses:
         '201':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthTokenResponse'
       tags: *ref_6
-  /v1/oauth/authorizations/{id}:
+  /v1/snippets:
     get:
-      operationId: getAuthorizationRequest
+      operationId: listSnippets
+      summary: Lists SQL snippets for the logged in user
       parameters:
-        - name: id
-          required: true
-          in: path
+        - name: project_ref
+          required: false
+          in: query
           schema:
             type: string
       responses:
         '200':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnippetList'
+        '500':
+          description: Failed to list user's SQL snippets
       tags: &ref_7
-        - oauth (beta)
+        - snippets
       security: &ref_8
         - bearer: []
-    post:
-      operationId: approveAuthorizationRequest
-      summary: Approve oauth app authorization request
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuthorizationsApproveBody'
-      responses:
-        '201':
-          description: ''
-      tags: *ref_7
-      security: *ref_8
-    delete:
-      operationId: declineAuthorizationRequest
-      summary: Decline oauth app authorization request
+  /v1/snippets/{id}:
+    get:
+      operationId: getSnippet
+      summary: Gets a specific SQL snippet
       parameters:
         - name: id
           required: true
@@ -309,273 +270,14 @@ paths:
       responses:
         '200':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnippetResponse'
+        '500':
+          description: Failed to retrieve SQL snippet
       tags: *ref_7
       security: *ref_8
-  /v1/projects/{ref}/functions:
-    post:
-      operationId: createFunction
-      summary: Create a function
-      description: Creates a function and adds it to the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: slug
-          required: false
-          in: query
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-        - name: name
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: verify_jwt
-          required: false
-          in: query
-          schema:
-            type: boolean
-        - name: import_map
-          required: false
-          in: query
-          schema:
-            type: boolean
-        - name: entrypoint_path
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: import_map_path
-          required: false
-          in: query
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json: &ref_9
-            schema:
-              $ref: '#/components/schemas/CreateFunctionBody'
-          application/vnd.denoland.eszip: *ref_9
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to create project's function
-      tags: &ref_10
-        - functions
-      security: &ref_11
-        - apiKeyHeader: []
-          apiKeyParam: []
-        - bearer: []
-    get:
-      operationId: getFunctions
-      summary: List all functions
-      description: Returns all functions you've previously added to the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FunctionResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve project's functions
-      tags: *ref_10
-      security: *ref_11
-  /v1/projects/{ref}/functions/{function_slug}:
-    get:
-      operationId: getFunction
-      summary: Retrieve a function
-      description: Retrieves a function with the specified slug and project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: function_slug
-          required: true
-          in: path
-          description: Function slug
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionSlugResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve function with given slug
-      tags: &ref_13
-        - functions
-      security: &ref_14
-        - apiKeyHeader: []
-          apiKeyParam: []
-        - bearer: []
-    patch:
-      operationId: updateFunction
-      summary: Update a function
-      description: Updates a function with the specified slug and project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: function_slug
-          required: true
-          in: path
-          description: Function slug
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-        - name: slug
-          required: false
-          in: query
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-        - name: name
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: verify_jwt
-          required: false
-          in: query
-          schema:
-            type: boolean
-        - name: import_map
-          required: false
-          in: query
-          schema:
-            type: boolean
-        - name: entrypoint_path
-          required: false
-          in: query
-          schema:
-            type: string
-        - name: import_map_path
-          required: false
-          in: query
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json: &ref_12
-            schema:
-              $ref: '#/components/schemas/UpdateFunctionBody'
-          application/vnd.denoland.eszip: *ref_12
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FunctionResponse'
-        '403':
-          description: ''
-        '500':
-          description: Failed to update function with given slug
-      tags: *ref_13
-      security: *ref_14
-    delete:
-      operationId: deleteFunction
-      summary: Delete a function
-      description: Deletes a function with the specified slug from the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: function_slug
-          required: true
-          in: path
-          description: Function slug
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-      responses:
-        '200':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to delete function with given slug
-      tags: *ref_13
-      security: *ref_14
-  /v1/projects/{ref}/functions/{function_slug}/body:
-    get:
-      operationId: getFunctionBody
-      summary: Retrieve a function body
-      description: Retrieves a function body for the specified slug and project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: function_slug
-          required: true
-          in: path
-          description: Function slug
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-      responses:
-        '200':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to retrieve function body with given slug
-      tags: *ref_13
-      security: *ref_14
   /v1/projects/{ref}/api-keys:
     get:
       operationId: getProjectApiKeys
@@ -628,9 +330,9 @@ paths:
                   $ref: '#/components/schemas/BranchResponse'
         '500':
           description: Failed to retrieve database branches
-      tags: &ref_15
+      tags: &ref_9
         - database branches (beta)
-      security: &ref_16
+      security: &ref_10
         - bearer: []
     post:
       operationId: createBranch
@@ -660,8 +362,8 @@ paths:
                 $ref: '#/components/schemas/BranchResponse'
         '500':
           description: Failed to create database branch
-      tags: *ref_15
-      security: *ref_16
+      tags: *ref_9
+      security: *ref_10
     delete:
       operationId: disableBranch
       summary: Disables preview branching
@@ -680,8 +382,8 @@ paths:
           description: ''
         '500':
           description: Failed to disable preview branching
-      tags: *ref_15
-      security: *ref_16
+      tags: *ref_9
+      security: *ref_10
   /v1/projects/{ref}/custom-hostname:
     get:
       operationId: getCustomHostnameConfig
@@ -706,9 +408,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's custom hostname config
-      tags: &ref_17
+      tags: &ref_11
         - custom hostname (beta)
-      security: &ref_18
+      security: &ref_12
         - bearer: []
     delete:
       operationId: removeCustomHostnameConfig
@@ -729,8 +431,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete project custom hostname configuration
-      tags: *ref_17
-      security: *ref_18
+      tags: *ref_11
+      security: *ref_12
   /v1/projects/{ref}/custom-hostname/initialize:
     post:
       operationId: createCustomHostnameConfig
@@ -761,8 +463,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project custom hostname configuration
-      tags: *ref_17
-      security: *ref_18
+      tags: *ref_11
+      security: *ref_12
   /v1/projects/{ref}/custom-hostname/reverify:
     post:
       operationId: reverify
@@ -789,8 +491,8 @@ paths:
           description: ''
         '500':
           description: Failed to verify project custom hostname configuration
-      tags: *ref_17
-      security: *ref_18
+      tags: *ref_11
+      security: *ref_12
   /v1/projects/{ref}/custom-hostname/activate:
     post:
       operationId: activate
@@ -815,8 +517,8 @@ paths:
           description: ''
         '500':
           description: Failed to activate project custom hostname configuration
-      tags: *ref_17
-      security: *ref_18
+      tags: *ref_11
+      security: *ref_12
   /v1/projects/{ref}/network-bans/retrieve:
     post:
       operationId: getNetworkBans
@@ -841,9 +543,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network bans
-      tags: &ref_19
+      tags: &ref_13
         - network bans (beta)
-      security: &ref_20
+      security: &ref_14
         - bearer: []
   /v1/projects/{ref}/network-bans:
     delete:
@@ -871,8 +573,8 @@ paths:
           description: ''
         '500':
           description: Failed to remove network bans.
-      tags: *ref_19
-      security: *ref_20
+      tags: *ref_13
+      security: *ref_14
   /v1/projects/{ref}/network-restrictions:
     get:
       operationId: getNetworkRestrictions
@@ -897,9 +599,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network restrictions
-      tags: &ref_21
+      tags: &ref_15
         - network restrictions (beta)
-      security: &ref_22
+      security: &ref_16
         - bearer: []
   /v1/projects/{ref}/network-restrictions/apply:
     post:
@@ -931,8 +633,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project network restrictions
-      tags: *ref_21
-      security: *ref_22
+      tags: *ref_15
+      security: *ref_16
   /v1/projects/{ref}/pgsodium:
     get:
       operationId: getPgsodiumConfig
@@ -957,9 +659,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's pgsodium config
-      tags: &ref_23
+      tags: &ref_17
         - pgsodium (beta)
-      security: &ref_24
+      security: &ref_18
         - bearer: []
     put:
       operationId: updatePgsodiumConfig
@@ -992,8 +694,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project's pgsodium config
-      tags: *ref_23
-      security: *ref_24
+      tags: *ref_17
+      security: *ref_18
   /v1/projects/{ref}/postgrest:
     get:
       operationId: getPostgRESTConfig
@@ -1018,9 +720,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's postgrest config
-      tags: &ref_25
+      tags: &ref_19
         - services
-      security: &ref_26
+      security: &ref_20
         - bearer: []
     patch:
       operationId: updatePostgRESTConfig
@@ -1051,42 +753,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project's postgrest config
-      tags: *ref_25
-      security: *ref_26
-  /v1/projects/{ref}/query:
-    post:
-      operationId: runQuery
-      summary: Run sql query
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunQueryBody'
-      responses:
-        '201':
-          description: ''
-          content:
-            application/json:
-              schema:
-                type: object
-        '403':
-          description: ''
-        '500':
-          description: Failed to run sql query
-      tags:
-        - projects
-      security:
-        - bearer: []
+      tags: *ref_19
+      security: *ref_20
   /v1/projects/{ref}/secrets:
     get:
       operationId: getSecrets
@@ -1114,9 +782,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's secrets
-      tags: &ref_27
+      tags: &ref_21
         - secrets
-      security: &ref_28
+      security: &ref_22
         - apiKeyHeader: []
           apiKeyParam: []
         - bearer: []
@@ -1148,8 +816,8 @@ paths:
           description: ''
         '500':
           description: Failed to create project's secrets
-      tags: *ref_27
-      security: *ref_28
+      tags: *ref_21
+      security: *ref_22
     delete:
       operationId: deleteSecrets
       summary: Bulk delete secrets
@@ -1182,8 +850,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete secrets with given names
-      tags: *ref_27
-      security: *ref_28
+      tags: *ref_21
+      security: *ref_22
   /v1/projects/{ref}/ssl-enforcement:
     get:
       operationId: getSslEnforcementConfig
@@ -1208,9 +876,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's SSL enforcement config
-      tags: &ref_29
+      tags: &ref_23
         - ssl enforcement (beta)
-      security: &ref_30
+      security: &ref_24
         - bearer: []
     put:
       operationId: updateSslEnforcementConfig
@@ -1241,8 +909,8 @@ paths:
           description: ''
         '500':
           description: Failed to update project's SSL enforcement configuration.
-      tags: *ref_29
-      security: *ref_30
+      tags: *ref_23
+      security: *ref_24
   /v1/projects/{ref}/types/typescript:
     get:
       operationId: getTypescriptTypes
@@ -1304,9 +972,9 @@ paths:
           description: ''
         '500':
           description: Failed to get project vanity subdomain configuration
-      tags: &ref_31
+      tags: &ref_25
         - vanity subdomain (beta)
-      security: &ref_32
+      security: &ref_26
         - bearer: []
     delete:
       operationId: removeVanitySubdomainConfig
@@ -1327,8 +995,8 @@ paths:
           description: ''
         '500':
           description: Failed to delete project vanity subdomain configuration
-      tags: *ref_31
-      security: *ref_32
+      tags: *ref_25
+      security: *ref_26
   /v1/projects/{ref}/vanity-subdomain/check-availability:
     post:
       operationId: checkVanitySubdomainAvailability
@@ -1359,8 +1027,8 @@ paths:
           description: ''
         '500':
           description: Failed to check project vanity subdomain configuration
-      tags: *ref_31
-      security: *ref_32
+      tags: *ref_25
+      security: *ref_26
   /v1/projects/{ref}/vanity-subdomain/activate:
     post:
       operationId: activateVanitySubdomainPlease
@@ -1391,8 +1059,8 @@ paths:
           description: ''
         '500':
           description: Failed to activate project vanity subdomain configuration
-      tags: *ref_31
-      security: *ref_32
+      tags: *ref_25
+      security: *ref_26
   /v1/projects/{ref}/upgrade:
     post:
       operationId: upgradeProject
@@ -1419,9 +1087,9 @@ paths:
           description: ''
         '500':
           description: Failed to initiate project upgrade
-      tags: &ref_33
+      tags: &ref_27
         - database version upgrade (beta)
-      security: &ref_34
+      security: &ref_28
         - bearer: []
   /v1/projects/{ref}/upgrade/eligibility:
     get:
@@ -1447,8 +1115,8 @@ paths:
           description: ''
         '500':
           description: Failed to determine project upgrade eligibility
-      tags: *ref_33
-      security: *ref_34
+      tags: *ref_27
+      security: *ref_28
   /v1/projects/{ref}/upgrade/status:
     get:
       operationId: getUpgradeStatus
@@ -1473,8 +1141,8 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project upgrade status
-      tags: *ref_33
-      security: *ref_34
+      tags: *ref_27
+      security: *ref_28
   /v1/projects/{ref}/readonly:
     get:
       operationId: getReadOnlyModeStatus
@@ -1497,9 +1165,9 @@ paths:
                 $ref: '#/components/schemas/ReadOnlyStatusResponse'
         '500':
           description: Failed to get project readonly mode status
-      tags: &ref_35
+      tags: &ref_29
         - database readonly mode
-      security: &ref_36
+      security: &ref_30
         - bearer: []
   /v1/projects/{ref}/readonly/temporary-disable:
     post:
@@ -1519,8 +1187,8 @@ paths:
           description: ''
         '500':
           description: Failed to disable project's readonly mode
-      tags: *ref_35
-      security: *ref_36
+      tags: *ref_29
+      security: *ref_30
   /v1/projects/{ref}/config/database/postgres:
     get:
       operationId: getConfig
@@ -1543,9 +1211,9 @@ paths:
                 $ref: '#/components/schemas/PostgresConfigResponse'
         '500':
           description: Failed to retrieve project's Postgres config
-      tags: &ref_37
+      tags: &ref_31
         - projects config
-      security: &ref_38
+      security: &ref_32
         - bearer: []
         - bearer: []
     put:
@@ -1575,12 +1243,12 @@ paths:
                 $ref: '#/components/schemas/PostgresConfigResponse'
         '500':
           description: Failed to update project's Postgres config
-      tags: *ref_37
-      security: *ref_38
+      tags: *ref_31
+      security: *ref_32
   /v1/projects/{ref}/config/database/pgbouncer:
     get:
-      operationId: getPgbouncerConfig
-      summary: Gets project's pgbouncer config
+      operationId: v1GetPgbouncerConfig
+      summary: Get project's pgbouncer config
       parameters:
         - name: ref
           required: true
@@ -1596,16 +1264,42 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectPgBouncerConfig'
+                $ref: '#/components/schemas/V1PgbouncerConfigResponse'
         '500':
           description: Failed to retrieve project's pgbouncer config
-      tags: &ref_39
+      tags:
         - projects config
-      security: &ref_40
+  /v1/projects/{ref}/config/auth:
+    get:
+      operationId: getV1AuthConfig
+      summary: Gets project's auth config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's auth config
+      tags: &ref_33
+        - projects config
+      security: &ref_34
         - bearer: []
     patch:
-      operationId: updatePgbouncerConfig
-      summary: Updates project's pgbouncer config
+      operationId: updateV1AuthConfig
+      summary: Updates a project's auth config
       parameters:
         - name: ref
           required: true
@@ -1620,18 +1314,341 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdatePgbouncerConfigBody'
+              $ref: '#/components/schemas/UpdateAuthConfigBody'
       responses:
         '200':
           description: ''
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UpdatePoolingConfigResponse'
+                $ref: '#/components/schemas/AuthConfigResponse'
         '403':
           description: ''
         '500':
-          description: Failed to update project's pgbouncer config
+          description: Failed to update project's auth config
+      tags: *ref_33
+      security: *ref_34
+  /v1/projects/{ref}/database/query:
+    post:
+      operationId: v1RunQuery
+      summary: Run sql query
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunQueryBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: ''
+        '500':
+          description: Failed to run sql query
+      tags:
+        - projects (beta)
+      security:
+        - bearer: []
+  /v1/projects/{ref}/database/webhooks/enable:
+    post:
+      operationId: v1EnableDatabaseWebhooks
+      summary: Enables Database Webhooks on the project
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to enable Database Webhooks on the project
+      tags:
+        - projects (beta)
+      security:
+        - bearer: []
+  /v1/projects/{ref}/functions:
+    post:
+      operationId: createFunction
+      summary: Create a function
+      description: Creates a function and adds it to the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: slug
+          required: false
+          in: query
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+        - name: name
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: verify_jwt
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: import_map
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: entrypoint_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: import_map_path
+          required: false
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json: &ref_35
+            schema:
+              $ref: '#/components/schemas/CreateFunctionBody'
+          application/vnd.denoland.eszip: *ref_35
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to create project's function
+      tags: &ref_36
+        - functions
+      security: &ref_37
+        - apiKeyHeader: []
+          apiKeyParam: []
+        - bearer: []
+    get:
+      operationId: getFunctions
+      summary: List all functions
+      description: Returns all functions you've previously added to the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's functions
+      tags: *ref_36
+      security: *ref_37
+  /v1/projects/{ref}/functions/{function_slug}:
+    get:
+      operationId: getFunction
+      summary: Retrieve a function
+      description: Retrieves a function with the specified slug and project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FunctionSlugResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve function with given slug
+      tags: &ref_39
+        - functions
+      security: &ref_40
+        - apiKeyHeader: []
+          apiKeyParam: []
+        - bearer: []
+    patch:
+      operationId: updateFunction
+      summary: Update a function
+      description: Updates a function with the specified slug and project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+        - name: slug
+          required: false
+          in: query
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+        - name: name
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: verify_jwt
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: import_map
+          required: false
+          in: query
+          schema:
+            type: boolean
+        - name: entrypoint_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: import_map_path
+          required: false
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json: &ref_38
+            schema:
+              $ref: '#/components/schemas/UpdateFunctionBody'
+          application/vnd.denoland.eszip: *ref_38
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update function with given slug
+      tags: *ref_39
+      security: *ref_40
+    delete:
+      operationId: deleteFunction
+      summary: Delete a function
+      description: Deletes a function with the specified slug from the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete function with given slug
+      tags: *ref_39
+      security: *ref_40
+  /v1/projects/{ref}/functions/{function_slug}/body:
+    get:
+      operationId: getFunctionBody
+      summary: Retrieve a function body
+      description: Retrieves a function body for the specified slug and project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve function body with given slug
       tags: *ref_39
       security: *ref_40
   /v1/projects/{ref}/config/auth/sso/providers:
@@ -1796,6 +1813,29 @@ paths:
             does not exist
       tags: *ref_41
       security: *ref_42
+  /v1/organizations/{slug}/members:
+    get:
+      operationId: v1ListOrganizationMembers
+      summary: List members of an organization
+      parameters:
+        - name: slug
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/V1OrganizationMemberResponse'
+      tags:
+        - organizations
+      security:
+        - bearer: []
 info:
   title: Supabase API (v1)
   description: ''
@@ -1824,7 +1864,6 @@ components:
         postgres_version:
           type: string
         status:
-          type: string
           enum:
             - ACTIVE_HEALTHY
             - ACTIVE_UNHEALTHY
@@ -1837,6 +1876,7 @@ components:
             - UNKNOWN
             - UPGRADING
             - PAUSING
+          type: string
         db_host:
           type: string
         db_user:
@@ -1867,6 +1907,8 @@ components:
           type: string
         project_ref:
           type: string
+        parent_project_ref:
+          type: string
         is_default:
           type: boolean
         git_branch:
@@ -1879,8 +1921,8 @@ components:
         - id
         - name
         - project_ref
+        - parent_project_ref
         - is_default
-        - git_branch
         - created_at
         - updated_at
     DatabaseResponse:
@@ -1986,109 +2028,172 @@ components:
           type: string
       required:
         - name
-    AuthorizationsApproveBody:
+    OAuthTokenBody:
       type: object
       properties:
-        organization_id:
+        grant_type:
+          enum:
+            - authorization_code
+            - refresh_token
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        code:
+          type: string
+        code_verifier:
+          type: string
+        redirect_uri:
+          type: string
+        refresh_token:
           type: string
       required:
-        - organization_id
-    CreateFunctionBody:
+        - grant_type
+        - client_id
+        - client_secret
+    OAuthTokenResponse:
       type: object
       properties:
-        slug:
+        token_type:
           type: string
-          pattern: /^[A-Za-z0-9_-]+$/
+          enum:
+            - Bearer
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: number
+      required:
+        - token_type
+        - access_token
+        - refresh_token
+        - expires_in
+    SnippetProject:
+      type: object
+      properties:
+        id:
+          type: number
         name:
           type: string
-        body:
-          type: string
-        verify_jwt:
-          type: boolean
       required:
-        - slug
+        - id
         - name
-        - body
-    FunctionResponse:
+    SnippetUser:
+      type: object
+      properties:
+        id:
+          type: number
+        username:
+          type: string
+      required:
+        - id
+        - username
+    SnippetMeta:
       type: object
       properties:
         id:
           type: string
-        slug:
+        inserted_at:
           type: string
-        name:
+        updated_at:
           type: string
-        status:
+        type:
+          type: string
           enum: &ref_43
-            - ACTIVE
-            - REMOVED
-            - THROTTLED
+            - sql
+        visibility:
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
-        verify_jwt:
-          type: boolean
-        import_map:
-          type: boolean
-        entrypoint_path:
+          enum: &ref_44
+            - user
+            - project
+            - org
+            - public
+        name:
           type: string
-        import_map_path:
+        description:
           type: string
+          nullable: true
+        project:
+          $ref: '#/components/schemas/SnippetProject'
+        owner:
+          $ref: '#/components/schemas/SnippetUser'
+        updated_by:
+          $ref: '#/components/schemas/SnippetUser'
       required:
         - id
-        - slug
-        - name
-        - status
-        - version
-        - created_at
+        - inserted_at
         - updated_at
-    FunctionSlugResponse:
+        - type
+        - visibility
+        - name
+        - description
+        - project
+        - owner
+        - updated_by
+    SnippetList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SnippetMeta'
+      required:
+        - data
+    SnippetContent:
+      type: object
+      properties:
+        favorite:
+          type: boolean
+        schema_version:
+          type: string
+        sql:
+          type: string
+      required:
+        - favorite
+        - schema_version
+        - sql
+    SnippetResponse:
       type: object
       properties:
         id:
           type: string
-        slug:
+        inserted_at:
+          type: string
+        updated_at:
+          type: string
+        type:
+          type: string
+          enum: *ref_43
+        visibility:
+          enum: *ref_44
           type: string
         name:
           type: string
-        status:
-          enum: *ref_43
+        description:
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
-        verify_jwt:
-          type: boolean
-        import_map:
-          type: boolean
-        entrypoint_path:
-          type: string
-        import_map_path:
-          type: string
+          nullable: true
+        project:
+          $ref: '#/components/schemas/SnippetProject'
+        owner:
+          $ref: '#/components/schemas/SnippetUser'
+        updated_by:
+          $ref: '#/components/schemas/SnippetUser'
+        content:
+          $ref: '#/components/schemas/SnippetContent'
       required:
         - id
-        - slug
-        - name
-        - status
-        - version
-        - created_at
+        - inserted_at
         - updated_at
-    UpdateFunctionBody:
-      type: object
-      properties:
-        name:
-          type: string
-        body:
-          type: string
-        verify_jwt:
-          type: boolean
+        - type
+        - visibility
+        - name
+        - description
+        - project
+        - owner
+        - updated_by
+        - content
     ApiKeyResponse:
       type: object
       properties:
@@ -2237,13 +2342,6 @@ components:
         - max_rows
         - db_schema
         - db_extra_search_path
-    RunQueryBody:
-      type: object
-      properties:
-        query:
-          type: string
-      required:
-        - query
     SecretResponse:
       type: object
       properties:
@@ -2259,9 +2357,11 @@ components:
       properties:
         name:
           type: string
+          maxLength: 256
+          pattern: /^(?!SUPABASE_).*/
         value:
           type: string
-          pattern: /^(?!SUPABASE_).*/
+          maxLength: 24576
       required:
         - name
         - value
@@ -2300,11 +2400,11 @@ components:
       type: object
       properties:
         status:
-          type: string
           enum:
             - not-used
             - custom-domain-used
             - active
+          type: string
         custom_domain:
           type: string
       required:
@@ -2514,116 +2614,166 @@ components:
             - replica
             - local
           type: string
-    ProjectPgBouncerConfig:
+    V1PgbouncerConfigResponse:
       type: object
       properties:
-        db_dns_name:
-          type: string
-        db_host:
-          type: string
-        db_name:
-          type: string
-        db_port:
-          type: number
-        db_ssl:
-          type: boolean
-        db_user:
-          type: string
-        default_pool_size:
-          type: number
-        ignore_startup_parameters:
-          type: string
-        inserted_at:
-          type: string
-        pgbouncer_enabled:
-          type: boolean
-        pgbouncer_status:
-          enum:
-            - COMING_DOWN
-            - COMING_UP
-            - DISABLED
-            - ENABLED
-            - RELOADING
-          type: string
         pool_mode:
+          type: string
           enum:
             - transaction
             - session
             - statement
+        default_pool_size:
+          type: number
+        ignore_startup_parameters:
           type: string
         max_client_conn:
           type: number
-          nullable: true
-      required:
-        - db_dns_name
-        - db_host
-        - db_name
-        - db_port
-        - db_ssl
-        - db_user
-        - ignore_startup_parameters
-        - inserted_at
-        - pgbouncer_enabled
-        - pgbouncer_status
-        - pool_mode
-    UpdatePgbouncerConfigBody:
+    AuthConfigResponse:
       type: object
       properties:
-        default_pool_size:
-          type: integer
-          minimum: 0
-          maximum: 1000
-        max_client_conn:
-          type: integer
-          nullable: true
-          minimum: 0
-          maximum: 18000
-        ignore_startup_parameters:
+        smtp_admin_email:
           type: string
-        pgbouncer_enabled:
-          type: boolean
-        pool_mode:
-          enum: &ref_44
-            - transaction
-            - session
-            - statement
+        smtp_host:
           type: string
-      required:
-        - ignore_startup_parameters
-        - pgbouncer_enabled
-        - pool_mode
-    UpdatePoolingConfigResponse:
+        smtp_port:
+          type: string
+        smtp_user:
+          type: string
+        smtp_pass:
+          type: string
+        smtp_max_frequency:
+          type: number
+        smtp_sender_name:
+          type: string
+        rate_limit_email_sent:
+          type: number
+          minimum: 0
+          maximum: 2147483647
+    UpdateAuthConfigBody:
       type: object
       properties:
-        default_pool_size:
-          type: integer
-          minimum: 0
-          maximum: 1000
-        max_client_conn:
-          type: integer
-          nullable: true
-          minimum: 0
-          maximum: 18000
-        ignore_startup_parameters:
+        smtp_admin_email:
           type: string
-        pgbouncer_enabled:
-          type: boolean
-        pool_mode:
-          enum: *ref_44
+        smtp_host:
           type: string
-        pgbouncer_status:
-          enum:
-            - COMING_DOWN
-            - COMING_UP
-            - DISABLED
-            - ENABLED
-            - RELOADING
+        smtp_port:
+          type: string
+        smtp_user:
+          type: string
+        smtp_pass:
+          type: string
+        smtp_max_frequency:
+          type: number
+        smtp_sender_name:
+          type: string
+        rate_limit_email_sent:
+          type: number
+          minimum: 0
+          maximum: 2147483647
+    RunQueryBody:
+      type: object
+      properties:
+        query:
           type: string
       required:
-        - ignore_startup_parameters
-        - pgbouncer_enabled
-        - pool_mode
-        - pgbouncer_status
+        - query
+    CreateFunctionBody:
+      type: object
+      properties:
+        slug:
+          type: string
+          pattern: /^[A-Za-z0-9_-]+$/
+        name:
+          type: string
+        body:
+          type: string
+        verify_jwt:
+          type: boolean
+      required:
+        - slug
+        - name
+        - body
+    FunctionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        status:
+          enum: &ref_45
+            - ACTIVE
+            - REMOVED
+            - THROTTLED
+          type: string
+        version:
+          type: number
+        created_at:
+          type: number
+        updated_at:
+          type: number
+        verify_jwt:
+          type: boolean
+        import_map:
+          type: boolean
+        entrypoint_path:
+          type: string
+        import_map_path:
+          type: string
+      required:
+        - id
+        - slug
+        - name
+        - status
+        - version
+        - created_at
+        - updated_at
+    FunctionSlugResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        status:
+          enum: *ref_45
+          type: string
+        version:
+          type: number
+        created_at:
+          type: number
+        updated_at:
+          type: number
+        verify_jwt:
+          type: boolean
+        import_map:
+          type: boolean
+        entrypoint_path:
+          type: string
+        import_map_path:
+          type: string
+      required:
+        - id
+        - slug
+        - name
+        - status
+        - version
+        - created_at
+        - updated_at
+    UpdateFunctionBody:
+      type: object
+      properties:
+        name:
+          type: string
+        body:
+          type: string
+        verify_jwt:
+          type: boolean
     AttributeValue:
       type: object
       properties:
@@ -2804,3 +2954,18 @@ components:
           type: string
       required:
         - id
+    V1OrganizationMemberResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        user_name:
+          type: string
+        email:
+          type: string
+        role_name:
+          type: string
+      required:
+        - user_id
+        - user_name
+        - role_name

@@ -25,29 +25,21 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var (
-	healthTimeout = 20 * time.Second
-	//go:embed templates/migra.sh
-	diffSchemaScript string
-)
+//go:embed templates/migra.sh
+var diffSchemaScript string
 
 func RunMigra(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if len(config.Password) > 0 {
+	if config.Host != "localhost" {
 		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
 	} else {
 		fmt.Fprintln(os.Stderr, "Connecting to local database...")
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
-		config.Host = "localhost"
-		config.Port = uint16(utils.Config.Db.Port)
-		config.User = "postgres"
-		config.Password = "postgres"
-		config.Database = "postgres"
 	}
 	// 1. Load all user defined schemas
 	if len(schema) == 0 {
@@ -181,8 +173,8 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if !reset.WaitForHealthyService(ctx, shadow, healthTimeout) {
-		return "", reset.ErrDatabase
+	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
+		return "", start.ErrDatabase
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err

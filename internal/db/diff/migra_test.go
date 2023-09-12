@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
@@ -27,7 +28,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "localhost",
+	Host:     "db.supabase.co",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",
@@ -102,7 +103,7 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{Host: "localhost"}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -246,7 +247,7 @@ func TestDiffDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on health check failure", func(t *testing.T) {
-		healthTimeout = time.Second
+		start.HealthTimeout = time.Second
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -263,7 +264,7 @@ func TestDiffDatabase(t *testing.T) {
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
 		// Check error
 		assert.Empty(t, diff)
-		assert.ErrorIs(t, err, reset.ErrDatabase)
+		assert.ErrorIs(t, err, start.ErrDatabase)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

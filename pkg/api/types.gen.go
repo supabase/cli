@@ -117,6 +117,17 @@ const (
 	Stored  NetworkRestrictionsResponseStatus = "stored"
 )
 
+// Defines values for OAuthTokenBodyGrantType.
+const (
+	AuthorizationCode OAuthTokenBodyGrantType = "authorization_code"
+	RefreshToken      OAuthTokenBodyGrantType = "refresh_token"
+)
+
+// Defines values for OAuthTokenResponseTokenType.
+const (
+	Bearer OAuthTokenResponseTokenType = "Bearer"
+)
+
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -124,20 +135,30 @@ const (
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
 )
 
-// Defines values for ProjectPgBouncerConfigPgbouncerStatus.
+// Defines values for SnippetMetaType.
 const (
-	ProjectPgBouncerConfigPgbouncerStatusCOMINGDOWN ProjectPgBouncerConfigPgbouncerStatus = "COMING_DOWN"
-	ProjectPgBouncerConfigPgbouncerStatusCOMINGUP   ProjectPgBouncerConfigPgbouncerStatus = "COMING_UP"
-	ProjectPgBouncerConfigPgbouncerStatusDISABLED   ProjectPgBouncerConfigPgbouncerStatus = "DISABLED"
-	ProjectPgBouncerConfigPgbouncerStatusENABLED    ProjectPgBouncerConfigPgbouncerStatus = "ENABLED"
-	ProjectPgBouncerConfigPgbouncerStatusRELOADING  ProjectPgBouncerConfigPgbouncerStatus = "RELOADING"
+	SnippetMetaTypeSql SnippetMetaType = "sql"
 )
 
-// Defines values for ProjectPgBouncerConfigPoolMode.
+// Defines values for SnippetMetaVisibility.
 const (
-	ProjectPgBouncerConfigPoolModeSession     ProjectPgBouncerConfigPoolMode = "session"
-	ProjectPgBouncerConfigPoolModeStatement   ProjectPgBouncerConfigPoolMode = "statement"
-	ProjectPgBouncerConfigPoolModeTransaction ProjectPgBouncerConfigPoolMode = "transaction"
+	SnippetMetaVisibilityOrg     SnippetMetaVisibility = "org"
+	SnippetMetaVisibilityProject SnippetMetaVisibility = "project"
+	SnippetMetaVisibilityPublic  SnippetMetaVisibility = "public"
+	SnippetMetaVisibilityUser    SnippetMetaVisibility = "user"
+)
+
+// Defines values for SnippetResponseType.
+const (
+	SnippetResponseTypeSql SnippetResponseType = "sql"
+)
+
+// Defines values for SnippetResponseVisibility.
+const (
+	SnippetResponseVisibilityOrg     SnippetResponseVisibility = "org"
+	SnippetResponseVisibilityProject SnippetResponseVisibility = "project"
+	SnippetResponseVisibilityPublic  SnippetResponseVisibility = "public"
+	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
 )
 
 // Defines values for UpdateCustomHostnameResponseStatus.
@@ -149,34 +170,18 @@ const (
 	N5ServicesReconfigured UpdateCustomHostnameResponseStatus = "5_services_reconfigured"
 )
 
-// Defines values for UpdatePgbouncerConfigBodyPoolMode.
-const (
-	UpdatePgbouncerConfigBodyPoolModeSession     UpdatePgbouncerConfigBodyPoolMode = "session"
-	UpdatePgbouncerConfigBodyPoolModeStatement   UpdatePgbouncerConfigBodyPoolMode = "statement"
-	UpdatePgbouncerConfigBodyPoolModeTransaction UpdatePgbouncerConfigBodyPoolMode = "transaction"
-)
-
-// Defines values for UpdatePoolingConfigResponsePgbouncerStatus.
-const (
-	UpdatePoolingConfigResponsePgbouncerStatusCOMINGDOWN UpdatePoolingConfigResponsePgbouncerStatus = "COMING_DOWN"
-	UpdatePoolingConfigResponsePgbouncerStatusCOMINGUP   UpdatePoolingConfigResponsePgbouncerStatus = "COMING_UP"
-	UpdatePoolingConfigResponsePgbouncerStatusDISABLED   UpdatePoolingConfigResponsePgbouncerStatus = "DISABLED"
-	UpdatePoolingConfigResponsePgbouncerStatusENABLED    UpdatePoolingConfigResponsePgbouncerStatus = "ENABLED"
-	UpdatePoolingConfigResponsePgbouncerStatusRELOADING  UpdatePoolingConfigResponsePgbouncerStatus = "RELOADING"
-)
-
-// Defines values for UpdatePoolingConfigResponsePoolMode.
-const (
-	Session     UpdatePoolingConfigResponsePoolMode = "session"
-	Statement   UpdatePoolingConfigResponsePoolMode = "statement"
-	Transaction UpdatePoolingConfigResponsePoolMode = "transaction"
-)
-
 // Defines values for UpdatePostgresConfigBodySessionReplicationRole.
 const (
 	UpdatePostgresConfigBodySessionReplicationRoleLocal   UpdatePostgresConfigBodySessionReplicationRole = "local"
 	UpdatePostgresConfigBodySessionReplicationRoleOrigin  UpdatePostgresConfigBodySessionReplicationRole = "origin"
 	UpdatePostgresConfigBodySessionReplicationRoleReplica UpdatePostgresConfigBodySessionReplicationRole = "replica"
+)
+
+// Defines values for V1PgbouncerConfigResponsePoolMode.
+const (
+	Session     V1PgbouncerConfigResponsePoolMode = "session"
+	Statement   V1PgbouncerConfigResponsePoolMode = "statement"
+	Transaction V1PgbouncerConfigResponsePoolMode = "transaction"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -196,13 +201,8 @@ const (
 // Defines values for AuthorizeParamsCodeChallengeMethod.
 const (
 	Plain  AuthorizeParamsCodeChallengeMethod = "plain"
+	S256   AuthorizeParamsCodeChallengeMethod = "S256"
 	Sha256 AuthorizeParamsCodeChallengeMethod = "sha256"
-)
-
-// Defines values for TokenParamsGrantType.
-const (
-	AuthorizationCode TokenParamsGrantType = "authorization_code"
-	RefreshToken      TokenParamsGrantType = "refresh_token"
 )
 
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
@@ -245,9 +245,16 @@ type AttributeValue_Default struct {
 	union json.RawMessage
 }
 
-// AuthorizationsApproveBody defines model for AuthorizationsApproveBody.
-type AuthorizationsApproveBody struct {
-	OrganizationId string `json:"organization_id"`
+// AuthConfigResponse defines model for AuthConfigResponse.
+type AuthConfigResponse struct {
+	RateLimitEmailSent *float32 `json:"rate_limit_email_sent,omitempty"`
+	SmtpAdminEmail     *string  `json:"smtp_admin_email,omitempty"`
+	SmtpHost           *string  `json:"smtp_host,omitempty"`
+	SmtpMaxFrequency   *float32 `json:"smtp_max_frequency,omitempty"`
+	SmtpPass           *string  `json:"smtp_pass,omitempty"`
+	SmtpPort           *string  `json:"smtp_port,omitempty"`
+	SmtpSenderName     *string  `json:"smtp_sender_name,omitempty"`
+	SmtpUser           *string  `json:"smtp_user,omitempty"`
 }
 
 // BranchDetailResponse defines model for BranchDetailResponse.
@@ -267,13 +274,14 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt  string `json:"created_at"`
-	GitBranch  string `json:"git_branch"`
-	Id         string `json:"id"`
-	IsDefault  bool   `json:"is_default"`
-	Name       string `json:"name"`
-	ProjectRef string `json:"project_ref"`
-	UpdatedAt  string `json:"updated_at"`
+	CreatedAt        string  `json:"created_at"`
+	GitBranch        *string `json:"git_branch,omitempty"`
+	Id               string  `json:"id"`
+	IsDefault        bool    `json:"is_default"`
+	Name             string  `json:"name"`
+	ParentProjectRef string  `json:"parent_project_ref"`
+	ProjectRef       string  `json:"project_ref"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 // CreateBranchBody defines model for CreateBranchBody.
@@ -473,6 +481,31 @@ type NetworkRestrictionsResponseEntitlement string
 // NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
 type NetworkRestrictionsResponseStatus string
 
+// OAuthTokenBody defines model for OAuthTokenBody.
+type OAuthTokenBody struct {
+	ClientId     string                  `json:"client_id"`
+	ClientSecret string                  `json:"client_secret"`
+	Code         *string                 `json:"code,omitempty"`
+	CodeVerifier *string                 `json:"code_verifier,omitempty"`
+	GrantType    OAuthTokenBodyGrantType `json:"grant_type"`
+	RedirectUri  *string                 `json:"redirect_uri,omitempty"`
+	RefreshToken *string                 `json:"refresh_token,omitempty"`
+}
+
+// OAuthTokenBodyGrantType defines model for OAuthTokenBody.GrantType.
+type OAuthTokenBodyGrantType string
+
+// OAuthTokenResponse defines model for OAuthTokenResponse.
+type OAuthTokenResponse struct {
+	AccessToken  string                      `json:"access_token"`
+	ExpiresIn    float32                     `json:"expires_in"`
+	RefreshToken string                      `json:"refresh_token"`
+	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
+}
+
+// OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
+type OAuthTokenResponseTokenType string
+
 // OrganizationResponse defines model for OrganizationResponse.
 type OrganizationResponse struct {
 	Id   string `json:"id"`
@@ -516,29 +549,6 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	JwtSecret         *string `json:"jwt_secret,omitempty"`
 	MaxRows           int     `json:"max_rows"`
 }
-
-// ProjectPgBouncerConfig defines model for ProjectPgBouncerConfig.
-type ProjectPgBouncerConfig struct {
-	DbDnsName               string                                `json:"db_dns_name"`
-	DbHost                  string                                `json:"db_host"`
-	DbName                  string                                `json:"db_name"`
-	DbPort                  float32                               `json:"db_port"`
-	DbSsl                   bool                                  `json:"db_ssl"`
-	DbUser                  string                                `json:"db_user"`
-	DefaultPoolSize         *float32                              `json:"default_pool_size,omitempty"`
-	IgnoreStartupParameters string                                `json:"ignore_startup_parameters"`
-	InsertedAt              string                                `json:"inserted_at"`
-	MaxClientConn           *float32                              `json:"max_client_conn"`
-	PgbouncerEnabled        bool                                  `json:"pgbouncer_enabled"`
-	PgbouncerStatus         ProjectPgBouncerConfigPgbouncerStatus `json:"pgbouncer_status"`
-	PoolMode                ProjectPgBouncerConfigPoolMode        `json:"pool_mode"`
-}
-
-// ProjectPgBouncerConfigPgbouncerStatus defines model for ProjectPgBouncerConfig.PgbouncerStatus.
-type ProjectPgBouncerConfigPgbouncerStatus string
-
-// ProjectPgBouncerConfigPoolMode defines model for ProjectPgBouncerConfig.PoolMode.
-type ProjectPgBouncerConfigPoolMode string
 
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
@@ -616,6 +626,71 @@ type SecretResponse struct {
 	Value string `json:"value"`
 }
 
+// SnippetContent defines model for SnippetContent.
+type SnippetContent struct {
+	Favorite      bool   `json:"favorite"`
+	SchemaVersion string `json:"schema_version"`
+	Sql           string `json:"sql"`
+}
+
+// SnippetList defines model for SnippetList.
+type SnippetList struct {
+	Data []SnippetMeta `json:"data"`
+}
+
+// SnippetMeta defines model for SnippetMeta.
+type SnippetMeta struct {
+	Description *string               `json:"description"`
+	Id          string                `json:"id"`
+	InsertedAt  string                `json:"inserted_at"`
+	Name        string                `json:"name"`
+	Owner       SnippetUser           `json:"owner"`
+	Project     SnippetProject        `json:"project"`
+	Type        SnippetMetaType       `json:"type"`
+	UpdatedAt   string                `json:"updated_at"`
+	UpdatedBy   SnippetUser           `json:"updated_by"`
+	Visibility  SnippetMetaVisibility `json:"visibility"`
+}
+
+// SnippetMetaType defines model for SnippetMeta.Type.
+type SnippetMetaType string
+
+// SnippetMetaVisibility defines model for SnippetMeta.Visibility.
+type SnippetMetaVisibility string
+
+// SnippetProject defines model for SnippetProject.
+type SnippetProject struct {
+	Id   float32 `json:"id"`
+	Name string  `json:"name"`
+}
+
+// SnippetResponse defines model for SnippetResponse.
+type SnippetResponse struct {
+	Content     SnippetContent            `json:"content"`
+	Description *string                   `json:"description"`
+	Id          string                    `json:"id"`
+	InsertedAt  string                    `json:"inserted_at"`
+	Name        string                    `json:"name"`
+	Owner       SnippetUser               `json:"owner"`
+	Project     SnippetProject            `json:"project"`
+	Type        SnippetResponseType       `json:"type"`
+	UpdatedAt   string                    `json:"updated_at"`
+	UpdatedBy   SnippetUser               `json:"updated_by"`
+	Visibility  SnippetResponseVisibility `json:"visibility"`
+}
+
+// SnippetResponseType defines model for SnippetResponse.Type.
+type SnippetResponseType string
+
+// SnippetResponseVisibility defines model for SnippetResponse.Visibility.
+type SnippetResponseVisibility string
+
+// SnippetUser defines model for SnippetUser.
+type SnippetUser struct {
+	Id       float32 `json:"id"`
+	Username string  `json:"username"`
+}
+
 // SslEnforcementRequest defines model for SslEnforcementRequest.
 type SslEnforcementRequest struct {
 	RequestedConfig SslEnforcements `json:"requestedConfig"`
@@ -640,6 +715,18 @@ type SubdomainAvailabilityResponse struct {
 // TypescriptResponse defines model for TypescriptResponse.
 type TypescriptResponse struct {
 	Types string `json:"types"`
+}
+
+// UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
+type UpdateAuthConfigBody struct {
+	RateLimitEmailSent *float32 `json:"rate_limit_email_sent,omitempty"`
+	SmtpAdminEmail     *string  `json:"smtp_admin_email,omitempty"`
+	SmtpHost           *string  `json:"smtp_host,omitempty"`
+	SmtpMaxFrequency   *float32 `json:"smtp_max_frequency,omitempty"`
+	SmtpPass           *string  `json:"smtp_pass,omitempty"`
+	SmtpPort           *string  `json:"smtp_port,omitempty"`
+	SmtpSenderName     *string  `json:"smtp_sender_name,omitempty"`
+	SmtpUser           *string  `json:"smtp_user,omitempty"`
 }
 
 // UpdateBranchBody defines model for UpdateBranchBody.
@@ -670,38 +757,10 @@ type UpdateFunctionBody struct {
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
-// UpdatePgbouncerConfigBody defines model for UpdatePgbouncerConfigBody.
-type UpdatePgbouncerConfigBody struct {
-	DefaultPoolSize         *int                              `json:"default_pool_size,omitempty"`
-	IgnoreStartupParameters string                            `json:"ignore_startup_parameters"`
-	MaxClientConn           *int                              `json:"max_client_conn"`
-	PgbouncerEnabled        bool                              `json:"pgbouncer_enabled"`
-	PoolMode                UpdatePgbouncerConfigBodyPoolMode `json:"pool_mode"`
-}
-
-// UpdatePgbouncerConfigBodyPoolMode defines model for UpdatePgbouncerConfigBody.PoolMode.
-type UpdatePgbouncerConfigBodyPoolMode string
-
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
 }
-
-// UpdatePoolingConfigResponse defines model for UpdatePoolingConfigResponse.
-type UpdatePoolingConfigResponse struct {
-	DefaultPoolSize         *int                                       `json:"default_pool_size,omitempty"`
-	IgnoreStartupParameters string                                     `json:"ignore_startup_parameters"`
-	MaxClientConn           *int                                       `json:"max_client_conn"`
-	PgbouncerEnabled        bool                                       `json:"pgbouncer_enabled"`
-	PgbouncerStatus         UpdatePoolingConfigResponsePgbouncerStatus `json:"pgbouncer_status"`
-	PoolMode                UpdatePoolingConfigResponsePoolMode        `json:"pool_mode"`
-}
-
-// UpdatePoolingConfigResponsePgbouncerStatus defines model for UpdatePoolingConfigResponse.PgbouncerStatus.
-type UpdatePoolingConfigResponsePgbouncerStatus string
-
-// UpdatePoolingConfigResponsePoolMode defines model for UpdatePoolingConfigResponse.PoolMode.
-type UpdatePoolingConfigResponsePoolMode string
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
@@ -750,6 +809,25 @@ type UpgradeDatabaseBody struct {
 	TargetVersion float32 `json:"target_version"`
 }
 
+// V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
+type V1OrganizationMemberResponse struct {
+	Email    *string `json:"email,omitempty"`
+	RoleName string  `json:"role_name"`
+	UserId   string  `json:"user_id"`
+	UserName string  `json:"user_name"`
+}
+
+// V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
+type V1PgbouncerConfigResponse struct {
+	DefaultPoolSize         *float32                           `json:"default_pool_size,omitempty"`
+	IgnoreStartupParameters *string                            `json:"ignore_startup_parameters,omitempty"`
+	MaxClientConn           *float32                           `json:"max_client_conn,omitempty"`
+	PoolMode                *V1PgbouncerConfigResponsePoolMode `json:"pool_mode,omitempty"`
+}
+
+// V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
+type V1PgbouncerConfigResponsePoolMode string
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -769,7 +847,7 @@ type AuthorizeParams struct {
 	ClientId            string                              `form:"client_id" json:"client_id"`
 	ResponseType        AuthorizeParamsResponseType         `form:"response_type" json:"response_type"`
 	RedirectUri         string                              `form:"redirect_uri" json:"redirect_uri"`
-	Scope               string                              `form:"scope" json:"scope"`
+	Scope               *string                             `form:"scope,omitempty" json:"scope,omitempty"`
 	State               *string                             `form:"state,omitempty" json:"state,omitempty"`
 	ResponseMode        *string                             `form:"response_mode,omitempty" json:"response_mode,omitempty"`
 	CodeChallenge       *string                             `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
@@ -781,20 +859,6 @@ type AuthorizeParamsResponseType string
 
 // AuthorizeParamsCodeChallengeMethod defines parameters for Authorize.
 type AuthorizeParamsCodeChallengeMethod string
-
-// TokenParams defines parameters for Token.
-type TokenParams struct {
-	GrantType    TokenParamsGrantType `form:"grant_type" json:"grant_type"`
-	ClientId     string               `form:"client_id" json:"client_id"`
-	ClientSecret string               `form:"client_secret" json:"client_secret"`
-	Code         *string              `form:"code,omitempty" json:"code,omitempty"`
-	CodeVerifier *string              `form:"code_verifier,omitempty" json:"code_verifier,omitempty"`
-	RedirectUri  *string              `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty"`
-	RefreshToken *string              `form:"refresh_token,omitempty" json:"refresh_token,omitempty"`
-}
-
-// TokenParamsGrantType defines parameters for Token.
-type TokenParamsGrantType string
 
 // CreateFunctionParams defines parameters for CreateFunction.
 type CreateFunctionParams struct {
@@ -827,11 +891,16 @@ type GetTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
 }
 
+// ListSnippetsParams defines parameters for ListSnippets.
+type ListSnippetsParams struct {
+	ProjectRef *string `form:"project_ref,omitempty" json:"project_ref,omitempty"`
+}
+
 // UpdateBranchJSONRequestBody defines body for UpdateBranch for application/json ContentType.
 type UpdateBranchJSONRequestBody = UpdateBranchBody
 
-// ApproveAuthorizationRequestJSONRequestBody defines body for ApproveAuthorizationRequest for application/json ContentType.
-type ApproveAuthorizationRequestJSONRequestBody = AuthorizationsApproveBody
+// TokenFormdataRequestBody defines body for Token for application/x-www-form-urlencoded ContentType.
+type TokenFormdataRequestBody = OAuthTokenBody
 
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
 type CreateOrganizationJSONRequestBody = CreateOrganizationBody
@@ -842,20 +911,23 @@ type CreateProjectJSONRequestBody = CreateProjectBody
 // CreateBranchJSONRequestBody defines body for CreateBranch for application/json ContentType.
 type CreateBranchJSONRequestBody = CreateBranchBody
 
+// UpdateV1AuthConfigJSONRequestBody defines body for UpdateV1AuthConfig for application/json ContentType.
+type UpdateV1AuthConfigJSONRequestBody = UpdateAuthConfigBody
+
 // CreateProviderForProjectJSONRequestBody defines body for CreateProviderForProject for application/json ContentType.
 type CreateProviderForProjectJSONRequestBody = CreateProviderBody
 
 // UpdateProviderByIdJSONRequestBody defines body for UpdateProviderById for application/json ContentType.
 type UpdateProviderByIdJSONRequestBody = UpdateProviderBody
 
-// UpdatePgbouncerConfigJSONRequestBody defines body for UpdatePgbouncerConfig for application/json ContentType.
-type UpdatePgbouncerConfigJSONRequestBody = UpdatePgbouncerConfigBody
-
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePostgresConfigBody
 
 // CreateCustomHostnameConfigJSONRequestBody defines body for CreateCustomHostnameConfig for application/json ContentType.
 type CreateCustomHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
+
+// V1RunQueryJSONRequestBody defines body for V1RunQuery for application/json ContentType.
+type V1RunQueryJSONRequestBody = RunQueryBody
 
 // CreateFunctionJSONRequestBody defines body for CreateFunction for application/json ContentType.
 type CreateFunctionJSONRequestBody = CreateFunctionBody
@@ -874,9 +946,6 @@ type UpdatePgsodiumConfigJSONRequestBody = UpdatePgsodiumConfigBody
 
 // UpdatePostgRESTConfigJSONRequestBody defines body for UpdatePostgRESTConfig for application/json ContentType.
 type UpdatePostgRESTConfigJSONRequestBody = UpdatePostgrestConfigBody
-
-// RunQueryJSONRequestBody defines body for RunQuery for application/json ContentType.
-type RunQueryJSONRequestBody = RunQueryBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
