@@ -128,7 +128,7 @@ serve(async (req: Request) => {
     });
     const controller = new AbortController();
 
-    const signal = controller.signal;
+    const { signal } = controller;
     // Note: Requests are aborted after 200s (same config as in production)
     // TODO: make this configuarable
     setTimeout(() => controller.abort(), 200 * 1000);
