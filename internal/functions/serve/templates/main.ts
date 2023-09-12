@@ -126,7 +126,13 @@ serve(async (req: Request) => {
       cpuBurstIntervalMs,
       maxCpuBursts,
     });
-    return await worker.fetch(req);
+    const controller = new AbortController();
+
+    const { signal } = controller;
+    // Note: Requests are aborted after 200s (same config as in production)
+    // TODO: make this configuarable
+    setTimeout(() => controller.abort(), 200 * 1000);
+    return await worker.fetch(req, { signal });
   } catch (e) {
     console.error(e);
     const error = { msg: e.toString() };

@@ -33,7 +33,7 @@ const (
 	PgmetaImage      = "supabase/postgres-meta:v0.68.0"
 	StudioImage      = "supabase/studio:20230905-f8c8a8e"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.15.1"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.16.0"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
 	// Update initial schemas in internal/utils/templates/initial_schemas when
