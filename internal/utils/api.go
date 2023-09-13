@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
 	"github.com/spf13/viper"
 	supabase "github.com/supabase/cli/pkg/api"
 )
@@ -221,17 +220,13 @@ func GetSupabase() *supabase.ClientWithResponses {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		provider, err := securityprovider.NewSecurityProviderBearerToken(token)
-		if err != nil {
-			log.Fatalln(err)
-		}
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
 			t.DialContext = withFallbackDNS(t.DialContext)
 		}
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
-			supabase.WithRequestEditorFn(provider.Intercept),
 			supabase.WithRequestEditorFn(func(ctx context.Context, req *http.Request) error {
+				req.Header.Set("Authorization", "Bearer "+token)
 				req.Header.Set("User-Agent", "SupabaseCLI/"+Version)
 				return nil
 			}),
