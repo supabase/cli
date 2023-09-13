@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/supabase/cli/internal/utils"
 )
@@ -34,5 +35,6 @@ func GetPostgrestVersion(ctx context.Context, projectRef string) (string, error)
 	if len(data.Info.Version) == 0 {
 		return "", errPostgrestVersion
 	}
-	return "v" + data.Info.Version, nil
+	parts := strings.Split(data.Info.Version, " ")
+	return "v" + parts[0], nil
 }
