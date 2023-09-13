@@ -22,7 +22,17 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-var updatedConfig = make(map[string]interface{})
+var updatedConfig ConfigCopy
+
+type ConfigCopy struct {
+	Api    interface{} `toml:"api"`
+	Db     interface{} `toml:"db"`
+	Pooler interface{} `toml:"db.pooler"`
+}
+
+func (c ConfigCopy) IsChanged() bool {
+	return c.Api != nil || c.Db != nil || c.Pooler != nil
+}
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
@@ -65,7 +75,7 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 
 func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	fmt.Fprintln(stdout, "Finished "+utils.Aqua("supabase link")+".")
-	if len(updatedConfig) == 0 {
+	if !updatedConfig.IsChanged() {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
@@ -137,7 +147,7 @@ func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
 		!utils.SliceEqual(utils.Config.Api.ExtraSearchPath, copy.ExtraSearchPath) ||
 		!utils.SliceEqual(utils.Config.Api.Schemas, copy.Schemas)
 	if changed {
-		updatedConfig["api"] = copy
+		updatedConfig.Api = copy
 	}
 }
 
@@ -187,7 +197,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 	if err == nil && uint64(utils.Config.Db.MajorVersion) != dbMajorVersion {
 		copy := utils.Config.Db
 		copy.MajorVersion = uint(dbMajorVersion)
-		updatedConfig["db"] = copy
+		updatedConfig.Db = copy
 	}
 }
 
@@ -218,7 +228,7 @@ func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
 		utils.Config.Db.Pooler.DefaultPoolSize != copy.DefaultPoolSize ||
 		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
 	if changed {
-		updatedConfig["db.pooler"] = copy
+		updatedConfig.Pooler = copy
 	}
 }
 

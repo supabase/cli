@@ -75,9 +75,9 @@ func TestPreRun(t *testing.T) {
 
 // Reset global variable
 func teardown() {
-	for k := range updatedConfig {
-		delete(updatedConfig, k)
-	}
+	updatedConfig.Api = nil
+	updatedConfig.Db = nil
+	updatedConfig.Pooler = nil
 }
 
 func TestPostRun(t *testing.T) {
@@ -97,7 +97,7 @@ func TestPostRun(t *testing.T) {
 	t.Run("prints changed config", func(t *testing.T) {
 		defer teardown()
 		project := "test-project"
-		updatedConfig["api"] = "test"
+		updatedConfig.Api = "test"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -301,8 +301,8 @@ func TestLinkPostgrest(t *testing.T) {
 		utils.Config.Api.Schemas = []string{"public", "storage", "graphql_public"}
 		utils.Config.Api.ExtraSearchPath = []string{"public", "extensions"}
 		utils.Config.Api.MaxRows = 1000
-		assert.Equal(t, map[string]interface{}{
-			"api": utils.Config.Api,
+		assert.Equal(t, ConfigCopy{
+			Api: utils.Config.Api,
 		}, updatedConfig)
 	})
 
@@ -390,8 +390,8 @@ func TestLinkDatabase(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		utils.Config.Db.MajorVersion = 15
-		assert.Equal(t, map[string]interface{}{
-			"db": utils.Config.Db,
+		assert.Equal(t, ConfigCopy{
+			Db: utils.Config.Db,
 		}, updatedConfig)
 	})
 
