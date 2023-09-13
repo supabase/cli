@@ -13,7 +13,10 @@ import (
 	"github.com/supabase/cli/internal/utils/tenant"
 )
 
-var errDatabaseVersion = errors.New("Database version not found.")
+var (
+	errDatabaseVersion = errors.New("Database version not found.")
+	suggestLinkCommand = fmt.Sprintf("Run %s to sync your local image versions with the linked project.", utils.Aqua("supabase link"))
+)
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	_ = utils.LoadConfigFS(fsys)
@@ -64,6 +67,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		version, ok := linked[image]
 		if !ok {
 			version = "-"
+		} else if parts[1] != version && image != utils.Config.Db.Image {
+			utils.CmdSuggestion = suggestLinkCommand
 		}
 		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", parts[0], parts[1], version)
 	}
