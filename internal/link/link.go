@@ -2,15 +2,14 @@ package link
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 	"github.com/jackc/pgconn"
@@ -19,15 +18,11 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 )
 
-var (
-	updatedConfig    = make(map[string]interface{})
-	errMissingKeys   = errors.New("No API keys found.")
-	errGotrueVersion = errors.New("GoTrue version not found.")
-	errRestVersion   = errors.New("PostgREST version not found.")
-)
+var updatedConfig = make(map[string]interface{})
 
 func PreRun(projectRef string, fsys afero.Fs) error {
 	// Sanity checks
@@ -39,19 +34,10 @@ func PreRun(projectRef string, fsys afero.Fs) error {
 
 func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
-	if err := loadAnonKey(ctx, projectRef); err != nil {
+	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
 		return err
 	}
-	// Ignore non-fatal errors linking services
-	if err := linkPostgrest(ctx, projectRef, fsys); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
-	if err := linkGotrue(ctx, projectRef, fsys); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
-	if err := linkPooler(ctx, projectRef); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
+	linkServices(ctx, projectRef, fsys)
 
 	// 2. Check database connection
 	if len(password) > 0 {
@@ -88,7 +74,38 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return enc.Encode(updatedConfig)
 }
 
-func linkPostgrest(ctx context.Context, projectRef string, fsys afero.Fs) error {
+func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
+	// Ignore non-fatal errors linking services
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		if err := linkPostgrest(ctx, projectRef); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkPostgrestVersion(ctx, projectRef, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkPooler(ctx, projectRef); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	wg.Wait()
+}
+
+func linkPostgrest(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return err
@@ -97,12 +114,18 @@ func linkPostgrest(ctx context.Context, projectRef string, fsys afero.Fs) error 
 		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
 	}
 	updateApiConfig(*resp.JSON200)
-	url := fmt.Sprintf("https://%s/rest/v1/", utils.GetSupabaseHost(projectRef))
-	data, err := getJsonResponse[SwaggerResponse](ctx, url, utils.Config.Auth.AnonKey)
+	return nil
+}
+
+func linkPostgrestVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	version, err := tenant.GetPostgrestVersion(ctx, projectRef)
 	if err != nil {
 		return err
 	}
-	return updatePostgrestVersion(data.Info.Version, fsys)
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RestVersionPath)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.RestVersionPath, []byte(version), 0644)
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
@@ -130,89 +153,10 @@ func readCsv(line string) []string {
 	return result
 }
 
-type SwaggerInfo struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-}
-
-type SwaggerResponse struct {
-	Swagger string      `json:"swagger"`
-	Info    SwaggerInfo `json:"info"`
-}
-
-func updatePostgrestVersion(version string, fsys afero.Fs) error {
-	if len(version) == 0 {
-		return errRestVersion
-	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RestVersionPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.RestVersionPath, []byte("v"+version), 0644)
-}
-
-func loadAnonKey(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
+func linkGotrueVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	version, err := tenant.GetGotrueVersion(ctx, projectRef)
 	if err != nil {
 		return err
-	}
-	if resp.JSON200 == nil {
-		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
-	}
-	keys := *resp.JSON200
-	if len(keys) == 0 {
-		return errMissingKeys
-	}
-	utils.Config.Auth.AnonKey = keys[0].ApiKey
-	return nil
-}
-
-func linkGotrue(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	url := fmt.Sprintf("https://%s/auth/v1/health", utils.GetSupabaseHost(projectRef))
-	data, err := getJsonResponse[HealthResponse](ctx, url, utils.Config.Auth.AnonKey)
-	if err != nil {
-		return err
-	}
-	return updateGotrueVersion(data.Version, fsys)
-}
-
-type HealthResponse struct {
-	Version     string `json:"version"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-func getJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("apikey", apiKey)
-	// Sends request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil || len(body) == 0 {
-			body = []byte(fmt.Sprintf("Error status %d", resp.StatusCode))
-		}
-		return nil, errors.New(string(body))
-	}
-	// Parses response
-	var data T
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&data); err != nil {
-		return nil, err
-	}
-	return &data, nil
-}
-
-func updateGotrueVersion(version string, fsys afero.Fs) error {
-	if len(version) == 0 {
-		return errGotrueVersion
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
 		return err
