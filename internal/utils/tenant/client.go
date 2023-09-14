@@ -25,6 +25,10 @@ type ApiKey struct {
 	ServiceRole string
 }
 
+func (a ApiKey) IsEmpty() bool {
+	return len(apiKey.Anon) == 0 && len(apiKey.ServiceRole) == 0
+}
+
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 	var errKey error
 	keyOnce.Do(func() {
@@ -37,18 +41,16 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 			errKey = fmt.Errorf("%w: %s", errAuthToken, string(resp.Body))
 			return
 		}
-		keys := *resp.JSON200
-		if len(keys) == 0 {
-			errKey = errMissingKey
-			return
-		}
-		for _, key := range keys {
+		for _, key := range *resp.JSON200 {
 			if key.Name == "anon" {
 				apiKey.Anon = key.ApiKey
 			}
 			if key.Name == "service_role" {
 				apiKey.ServiceRole = key.ApiKey
 			}
+		}
+		if apiKey.IsEmpty() {
+			errKey = errMissingKey
 		}
 	})
 	return apiKey, errKey

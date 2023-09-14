@@ -30,8 +30,8 @@ type ConfigCopy struct {
 	Pooler interface{} `toml:"db.pooler"`
 }
 
-func (c ConfigCopy) IsChanged() bool {
-	return c.Api != nil || c.Db != nil || c.Pooler != nil
+func (c ConfigCopy) IsEmpty() bool {
+	return c.Api == nil && c.Db == nil && c.Pooler == nil
 }
 
 func PreRun(projectRef string, fsys afero.Fs) error {
@@ -75,7 +75,7 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 
 func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	fmt.Fprintln(stdout, "Finished "+utils.Aqua("supabase link")+".")
-	if !updatedConfig.IsChanged() {
+	if updatedConfig.IsEmpty() {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))

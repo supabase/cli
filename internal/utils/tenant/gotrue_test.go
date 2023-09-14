@@ -14,12 +14,12 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestPostgrestVersion(t *testing.T) {
+func TestGotrueVersion(t *testing.T) {
 	projectRef := apitest.RandomProjectRef()
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-	t.Run("appends prefix v", func(t *testing.T) {
+	t.Run("gets gotrue version", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -27,32 +27,14 @@ func TestPostgrestVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		gock.New(fmt.Sprintf("https://%s.supabase.co", projectRef)).
-			Get("/rest/v1/").
+			Get("/auth/v1/health").
 			Reply(http.StatusOK).
-			JSON(SwaggerResponse{Info: SwaggerInfo{Version: "11.1.0"}})
+			JSON(HealthResponse{Version: "v2.92.1"})
 		// Run test
-		version, err := GetPostgrestVersion(context.Background(), projectRef)
+		version, err := GetGotrueVersion(context.Background(), projectRef)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, version, "v11.1.0")
-	})
-
-	t.Run("ignores commit hash", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
-		gock.New(fmt.Sprintf("https://%s.supabase.co", projectRef)).
-			Get("/rest/v1/").
-			Reply(http.StatusOK).
-			JSON(SwaggerResponse{Info: SwaggerInfo{Version: "11.2.0 (c820efb)"}})
-		// Run test
-		version, err := GetPostgrestVersion(context.Background(), projectRef)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, version, "v11.2.0")
+		assert.Equal(t, version, "v2.92.1")
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -63,10 +45,10 @@ func TestPostgrestVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		gock.New(fmt.Sprintf("https://%s.supabase.co", projectRef)).
-			Get("/rest/v1/").
+			Get("/auth/v1/health").
 			ReplyError(errors.New("network error"))
 		// Run test
-		version, err := GetPostgrestVersion(context.Background(), projectRef)
+		version, err := GetGotrueVersion(context.Background(), projectRef)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, version)
@@ -80,13 +62,13 @@ func TestPostgrestVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		gock.New(fmt.Sprintf("https://%s.supabase.co", projectRef)).
-			Get("/rest/v1/").
+			Get("/auth/v1/health").
 			Reply(http.StatusOK).
-			JSON(SwaggerResponse{})
+			JSON(HealthResponse{})
 		// Run test
-		version, err := GetPostgrestVersion(context.Background(), projectRef)
+		version, err := GetGotrueVersion(context.Background(), projectRef)
 		// Check error
-		assert.ErrorIs(t, err, errPostgrestVersion)
+		assert.ErrorIs(t, err, errGotrueVersion)
 		assert.Empty(t, version)
 	})
 }
