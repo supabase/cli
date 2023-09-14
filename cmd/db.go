@@ -171,7 +171,7 @@ var (
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return reset.Run(cmd.Context(), version, flags.DbConfig, afero.NewOsFs())
+			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -284,7 +284,7 @@ func init() {
 	resetFlags.Bool("linked", false, "Resets the linked project to current migrations.")
 	resetFlags.Bool("local", true, "Resets the local database to current migrations.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	resetFlags.StringVar(&version, "version", "", "Reset up to the specified version.")
+	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()

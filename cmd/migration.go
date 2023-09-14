@@ -61,13 +61,13 @@ var (
 		},
 	}
 
-	version string
+	migrationVersion string
 
 	migrationSquashCmd = &cobra.Command{
 		Use:   "squash",
 		Short: "Squash migrations to a single file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return squash.Run(cmd.Context(), version, flags.DbConfig, afero.NewOsFs())
+			return squash.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase migration squash") + ".")
@@ -111,7 +111,7 @@ func init() {
 	migrationCmd.AddCommand(migrationRepairCmd)
 	// Build squash command
 	squashFlags := migrationSquashCmd.Flags()
-	squashFlags.StringVar(&version, "version", "", "Squash up to the specified version.")
+	squashFlags.StringVar(&migrationVersion, "version", "", "Squash up to the specified version.")
 	squashFlags.String("db-url", "", "Squashes migrations of the database specified by the connection string (must be percent-encoded).")
 	squashFlags.Bool("linked", false, "Squashes the migration history of the linked project.")
 	squashFlags.Bool("local", true, "Squashes the migration history of the local database.")

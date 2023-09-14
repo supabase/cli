@@ -145,7 +145,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		rest := tenant.SwaggerResponse{Info: tenant.SwaggerInfo{Version: "11.1.0"}}
 		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
 			Get("/rest/v1/").
@@ -197,7 +197,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
@@ -232,7 +232,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
