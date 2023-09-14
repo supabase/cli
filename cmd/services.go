@@ -3,20 +3,20 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/version"
+	"github.com/supabase/cli/internal/services"
 )
 
 var (
-	versionCmd = &cobra.Command{
+	servicesCmd = &cobra.Command{
 		GroupID: groupManagementAPI,
-		Use:     "version",
+		Use:     "services",
 		Short:   "Show versions of all Supabase services",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return version.Run(cmd.Context(), afero.NewOsFs())
+			return services.Run(cmd.Context(), afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(servicesCmd)
 }

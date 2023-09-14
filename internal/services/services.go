@@ -1,4 +1,4 @@
-package version
+package services
 
 import (
 	"context"
