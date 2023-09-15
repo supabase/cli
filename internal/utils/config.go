@@ -60,6 +60,10 @@ func (s *sizeInBytes) UnmarshalText(text []byte) error {
 	return err
 }
 
+func (s sizeInBytes) MarshalText() (text []byte, err error) {
+	return []byte(units.BytesSize(float64(s))), nil
+}
+
 type LogflareBackend string
 
 const (
