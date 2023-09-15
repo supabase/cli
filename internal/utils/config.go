@@ -83,24 +83,17 @@ const (
 
 var Config = config{
 	Api: api{
-		// Defaults to true for backwards compatibility with existing config.toml
-		Enabled: true,
-		Image:   PostgrestImage,
+		Image: PostgrestImage,
 	},
 	Db: db{
 		Image:    Pg15Image,
 		Password: "postgres",
 	},
 	Realtime: realtime{
-		Enabled:   true,
 		IpVersion: AddressIPv6,
 	},
-	Storage: storage{
-		Enabled: true,
-	},
 	Auth: auth{
-		Enabled: true,
-		Image:   GotrueImage,
+		Image: GotrueImage,
 		Email: email{
 			Template: map[string]emailTemplate{
 				"invite":       {},
