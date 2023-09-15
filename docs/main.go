@@ -55,7 +55,7 @@ func generate(version string) error {
 			Language:    "sh",
 			Source:      "https://github.com/supabase/cli",
 			Bugs:        "https://github.com/supabase/cli/issues",
-			Spec:        "https://github.com/supabase/supabase.tools/cli_spec/lib.yaml",
+			Spec:        "https://github.com/supabase/spec/cli_v1_commands.yaml",
 			Tags:        getTags(root),
 		},
 	}
@@ -128,18 +128,34 @@ type CmdDoc struct {
 	Description string       `yaml:",omitempty"`
 	Examples    []ExampleDoc `yaml:",omitempty"`
 	Tags        []string     `yaml:""`
-	Links       []string     `yaml:""`
+	Links       []LinkDoc    `yaml:""`
 	Usage       string       `yaml:",omitempty"`
 	Subcommands []string     `yaml:""`
 	Options     string       `yaml:",omitempty"`
 	Flags       []FlagDoc    `yaml:""`
 }
 
+type LinkDoc struct {
+	Name string `yaml:",omitempty"`
+	Link string `yaml:",omitempty"`
+}
+
+type ParamDoc struct {
+	Id          string    `yaml:",omitempty"`
+	Title       string    `yaml:",omitempty"`
+	Description string    `yaml:",omitempty"`
+	Required    bool      `yaml:",omitempty"`
+	Default     string    `yaml:",omitempty"`
+	Tags        []string  `yaml:",omitempty"`
+	Links       []LinkDoc `yaml:""`
+}
+
 type SpecDoc struct {
-	Clispec  string    `yaml:",omitempty"`
-	Info     InfoDoc   `yaml:",omitempty"`
-	Flags    []FlagDoc `yaml:",omitempty"`
-	Commands []CmdDoc  `yaml:""`
+	Clispec    string    `yaml:",omitempty"`
+	Info       InfoDoc   `yaml:",omitempty"`
+	Flags      []FlagDoc `yaml:",omitempty"`
+	Commands   []CmdDoc  `yaml:",omitempty"`
+	Parameters []FlagDoc `yaml:",omitempty"`
 }
 
 // DFS on command tree to generate documentation specs.
