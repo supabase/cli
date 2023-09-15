@@ -52,4 +52,12 @@ begin
   loop
     execute format('drop type if exists %I.%I cascade', rec.typnamespace::regnamespace::name, rec.typname);
   end loop;
+
+  -- policies
+  for rec in
+    select *
+    from pg_policies p
+  loop
+    execute format('drop policy if exists %I on %I.%I cascade', rec.policyname, rec.schemaname, rec.tablename);
+  end loop;
 end $$;
