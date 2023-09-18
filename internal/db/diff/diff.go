@@ -62,7 +62,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if !start.WaitForHealthyService(ctx, shadow, 3*start.HealthTimeout) {
+	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
 		return start.ErrDatabase
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
