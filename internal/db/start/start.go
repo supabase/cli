@@ -26,7 +26,7 @@ import (
 
 var (
 	ErrDatabase   = errors.New("database is not healthy")
-	HealthTimeout = 40 * time.Second
+	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
 )
