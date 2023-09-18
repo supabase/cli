@@ -33,7 +33,7 @@ const (
 	PgmetaImage      = "supabase/postgres-meta:v0.68.0"
 	StudioImage      = "supabase/studio:20230912-748fd33"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.16.0"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.18.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
 	GotrueImage      = "supabase/gotrue:v2.92.1"
