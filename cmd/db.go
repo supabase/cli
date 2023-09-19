@@ -289,8 +289,8 @@ func init() {
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
 	lintFlags.String("db-url", "", "Lints the database specified by the connection string (must be percent-encoded).")
-	lintFlags.Bool("linked", true, "Lints the linked project for schema errors.")
-	lintFlags.Bool("local", false, "Lints the local database for schema errors.")
+	lintFlags.Bool("linked", false, "Lints the linked project for schema errors.")
+	lintFlags.Bool("local", true, "Lints the local database for schema errors.")
 	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
 	lintFlags.Lookup("schema").DefValue = "all"
