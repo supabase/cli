@@ -124,8 +124,8 @@ func init() {
 	upFlags := migrationUpCmd.Flags()
 	upFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
 	upFlags.String("db-url", "", "Applies migrations to the database specified by the connection string (must be percent-encoded).")
-	upFlags.Bool("linked", true, "Applies pending migrations to the linked project.")
-	upFlags.Bool("local", false, "Applies pending migrations to the local database.")
+	upFlags.Bool("linked", false, "Applies pending migrations to the linked project.")
+	upFlags.Bool("local", true, "Applies pending migrations to the local database.")
 	migrationUpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationUpCmd)
 	// Build new command
