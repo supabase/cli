@@ -36,7 +36,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 }
 
 func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return nil, err
 	}

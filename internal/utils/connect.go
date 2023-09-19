@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgconn"
@@ -103,4 +104,23 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	}
 	// Connect to database
 	return pgx.ConnectConfig(ctx, config)
+}
+
+func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
+	if IsLoopback(config.Host) {
+		fmt.Fprintln(os.Stderr, "Connecting to local database...")
+		return ConnectLocalPostgres(ctx, config, options...)
+	}
+	fmt.Fprintln(os.Stderr, "Connecting to remote database...")
+	return ConnectRemotePostgres(ctx, config, options...)
+}
+
+func IsLoopback(host string) bool {
+	if strings.ToLower(host) == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }

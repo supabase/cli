@@ -73,7 +73,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, pgconn.Config{Host: "db.supabase.co"}, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "target" does not exist (SQLSTATE 3D000)`)
 	})

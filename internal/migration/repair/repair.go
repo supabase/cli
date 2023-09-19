@@ -38,7 +38,7 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 	if _, err := strconv.Atoi(version); err != nil {
 		return ErrInvalidVersion
 	}
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
