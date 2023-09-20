@@ -36,6 +36,21 @@ var (
 	VectorId      string
 	PoolerId      string
 
+	DbAliases          = []string{"db"}
+	KongAliases        = []string{"kong", "api"}
+	GotrueAliases      = []string{"auth"}
+	InbucketAliases    = []string{"inbucket"}
+	RealtimeAliases    = []string{"realtime"}
+	RestAliases        = []string{"rest"}
+	StorageAliases     = []string{"storage"}
+	ImgProxyAliases    = []string{"imgproxy"}
+	PgmetaAliases      = []string{"pg_meta"}
+	StudioAliases      = []string{"studio"}
+	EdgeRuntimeAliases = []string{"edge_runtime"}
+	LogflareAliases    = []string{"analytics"}
+	VectorAliases      = []string{"vector"}
+	PoolerAliases      = []string{"pooler"}
+
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
 	InitialSchemaPg13Sql string

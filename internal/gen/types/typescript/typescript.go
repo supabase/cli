@@ -80,6 +80,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 				NetworkMode: container.NetworkMode("host"),
 			},
 			"",
+			[]string{},
 			os.Stdout,
 			os.Stderr,
 		)

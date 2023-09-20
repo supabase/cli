@@ -162,6 +162,7 @@ EOF
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		}),
 		utils.EdgeRuntimeId,
+		utils.EdgeRuntimeAliases,
 	)
 	return err
 }

@@ -102,7 +102,7 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	return utils.DockerStart(ctx, config, hostConfig, "")
+	return utils.DockerStart(ctx, config, hostConfig, "", []string{})
 }
 
 func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
@@ -158,6 +158,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 			NetworkMode: container.NetworkMode("host"),
 		},
 		"",
+		[]string{},
 		&out,
 		&stderr,
 	); err != nil {

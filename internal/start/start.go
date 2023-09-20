@@ -181,6 +181,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.VectorId,
+			utils.VectorAliases,
 		); err != nil {
 			return err
 		}
@@ -267,6 +268,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.LogflareId,
+			utils.LogflareAliases,
 		); err != nil {
 			return err
 		}
@@ -338,6 +340,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
 			utils.KongId,
+			utils.KongAliases,
 		); err != nil {
 			return err
 		}
@@ -504,6 +507,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
 			utils.GotrueId,
+			utils.GotrueAliases,
 		); err != nil {
 			return err
 		}
@@ -535,6 +539,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.InbucketId,
+			utils.InbucketAliases,
 		); err != nil {
 			return err
 		}
@@ -582,6 +587,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
 			utils.RealtimeId,
+			utils.RealtimeAliases,
 		); err != nil {
 			return err
 		}
@@ -608,6 +614,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
 			utils.RestId,
+			utils.RestAliases,
 		); err != nil {
 			return err
 		}
@@ -650,6 +657,7 @@ EOF
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
 			}),
 			utils.StorageId,
+			utils.StorageAliases,
 		); err != nil {
 			return err
 		}
@@ -679,6 +687,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.ImgProxyId,
+			utils.ImgProxyAliases,
 		); err != nil {
 			return err
 		}
@@ -719,6 +728,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.PgmetaId,
+			utils.PgmetaAliases,
 		); err != nil {
 			return err
 		}
@@ -756,6 +766,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.StudioId,
+			utils.StudioAliases,
 		); err != nil {
 			return err
 		}
@@ -792,6 +803,7 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			utils.PoolerId,
+			utils.PoolerAliases,
 		); err != nil {
 			return err
 		}

@@ -127,7 +127,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()
 	fmt.Fprintln(os.Stderr, "Recreating database...")
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
+	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId, utils.DbAliases); err != nil {
 		return err
 	}
 	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {

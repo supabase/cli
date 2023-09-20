@@ -112,7 +112,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	} else {
 		fmt.Fprintln(w, "Starting database from backup...")
 	}
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId); err != nil {
+	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId, utils.DbAliases); err != nil {
 		return err
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {

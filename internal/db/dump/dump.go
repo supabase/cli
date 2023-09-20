@@ -118,6 +118,7 @@ EOF`
 			NetworkMode: container.NetworkMode("host"),
 		},
 		"",
+		[]string{},
 		stdout,
 		os.Stderr,
 	)
