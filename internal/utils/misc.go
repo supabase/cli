@@ -35,7 +35,7 @@ const (
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.18.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
-	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
+	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	GotrueImage      = "supabase/gotrue:v2.92.1"
 	RealtimeImage    = "supabase/realtime:v2.10.1"
 	StorageImage     = "supabase/storage-api:v0.40.4"
