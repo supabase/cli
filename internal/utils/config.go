@@ -381,7 +381,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
 			RestId = GetId(RestAliases[0])
 			StorageId = GetId(StorageAliases[0])
-			ImgProxyId = GetId(ImgProxyAliases[0])
+			ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
 			DifferId = GetId("differ")
 			PgmetaId = GetId(PgmetaAliases[0])
 			StudioId = GetId(StudioAliases[0])
