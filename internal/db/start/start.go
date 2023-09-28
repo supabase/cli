@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
@@ -100,6 +101,13 @@ func NewHostConfig() container.HostConfig {
 func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	config := NewContainerConfig()
 	hostConfig := NewHostConfig()
+	networkingConfig := network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			utils.NetId: {
+				Aliases: utils.DbAliases,
+			},
+		},
+	}
 	if utils.Config.Db.MajorVersion <= 14 {
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
@@ -112,7 +120,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	} else {
 		fmt.Fprintln(w, "Starting database from backup...")
 	}
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId, utils.DbAliases); err != nil {
+	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {

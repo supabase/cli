@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/jackc/pgconn"
@@ -126,8 +127,15 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	}
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()
+	networkingConfig := network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			utils.NetId: {
+				Aliases: utils.DbAliases,
+			},
+		},
+	}
 	fmt.Fprintln(os.Stderr, "Recreating database...")
-	if _, err := utils.DockerStart(ctx, config, hostConfig, utils.DbId, utils.DbAliases); err != nil {
+	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
 	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {

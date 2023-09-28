@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -79,8 +80,8 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			container.HostConfig{
 				NetworkMode: container.NetworkMode("host"),
 			},
+			network.NetworkingConfig{},
 			"",
-			[]string{},
 			os.Stdout,
 			os.Stderr,
 		)

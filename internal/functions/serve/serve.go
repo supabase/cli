@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
@@ -161,8 +162,14 @@ EOF
 			Binds:      binds,
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		}),
+		network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				utils.NetId: {
+					Aliases: utils.EdgeRuntimeAliases,
+				},
+			},
+		},
 		utils.EdgeRuntimeId,
-		utils.EdgeRuntimeAliases,
 	)
 	return err
 }
