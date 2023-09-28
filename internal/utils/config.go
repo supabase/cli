@@ -378,7 +378,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			KongId = GetId(KongAliases[0])
 			GotrueId = GetId(GotrueAliases[0])
 			InbucketId = GetId(InbucketAliases[0])
-			RealtimeId = GetId(RealtimeAliases[0])
+			RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
 			RestId = GetId(RestAliases[0])
 			StorageId = GetId(StorageAliases[0])
 			ImgProxyId = GetId(ImgProxyAliases[0])
