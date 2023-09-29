@@ -3,7 +3,6 @@ package link
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -135,6 +134,11 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/api-keys").
+			Reply(200).
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+		// Link configs
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{})
@@ -142,20 +146,34 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
-			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+		// Link versions
 		rest := tenant.SwaggerResponse{Info: tenant.SwaggerInfo{Version: "11.1.0"}}
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
 			Reply(200).
 			JSON(rest)
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
 			Reply(200).
 			JSON(auth)
+		postgres := api.DatabaseResponse{
+			Host:    utils.GetSupabaseDbHost(project),
+			Version: "15.1.0.117",
+		}
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
+			Reply(200).
+			JSON([]api.ProjectResponse{
+				{
+					Id:             project,
+					Database:       &postgres,
+					OrganizationId: "combined-fuchsia-lion",
+					Name:           "Test Project",
+					Region:         "us-west-1",
+					CreatedAt:      "2022-04-25T02:14:55.906498Z",
+				},
+			})
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys, conn.Intercept)
 		// Check error
@@ -171,6 +189,9 @@ func TestLinkCommand(t *testing.T) {
 		authVersion, err := afero.ReadFile(fsys, utils.GotrueVersionPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(auth.Version), authVersion)
+		postgresVersion, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte(postgres.Version), postgresVersion)
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
@@ -206,11 +227,14 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			ReplyError(errors.New("network error"))
 		// Link versions
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
 			ReplyError(errors.New("network error"))
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, dbConfig.Password, fsys, func(cc *pgx.ConnConfig) {
@@ -241,11 +265,14 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			ReplyError(errors.New("network error"))
 		// Link versions
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
 			ReplyError(errors.New("network error"))
-		gock.New(fmt.Sprintf("https://%s.supabase.co", project)).
+		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, "", fsys)
@@ -331,7 +358,7 @@ func TestLinkPostgrest(t *testing.T) {
 		// Run test
 		err := linkPostgrest(context.Background(), project)
 		// Validate api
-		assert.ErrorContains(t, err, `Authorization failed for the access token and project ref pair: {"message":"unavailable"}`)
+		assert.ErrorIs(t, err, tenant.ErrAuthToken)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
