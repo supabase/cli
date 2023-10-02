@@ -8,7 +8,7 @@ import binLinks from "bin-links";
 import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
-import { ProxyAgent } from "proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import path from "path";
 import tar from "tar";
 import zlib from "zlib";
@@ -124,7 +124,11 @@ async function main() {
   const untar = tar.x({ cwd: binDir }, [binName]);
 
   console.info("Downloading", url);
-  const agent = new ProxyAgent();
+  const proxyUrl =
+    process.env.npm_config_https_proxy ||
+    process.env.npm_config_http_proxy ||
+    process.env.npm_config_proxy;
+  const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
   const resp = await fetch(url, { agent });
 
   const hash = createHash("sha256");
