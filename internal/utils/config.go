@@ -36,7 +36,7 @@ var (
 	VectorId      string
 	PoolerId      string
 
-	DbAliases          = []string{"db"}
+	DbAliases          = []string{"db", "db.supabase.internal"}
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
