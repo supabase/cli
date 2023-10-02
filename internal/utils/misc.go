@@ -166,6 +166,7 @@ var (
 	ImportMapsDir         = filepath.Join(SupabaseDirPath, TempDir, "import_maps")
 	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
 	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
+	PostgresVersionPath   = filepath.Join(SupabaseDirPath, TempDir, "postgres-version")
 	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(SupabaseDirPath, TempDir, "rest-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")

@@ -2,7 +2,6 @@ package link
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -87,7 +87,13 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
 	go func() {
 		defer wg.Done()
 		if err := linkPostgrest(ctx, projectRef); err != nil {
@@ -121,7 +127,7 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
+		return fmt.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	updateApiConfig(*resp.JSON200)
 	return nil
@@ -185,6 +191,17 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	return repair.CreateMigrationTable(ctx, conn)
 }
 
+func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	version, err := services.GetDatabaseVersion(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.PostgresVersionPath)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.PostgresVersionPath, []byte(version), 0644)
+}
+
 func updatePostgresConfig(conn *pgx.Conn) {
 	serverVersion := conn.PgConn().ParameterStatus("server_version")
 	// Safe to assume that supported Postgres version is 10.0 <= n < 100.0
@@ -207,7 +224,7 @@ func linkPooler(ctx context.Context, projectRef string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errors.New("Authorization failed for the access token and project ref pair: " + string(resp.Body))
+		return fmt.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	updatePoolerConfig(*resp.JSON200)
 	return nil
