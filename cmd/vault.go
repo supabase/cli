@@ -4,20 +4,20 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/root_key/get"
-	"github.com/supabase/cli/internal/root_key/update"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/vault/get"
+	"github.com/supabase/cli/internal/vault/update"
 )
 
 var (
-	rootKeyCmd = &cobra.Command{
+	vaultCmd = &cobra.Command{
 		GroupID: groupManagementAPI,
-		Use:     "root-key",
-		Short:   "Manage root encryption key",
+		Use:     "vault",
+		Short:   "Manage column encryption of Supabase projects",
 	}
 
 	rootKeyGetCmd = &cobra.Command{
-		Use:   "get",
+		Use:   "get-root-key",
 		Short: "Get the root encryption key of a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return get.Run(cmd.Context(), flags.ProjectRef)
@@ -25,7 +25,7 @@ var (
 	}
 
 	rootKeyUpdateCmd = &cobra.Command{
-		Use:   "update",
+		Use:   "update-root-key",
 		Short: "Update root encryption key of a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return update.Run(cmd.Context(), flags.ProjectRef, os.Stdin)
@@ -34,8 +34,8 @@ var (
 )
 
 func init() {
-	rootKeyCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	rootKeyCmd.AddCommand(rootKeyUpdateCmd)
-	rootKeyCmd.AddCommand(rootKeyGetCmd)
-	rootCmd.AddCommand(rootKeyCmd)
+	vaultCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	vaultCmd.AddCommand(rootKeyUpdateCmd)
+	vaultCmd.AddCommand(rootKeyGetCmd)
+	rootCmd.AddCommand(vaultCmd)
 }
