@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -244,7 +245,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
-func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string) (string, error) {
+func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
 		return "", err
@@ -281,7 +282,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		hostConfig.Binds = binds
 	}
 	// Create container from image
-	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, nil, nil, containerName)
+	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, &networkingConfig, nil, containerName)
 	if err != nil {
 		return "", err
 	}
@@ -326,14 +327,14 @@ func DockerRunOnceWithStream(ctx context.Context, image string, env, cmd []strin
 		Image: image,
 		Env:   env,
 		Cmd:   cmd,
-	}, container.HostConfig{}, "", stdout, stderr)
+	}, container.HostConfig{}, network.NetworkingConfig{}, "", stdout, stderr)
 }
 
-func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, containerName string, stdout, stderr io.Writer) error {
+func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string, stdout, stderr io.Writer) error {
 	// Cannot rely on docker's auto remove because
 	//   1. We must inspect exit code after container stops
 	//   2. Context cancellation may happen after start
-	container, err := DockerStart(ctx, config, hostConfig, containerName)
+	container, err := DockerStart(ctx, config, hostConfig, networkingConfig, containerName)
 	if err != nil {
 		return err
 	}

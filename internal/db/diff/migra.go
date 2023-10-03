@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -98,11 +99,12 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		AutoRemove:   true,
 	}
+	networkingConfig := network.NetworkingConfig{}
 	if utils.Config.Db.MajorVersion <= 14 {
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	return utils.DockerStart(ctx, config, hostConfig, "")
+	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")
 }
 
 func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
@@ -157,6 +159,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 		container.HostConfig{
 			NetworkMode: container.NetworkMode("host"),
 		},
+		network.NetworkingConfig{},
 		"",
 		&out,
 		&stderr,
