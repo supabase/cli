@@ -23,7 +23,7 @@ var Version string
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.103"
+	Pg15Image = "supabase/postgres:15.1.0.117"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -31,11 +31,11 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "djrobstep/migra:3.0.1621480950"
 	PgmetaImage      = "supabase/postgres-meta:v0.68.0"
-	StudioImage      = "supabase/studio:20230912-748fd33"
+	StudioImage      = "supabase/studio:20230921-d657f29"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.18.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
-	PgbouncerImage   = "bitnami/pgbouncer:1.20.1"
+	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	GotrueImage      = "supabase/gotrue:v2.92.1"
 	RealtimeImage    = "supabase/realtime:v2.10.1"
 	StorageImage     = "supabase/storage-api:v0.40.4"
@@ -166,6 +166,7 @@ var (
 	ImportMapsDir         = filepath.Join(SupabaseDirPath, TempDir, "import_maps")
 	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
 	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
+	PostgresVersionPath   = filepath.Join(SupabaseDirPath, TempDir, "postgres-version")
 	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(SupabaseDirPath, TempDir, "rest-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")

@@ -419,6 +419,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			Config.Db.Image = Pg14Image
 			InitialSchemaSql = InitialSchemaPg14Sql
 		case 15:
+			if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && len(version) > 0 {
+				index := strings.IndexByte(Pg15Image, ':')
+				Config.Db.Image = Pg15Image[:index+1] + string(version)
+			}
 		default:
 			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}

@@ -65,7 +65,25 @@ func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keep
 
 func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCopy, dryRun bool, stdout io.Writer) error {
 	// We want to dump user data in auth, storage, etc. for migrating to new project
-	excludedSchemas := append([]string{
+	excludedSchemas := []string{
+		"information_schema",
+		"pg_*", // Wildcard pattern follows pg_dump
+		// Owned by extensions
+		// "cron",
+		"graphql",
+		"graphql_public",
+		// "net",
+		// "pgsodium",
+		// "pgsodium_masks",
+		"pgtle",
+		"repack",
+		"tiger",
+		"tiger_data",
+		"timescaledb_*",
+		"_timescaledb_*",
+		"topology",
+		// "vault",
+		// Managed by Supabase
 		// "auth",
 		"extensions",
 		"pgbouncer",
@@ -75,7 +93,7 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 		"_analytics",
 		// "supabase_functions",
 		"supabase_migrations",
-	}, utils.SystemSchemas...)
+	}
 	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|")}
 	if len(schema) > 0 {
 		env[0] = "INCLUDED_SCHEMAS=" + strings.Join(schema, "|")

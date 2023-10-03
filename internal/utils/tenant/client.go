@@ -16,7 +16,7 @@ var (
 	apiKey  ApiKey
 	keyOnce sync.Once
 
-	errAuthToken  = errors.New("Authorization failed for the access token and project ref pair")
+	ErrAuthToken  = errors.New("Authorization failed for the access token and project ref pair")
 	errMissingKey = errors.New("Anon key not found.")
 )
 
@@ -38,7 +38,7 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 			return
 		}
 		if resp.JSON200 == nil {
-			errKey = fmt.Errorf("%w: %s", errAuthToken, string(resp.Body))
+			errKey = fmt.Errorf("%w: %s", ErrAuthToken, string(resp.Body))
 			return
 		}
 		for _, key := range *resp.JSON200 {

@@ -26,6 +26,7 @@ pg_dump \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE VIEW "/CREATE OR REPLACE VIEW "/' \
 | sed -E 's/^CREATE FUNCTION "/CREATE OR REPLACE FUNCTION "/' \
+| sed -E 's/^CREATE TRIGGER "/CREATE OR REPLACE TRIGGER "/' \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
 | sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
