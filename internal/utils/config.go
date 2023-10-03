@@ -36,6 +36,21 @@ var (
 	VectorId      string
 	PoolerId      string
 
+	DbAliases          = []string{"db", "db.supabase.internal"}
+	KongAliases        = []string{"kong", "api.supabase.internal"}
+	GotrueAliases      = []string{"auth"}
+	InbucketAliases    = []string{"inbucket"}
+	RealtimeAliases    = []string{"realtime"}
+	RestAliases        = []string{"rest"}
+	StorageAliases     = []string{"storage"}
+	ImgProxyAliases    = []string{"imgproxy"}
+	PgmetaAliases      = []string{"pg_meta"}
+	StudioAliases      = []string{"studio"}
+	EdgeRuntimeAliases = []string{"edge_runtime"}
+	LogflareAliases    = []string{"analytics"}
+	VectorAliases      = []string{"vector"}
+	PoolerAliases      = []string{"pooler"}
+
 	InitialSchemaSql string
 	//go:embed templates/initial_schemas/13.sql
 	InitialSchemaPg13Sql string
@@ -48,6 +63,10 @@ var (
 	invalidProjectId   = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
 	envPattern         = regexp.MustCompile(`^env\((.*)\)$`)
 )
+
+func GetId(name string) string {
+	return "supabase_" + name + "_" + Config.ProjectId
+}
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
 type sizeInBytes int64
@@ -353,23 +372,23 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
 		} else {
-			NetId = "supabase_network_" + Config.ProjectId
-			DbId = "supabase_db_" + Config.ProjectId
-			ConfigId = "supabase_config_" + Config.ProjectId
-			KongId = "supabase_kong_" + Config.ProjectId
-			GotrueId = "supabase_auth_" + Config.ProjectId
-			InbucketId = "supabase_inbucket_" + Config.ProjectId
-			RealtimeId = "realtime-dev.supabase_realtime_" + Config.ProjectId
-			RestId = "supabase_rest_" + Config.ProjectId
-			StorageId = "supabase_storage_" + Config.ProjectId
-			ImgProxyId = "storage_imgproxy_" + Config.ProjectId
-			DifferId = "supabase_differ_" + Config.ProjectId
-			PgmetaId = "supabase_pg_meta_" + Config.ProjectId
-			StudioId = "supabase_studio_" + Config.ProjectId
-			EdgeRuntimeId = "supabase_edge_runtime_" + Config.ProjectId
-			LogflareId = "supabase_analytics_" + Config.ProjectId
-			VectorId = "supabase_vector_" + Config.ProjectId
-			PoolerId = "supabase_pooler_" + Config.ProjectId
+			NetId = GetId("network")
+			DbId = GetId(DbAliases[0])
+			ConfigId = GetId("config")
+			KongId = GetId(KongAliases[0])
+			GotrueId = GetId(GotrueAliases[0])
+			InbucketId = GetId(InbucketAliases[0])
+			RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+			RestId = GetId(RestAliases[0])
+			StorageId = GetId(StorageAliases[0])
+			ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+			DifferId = GetId("differ")
+			PgmetaId = GetId(PgmetaAliases[0])
+			StudioId = GetId(StudioAliases[0])
+			EdgeRuntimeId = GetId(EdgeRuntimeAliases[0])
+			LogflareId = GetId(LogflareAliases[0])
+			VectorId = GetId(VectorAliases[0])
+			PoolerId = GetId(PoolerAliases[0])
 		}
 		// Validate api config
 		if Config.Api.Port == 0 {

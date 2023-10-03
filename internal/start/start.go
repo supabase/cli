@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -180,6 +181,13 @@ EOF
 				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.VectorAliases,
+					},
+				},
+			},
 			utils.VectorId,
 		); err != nil {
 			return err
@@ -266,6 +274,13 @@ EOF
 				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.LogflareAliases,
+					},
+				},
+			},
 			utils.LogflareId,
 		); err != nil {
 			return err
@@ -337,6 +352,13 @@ EOF
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.KongAliases,
+					},
+				},
+			},
 			utils.KongId,
 		); err != nil {
 			return err
@@ -503,6 +525,13 @@ EOF
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.GotrueAliases,
+					},
+				},
+			},
 			utils.GotrueId,
 		); err != nil {
 			return err
@@ -533,6 +562,13 @@ EOF
 				},
 				PortBindings:  inbucketPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.InbucketAliases,
+					},
+				},
 			},
 			utils.InbucketId,
 		); err != nil {
@@ -581,6 +617,13 @@ EOF
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.RealtimeAliases,
+					},
+				},
+			},
 			utils.RealtimeId,
 		); err != nil {
 			return err
@@ -607,6 +650,13 @@ EOF
 			start.WithSyslogConfig(container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			}),
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.RestAliases,
+					},
+				},
+			},
 			utils.RestId,
 		); err != nil {
 			return err
@@ -649,6 +699,13 @@ EOF
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
 			}),
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.StorageAliases,
+					},
+				},
+			},
 			utils.StorageId,
 		); err != nil {
 			return err
@@ -677,6 +734,13 @@ EOF
 			container.HostConfig{
 				VolumesFrom:   []string{utils.StorageId},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.ImgProxyAliases,
+					},
+				},
 			},
 			utils.ImgProxyId,
 		); err != nil {
@@ -718,6 +782,13 @@ EOF
 			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.PgmetaAliases,
+					},
+				},
+			},
 			utils.PgmetaId,
 		); err != nil {
 			return err
@@ -754,6 +825,13 @@ EOF
 			container.HostConfig{
 				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.StudioAliases,
+					},
+				},
 			},
 			utils.StudioId,
 		); err != nil {
@@ -792,6 +870,13 @@ EOF
 			container.HostConfig{
 				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.PoolerAliases,
+					},
+				},
 			},
 			utils.PoolerId,
 		); err != nil {
