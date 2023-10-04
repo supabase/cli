@@ -16,6 +16,25 @@ interface FunctionConfig {
   verifyJWT: boolean;
 }
 
+enum WorkerErrors {
+  InvalidWorkerCreation = "InvalidWorkerCreation",
+  InvalidWorkerResponse = "InvalidWorkerResponse",
+}
+
+function respondWith(payload: any, status: number, customHeaders = {}) {
+  const headers = { ...customHeaders };
+  let body = null;
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(payload);
+  }
+  const res = new Response(body, {
+    status,
+    headers,
+  });
+  return res;
+}
+
 const functionsConfig: Record<string, FunctionConfig> = (() => {
   try {
     const functionsConfig = JSON.parse(FUNCTIONS_CONFIG_STRING);
@@ -135,10 +154,31 @@ serve(async (req: Request) => {
     return await worker.fetch(req, { signal });
   } catch (e) {
     console.error(e);
-    const error = { msg: e.toString() };
-    return new Response(
-      JSON.stringify(error),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+    if (e.name === WorkerErrors.InvalidWorkerCreation) {
+      return respondWith(
+        {
+          code: "BOOT_ERROR",
+          message: "Worker failed to boot (please check logs)",
+        },
+        503,
+      );
+    }
+    if (e.name === WorkerErrors.InvalidWorkerResponse) {
+      return respondWith(
+        {
+          code: "WORKER_LIMIT",
+          message:
+            "Worker failed to respond due to an error or resource limit (please check logs)",
+        },
+        546, // custom error code
+      );
+    }
+    return respondWith(
+      {
+        code: Status.InternalServerError,
+        message: "Request failed due to a server error",
+      },
+      Status.InternalServerError,
     );
   }
 }, {
