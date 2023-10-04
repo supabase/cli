@@ -223,7 +223,7 @@ func init() {
 	diffFlags.Bool("local", true, "Diffs local migration files against the local database.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
-	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	diffFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDiffCmd)
 	// Build dump command
@@ -241,7 +241,7 @@ func init() {
 	dbDumpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
-	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	dumpFlags.Lookup("schema").DefValue = "all"
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
@@ -259,7 +259,7 @@ func init() {
 	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
-	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.Lookup("schema").DefValue = "all"
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")
@@ -273,7 +273,7 @@ func init() {
 	remoteFlags.String("db-url", "", "Connect using the specified Postgres URL (must be percent-encoded).")
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
-	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	remoteFlags.Lookup("schema").DefValue = "all"
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
@@ -292,7 +292,7 @@ func init() {
 	lintFlags.Bool("linked", false, "Lints the linked project for schema errors.")
 	lintFlags.Bool("local", true, "Lints the local database for schema errors.")
 	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "List of schema to include.")
+	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	lintFlags.Lookup("schema").DefValue = "all"
 	lintFlags.Var(&level, "level", "Error level to emit.")
 	dbCmd.AddCommand(dbLintCmd)
