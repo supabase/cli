@@ -147,16 +147,20 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
 		// Link versions
-		rest := tenant.SwaggerResponse{Info: tenant.SwaggerInfo{Version: "11.1.0"}}
-		gock.New("https://" + utils.GetSupabaseHost(project)).
-			Get("/rest/v1/").
-			Reply(200).
-			JSON(rest)
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
 			Reply(200).
 			JSON(auth)
+		rest := tenant.SwaggerResponse{Info: tenant.SwaggerInfo{Version: "11.1.0"}}
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/rest/v1/").
+			Reply(200).
+			JSON(rest)
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
+			Reply(200).
+			BodyString("0.40.4")
 		postgres := api.DatabaseResponse{
 			Host:    utils.GetSupabaseDbHost(project),
 			Version: "15.1.0.117",
@@ -233,6 +237,9 @@ func TestLinkCommand(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
 			ReplyError(errors.New("network error"))
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
+			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
@@ -270,6 +277,9 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
+			ReplyError(errors.New("network error"))
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
