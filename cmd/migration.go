@@ -21,6 +21,7 @@ var (
 	migrationCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "migration",
+		Aliases: []string{"migrations"},
 		Short:   "Manage database migration scripts",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
