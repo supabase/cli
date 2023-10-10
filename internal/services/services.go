@@ -25,7 +25,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		utils.Config.Auth.Image,
 		utils.Config.Api.Image,
 		utils.RealtimeImage,
-		utils.StorageImage,
+		utils.Config.Storage.Image,
 		utils.EdgeRuntimeImage,
 		utils.StudioImage,
 		utils.PgmetaImage,

@@ -117,7 +117,9 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound)
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
+		utils.Config.Auth.Image = utils.GotrueImage
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		utils.Config.Storage.Image = utils.StorageImage
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
