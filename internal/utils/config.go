@@ -115,6 +115,9 @@ var Config = config{
 	Realtime: realtime{
 		IpVersion: AddressIPv6,
 	},
+	Storage: storage{
+		Image: StorageImage,
+	},
 	Auth: auth{
 		Image: GotrueImage,
 		Email: email{
@@ -240,6 +243,7 @@ type (
 
 	storage struct {
 		Enabled       bool        `toml:"enabled"`
+		Image         string      `toml:"-"`
 		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
 	}
 
@@ -438,6 +442,13 @@ func LoadConfigFS(fsys afero.Fs) error {
 			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 			if !SliceContains(allowed, Config.Realtime.IpVersion) {
 				return fmt.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
+			}
+		}
+		// Validate storage config
+		if Config.Storage.Enabled {
+			if version, err := afero.ReadFile(fsys, StorageVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
+				index := strings.IndexByte(StorageImage, ':')
+				Config.Storage.Image = StorageImage[:index+1] + string(version)
 			}
 		}
 		// Validate studio config

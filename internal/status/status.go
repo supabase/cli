@@ -35,7 +35,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
 	}
-	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.GotrueImage)) {
+	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey

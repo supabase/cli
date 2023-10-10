@@ -367,7 +367,7 @@ EOF
 	}
 
 	// Start GoTrue.
-	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.GotrueImage, excluded) {
+	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
 			encoder := json.NewEncoder(&testOTP)
@@ -665,12 +665,12 @@ EOF
 	}
 
 	// Start Storage.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.StorageImage, excluded) {
+	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
 		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.StorageImage,
+				Image: utils.Config.Storage.Image,
 				Env: []string{
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,

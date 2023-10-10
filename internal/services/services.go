@@ -25,7 +25,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		utils.Config.Auth.Image,
 		utils.Config.Api.Image,
 		utils.RealtimeImage,
-		utils.StorageImage,
+		utils.Config.Storage.Image,
 		utils.EdgeRuntimeImage,
 		utils.StudioImage,
 		utils.PgmetaImage,
@@ -37,7 +37,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	linked := make(map[string]string)
 	if projectRef, err := utils.LoadProjectRef(fsys); err == nil {
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 		go func() {
 			defer wg.Done()
 			if version, err := GetDatabaseVersion(ctx, projectRef); err == nil {
@@ -54,6 +54,12 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			defer wg.Done()
 			if version, err := tenant.GetPostgrestVersion(ctx, projectRef); err == nil {
 				linked[utils.Config.Api.Image] = version
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if version, err := tenant.GetStorageVersion(ctx, projectRef); err == nil {
+				linked[utils.Config.Storage.Image] = version
 			}
 		}()
 		wg.Wait()

@@ -87,7 +87,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(6)
 	go func() {
 		defer wg.Done()
 		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil {
@@ -109,6 +109,12 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	go func() {
 		defer wg.Done()
 		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkStorageVersion(ctx, projectRef, fsys); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -178,6 +184,17 @@ func linkGotrueVersion(ctx context.Context, projectRef string, fsys afero.Fs) er
 		return err
 	}
 	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(version), 0644)
+}
+
+func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	version, err := tenant.GetStorageVersion(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.StorageVersionPath)); err != nil {
+		return err
+	}
+	return afero.WriteFile(fsys, utils.StorageVersionPath, []byte(version), 0644)
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {

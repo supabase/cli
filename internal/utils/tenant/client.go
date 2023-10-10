@@ -72,10 +72,10 @@ func GetJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
-		if err != nil || len(body) == 0 {
-			body = []byte(fmt.Sprintf("Error status %d", resp.StatusCode))
+		if err != nil {
+			return nil, err
 		}
-		return nil, errors.New(string(body))
+		return nil, fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
 	// Parses response
 	var data T
@@ -84,4 +84,28 @@ func GetJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error)
 		return nil, err
 	}
 	return &data, nil
+}
+
+func GetTextResponse(ctx context.Context, url, apiKey string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	if len(apiKey) > 0 {
+		req.Header.Add("apikey", apiKey)
+	}
+	// Sends request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
+	}
+	return string(body), nil
 }

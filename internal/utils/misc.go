@@ -169,6 +169,7 @@ var (
 	PostgresVersionPath   = filepath.Join(SupabaseDirPath, TempDir, "postgres-version")
 	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(SupabaseDirPath, TempDir, "rest-version")
+	StorageVersionPath    = filepath.Join(SupabaseDirPath, TempDir, "storage-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
