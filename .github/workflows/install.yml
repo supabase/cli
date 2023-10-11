@@ -58,4 +58,4 @@ jobs:
           npm install -g pnpm
           pnpm i --save-dev ./supabase-1.28.0.tgz
 
-      - run: npx supabase --version
+      - run: npx --no-install supabase --version
