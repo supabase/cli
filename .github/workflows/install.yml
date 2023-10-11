@@ -49,7 +49,9 @@ jobs:
         run: npm i --save-dev ./supabase-1.28.0.tgz
 
       - if: ${{ matrix.pm == 'yarn' }}
-        run: yarn add -D ./supabase-1.28.0.tgz
+        run: |
+          yarn set version berry
+          yarn add -D ./supabase-1.28.0.tgz
 
       - if: ${{ matrix.pm == 'pnpm' }}
         run: |
