@@ -99,6 +99,9 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	// 3. Parse custom import map
 	binds := []string{
+		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
+		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z",
 	}
 	if importMapPath != "" {
