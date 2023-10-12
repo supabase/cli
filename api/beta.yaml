@@ -20,7 +20,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/BranchDetailResponse'
         '500':
-          description: Failed to update database branch
+          description: Failed to retrieve database branch
       tags: &ref_0
         - database branches (beta)
       security: &ref_1
@@ -755,6 +755,32 @@ paths:
           description: Failed to update project's postgrest config
       tags: *ref_19
       security: *ref_20
+  /v1/projects/{ref}:
+    delete:
+      operationId: deleteProject
+      summary: Deletes the given project
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectRefResponse'
+        '403':
+          description: ''
+      tags:
+        - projects
+      security:
+        - bearer: []
   /v1/projects/{ref}/secrets:
     get:
       operationId: getSecrets
@@ -1189,6 +1215,53 @@ paths:
           description: Failed to disable project's readonly mode
       tags: *ref_29
       security: *ref_30
+  /v1/projects/{ref}/health:
+    get:
+      operationId: checkServiceHealth
+      summary: Gets project's service health status
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: timeout_ms
+          required: false
+          in: query
+          schema:
+            minimum: 0
+            maximum: 10000
+            type: integer
+        - name: services
+          required: true
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - auth
+                - realtime
+                - rest
+                - storage
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceHealthResponse'
+        '500':
+          description: Failed to retrieve project's service health status
+      tags:
+        - services
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/database/postgres:
     get:
       operationId: getConfig
@@ -1813,6 +1886,32 @@ paths:
             does not exist
       tags: *ref_41
       security: *ref_42
+  /v1/projects/{ref}/database/backups/restore-pitr:
+    post:
+      operationId: v1RestorePitr
+      summary: Restores a PITR backup for a database
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/V1RestorePitrBody'
+      responses:
+        '201':
+          description: ''
+      tags:
+        - backups (beta)
+      security:
+        - bearer: []
   /v1/organizations/{slug}/members:
     get:
       operationId: v1ListOrganizationMembers
@@ -2005,6 +2104,7 @@ components:
           example: us-east-1
         kps_enabled:
           type: boolean
+          deprecated: true
       required:
         - db_pass
         - name
@@ -2342,6 +2442,19 @@ components:
         - max_rows
         - db_schema
         - db_extra_search_path
+    ProjectRefResponse:
+      type: object
+      properties:
+        id:
+          type: number
+        ref:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - ref
+        - name
     SecretResponse:
       type: object
       properties:
@@ -2359,6 +2472,8 @@ components:
           type: string
           maxLength: 256
           pattern: /^(?!SUPABASE_).*/
+          description: Secret name must not start with the SUPABASE_ prefix.
+          example: string
         value:
           type: string
           maxLength: 24576
@@ -2536,6 +2651,53 @@ components:
         - enabled
         - override_enabled
         - override_active_until
+    AuthHealthResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+      required:
+        - name
+        - version
+        - description
+    RealtimeHealthResponse:
+      type: object
+      properties:
+        healthy:
+          type: boolean
+        db_connected:
+          type: boolean
+        connected_cluster:
+          type: number
+      required:
+        - healthy
+        - db_connected
+        - connected_cluster
+    ServiceHealthResponse:
+      type: object
+      properties:
+        info:
+          oneOf:
+            - $ref: '#/components/schemas/AuthHealthResponse'
+            - $ref: '#/components/schemas/RealtimeHealthResponse'
+        name:
+          enum:
+            - auth
+            - realtime
+            - rest
+            - storage
+          type: string
+        healthy:
+          type: boolean
+        error:
+          type: string
+      required:
+        - name
+        - healthy
     PostgresConfigResponse:
       type: object
       properties:
@@ -2954,6 +3116,13 @@ components:
           type: string
       required:
         - id
+    V1RestorePitrBody:
+      type: object
+      properties:
+        recovery_time_target_unix:
+          type: number
+      required:
+        - recovery_time_target_unix
     V1OrganizationMemberResponse:
       type: object
       properties:

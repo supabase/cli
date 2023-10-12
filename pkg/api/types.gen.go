@@ -135,6 +135,14 @@ const (
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
 )
 
+// Defines values for ServiceHealthResponseName.
+const (
+	ServiceHealthResponseNameAuth     ServiceHealthResponseName = "auth"
+	ServiceHealthResponseNameRealtime ServiceHealthResponseName = "realtime"
+	ServiceHealthResponseNameRest     ServiceHealthResponseName = "rest"
+	ServiceHealthResponseNameStorage  ServiceHealthResponseName = "storage"
+)
+
 // Defines values for SnippetMetaType.
 const (
 	SnippetMetaTypeSql SnippetMetaType = "sql"
@@ -205,6 +213,14 @@ const (
 	Sha256 AuthorizeParamsCodeChallengeMethod = "sha256"
 )
 
+// Defines values for CheckServiceHealthParamsServices.
+const (
+	CheckServiceHealthParamsServicesAuth     CheckServiceHealthParamsServices = "auth"
+	CheckServiceHealthParamsServicesRealtime CheckServiceHealthParamsServices = "realtime"
+	CheckServiceHealthParamsServicesRest     CheckServiceHealthParamsServices = "rest"
+	CheckServiceHealthParamsServicesStorage  CheckServiceHealthParamsServices = "storage"
+)
+
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
 type ActivateVanitySubdomainResponse struct {
 	CustomDomain string `json:"custom_domain"`
@@ -257,6 +273,13 @@ type AuthConfigResponse struct {
 	SmtpUser           *string  `json:"smtp_user,omitempty"`
 }
 
+// AuthHealthResponse defines model for AuthHealthResponse.
+type AuthHealthResponse struct {
+	Description string `json:"description"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+}
+
 // BranchDetailResponse defines model for BranchDetailResponse.
 type BranchDetailResponse struct {
 	DbHost          string                     `json:"db_host"`
@@ -307,8 +330,9 @@ type CreateOrganizationBody struct {
 // CreateProjectBody defines model for CreateProjectBody.
 type CreateProjectBody struct {
 	// DbPass Database password
-	DbPass     string `json:"db_pass"`
-	KpsEnabled *bool  `json:"kps_enabled,omitempty"`
+	DbPass string `json:"db_pass"`
+	// Deprecated:
+	KpsEnabled *bool `json:"kps_enabled,omitempty"`
 
 	// Name Name of your project, should not contain dots
 	Name string `json:"name"`
@@ -354,6 +378,7 @@ type CreateProviderResponse struct {
 
 // CreateSecretBody defines model for CreateSecretBody.
 type CreateSecretBody struct {
+	// Name Secret name must not start with the SUPABASE_ prefix.
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
@@ -550,6 +575,13 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	MaxRows           int     `json:"max_rows"`
 }
 
+// ProjectRefResponse defines model for ProjectRefResponse.
+type ProjectRefResponse struct {
+	Id   float32 `json:"id"`
+	Name string  `json:"name"`
+	Ref  string  `json:"ref"`
+}
+
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
 	// CreatedAt Creation timestamp
@@ -601,6 +633,13 @@ type ReadOnlyStatusResponse struct {
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
+// RealtimeHealthResponse defines model for RealtimeHealthResponse.
+type RealtimeHealthResponse struct {
+	ConnectedCluster float32 `json:"connected_cluster"`
+	DbConnected      bool    `json:"db_connected"`
+	Healthy          bool    `json:"healthy"`
+}
+
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
 	Ipv4Addresses []string `json:"ipv4_addresses"`
@@ -625,6 +664,22 @@ type SecretResponse struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
+
+// ServiceHealthResponse defines model for ServiceHealthResponse.
+type ServiceHealthResponse struct {
+	Error   *string                     `json:"error,omitempty"`
+	Healthy bool                        `json:"healthy"`
+	Info    *ServiceHealthResponse_Info `json:"info,omitempty"`
+	Name    ServiceHealthResponseName   `json:"name"`
+}
+
+// ServiceHealthResponse_Info defines model for ServiceHealthResponse.Info.
+type ServiceHealthResponse_Info struct {
+	union json.RawMessage
+}
+
+// ServiceHealthResponseName defines model for ServiceHealthResponse.Name.
+type ServiceHealthResponseName string
 
 // SnippetContent defines model for SnippetContent.
 type SnippetContent struct {
@@ -828,6 +883,11 @@ type V1PgbouncerConfigResponse struct {
 // V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
 type V1PgbouncerConfigResponsePoolMode string
 
+// V1RestorePitrBody defines model for V1RestorePitrBody.
+type V1RestorePitrBody struct {
+	RecoveryTimeTargetUnix float32 `json:"recovery_time_target_unix"`
+}
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -880,6 +940,15 @@ type UpdateFunctionParams struct {
 	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
+// CheckServiceHealthParams defines parameters for CheckServiceHealth.
+type CheckServiceHealthParams struct {
+	TimeoutMs *int                               `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Services  []CheckServiceHealthParamsServices `form:"services" json:"services"`
+}
+
+// CheckServiceHealthParamsServices defines parameters for CheckServiceHealth.
+type CheckServiceHealthParamsServices string
+
 // DeleteSecretsJSONBody defines parameters for DeleteSecrets.
 type DeleteSecretsJSONBody = []string
 
@@ -925,6 +994,9 @@ type UpdateConfigJSONRequestBody = UpdatePostgresConfigBody
 
 // CreateCustomHostnameConfigJSONRequestBody defines body for CreateCustomHostnameConfig for application/json ContentType.
 type CreateCustomHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
+
+// V1RestorePitrJSONRequestBody defines body for V1RestorePitr for application/json ContentType.
+type V1RestorePitrJSONRequestBody = V1RestorePitrBody
 
 // V1RunQueryJSONRequestBody defines body for V1RunQuery for application/json ContentType.
 type V1RunQueryJSONRequestBody = RunQueryBody
@@ -1075,6 +1147,68 @@ func (t AttributeValue_Default) MarshalJSON() ([]byte, error) {
 }
 
 func (t *AttributeValue_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAuthHealthResponse returns the union data inside the ServiceHealthResponse_Info as a AuthHealthResponse
+func (t ServiceHealthResponse_Info) AsAuthHealthResponse() (AuthHealthResponse, error) {
+	var body AuthHealthResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAuthHealthResponse overwrites any union data inside the ServiceHealthResponse_Info as the provided AuthHealthResponse
+func (t *ServiceHealthResponse_Info) FromAuthHealthResponse(v AuthHealthResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAuthHealthResponse performs a merge with any union data inside the ServiceHealthResponse_Info, using the provided AuthHealthResponse
+func (t *ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JsonMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsRealtimeHealthResponse returns the union data inside the ServiceHealthResponse_Info as a RealtimeHealthResponse
+func (t ServiceHealthResponse_Info) AsRealtimeHealthResponse() (RealtimeHealthResponse, error) {
+	var body RealtimeHealthResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromRealtimeHealthResponse overwrites any union data inside the ServiceHealthResponse_Info as the provided RealtimeHealthResponse
+func (t *ServiceHealthResponse_Info) FromRealtimeHealthResponse(v RealtimeHealthResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeRealtimeHealthResponse performs a merge with any union data inside the ServiceHealthResponse_Info, using the provided RealtimeHealthResponse
+func (t *ServiceHealthResponse_Info) MergeRealtimeHealthResponse(v RealtimeHealthResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JsonMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ServiceHealthResponse_Info) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ServiceHealthResponse_Info) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
