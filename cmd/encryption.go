@@ -13,7 +13,7 @@ var (
 	encryptionCmd = &cobra.Command{
 		GroupID: groupManagementAPI,
 		Use:     "encryption",
-		Short:   "Manage encryption of Supabase projects",
+		Short:   "Manage encryption keys of Supabase projects",
 	}
 
 	rootKeyGetCmd = &cobra.Command{
