@@ -30,12 +30,11 @@ jobs:
           name: installer
           path: supabase-1.28.0.tgz
 
-  install:
+  npm:
     needs: pack
     strategy:
       fail-fast: false
       matrix:
-        pm: [npm, yarn, pnpm]
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
@@ -44,16 +43,61 @@ jobs:
           name: installer
 
       - run: npm init -y
+      - run: npm i --save-dev ./supabase-1.28.0.tgz
+      - run: npx --no-install supabase --version
 
-      - if: ${{ matrix.pm == 'npm' }}
-        run: npm i --save-dev ./supabase-1.28.0.tgz
+  yarn:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: installer
 
-      - if: ${{ matrix.pm == 'yarn' }}
-        run: yarn add -D ./supabase-1.28.0.tgz
+      # Berry fails to find executable on windows
+      # - run: yarn set version berry
+      - run: yarn init -y
+      - run: yarn add -D ./supabase-1.28.0.tgz
+      - run: yarn supabase --version
 
-      - if: ${{ matrix.pm == 'pnpm' }}
-        run: |
-          npm install -g pnpm
-          pnpm i --save-dev ./supabase-1.28.0.tgz
+  pnpm:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: installer
 
-      - run: npx supabase --version
+      - run: npm install -g pnpm
+      - run: pnpm init
+      - run: pnpm i --save-dev ./supabase-1.28.0.tgz
+      - run: pnpm supabase --version
+
+  bun:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        # Bun build is experimental on windows
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: installer
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: |
+          echo '{"trustedDependencies": ["supabase"]}' > package.json
+      - run: bun add -D ./supabase-1.28.0.tgz
+      - run: bunx supabase --version
