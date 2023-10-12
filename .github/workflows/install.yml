@@ -58,8 +58,9 @@ jobs:
         with:
           name: installer
 
-      - run: yarn set version berry
-      - run: yarn init
+      # Berry fails to find executable on windows
+      # - run: yarn set version berry
+      - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
       - run: yarn supabase --version
 
