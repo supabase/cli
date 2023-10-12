@@ -811,8 +811,6 @@ paths:
       tags: &ref_21
         - secrets
       security: &ref_22
-        - apiKeyHeader: []
-          apiKeyParam: []
         - bearer: []
     post:
       operationId: createSecrets
@@ -971,8 +969,6 @@ paths:
       tags:
         - projects
       security:
-        - apiKeyHeader: []
-          apiKeyParam: []
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain:
     get:
@@ -1288,7 +1284,6 @@ paths:
         - projects config
       security: &ref_32
         - bearer: []
-        - bearer: []
     put:
       operationId: updateConfig
       summary: Updates project's Postgres config
@@ -1525,8 +1520,6 @@ paths:
       tags: &ref_36
         - functions
       security: &ref_37
-        - apiKeyHeader: []
-          apiKeyParam: []
         - bearer: []
     get:
       operationId: getFunctions
@@ -1591,8 +1584,6 @@ paths:
       tags: &ref_39
         - functions
       security: &ref_40
-        - apiKeyHeader: []
-          apiKeyParam: []
         - bearer: []
     patch:
       operationId: updateFunction

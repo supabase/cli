@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/zalando/go-keyring"
@@ -16,7 +17,10 @@ import (
 )
 
 func TestDeleteCommand(t *testing.T) {
-	const ref = "test-project"
+	ref := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 	// Mock credentials store
 	keyring.MockInit()
 
@@ -27,9 +31,12 @@ func TestDeleteCommand(t *testing.T) {
 		// Setup api mock
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/projects/" + ref + "").
+			Delete("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(api.ProjectRefResponse{Ref: ref})
+			JSON(api.ProjectRefResponse{
+				Ref:  ref,
+				Name: "test-project",
+			})
 		// Run test
 		err := Run(context.Background(), ref, afero.NewReadOnlyFs(fsys))
 		// Check error
@@ -42,7 +49,7 @@ func TestDeleteCommand(t *testing.T) {
 		// Setup api mock
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/projects/" + ref + "").
+			Delete("/v1/projects/" + ref).
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), ref, fsys)
@@ -56,12 +63,12 @@ func TestDeleteCommand(t *testing.T) {
 		// Setup api mock
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/projects/" + ref + "").
+			Delete("/v1/projects/" + ref).
 			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), ref, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Project test-project does not exist.")
+		assert.ErrorContains(t, err, "Project does not exist:")
 	})
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
@@ -70,11 +77,11 @@ func TestDeleteCommand(t *testing.T) {
 		// Setup api mock
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/projects/" + ref + "").
+			Delete("/v1/projects/" + ref).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := Run(context.Background(), ref, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to delete project test-project:")
+		assert.ErrorContains(t, err, "Failed to delete project")
 	})
 }

@@ -31,7 +31,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 
 	switch resp.StatusCode() {
 	case http.StatusNotFound:
-		return errors.New("Project " + utils.Aqua(ref) + " does not exist.")
+		return errors.New("Project does not exist:" + utils.Aqua(ref))
 	case http.StatusOK:
 		break
 	default:
@@ -43,11 +43,20 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	if match, _ := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
-		if err := fsys.Remove(utils.ProjectRefPath); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		tmpFiles := []string{
+			utils.ProjectRefPath,
+			utils.PostgresVersionPath,
+			utils.GotrueVersionPath,
+			utils.RestVersionPath,
+			utils.StorageVersionPath,
+		}
+		for _, path := range tmpFiles {
+			if err := fsys.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		}
 	}
 
-	fmt.Println("Deleted Project " + utils.Aqua(ref) + ".")
+	fmt.Println("Deleted project: " + utils.Aqua(resp.JSON200.Name))
 	return nil
 }

@@ -10,9 +10,7 @@ import (
 )
 
 const (
-	ApiKeyHeaderScopes = "apiKeyHeader.Scopes"
-	ApiKeyParamScopes  = "apiKeyParam.Scopes"
-	BearerScopes       = "bearer.Scopes"
+	BearerScopes = "bearer.Scopes"
 )
 
 // Defines values for BranchDetailResponseStatus.
