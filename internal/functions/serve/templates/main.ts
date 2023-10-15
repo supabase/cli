@@ -126,7 +126,7 @@ serve(async (req: Request) => {
     .filter(([name, _]) =>
       !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
     );
-  const forceCreate = true;
+  const forceCreate = false;
   const customModuleRoot = ""; // empty string to allow any local path
   const cpuTimeThresholdMs = 50;
   const cpuBurstIntervalMs = 100;
