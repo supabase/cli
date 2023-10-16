@@ -28,6 +28,9 @@ func TestConfigParsing(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		assert.NoError(t, WriteConfig(fsys, false))
 		assert.NoError(t, LoadConfigFS(fsys))
+
+		// Test default network
+		assert.Equal(t, "supabase_network_utils", NetId)
 	})
 
 	t.Run("config file with environment variables", func(t *testing.T) {
@@ -45,6 +48,9 @@ func TestConfigParsing(t *testing.T) {
 		// Check error
 		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)
 		assert.Equal(t, "this is cool", Config.Auth.External["azure"].Secret)
+		// Check for overridden network
+		assert.Equal(t, "supabase-test-network", Config.Network)
+		assert.Equal(t, "supabase-test-network", NetId)
 	})
 
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {

@@ -1,6 +1,8 @@
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
 project_id = "{{ .ProjectId }}"
+# Uncomment to use a custom docker network
+# network = "supabase_network_{{ .ProjectId }}"
 
 [api]
 enabled = true
