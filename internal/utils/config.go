@@ -185,6 +185,7 @@ var Config = config{
 type (
 	config struct {
 		ProjectId string              `toml:"project_id"`
+		Network   string              `toml:"network"`
 		Api       api                 `toml:"api"`
 		Db        db                  `toml:"db" mapstructure:"db"`
 		Realtime  realtime            `toml:"realtime"`
@@ -395,6 +396,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			LogflareId = GetId(LogflareAliases[0])
 			VectorId = GetId(VectorAliases[0])
 			PoolerId = GetId(PoolerAliases[0])
+		}
+		if Config.Network != "" {
+			NetId = Config.Network
 		}
 		// Validate api config
 		if Config.Api.Port == 0 {
