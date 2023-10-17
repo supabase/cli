@@ -157,7 +157,7 @@ func PromptYesNo(label string, def bool, stdin *os.File) bool {
 		choices = "y/N"
 	}
 
-	r := bufio.NewReader(os.Stdin)
+	r := bufio.NewReader(stdin)
 	for {
 		fmt.Fprintf(os.Stderr, "%s [%s] ", label, choices)
 		// Any error will be handled as empty string

@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
+	"github.com/supabase/cli/internal/projects/delete"
 	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -82,6 +83,18 @@ var (
 			return apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
+
+	projectsDeleteCmd = &cobra.Command{
+		Use:   "delete <ref>",
+		Short: "Delete a Supabase project",
+		Args:  cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return delete.PreRun(args[0])
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return delete.Run(cmd.Context(), args[0], afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -106,6 +119,7 @@ func init() {
 
 	// Add commands to root
 	projectsCmd.AddCommand(projectsCreateCmd)
+	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)

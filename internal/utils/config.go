@@ -111,6 +111,7 @@ var Config = config{
 	Db: db{
 		Image:    Pg15Image,
 		Password: "postgres",
+		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 	},
 	Realtime: realtime{
 		IpVersion: AddressIPv6,
@@ -185,7 +186,7 @@ type (
 	config struct {
 		ProjectId string              `toml:"project_id"`
 		Api       api                 `toml:"api"`
-		Db        db                  `toml:"db"`
+		Db        db                  `toml:"db" mapstructure:"db"`
 		Realtime  realtime            `toml:"realtime"`
 		Studio    studio              `toml:"studio"`
 		Inbucket  inbucket            `toml:"inbucket"`
@@ -212,6 +213,7 @@ type (
 		ShadowPort   uint   `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
 		Password     string `toml:"-"`
+		RootKey      string `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler `toml:"pooler"`
 	}
 
