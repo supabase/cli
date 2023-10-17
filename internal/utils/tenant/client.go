@@ -2,10 +2,8 @@ package tenant
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 
@@ -57,55 +55,22 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 }
 
 func GetJsonResponse[T any](ctx context.Context, url, apiKey string) (*T, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	if len(apiKey) > 0 {
+	return utils.JsonResponse[T](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
 		req.Header.Add("apikey", apiKey)
-	}
-	// Sends request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
-	}
-	// Parses response
-	var data T
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&data); err != nil {
-		return nil, err
-	}
-	return &data, nil
+		return nil
+	})
+}
+
+func JsonResponseWithBearer[T any](ctx context.Context, method, url, token string, reqBody any) (*T, error) {
+	return utils.JsonResponse[T](ctx, method, url, reqBody, func(ctx context.Context, req *http.Request) error {
+		req.Header.Add("Authorization", "Bearer "+token)
+		return nil
+	})
 }
 
 func GetTextResponse(ctx context.Context, url, apiKey string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-	if len(apiKey) > 0 {
+	return utils.TextResponse(ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
 		req.Header.Add("apikey", apiKey)
-	}
-	// Sends request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
-	}
-	return string(body), nil
+		return nil
+	})
 }

@@ -81,7 +81,7 @@ func InstallOrUpgradeDeno(ctx context.Context, fsys afero.Fs) error {
 	// 2. Download & install Deno binary.
 	{
 		assetUrl := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", assetRepo, DenoVersion, assetFilename)
-		req, err := http.NewRequestWithContext(ctx, "GET", assetUrl, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, assetUrl, nil)
 		if err != nil {
 			return err
 		}

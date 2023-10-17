@@ -4,16 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/textproto"
 	"sync"
-	"time"
 
 	"github.com/spf13/viper"
 	supabase "github.com/supabase/cli/pkg/api"
@@ -27,7 +24,6 @@ const (
 var (
 	clientOnce sync.Once
 	apiClient  *supabase.ClientWithResponses
-	httpClient = http.Client{Timeout: 10 * time.Second}
 
 	DNSResolver = EnumFlag{
 		Allowed: []string{DNS_GO_NATIVE, DNS_OVER_HTTPS},
@@ -57,28 +53,12 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://1.1.1.1/dns-query?name="+host, nil)
+	url := "https://1.1.1.1/dns-query?name=" + host
+	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
+		req.Header.Add("accept", "application/dns-json")
+		return nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("accept", "application/dns-json")
-	// Sends request
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil || len(body) == 0 {
-			body = []byte(fmt.Sprintf("status %d", resp.StatusCode))
-		}
-		return nil, errors.New(string(body))
-	}
-	// Parses response
-	var data dnsResponse
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&data); err != nil {
 		return nil, err
 	}
 	// Look for first valid IP
@@ -96,25 +76,13 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://1.1.1.1/dns-query?name=%s&type=CNAME", host), nil)
+	url := fmt.Sprintf("https://1.1.1.1/dns-query?name=%s&type=CNAME", host)
+	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
+		req.Header.Add("accept", "application/dns-json")
+		return nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to initialize request: %w", err)
-	}
-	req.Header.Add("accept", "application/dns-json")
-	// Sends request
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute resolution request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("resolution response code was not 200: %s", resp.Status)
-	}
-	// Parses response
-	var data dnsResponse
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&data); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		return "", err
 	}
 	// Look for first valid IP
 	for _, answer := range data.Answer {
