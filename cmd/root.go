@@ -87,11 +87,12 @@ var (
 			}
 			// Prepare context
 			if viper.GetBool("DEBUG") {
-				cmd.SetContext(utils.WithTraceContext(ctx))
+				ctx = utils.WithTraceContext(ctx)
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 			} else {
 				utils.CmdSuggestion = suggestDebugFlag
 			}
+			cmd.SetContext(ctx)
 			return nil
 		},
 		SilenceErrors: true,
