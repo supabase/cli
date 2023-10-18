@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -79,8 +78,7 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return new_.Run(ctx, args[0], afero.NewOsFs())
+			return new_.Run(cmd.Context(), args[0], afero.NewOsFs())
 		},
 	}
 
@@ -94,12 +92,11 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return serve.Run(ctx, envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 )

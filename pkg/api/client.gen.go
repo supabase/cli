@@ -127,6 +127,9 @@ type ClientInterface interface {
 
 	CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteProject request
+	DeleteProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetProjectApiKeys request
 	GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -196,6 +199,11 @@ type ClientInterface interface {
 	// Reverify request
 	Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1RestorePitrWithBody request with any body
+	V1RestorePitrWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1RestorePitr(ctx context.Context, ref string, body V1RestorePitrJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RunQueryWithBody request with any body
 	V1RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -225,6 +233,9 @@ type ClientInterface interface {
 
 	// GetFunctionBody request
 	GetFunctionBody(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckServiceHealth request
+	CheckServiceHealth(ctx context.Context, ref string, params *CheckServiceHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveNetworkBanWithBody request with any body
 	RemoveNetworkBanWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -480,6 +491,18 @@ func (c *Client) CreateProjectWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) CreateProject(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -790,6 +813,30 @@ func (c *Client) Reverify(ctx context.Context, ref string, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1RestorePitrWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestorePitrRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RestorePitr(ctx context.Context, ref string, body V1RestorePitrJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestorePitrRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1RunQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RunQueryRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
@@ -912,6 +959,18 @@ func (c *Client) UpdateFunction(ctx context.Context, ref string, functionSlug st
 
 func (c *Client) GetFunctionBody(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetFunctionBodyRequest(c.Server, ref, functionSlug)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckServiceHealth(ctx context.Context, ref string, params *CheckServiceHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckServiceHealthRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,6 +1873,40 @@ func NewCreateProjectRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewDeleteProjectRequest generates requests for DeleteProject
+func NewDeleteProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetProjectApiKeysRequest generates requests for GetProjectApiKeys
 func NewGetProjectApiKeysRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -2559,6 +2652,53 @@ func NewReverifyRequest(server string, ref string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewV1RestorePitrRequest calls the generic V1RestorePitr builder with application/json body
+func NewV1RestorePitrRequest(server string, ref string, body V1RestorePitrJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1RestorePitrRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1RestorePitrRequestWithBody generates requests for V1RestorePitr with any type of body
+func NewV1RestorePitrRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-pitr", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1RunQueryRequest calls the generic V1RunQuery builder with application/json body
 func NewV1RunQueryRequest(server string, ref string, body V1RunQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3092,6 +3232,74 @@ func NewGetFunctionBodyRequest(server string, ref string, functionSlug string) (
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCheckServiceHealthRequest generates requests for CheckServiceHealth
+func NewCheckServiceHealthRequest(server string, ref string, params *CheckServiceHealthParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/health", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.TimeoutMs != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "timeout_ms", runtime.ParamLocationQuery, *params.TimeoutMs); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "services", runtime.ParamLocationQuery, params.Services); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -4200,6 +4408,9 @@ type ClientWithResponsesInterface interface {
 
 	CreateProjectWithResponse(ctx context.Context, body CreateProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProjectResponse, error)
 
+	// DeleteProjectWithResponse request
+	DeleteProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*DeleteProjectResponse, error)
+
 	// GetProjectApiKeysWithResponse request
 	GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetProjectApiKeysResponse, error)
 
@@ -4269,6 +4480,11 @@ type ClientWithResponsesInterface interface {
 	// ReverifyWithResponse request
 	ReverifyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ReverifyResponse, error)
 
+	// V1RestorePitrWithBodyWithResponse request with any body
+	V1RestorePitrWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePitrResponse, error)
+
+	V1RestorePitrWithResponse(ctx context.Context, ref string, body V1RestorePitrJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePitrResponse, error)
+
 	// V1RunQueryWithBodyWithResponse request with any body
 	V1RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error)
 
@@ -4298,6 +4514,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetFunctionBodyWithResponse request
 	GetFunctionBodyWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*GetFunctionBodyResponse, error)
+
+	// CheckServiceHealthWithResponse request
+	CheckServiceHealthWithResponse(ctx context.Context, ref string, params *CheckServiceHealthParams, reqEditors ...RequestEditorFn) (*CheckServiceHealthResponse, error)
 
 	// RemoveNetworkBanWithBodyWithResponse request with any body
 	RemoveNetworkBanWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveNetworkBanResponse, error)
@@ -4608,6 +4827,28 @@ func (r CreateProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ProjectRefResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5030,6 +5271,27 @@ func (r ReverifyResponse) StatusCode() int {
 	return 0
 }
 
+type V1RestorePitrResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RestorePitrResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RestorePitrResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1RunQueryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5197,6 +5459,28 @@ func (r GetFunctionBodyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetFunctionBodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CheckServiceHealthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]ServiceHealthResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckServiceHealthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckServiceHealthResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5870,6 +6154,15 @@ func (c *ClientWithResponses) CreateProjectWithResponse(ctx context.Context, bod
 	return ParseCreateProjectResponse(rsp)
 }
 
+// DeleteProjectWithResponse request returning *DeleteProjectResponse
+func (c *ClientWithResponses) DeleteProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*DeleteProjectResponse, error) {
+	rsp, err := c.DeleteProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteProjectResponse(rsp)
+}
+
 // GetProjectApiKeysWithResponse request returning *GetProjectApiKeysResponse
 func (c *ClientWithResponses) GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetProjectApiKeysResponse, error) {
 	rsp, err := c.GetProjectApiKeys(ctx, ref, reqEditors...)
@@ -6089,6 +6382,23 @@ func (c *ClientWithResponses) ReverifyWithResponse(ctx context.Context, ref stri
 	return ParseReverifyResponse(rsp)
 }
 
+// V1RestorePitrWithBodyWithResponse request with arbitrary body returning *V1RestorePitrResponse
+func (c *ClientWithResponses) V1RestorePitrWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePitrResponse, error) {
+	rsp, err := c.V1RestorePitrWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestorePitrResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1RestorePitrWithResponse(ctx context.Context, ref string, body V1RestorePitrJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePitrResponse, error) {
+	rsp, err := c.V1RestorePitr(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestorePitrResponse(rsp)
+}
+
 // V1RunQueryWithBodyWithResponse request with arbitrary body returning *V1RunQueryResponse
 func (c *ClientWithResponses) V1RunQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunQueryResponse, error) {
 	rsp, err := c.V1RunQueryWithBody(ctx, ref, contentType, body, reqEditors...)
@@ -6183,6 +6493,15 @@ func (c *ClientWithResponses) GetFunctionBodyWithResponse(ctx context.Context, r
 		return nil, err
 	}
 	return ParseGetFunctionBodyResponse(rsp)
+}
+
+// CheckServiceHealthWithResponse request returning *CheckServiceHealthResponse
+func (c *ClientWithResponses) CheckServiceHealthWithResponse(ctx context.Context, ref string, params *CheckServiceHealthParams, reqEditors ...RequestEditorFn) (*CheckServiceHealthResponse, error) {
+	rsp, err := c.CheckServiceHealth(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckServiceHealthResponse(rsp)
 }
 
 // RemoveNetworkBanWithBodyWithResponse request with arbitrary body returning *RemoveNetworkBanResponse
@@ -6737,6 +7056,32 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	return response, nil
 }
 
+// ParseDeleteProjectResponse parses an HTTP response from a DeleteProjectWithResponse call
+func ParseDeleteProjectResponse(rsp *http.Response) (*DeleteProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectRefResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetProjectApiKeysResponse parses an HTTP response from a GetProjectApiKeysWithResponse call
 func ParseGetProjectApiKeysResponse(rsp *http.Response) (*GetProjectApiKeysResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7211,6 +7556,22 @@ func ParseReverifyResponse(rsp *http.Response) (*ReverifyResponse, error) {
 	return response, nil
 }
 
+// ParseV1RestorePitrResponse parses an HTTP response from a V1RestorePitrWithResponse call
+func ParseV1RestorePitrResponse(rsp *http.Response) (*V1RestorePitrResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RestorePitrResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1RunQueryResponse parses an HTTP response from a V1RunQueryWithResponse call
 func ParseV1RunQueryResponse(rsp *http.Response) (*V1RunQueryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -7384,6 +7745,32 @@ func ParseGetFunctionBodyResponse(rsp *http.Response) (*GetFunctionBodyResponse,
 	response := &GetFunctionBodyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseCheckServiceHealthResponse parses an HTTP response from a CheckServiceHealthWithResponse call
+func ParseCheckServiceHealthResponse(rsp *http.Response) (*CheckServiceHealthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckServiceHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []ServiceHealthResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	}
 
 	return response, nil
