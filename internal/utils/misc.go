@@ -326,3 +326,7 @@ func ValidateFunctionSlug(slug string) error {
 
 	return nil
 }
+
+func Ptr[T any](v T) *T {
+	return &v
+}
