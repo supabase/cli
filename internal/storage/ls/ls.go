@@ -25,36 +25,17 @@ func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	paths, err := ListStoragePaths(ctx, projectRef, remotePath)
-	if err != nil {
-		return err
+	callback := func(objectPath string) error {
+		fmt.Println(objectPath)
+		return nil
 	}
 	if recursive {
-		basePath := remotePath
-		if !strings.HasSuffix(remotePath, "/") {
-			basePath, _ = path.Split(remotePath)
-		}
-		var result []string
-		for i := len(paths) - 1; i >= 0; i-- {
-			name := paths[i]
-			if !strings.HasSuffix(name, "/") {
-				result = append(result, name)
-				continue
-			}
-			dirPath := basePath + name
-			children, err := ListStoragePathsAll(ctx, projectRef, dirPath)
-			if err != nil {
-				return err
-			}
-			result = append(result, children...)
-		}
-		paths = result
+		return IterateStoragePathsAll(ctx, projectRef, remotePath, callback)
 	}
-	if len(paths) > 0 {
-		fmt.Println(strings.Join(paths, "\n"))
-	}
-	return nil
+	return IterateStoragePaths(ctx, projectRef, remotePath, callback)
 }
+
+var errInvalidURL = errors.New("URL must match pattern ss:///bucket/prefix")
 
 func ParseStorageURL(objectPath string) (string, error) {
 	parsed, err := url.Parse(objectPath)
@@ -62,22 +43,32 @@ func ParseStorageURL(objectPath string) (string, error) {
 		return "", err
 	}
 	if strings.ToLower(parsed.Scheme) != STORAGE_SCHEME || len(parsed.Path) == 0 || len(parsed.Host) > 0 {
-		return "", errors.New("URL must match pattern ss:///bucket/prefix")
+		return "", errInvalidURL
 	}
 	return parsed.Path, nil
 }
 
 func ListStoragePaths(ctx context.Context, projectRef, remotePath string) ([]string, error) {
 	var result []string
+	err := IterateStoragePaths(ctx, projectRef, remotePath, func(objectName string) error {
+		result = append(result, objectName)
+		return nil
+	})
+	return result, err
+}
+
+func IterateStoragePaths(ctx context.Context, projectRef, remotePath string, callback func(objectName string) error) error {
 	bucket, prefix := SplitBucketPrefix(remotePath)
 	if len(bucket) == 0 || (len(prefix) == 0 && !strings.HasSuffix(remotePath, "/")) {
 		buckets, err := client.ListStorageBuckets(ctx, projectRef)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, b := range buckets {
 			if strings.HasPrefix(b.Name, bucket) {
-				result = append(result, b.Name+"/")
+				if err := callback(b.Name + "/"); err != nil {
+					return err
+				}
 			}
 		}
 	} else {
@@ -85,14 +76,16 @@ func ListStoragePaths(ctx context.Context, projectRef, remotePath string) ([]str
 		for i := 0; i < pages; i++ {
 			objects, err := client.ListStorageObjects(ctx, projectRef, bucket, prefix, i)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			for _, o := range objects {
 				name := o.Name
 				if o.Id == nil {
 					name += "/"
 				}
-				result = append(result, name)
+				if err := callback(name); err != nil {
+					return err
+				}
 			}
 			if len(objects) == client.PAGE_LIMIT {
 				// TODO: show interactive prompt?
@@ -101,43 +94,74 @@ func ListStoragePaths(ctx context.Context, projectRef, remotePath string) ([]str
 			}
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func SplitBucketPrefix(objectPath string) (string, string) {
 	if objectPath == "" || objectPath == "/" {
 		return "", ""
 	}
-	sep := strings.IndexByte(objectPath[1:], '/')
-	if sep < 0 {
-		return objectPath[1:], ""
+	start := 0
+	if objectPath[0] == '/' {
+		start = 1
 	}
-	return objectPath[1 : sep+1], objectPath[sep+2:]
+	sep := strings.IndexByte(objectPath[start:], '/')
+	if sep < 0 {
+		return objectPath[start:], ""
+	}
+	return objectPath[start : sep+start], objectPath[sep+start+1:]
 }
 
 // Expects remotePath to be terminated by "/"
 func ListStoragePathsAll(ctx context.Context, projectRef, remotePath string) ([]string, error) {
 	var result []string
-	queue := make([]string, 0)
-	queue = append(queue, remotePath)
-	for len(queue) > 0 {
-		dirPath := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		paths, err := ListStoragePaths(ctx, projectRef, dirPath)
-		if err != nil {
-			return result, err
+	err := IterateStoragePathsAll(ctx, projectRef, remotePath, func(objectPath string) error {
+		result = append(result, objectPath)
+		return nil
+	})
+	return result, err
+}
+
+func IterateStoragePathsAll(ctx context.Context, projectRef, remotePath string, callback func(objectPath string) error) error {
+	basePath := remotePath
+	if !strings.HasSuffix(remotePath, "/") {
+		basePath, _ = path.Split(remotePath)
+	}
+	// BFS so we can list paths in increasing depth
+	dirQueue := make([]string, 0)
+	// We don't know if user passed in a directory or file, so query storage first.
+	if err := IterateStoragePaths(ctx, projectRef, remotePath, func(objectName string) error {
+		objectPath := basePath + objectName
+		if strings.HasSuffix(objectName, "/") {
+			dirQueue = append(dirQueue, objectPath)
+			return nil
 		}
-		if len(paths) == 0 {
-			result = append(result, dirPath)
-		}
-		for _, objectName := range paths {
+		return callback(objectPath)
+	}); err != nil {
+		return err
+	}
+	for len(dirQueue) > 0 {
+		dirPath := dirQueue[len(dirQueue)-1]
+		dirQueue = dirQueue[:len(dirQueue)-1]
+		empty := true
+		if err := IterateStoragePaths(ctx, projectRef, dirPath, func(objectName string) error {
+			empty = false
 			objectPath := dirPath + objectName
 			if strings.HasSuffix(objectName, "/") {
-				queue = append(queue, objectPath)
-			} else {
-				result = append(result, objectPath)
+				dirQueue = append(dirQueue, objectPath)
+				return nil
+			}
+			return callback(objectPath)
+		}); err != nil {
+			return err
+		}
+		// Also report empty buckets
+		bucket, prefix := SplitBucketPrefix(dirPath)
+		if empty && len(prefix) == 0 {
+			if err := callback(bucket + "/"); err != nil {
+				return err
 			}
 		}
 	}
-	return result, nil
+	return nil
 }
