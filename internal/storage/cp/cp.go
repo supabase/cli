@@ -17,6 +17,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+var errUnsupportedOperation = errors.New("Unsupported operation")
+
 func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
 	srcParsed, err := url.Parse(src)
 	if err != nil {
@@ -42,75 +44,55 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 		}
 		// TODO: Check if destination is a directory
 		return client.UploadStorageObject(ctx, projectRef, dstParsed.Path, src, fsys)
+	} else if strings.ToLower(srcParsed.Scheme) == ls.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == ls.STORAGE_SCHEME {
+		return errors.New("Copying between buckets is not supported")
 	}
-	return errors.New("Unsupported operation")
+	utils.CmdSuggestion = fmt.Sprintf("Run %s to copy between local directories.", utils.Aqua("cp -r <src> <dst>"))
+	return errUnsupportedOperation
 }
 
 func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
-	remotePath = path.Join("/", remotePath)
+	// Prepare local directory for download
 	if fi, err := fsys.Stat(localPath); err == nil && fi.IsDir() {
 		localPath = filepath.Join(localPath, path.Base(remotePath))
 	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(localPath)); err != nil {
+	count := 0
+	if err := ls.IterateStoragePathsAll(ctx, projectRef, remotePath, func(objectPath string) error {
+		relPath := strings.TrimPrefix(objectPath, remotePath)
+		dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
+		fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
+		count++
+		if strings.HasSuffix(objectPath, "/") {
+			return utils.MkdirIfNotExistFS(fsys, dstPath)
+		}
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dstPath)); err != nil {
+			return err
+		}
+		return client.DownloadStorageObject(ctx, projectRef, objectPath, dstPath, fsys)
+	}); err != nil {
 		return err
 	}
-	if !IsDir(remotePath) {
-		fmt.Fprintln(os.Stderr, "Downloading:", remotePath, "=>", localPath)
-		if err := client.DownloadStorageObject(ctx, projectRef, remotePath, localPath, fsys); err != nil && strings.Contains(err.Error(), `"error":"Not Found"`) {
-			// Retry downloading as directory
-			remotePath += "/"
-		} else {
-			return err
-		}
-	}
-	queue := make([]string, 0)
-	queue = append(queue, remotePath)
-	for len(queue) > 0 {
-		dirPath := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		paths, err := ls.ListStoragePaths(ctx, projectRef, dirPath)
-		if err != nil {
-			return err
-		}
-		if strings.Count(dirPath, "/") > 2 && len(paths) == 0 {
-			return errors.New("Object not found: " + dirPath)
-		}
-		for _, objectName := range paths {
-			objectPath := dirPath + objectName
-			relPath := strings.TrimPrefix(objectPath, remotePath)
-			dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
-			fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
-			if strings.HasSuffix(objectName, "/") {
-				if err := utils.MkdirIfNotExistFS(fsys, dstPath); err != nil {
-					return err
-				}
-				queue = append(queue, objectPath)
-				continue
-			}
-			if err := client.DownloadStorageObject(ctx, projectRef, objectPath, dstPath, fsys); err != nil {
-				return err
-			}
-		}
+	if count == 0 {
+		return errors.New("Object not found: " + remotePath)
 	}
 	return nil
 }
 
 func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
 	noSlash := strings.TrimSuffix(remotePath, "/")
-	paths, err := ls.ListStoragePaths(ctx, projectRef, noSlash)
-	if err != nil {
-		return err
-	}
 	// Check if directory exists on remote
 	dirExists := false
 	fileExists := false
-	for _, p := range paths {
-		if p == path.Base(noSlash) {
+	if err := ls.IterateStoragePaths(ctx, projectRef, noSlash, func(objectName string) error {
+		if objectName == path.Base(noSlash) {
 			fileExists = true
 		}
-		if p == path.Base(noSlash)+"/" {
+		if objectName == path.Base(noSlash)+"/" {
 			dirExists = true
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	baseName := filepath.Base(localPath)
 	return afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -62,16 +63,17 @@ func ListStorageObjects(ctx context.Context, projectRef, bucket, prefix string, 
 }
 
 func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
-	if err != nil {
-		return err
-	}
-	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
 	f, err := fsys.Open(localPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, f)
 	if err != nil {
 		return err
@@ -98,6 +100,7 @@ func DownloadStorageObject(ctx context.Context, projectRef, remotePath, localPat
 	if err != nil {
 		return err
 	}
+	remotePath = strings.TrimPrefix(remotePath, "/")
 	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
