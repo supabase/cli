@@ -90,7 +90,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	}
 	defer f.Close()
 	config := pgconn.Config{
-		Host:     "localhost",
+		Host:     "127.0.0.1",
 		Port:     uint16(utils.Config.Db.ShadowPort),
 		User:     "postgres",
 		Password: utils.Config.Db.Password,

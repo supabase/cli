@@ -200,7 +200,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 }
 
 func TestGenRemoteCommand(t *testing.T) {
-	const dbUrl = "postgres://postgres:@localhost:5432/postgres"
+	const dbUrl = "postgres://postgres:@127.0.0.1:5432/postgres"
 	const containerId = "test-container"
 
 	t.Run("generates type from remote db", func(t *testing.T) {

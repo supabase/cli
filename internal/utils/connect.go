@@ -68,7 +68,7 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	if len(config.Host) == 0 {
-		config.Host = "localhost"
+		config.Host = "127.0.0.1"
 	}
 	if config.Port == 0 {
 		config.Port = uint16(Config.Db.Port)

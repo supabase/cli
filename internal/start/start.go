@@ -170,7 +170,7 @@ EOF
 						"--no-verbose",
 						"--tries=1",
 						"--spider",
-						"http://localhost:9001/health"},
+						"http://127.0.0.1:9001/health"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -261,7 +261,7 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://localhost:4000/health"},
+					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"},
 					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
 					Retries:     3,
@@ -376,7 +376,7 @@ EOF
 			}
 		}
 		env := []string{
-			fmt.Sprintf("API_EXTERNAL_URL=http://localhost:%v", utils.Config.Api.Port),
+			fmt.Sprintf("API_EXTERNAL_URL=http://127.0.0.1:%v", utils.Config.Api.Port),
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -405,10 +405,10 @@ EOF
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100
 			// is fixed on upstream GoTrue.
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://localhost:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -498,7 +498,7 @@ EOF
 				)
 			} else {
 				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://localhost:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://127.0.0.1:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
 				)
 			}
 
@@ -516,7 +516,7 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"},
+					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -608,7 +608,7 @@ EOF
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/4000"},
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/4000"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -688,7 +688,7 @@ EOF
 					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
 				},
 				Healthcheck: &container.HealthConfig{
-					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
+					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
 					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
@@ -773,7 +773,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -816,7 +816,7 @@ EOF
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://localhost:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -861,7 +861,7 @@ EOF
 					"PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/localhost/6432"},
+					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/6432"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,

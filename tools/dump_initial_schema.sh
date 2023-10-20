@@ -9,7 +9,7 @@ set -euo pipefail
 pg_dump \
     --column-inserts \
     --exclude-table-data 'pgsodium.key' \
-    -d 'postgres://supabase_admin:postgres@localhost:54322/postgres' \
+    -d 'postgres://supabase_admin:postgres@127.0.0.1:54322/postgres' \
 | sed 's/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /' \
 | sed 's/^CREATE TABLE /CREATE TABLE IF NOT EXISTS /' \
 | sed 's/^CREATE SEQUENCE /CREATE SEQUENCE IF NOT EXISTS /' \

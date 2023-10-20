@@ -26,14 +26,14 @@ type CustomName struct {
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
-		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@localhost:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
+		c.DbURL: fmt.Sprintf("postgresql://postgres:%s@127.0.0.1:%d/postgres", utils.Config.Db.Password, utils.Config.Db.Port),
 	}
 	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
-		values[c.ApiURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Api.Port)
-		values[c.GraphqlURL] = fmt.Sprintf("http://localhost:%d/graphql/v1", utils.Config.Api.Port)
+		values[c.ApiURL] = fmt.Sprintf("http://127.0.0.1:%d", utils.Config.Api.Port)
+		values[c.GraphqlURL] = fmt.Sprintf("http://127.0.0.1:%d/graphql/v1", utils.Config.Api.Port)
 	}
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
-		values[c.StudioURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Studio.Port)
+		values[c.StudioURL] = fmt.Sprintf("http://127.0.0.1:%d", utils.Config.Studio.Port)
 	}
 	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
@@ -41,7 +41,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
-		values[c.InbucketURL] = fmt.Sprintf("http://localhost:%d", utils.Config.Inbucket.Port)
+		values[c.InbucketURL] = fmt.Sprintf("http://127.0.0.1:%d", utils.Config.Inbucket.Port)
 	}
 	return values
 }
@@ -118,13 +118,13 @@ func IsServiceReady(ctx context.Context, container string) bool {
 
 func isPostgRESTHealthy(ctx context.Context) bool {
 	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://localhost:%d/rest/v1/", utils.Config.Api.Port)
+	restUrl := fmt.Sprintf("http://127.0.0.1:%d/rest/v1/", utils.Config.Api.Port)
 	return checkHTTPHead(ctx, restUrl)
 }
 
 func isEdgeRuntimeHealthy(ctx context.Context) bool {
 	// Native health check logs too much hyper::Error(IncompleteMessage)
-	restUrl := fmt.Sprintf("http://localhost:%d/functions/v1/_internal/health", utils.Config.Api.Port)
+	restUrl := fmt.Sprintf("http://127.0.0.1:%d/functions/v1/_internal/health", utils.Config.Api.Port)
 	return checkHTTPHead(ctx, restUrl)
 }
 

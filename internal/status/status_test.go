@@ -156,7 +156,7 @@ func TestPrintStatus(t *testing.T) {
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputEnv, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "DB_URL=\"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
+		assert.Equal(t, "DB_URL=\"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
 	})
 
 	t.Run("outputs json object", func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestPrintStatus(t *testing.T) {
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputJson, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@localhost:0/postgres\"\n}\n", stdout.String())
+		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
 	})
 
 	t.Run("outputs yaml properties", func(t *testing.T) {
@@ -172,7 +172,7 @@ func TestPrintStatus(t *testing.T) {
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputYaml, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "DB_URL: postgresql://postgres:postgres@localhost:0/postgres\n", stdout.String())
+		assert.Equal(t, "DB_URL: postgresql://postgres:postgres@127.0.0.1:0/postgres\n", stdout.String())
 	})
 
 	t.Run("outputs toml fields", func(t *testing.T) {
@@ -180,6 +180,6 @@ func TestPrintStatus(t *testing.T) {
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputToml, &stdout, exclude...))
 		// Check error
-		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@localhost:0/postgres\"\n", stdout.String())
+		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
 	})
 }

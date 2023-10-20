@@ -23,7 +23,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "localhost",
+	Host:     "127.0.0.1",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",

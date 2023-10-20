@@ -34,7 +34,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if config.Host != "localhost" {
+	if config.Host != "127.0.0.1" {
 		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
 	} else {
 		fmt.Fprintln(os.Stderr, "Connecting to local database...")
@@ -61,7 +61,7 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
 	var conn *pgx.Conn
-	if config.Host == "localhost" && config.Port == uint16(utils.Config.Db.Port) {
+	if config.Host == "127.0.0.1" && config.Port == uint16(utils.Config.Db.Port) {
 		conn, err = utils.ConnectLocalPostgres(ctx, config, options...)
 	} else {
 		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
@@ -183,7 +183,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
-	source := fmt.Sprintf("postgresql://postgres:postgres@localhost:%d/postgres", utils.Config.Db.ShadowPort)
+	source := fmt.Sprintf("postgresql://postgres:postgres@127.0.0.1:%d/postgres", utils.Config.Db.ShadowPort)
 	target := utils.ToPostgresURL(config)
 	return DiffSchemaMigra(ctx, source, target, schema)
 }

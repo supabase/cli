@@ -13,7 +13,7 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-const mockHost = "http://localhost"
+const mockHost = "http://127.0.0.1"
 
 func MockDocker(docker *client.Client) error {
 	// Skip setup if docker is already mocked

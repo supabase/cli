@@ -103,7 +103,7 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{Host: "localhost"}, fsys)
+		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{Host: "127.0.0.1"}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
