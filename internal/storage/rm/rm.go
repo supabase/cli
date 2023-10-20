@@ -14,6 +14,12 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+var (
+	errMissingObject = errors.New("Object not found")
+	errMissingBucket = errors.New("You must specify a bucket to delete.")
+	errMissingFlag   = errors.New("You must specify -r flag to delete directories.")
+)
+
 type PrefixGroup struct {
 	Bucket   string
 	Prefixes []string
@@ -30,10 +36,10 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		bucket, prefix := ls.SplitBucketPrefix(remotePath)
 		// Ignore attempts to delete all buckets
 		if len(bucket) == 0 {
-			return errors.New("You must specify a bucket to delete.")
+			return errMissingBucket
 		}
 		if cp.IsDir(prefix) && !recursive {
-			return errors.New("You must specify -r flag to delete directories.")
+			return errMissingFlag
 		}
 		groups[bucket] = append(groups[bucket], prefix)
 	}
@@ -42,49 +48,38 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		return err
 	}
 	for bucket, prefixes := range groups {
-		if utils.SliceContains(prefixes, "") {
-			fmt.Fprintln(os.Stderr, "Deleting bucket:", bucket)
-			if err := RemoveStoragePathAll(ctx, projectRef, bucket, ""); err != nil {
-				return err
-			}
-			if data, err := client.DeleteStorageBucket(ctx, projectRef, bucket); err == nil {
-				fmt.Fprintln(os.Stderr, data.Message)
-			} else if !strings.Contains(err.Error(), `"error":"Bucket not found"`) {
-				return err
-			} else {
-				fmt.Fprintln(os.Stderr, "Bucket not found")
-			}
-			continue
-		}
+		// Always try deleting first in case the paths resolve to extensionless files
 		fmt.Fprintln(os.Stderr, "Deleting objects:", prefixes)
 		removed, err := client.DeleteStorageObjects(ctx, projectRef, bucket, prefixes)
 		if err != nil {
 			return err
-		}
-		if !recursive {
-			if len(removed) == 0 {
-				utils.CmdSuggestion = "You must specify -r flag to delete directories."
-				return errors.New("Object not found")
-			}
-			continue
 		}
 		set := map[string]struct{}{}
 		for _, object := range removed {
 			set[object.Name] = struct{}{}
 		}
 		for _, prefix := range prefixes {
-			if _, ok := set[prefix]; !ok {
-				if err := RemoveStoragePathAll(ctx, projectRef, bucket, prefix+"/"); err != nil {
-					return err
-				}
+			if _, ok := set[prefix]; ok {
+				continue
+			}
+			if !recursive {
+				fmt.Fprintln(os.Stderr, "Object not found:", prefix)
+				continue
+			}
+			if len(prefix) > 0 {
+				prefix += "/"
+			}
+			if err := RemoveStoragePathAll(ctx, projectRef, bucket, prefix); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
 }
 
-// Expects prefix to be terminated by "/"
+// Expects prefix to be terminated by "/" or ""
 func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string) error {
+	// We must remove one directory at a time to avoid breaking pagination result
 	queue := make([]string, 0)
 	queue = append(queue, prefix)
 	for len(queue) > 0 {
@@ -94,8 +89,8 @@ func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string
 		if err != nil {
 			return err
 		}
-		if len(paths) == 0 {
-			return errors.New("Object not found")
+		if len(paths) == 0 && len(prefix) > 0 {
+			return fmt.Errorf("%w: %s/%s", errMissingObject, bucket, prefix)
 		}
 		var files []string
 		for _, objectName := range paths {
@@ -111,6 +106,16 @@ func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string
 			if _, err := client.DeleteStorageObjects(ctx, projectRef, bucket, files); err != nil {
 				return err
 			}
+		}
+	}
+	if len(prefix) == 0 {
+		fmt.Fprintln(os.Stderr, "Deleting bucket:", bucket)
+		if data, err := client.DeleteStorageBucket(ctx, projectRef, bucket); err == nil {
+			fmt.Fprintln(os.Stderr, data.Message)
+		} else if strings.Contains(err.Error(), `"error":"Bucket not found"`) {
+			fmt.Fprintln(os.Stderr, "Bucket not found:", bucket)
+		} else {
+			return err
 		}
 	}
 	return nil
