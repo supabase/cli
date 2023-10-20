@@ -14,6 +14,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+var (
+	errUnsupportedMove = errors.New("Moving between buckets is unsupported")
+	errMissingPath     = errors.New("You must specify an object path")
+)
+
 func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
 	srcParsed, err := ls.ParseStorageURL(src)
 	if err != nil {
@@ -29,8 +34,11 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	}
 	srcBucket, srcPrefix := ls.SplitBucketPrefix(srcParsed)
 	dstBucket, dstPrefix := ls.SplitBucketPrefix(dstParsed)
+	if len(srcPrefix) == 0 && len(dstPrefix) == 0 {
+		return errMissingPath
+	}
 	if srcBucket != dstBucket {
-		return errors.New("Moving between buckets is unsupported")
+		return errUnsupportedMove
 	}
 	fmt.Fprintln(os.Stderr, "Moving object:", srcParsed, "=>", dstParsed)
 	data, err := client.MoveStorageObject(ctx, projectRef, srcBucket, srcPrefix, dstPrefix)
@@ -45,6 +53,8 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 // Expects srcPath to be terminated by "/"
 func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath string) error {
 	_, dstPrefix := ls.SplitBucketPrefix(dstPath)
+	// Cannot iterate because pagination result may be updated during move
+	count := 0
 	queue := make([]string, 0)
 	queue = append(queue, srcPath)
 	for len(queue) > 0 {
@@ -60,6 +70,7 @@ func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath stri
 				queue = append(queue, objectPath)
 				continue
 			}
+			count++
 			relPath := strings.TrimPrefix(objectPath, srcPath)
 			srcBucket, srcPrefix := ls.SplitBucketPrefix(objectPath)
 			absPath := path.Join(dstPrefix, relPath)
@@ -68,6 +79,9 @@ func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath stri
 				return err
 			}
 		}
+	}
+	if count == 0 {
+		return errors.New("Object not found: " + srcPath)
 	}
 	return nil
 }
