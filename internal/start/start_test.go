@@ -172,10 +172,10 @@ func TestDatabaseStart(t *testing.T) {
 					},
 				}})
 		}
-		gock.New("localhost").
+		gock.New("127.0.0.1").
 			Head("/rest/v1/").
 			Reply(http.StatusOK)
-		gock.New("localhost").
+		gock.New("127.0.0.1").
 			Head("/functions/v1/_internal/health").
 			Reply(http.StatusOK)
 		// Run test

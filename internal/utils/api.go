@@ -279,7 +279,7 @@ func GetSupabaseDashboardURL() string {
 	case "https://api.supabase.green":
 		return "https://app.supabase.green"
 	default:
-		return "http://localhost:8082"
+		return "http://127.0.0.1:8082"
 	}
 }
 

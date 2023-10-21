@@ -11,7 +11,7 @@ import (
 )
 
 func TestPostgresProxy(t *testing.T) {
-	const postgresUrl = "postgresql://postgres:password@localhost:5432/postgres"
+	const postgresUrl = "postgresql://postgres:password@127.0.0.1:5432/postgres"
 
 	t.Run("forwards messages between frontend and backend", func(t *testing.T) {
 		// Parse connection url

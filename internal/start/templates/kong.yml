@@ -89,7 +89,7 @@ services:
         config:
           add:
             headers:
-              - "Forwarded: host=localhost:{{ .ApiPort }}/storage/v1;proto=http"
+              - "Forwarded: host=127.0.0.1:{{ .ApiPort }}/storage/v1;proto=http"
   - name: pg-meta
     _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
     url: http://{{ .PgmetaId }}:8080/

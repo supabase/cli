@@ -13,7 +13,7 @@ To make a new release:
 1. Update `beta.yaml` with the latest version from local development
 
 ```bash
-curl -o api/beta.yaml http://localhost:8080/api/v1-yaml
+curl -o api/beta.yaml http://127.0.0.1:8080/api/v1-yaml
 ```
 
 2. Regenerate the Go client and API types
