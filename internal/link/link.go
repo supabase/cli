@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
@@ -90,37 +91,37 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil {
+		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPostgrest(ctx, projectRef); err != nil {
+		if err := linkPostgrest(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, projectRef, fsys); err != nil {
+		if err := linkPostgrestVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil {
+		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkStorageVersion(ctx, projectRef, fsys); err != nil {
+		if err := linkStorageVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPooler(ctx, projectRef); err != nil {
+		if err := linkPooler(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
