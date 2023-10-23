@@ -18,9 +18,9 @@ const PAGE_LIMIT = 100
 
 type ListObjectsQuery struct {
 	Prefix string `json:"prefix"`
-	Search string `json:"search"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
+	Search string `json:"search,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
 }
 
 type ObjectResponse struct {
