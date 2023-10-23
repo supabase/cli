@@ -3,6 +3,7 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/storage/mv"
@@ -24,7 +25,7 @@ var (
 		Short:   "List objects by path prefix",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			objectPath := ls.STORAGE_SCHEME + ":///"
+			objectPath := storage.STORAGE_SCHEME + ":///"
 			if len(args) > 0 {
 				objectPath = args[0]
 			}
