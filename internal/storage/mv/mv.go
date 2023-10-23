@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
@@ -20,11 +21,11 @@ var (
 )
 
 func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
-	srcParsed, err := ls.ParseStorageURL(src)
+	srcParsed, err := storage.ParseStorageURL(src)
 	if err != nil {
 		return err
 	}
-	dstParsed, err := ls.ParseStorageURL(dst)
+	dstParsed, err := storage.ParseStorageURL(dst)
 	if err != nil {
 		return err
 	}
@@ -32,8 +33,8 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	if err != nil {
 		return err
 	}
-	srcBucket, srcPrefix := ls.SplitBucketPrefix(srcParsed)
-	dstBucket, dstPrefix := ls.SplitBucketPrefix(dstParsed)
+	srcBucket, srcPrefix := storage.SplitBucketPrefix(srcParsed)
+	dstBucket, dstPrefix := storage.SplitBucketPrefix(dstParsed)
 	if len(srcPrefix) == 0 && len(dstPrefix) == 0 {
 		return errMissingPath
 	}
@@ -52,7 +53,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 
 // Expects srcPath to be terminated by "/"
 func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath string) error {
-	_, dstPrefix := ls.SplitBucketPrefix(dstPath)
+	_, dstPrefix := storage.SplitBucketPrefix(dstPath)
 	// Cannot iterate because pagination result may be updated during move
 	count := 0
 	queue := make([]string, 0)
@@ -72,7 +73,7 @@ func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath stri
 			}
 			count++
 			relPath := strings.TrimPrefix(objectPath, srcPath)
-			srcBucket, srcPrefix := ls.SplitBucketPrefix(objectPath)
+			srcBucket, srcPrefix := storage.SplitBucketPrefix(objectPath)
 			absPath := path.Join(dstPrefix, relPath)
 			fmt.Fprintln(os.Stderr, "Moving object:", objectPath, "=>", path.Join(dstPath, relPath))
 			if _, err := client.MoveStorageObject(ctx, projectRef, srcBucket, srcPrefix, absPath); err != nil {

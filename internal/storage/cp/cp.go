@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
@@ -122,7 +123,7 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 		err = client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys)
 		if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 			// Retry after creating bucket
-			if bucket, prefix := ls.SplitBucketPrefix(dstPath); len(prefix) > 0 {
+			if bucket, prefix := storage.SplitBucketPrefix(dstPath); len(prefix) > 0 {
 				if _, err := client.CreateStorageBucket(ctx, projectRef, bucket); err != nil {
 					return err
 				}
