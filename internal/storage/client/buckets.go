@@ -34,8 +34,8 @@ func ListStorageBuckets(ctx context.Context, projectRef string) ([]BucketRespons
 }
 
 type CreateBucketRequest struct {
-	Id               string   `json:"id"`                           // "string",
 	Name             string   `json:"name"`                         // "string",
+	Id               string   `json:"id,omitempty"`                 // "string",
 	Public           bool     `json:"public,omitempty"`             // false,
 	FileSizeLimit    int      `json:"file_size_limit,omitempty"`    // 0,
 	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
@@ -51,10 +51,7 @@ func CreateStorageBucket(ctx context.Context, projectRef, bucketName string) (*C
 	if err != nil {
 		return nil, err
 	}
-	body := CreateBucketRequest{
-		Id:   bucketName,
-		Name: bucketName,
-	}
+	body := CreateBucketRequest{Name: bucketName}
 	return tenant.JsonResponseWithBearer[CreateBucketResponse](ctx, http.MethodPost, url, apiKey.ServiceRole, body)
 }
 
