@@ -16,6 +16,23 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
+var mockFile = client.ObjectResponse{
+	Name:           "abstract.pdf",
+	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
+	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
+	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
+	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
+	Metadata: &client.ObjectMetadata{
+		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
+		Size:           82702,
+		Mimetype:       "application/pdf",
+		CacheControl:   "max-age=3600",
+		LastModified:   "2023-10-13T18:08:22.000Z",
+		ContentLength:  82702,
+		HttpStatusCode: 200,
+	},
+}
+
 func TestStorageLS(t *testing.T) {
 	t.Run("lists buckets", func(t *testing.T) {
 		// Setup in-memory fs
@@ -175,22 +192,7 @@ func TestListStoragePaths(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{{
 				Name: "folder",
-			}, {
-				Name:           "abstract.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			}, mockFile})
 		// Run test
 		paths, err := ListStoragePaths(context.Background(), projectRef, "bucket/")
 		// Check error
@@ -331,22 +333,7 @@ func TestListStoragePathsAll(t *testing.T) {
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
-				Name:           "abstract.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			JSON([]client.ObjectResponse{mockFile})
 		// Run test
 		paths, err := ListStoragePathsAll(context.Background(), projectRef, "")
 		// Check error
@@ -377,22 +364,7 @@ func TestListStoragePathsAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{{
 				Name: "error",
-			}, {
-				Name:           "abstract.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			}, mockFile})
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/list/private").
 			JSON(client.ListObjectsQuery{
