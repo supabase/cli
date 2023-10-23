@@ -16,6 +16,23 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
+var mockFile = client.ObjectResponse{
+	Name:           "abstract.pdf",
+	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
+	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
+	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
+	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
+	Metadata: &client.ObjectMetadata{
+		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
+		Size:           82702,
+		Mimetype:       "application/pdf",
+		CacheControl:   "max-age=3600",
+		LastModified:   "2023-10-13T18:08:22.000Z",
+		ContentLength:  82702,
+		HttpStatusCode: 200,
+	},
+}
+
 func TestStorageCP(t *testing.T) {
 	t.Run("copy local to remote", func(t *testing.T) {
 		// Setup in-memory fs
@@ -314,25 +331,12 @@ func TestUploadAll(t *testing.T) {
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
+		fileObject := mockFile
+		fileObject.Name = "file"
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
-				Name:           "file",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			JSON([]client.ObjectResponse{fileObject})
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
@@ -513,26 +517,13 @@ func TestDownloadAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{{
 				Name: "docs",
-			}, {
-				Name:           "abstract.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			}, mockFile})
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/object/private/tmp/abstract.pdf").
 			Reply(http.StatusOK)
 		// Lists /private/tmp/docs directory
+		readme := mockFile
+		readme.Name = "readme.md"
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/list/private").
 			JSON(client.ListObjectsQuery{
@@ -542,24 +533,9 @@ func TestDownloadAll(t *testing.T) {
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
-				Name:           "readme.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			JSON([]client.ObjectResponse{readme})
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
-			Get("/storage/v1/object/private/tmp/docs/readme.pdf").
+			Get("/storage/v1/object/private/tmp/docs/readme.md").
 			Reply(http.StatusOK)
 		// Run test
 		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/tmp/", "/", fsys)
@@ -569,7 +545,7 @@ func TestDownloadAll(t *testing.T) {
 		exists, err := afero.Exists(fsys, "/tmp/abstract.pdf")
 		assert.NoError(t, err)
 		assert.True(t, exists)
-		exists, err = afero.Exists(fsys, "/tmp/docs/readme.pdf")
+		exists, err = afero.Exists(fsys, "/tmp/docs/readme.md")
 		assert.NoError(t, err)
 		assert.True(t, exists)
 	})
@@ -589,22 +565,7 @@ func TestDownloadAll(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
-				Name:           "abstract.pdf",
-				Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-				UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-				LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-				Metadata: &client.ObjectMetadata{
-					ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
-					Size:           82702,
-					Mimetype:       "application/pdf",
-					CacheControl:   "max-age=3600",
-					LastModified:   "2023-10-13T18:08:22.000Z",
-					ContentLength:  82702,
-					HttpStatusCode: 200,
-				},
-			}})
+			JSON([]client.ObjectResponse{mockFile})
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/object/private/abstract.pdf").
 			Reply(http.StatusOK)
