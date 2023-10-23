@@ -23,6 +23,7 @@ import (
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -124,7 +125,9 @@ func DockerRemoveAll(ctx context.Context) {
 	_ = WaitAll(Volumes, func(name string) error {
 		return Docker.VolumeRemove(ctx, name, true)
 	})
-	_ = Docker.NetworkRemove(ctx, NetId)
+	_, _ = Docker.NetworksPrune(ctx, filters.NewArgs(
+		filters.Arg("label", "com.supabase.cli.project="+Config.ProjectId),
+	))
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {

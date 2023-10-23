@@ -245,7 +245,7 @@ func TestStartCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		// Cleanup resources
 		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/networks/").
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 			Reply(http.StatusOK)
 		// Run test
 		err := Run(context.Background(), fsys)
