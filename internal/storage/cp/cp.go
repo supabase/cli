@@ -33,19 +33,17 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	if err != nil {
 		return err
 	}
-	if strings.ToLower(srcParsed.Scheme) == ls.STORAGE_SCHEME && dstParsed.Scheme == "" {
+	if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && dstParsed.Scheme == "" {
 		if recursive {
 			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, dst, fsys)
 		}
-		// TODO: Check if destination is a directory
 		return client.DownloadStorageObject(ctx, projectRef, srcParsed.Path, dst, fsys)
-	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == ls.STORAGE_SCHEME {
+	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
 		if recursive {
 			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, src, fsys)
 		}
-		// TODO: Check if destination is a directory
 		return client.UploadStorageObject(ctx, projectRef, dstParsed.Path, src, fsys)
-	} else if strings.ToLower(srcParsed.Scheme) == ls.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == ls.STORAGE_SCHEME {
+	} else if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
 		return errors.New("Copying between buckets is not supported")
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to copy between local directories.", utils.Aqua("cp -r <src> <dst>"))

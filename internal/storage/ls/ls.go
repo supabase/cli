@@ -13,8 +13,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const STORAGE_SCHEME = "ss"
-
 func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) error {
 	remotePath, err := storage.ParseStorageURL(objectPath)
 	if err != nil {
