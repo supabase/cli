@@ -35,7 +35,7 @@ func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) 
 	return IterateStoragePaths(ctx, projectRef, remotePath, callback)
 }
 
-var errInvalidURL = errors.New("URL must match pattern ss:///bucket/prefix")
+var errInvalidURL = errors.New("URL must match pattern ss:///bucket/[prefix]")
 
 func ParseStorageURL(objectPath string) (string, error) {
 	parsed, err := url.Parse(objectPath)

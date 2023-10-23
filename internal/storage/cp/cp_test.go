@@ -168,7 +168,7 @@ func TestStorageCP(t *testing.T) {
 		assert.ErrorIs(t, err, utils.ErrNotLinked)
 	})
 
-	t.Run("throws error on missing project", func(t *testing.T) {
+	t.Run("throws error on unsupported operation", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		projectRef := apitest.RandomProjectRef()

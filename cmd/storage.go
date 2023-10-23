@@ -19,7 +19,7 @@ var (
 	recursive bool
 
 	lsCmd = &cobra.Command{
-		Use:     "ls [prefix]",
+		Use:     "ls [path]",
 		Example: "ls ss:///bucket/docs",
 		Short:   "List objects by path prefix",
 		Args:    cobra.MaximumNArgs(1),
@@ -38,7 +38,7 @@ var (
 cp -r docs ss:///bucket/docs
 cp -r ss:///bucket/docs .
 `,
-		Short: "Copy objects by from src to dst path",
+		Short: "Copy objects from src to dst path",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cp.Run(cmd.Context(), args[0], args[1], recursive, afero.NewOsFs())
@@ -47,7 +47,7 @@ cp -r ss:///bucket/docs .
 
 	mvCmd = &cobra.Command{
 		Use:     "mv <src> <dst>",
-		Short:   "Move objects by from src to dst path",
+		Short:   "Move objects from src to dst path",
 		Example: "mv -r ss:///bucket/docs ss:///bucket/www/docs",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
