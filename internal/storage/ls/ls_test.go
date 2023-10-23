@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
@@ -67,7 +68,7 @@ func TestStorageLS(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", false, fsys)
 		// Check error
-		assert.ErrorIs(t, err, errInvalidURL)
+		assert.ErrorIs(t, err, storage.ErrInvalidURL)
 	})
 
 	t.Run("throws error on invalid project", func(t *testing.T) {
@@ -390,81 +391,5 @@ func TestListStoragePathsAll(t *testing.T) {
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.ElementsMatch(t, []string{"private/abstract.pdf"}, paths)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
-func TestSplitBucketPrefix(t *testing.T) {
-	t.Run("splits empty path", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("")
-		assert.Equal(t, bucket, "")
-		assert.Equal(t, prefix, "")
-	})
-
-	t.Run("splits root path", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("/")
-		assert.Equal(t, bucket, "")
-		assert.Equal(t, prefix, "")
-	})
-
-	t.Run("splits no slash", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("bucket")
-		assert.Equal(t, bucket, "bucket")
-		assert.Equal(t, prefix, "")
-	})
-
-	t.Run("splits prefix slash", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("/bucket")
-		assert.Equal(t, bucket, "bucket")
-		assert.Equal(t, prefix, "")
-	})
-
-	t.Run("splits suffix slash", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("bucket/")
-		assert.Equal(t, bucket, "bucket")
-		assert.Equal(t, prefix, "")
-	})
-
-	t.Run("splits file path", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("/bucket/folder/name.png")
-		assert.Equal(t, bucket, "bucket")
-		assert.Equal(t, prefix, "folder/name.png")
-	})
-
-	t.Run("splits dir path", func(t *testing.T) {
-		bucket, prefix := SplitBucketPrefix("/bucket/folder/")
-		assert.Equal(t, bucket, "bucket")
-		assert.Equal(t, prefix, "folder/")
-	})
-}
-
-func TestParseStorageURL(t *testing.T) {
-	t.Run("parses valid url", func(t *testing.T) {
-		path, err := ParseStorageURL("ss:///bucket/folder/name.png")
-		assert.NoError(t, err)
-		assert.Equal(t, path, "/bucket/folder/name.png")
-	})
-
-	t.Run("throws error on invalid host", func(t *testing.T) {
-		path, err := ParseStorageURL("ss://bucket")
-		assert.ErrorIs(t, err, errInvalidURL)
-		assert.Empty(t, path)
-	})
-
-	t.Run("throws error on missing path", func(t *testing.T) {
-		path, err := ParseStorageURL("ss:")
-		assert.ErrorIs(t, err, errInvalidURL)
-		assert.Empty(t, path)
-	})
-
-	t.Run("throws error on invalid scheme", func(t *testing.T) {
-		path, err := ParseStorageURL(".")
-		assert.ErrorIs(t, err, errInvalidURL)
-		assert.Empty(t, path)
-	})
-
-	t.Run("throws error on invalid url", func(t *testing.T) {
-		path, err := ParseStorageURL(":")
-		assert.ErrorContains(t, err, "missing protocol scheme")
-		assert.Empty(t, path)
 	})
 }

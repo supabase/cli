@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
@@ -29,11 +30,11 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 	// Group paths by buckets
 	groups := map[string][]string{}
 	for _, objectPath := range paths {
-		remotePath, err := ls.ParseStorageURL(objectPath)
+		remotePath, err := storage.ParseStorageURL(objectPath)
 		if err != nil {
 			return err
 		}
-		bucket, prefix := ls.SplitBucketPrefix(remotePath)
+		bucket, prefix := storage.SplitBucketPrefix(remotePath)
 		// Ignore attempts to delete all buckets
 		if len(bucket) == 0 {
 			return errMissingBucket
