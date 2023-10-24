@@ -108,7 +108,8 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 		dstPath := remotePath
 		// Copying single file
 		if relPath == "." {
-			if IsDir(dstPath) || (dirExists && !fileExists) {
+			_, prefix := storage.SplitBucketPrefix(dstPath)
+			if IsDir(prefix) || (dirExists && !fileExists) {
 				dstPath = path.Join(dstPath, info.Name())
 			}
 		} else {
@@ -132,6 +133,6 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 	})
 }
 
-func IsDir(objectPath string) bool {
-	return len(objectPath) == 0 || strings.HasSuffix(objectPath, "/")
+func IsDir(objectPrefix string) bool {
+	return len(objectPrefix) == 0 || strings.HasSuffix(objectPrefix, "/")
 }

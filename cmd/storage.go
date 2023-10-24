@@ -35,7 +35,7 @@ var (
 
 	cpCmd = &cobra.Command{
 		Use: "cp <src> <dst>",
-		Example: `cp readme.md ss:///bucket
+		Example: `cp readme.md ss:///bucket/readme.md
 cp -r docs ss:///bucket/docs
 cp -r ss:///bucket/docs .
 `,
