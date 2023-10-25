@@ -23,7 +23,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "127.0.0.1",
+	Host:     "db.supabase.co",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",

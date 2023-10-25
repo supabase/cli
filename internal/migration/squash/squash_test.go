@@ -22,7 +22,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "127.0.0.1",
+	Host:     "db.supabase.co",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",
@@ -72,7 +72,7 @@ func TestSquashCommand(t *testing.T) {
 			Query(repair.INSERT_MIGRATION_VERSION, "1", "target", "{}").
 			Reply("INSERT 1")
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{Host: "127.0.0.1"}, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

@@ -37,7 +37,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// 2. Update migration history
-	if shouldUpdate := utils.PromptYesNo("Update remote migration history table?", true, os.Stdin); !shouldUpdate {
+	if utils.IsLoopback(config.Host) || !utils.PromptYesNo("Update remote migration history table?", true, os.Stdin) {
 		return nil
 	}
 	return baselineMigrations(ctx, config, version, fsys, options...)

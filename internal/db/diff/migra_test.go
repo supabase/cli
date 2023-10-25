@@ -92,23 +92,6 @@ func TestRunMigra(t *testing.T) {
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
-	t.Run("throws error on missing database", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
-			ReplyError(errors.New("network error"))
-		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{Host: "127.0.0.1"}, fsys)
-		// Check error
-		assert.ErrorIs(t, err, utils.ErrNotRunning)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("throws error on failure to load user schemas", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
