@@ -132,10 +132,14 @@ var (
 	}
 
 	dbPullCmd = &cobra.Command{
-		Use:   "pull",
+		Use:   "pull [migration name]",
 		Short: "Pull schema from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, afero.NewOsFs())
+			name := "remote_schema"
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")

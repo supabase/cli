@@ -11,7 +11,7 @@ import (
 )
 
 func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
-	path := GetMigrationPath(migrationName)
+	path := GetMigrationPath(utils.GetCurrentTimestamp(), migrationName)
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 	return nil
 }
 
-func GetMigrationPath(migrationName string) string {
-	name := utils.GetCurrentTimestamp() + "_" + migrationName + ".sql"
-	return filepath.Join(utils.MigrationsDir, name)
+func GetMigrationPath(timestamp, name string) string {
+	fullName := fmt.Sprintf("%s_%s.sql", timestamp, name)
+	return filepath.Join(utils.MigrationsDir, fullName)
 }

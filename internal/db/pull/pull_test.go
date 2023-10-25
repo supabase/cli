@@ -44,7 +44,7 @@ func TestPullCommand(t *testing.T) {
 			Get("/_ping").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, fsys)
+		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -67,7 +67,7 @@ func TestPullCommand(t *testing.T) {
 			SetHeader("API-Version", utils.Docker.ClientVersion()).
 			SetHeader("OSType", "linux")
 		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, fsys)
+		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -91,7 +91,7 @@ func TestPullCommand(t *testing.T) {
 			SetHeader("API-Version", utils.Docker.ClientVersion()).
 			SetHeader("OSType", "linux")
 		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, fsys)
+		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -120,7 +120,7 @@ func TestPullCommand(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`)
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), nil, dbConfig, "", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" does not exist (SQLSTATE 3D000)`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
