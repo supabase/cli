@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -15,6 +14,7 @@ import (
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -28,7 +28,7 @@ var (
 	errInSync  = errors.New("no schema changes found")
 )
 
-func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks.
 	if err := utils.AssertDockerIsRunning(ctx); err != nil {
 		return err
@@ -45,7 +45,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.
 	defer conn.Close(context.Background())
 	// 3. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
-	path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_schema.sql")
+	path := new.GetMigrationPath(timestamp, name)
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		return run(p, ctx, schema, path, conn, fsys)
 	}); err != nil {
