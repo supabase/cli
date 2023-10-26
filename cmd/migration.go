@@ -79,7 +79,7 @@ var (
 		Use:   "up",
 		Short: "Apply pending migrations to local database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return up.Run(cmd.Context(), includeAll, afero.NewOsFs())
+			return up.Run(cmd.Context(), includeAll, flags.DbConfig, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Local database is up to date.")

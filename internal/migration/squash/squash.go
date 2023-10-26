@@ -37,7 +37,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// 2. Update migration history
-	if len(config.Host) == 0 || !utils.PromptYesNo("Update remote migration history table?", true, os.Stdin) {
+	if utils.IsLoopback(config.Host) || !utils.PromptYesNo("Update remote migration history table?", true, os.Stdin) {
 		return nil
 	}
 	return baselineMigrations(ctx, config, version, fsys, options...)
@@ -110,7 +110,7 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}

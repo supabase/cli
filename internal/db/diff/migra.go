@@ -34,14 +34,6 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if config.Host != "127.0.0.1" {
-		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
-	} else {
-		fmt.Fprintln(os.Stderr, "Connecting to local database...")
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
-	}
 	// 1. Load all user defined schemas
 	if len(schema) == 0 {
 		schema, err = loadSchema(ctx, config, options...)
@@ -59,15 +51,10 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	return SaveDiff(out, file, fsys)
 }
 
-func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (schema []string, err error) {
-	var conn *pgx.Conn
-	if config.Host == "127.0.0.1" && config.Port == uint16(utils.Config.Db.Port) {
-		conn, err = utils.ConnectLocalPostgres(ctx, config, options...)
-	} else {
-		conn, err = utils.ConnectRemotePostgres(ctx, config, options...)
-	}
+func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
-		return schema, err
+		return nil, err
 	}
 	defer conn.Close(context.Background())
 	return LoadUserSchemas(ctx, conn)

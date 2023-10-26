@@ -37,8 +37,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 		return err
 	}
 	// 2. Check postgres connection
-	fmt.Fprintln(os.Stderr, "Connecting to remote database...")
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}

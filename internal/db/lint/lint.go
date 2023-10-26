@@ -40,7 +40,7 @@ func toEnum(level string) LintLevel {
 
 func Run(ctx context.Context, schema []string, level string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
-	conn, err := connect(ctx, config, fsys, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
@@ -55,21 +55,6 @@ func Run(ctx context.Context, schema []string, level string, config pgconn.Confi
 		return nil
 	}
 	return printResultJSON(result, toEnum(level), os.Stdout)
-}
-
-func connect(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	if config.Host != "127.0.0.1" {
-		fmt.Fprintln(os.Stderr, "Connecting to remote database...")
-		return utils.ConnectRemotePostgres(ctx, config, options...)
-	}
-	fmt.Fprintln(os.Stderr, "Connecting to local database...")
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return nil, err
-	}
-	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-		return nil, err
-	}
-	return utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
