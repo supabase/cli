@@ -1,6 +1,5 @@
 import * as path from "https://deno.land/std@0.127.0/path/mod.ts";
 import { readAll } from "https://deno.land/std@0.162.0/streams/conversion.ts";
-import { decompress } from "https://deno.land/x/brotli@0.1.7/mod.ts";
 import { Parser } from "https://deno.land/x/eszip@v0.30.0/mod.ts";
 
 async function write(p: string, content: string) {
@@ -19,7 +18,7 @@ async function extractEszip(
   destPath: string,
   entrypointUrl: string,
   parser: Parser,
-  specifiers: string[]
+  specifiers: string[],
 ) {
   const entrypointPath = path.fromFileUrl(entrypointUrl);
   const basePath = path.dirname(entrypointPath);
@@ -40,9 +39,8 @@ async function extractEszip(
 
 async function extractSource(destPath: string, entrypointUrl: string) {
   const buf = await readAll(Deno.stdin);
-  // response is compressed with Brotli
-  const decompressed = decompress(buf);
-  const { parser, specifiers } = await loadEszip(decompressed);
+
+  const { parser, specifiers } = await loadEszip(buf);
   await extractEszip(destPath, entrypointUrl, parser, specifiers);
 }
 
