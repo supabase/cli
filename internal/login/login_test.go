@@ -1,6 +1,7 @@
 package login
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func TestLoginCommand(t *testing.T) {
 	keyring.MockInit()
 
-	t.Run("prompts and validates api token", func(t *testing.T) {
+	t.Run("accepts --token flag and validates provided value", func(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -27,7 +28,7 @@ func TestLoginCommand(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, w.Close())
 		// Run test
-		assert.NoError(t, Run(r, fsys))
+		assert.NoError(t, Run(context.Background(), r, RunParams{Token: string(token), Fsys: fsys}))
 		// Validate saved token
 		saved, err := credentials.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
