@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
@@ -20,11 +21,20 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		return errors.New("Unexpected error retrieving functions: " + string(resp.Body))
 	}
 
-	table := `|ID|NAME|SLUG|UPDATED_AT|VERSION|STATUS|
+	table := `|ID|NAME|SLUG|STATUS|VERSION|UPDATED_AT (UTC)|
 |-|-|-|-|-|-|
 `
 	for _, function := range *resp.JSON200 {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%f`|`%f`|`%s`|\n", function.Id, function.Name, function.Slug, function.UpdatedAt, function.Version, function.Status)
+		t := time.UnixMilli(int64(function.UpdatedAt))
+		table += fmt.Sprintf(
+			"|`%s`|`%s`|`%s`|`%s`|`%d`|`%s`|\n",
+			function.Id,
+			function.Name,
+			function.Slug,
+			function.Status,
+			uint64(function.Version),
+			t.UTC().Format("2006-01-02 15:04:05"),
+		)
 	}
 
 	return list.RenderTable(table)
