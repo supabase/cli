@@ -402,6 +402,8 @@ type (
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key"`
 		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+
+		Sessions sessions `toml:"sessions"`
 	}
 
 	email struct {
@@ -507,6 +509,11 @@ type (
 		S3Region        string `toml:"s3_region"`
 		S3AccessKey     string `toml:"s3_access_key"`
 		S3SecretKey     string `toml:"s3_secret_key"`
+	}
+
+	sessions struct {
+		Timebox           float64 `toml:"timebox"`
+		InactivityTimeout float64 `toml:"inactivity_timeout"`
 	}
 
 	// TODO
