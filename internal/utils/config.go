@@ -268,6 +268,8 @@ type (
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key"`
 		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+
+		Sessions sessions `toml:"sessions"`
 	}
 
 	email struct {
@@ -341,6 +343,11 @@ type (
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+	}
+
+	sessions struct {
+		Timebox           float64 `toml:"timebox"`
+		InactivityTimeout float64 `toml:"inactivity_timeout"`
 	}
 
 	// TODO
