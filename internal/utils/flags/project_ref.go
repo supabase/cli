@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"golang.org/x/term"
 )
@@ -18,6 +19,9 @@ var ProjectRef string
 
 func ParseProjectRef(fsys afero.Fs) error {
 	// Flag takes highest precedence
+	if len(ProjectRef) == 0 {
+		ProjectRef = viper.GetString("PROJECT_ID")
+	}
 	if len(ProjectRef) > 0 {
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
