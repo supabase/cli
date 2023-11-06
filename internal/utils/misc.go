@@ -180,7 +180,7 @@ var (
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 
 	ErrNotLinked  = errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
-	ErrInvalidRef = errors.New("Missing or invalid project ID. Use " + Aqua("--project-ref") + "or" + Aqua("SUPABASE_PROJECT_ID") + "env variable to set it. Project ID can be found on project settings page.")
+	ErrInvalidRef = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 	ErrNotRunning = errors.New(Aqua("supabase start") + " is not running.")
 )
 
