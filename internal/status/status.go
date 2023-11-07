@@ -118,7 +118,7 @@ func IsServiceReady(ctx context.Context, container string) bool {
 
 func isPostgRESTHealthy(ctx context.Context) bool {
 	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://127.0.0.1:%d/rest/v1/", utils.Config.Api.Port)
+	restUrl := fmt.Sprintf("http://127.0.0.1:%d/rest-admin/v1/live", utils.Config.Api.Port)
 	return checkHTTPHead(ctx, restUrl)
 }
 

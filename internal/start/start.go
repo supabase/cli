@@ -645,6 +645,7 @@ EOF
 					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					"PGRST_DB_ANON_ROLE=anon",
 					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"PGRST_ADMIN_SERVER_PORT=3001",
 				},
 				// PostgREST does not expose a shell for health check
 			},

@@ -50,6 +50,16 @@ services:
           - /rest/v1/
     plugins:
       - name: cors
+  - name: rest-admin-v1
+    _comment: "PostgREST: /rest-admin/v1/* -> http://rest:3001/*"
+    url: http://{{ .RestId }}:3001/
+    routes:
+      - name: rest-admin-v1-all
+        strip_path: true
+        paths:
+          - /rest-admin/v1/
+    plugins:
+      - name: cors
   - name: graphql-v1
     _comment: "PostgREST: /graphql/v1 -> http://rest:3000/rpc/graphql"
     url: http://{{ .RestId }}:3000/rpc/graphql
