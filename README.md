@@ -135,14 +135,14 @@ For Bun users, you must add `supabase` as a [trusted dependency](https://bun.sh/
 <details>
   <summary><b>Community Maintained Packages</b></summary>
 
-  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/0a870774137cde2e1e9a6fb0bd63064077127bf3/projects/supabase.com/cli/package.yml)
+  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/0a870774137cde2e1e9a6fb0bd63064077127bf3/projects/supabase.com/cli/package.yml).
   To install in your working directory:
 
   ```bash
   pkgx install supabase
   ```
 
-  Available via Nixpkgs. Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix)
+  Available via Nixpkgs. Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
 </details>
 
 ### Run the CLI
