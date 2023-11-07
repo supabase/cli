@@ -173,7 +173,7 @@ func TestDatabaseStart(t *testing.T) {
 				}})
 		}
 		gock.New("127.0.0.1").
-			Head("/rest/v1/").
+			Head("/rest-admin/v1/ready").
 			Reply(http.StatusOK)
 		gock.New("127.0.0.1").
 			Head("/functions/v1/_internal/health").
