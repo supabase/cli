@@ -816,6 +816,8 @@ EOF
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
+					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
+					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
