@@ -1,10 +1,12 @@
 package start
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -231,5 +233,32 @@ func TestDatabaseStart(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestFormatMapForEnvConfig(t *testing.T) {
+	t.Run("It produces the correct format and removes the trailing comma", func(t *testing.T) {
+		output := bytes.Buffer{}
+		input := map[string]string{}
+
+		keys := [4]string{"123456", "234567", "345678", "456789"}
+		values := [4]string{"123456", "234567", "345678", "456789"}
+		expected := [4]string{
+			`^\w{6}:\w{6}$`,
+			`^\w{6}:\w{6},\w{6}:\w{6}$`,
+			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
+			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
+		}
+		formatMapForEnvconfig(input, &output)
+		if len(output.Bytes()) > 0 {
+			t.Error("No values should be expected when empty map is provided")
+		}
+		for i := 0; i < 4; i++ {
+			output.Reset()
+			input[keys[i]] = values[i]
+			formatMapForEnvconfig(input, &output)
+			result := output.String()
+			assert.Regexp(t, regexp.MustCompile(expected[i]), result)
+		}
 	})
 }

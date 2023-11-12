@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -370,11 +369,9 @@ EOF
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
-			encoder := json.NewEncoder(&testOTP)
-			if err := encoder.Encode(utils.Config.Auth.Sms.TestOTP); err != nil {
-				return err
-			}
+			formatMapForEnvconfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
 		}
+
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://127.0.0.1:%v", utils.Config.Api.Port),
 
@@ -418,7 +415,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
-			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
+			fmt.Sprintf("GOTRUE_SMS_TEST_OTP=%s", testOTP.String()),
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
@@ -905,4 +902,18 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
+}
+
+func formatMapForEnvconfig(input map[string]string, output *bytes.Buffer) {
+	numOfKeyPairs := len(input)
+	i := 0
+	for k, v := range input {
+		output.WriteString(k)
+		output.WriteString(":")
+		output.WriteString(v)
+		i++
+		if i < numOfKeyPairs {
+			output.WriteString(",")
+		}
+	}
 }
