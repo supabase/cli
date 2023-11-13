@@ -249,14 +249,14 @@ func TestFormatMapForEnvConfig(t *testing.T) {
 			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
 			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
 		}
-		formatMapForEnvconfig(input, &output)
+		formatMapForEnvConfig(input, &output)
 		if len(output.Bytes()) > 0 {
 			t.Error("No values should be expected when empty map is provided")
 		}
 		for i := 0; i < 4; i++ {
 			output.Reset()
 			input[keys[i]] = values[i]
-			formatMapForEnvconfig(input, &output)
+			formatMapForEnvConfig(input, &output)
 			result := output.String()
 			assert.Regexp(t, regexp.MustCompile(expected[i]), result)
 		}

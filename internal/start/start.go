@@ -369,7 +369,7 @@ EOF
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
-			formatMapForEnvconfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
+			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
 		}
 
 		env := []string{
@@ -415,7 +415,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			"GOTRUE_SMS_TEMPLATE=Your code is {{ .Code }}",
-			fmt.Sprintf("GOTRUE_SMS_TEST_OTP=%s", testOTP.String()),
+			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
@@ -904,7 +904,7 @@ func ExcludableContainers() []string {
 	return names
 }
 
-func formatMapForEnvconfig(input map[string]string, output *bytes.Buffer) {
+func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 	numOfKeyPairs := len(input)
 	i := 0
 	for k, v := range input {
