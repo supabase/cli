@@ -130,6 +130,9 @@ var Config = config{
 				"email_change": {},
 			},
 		},
+		Sms: sms{
+			Template: "Your code is {{ .Code }} .",
+		},
 		External: map[string]provider{
 			"apple":     {},
 			"azure":     {},
