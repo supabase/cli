@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -370,11 +369,9 @@ EOF
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
-			encoder := json.NewEncoder(&testOTP)
-			if err := encoder.Encode(utils.Config.Auth.Sms.TestOTP); err != nil {
-				return err
-			}
+			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
 		}
+
 		env := []string{
 			fmt.Sprintf("API_EXTERNAL_URL=http://127.0.0.1:%v", utils.Config.Api.Port),
 
@@ -905,4 +902,18 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
+}
+
+func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
+	numOfKeyPairs := len(input)
+	i := 0
+	for k, v := range input {
+		output.WriteString(k)
+		output.WriteString(":")
+		output.WriteString(v)
+		i++
+		if i < numOfKeyPairs {
+			output.WriteString(",")
+		}
+	}
 }
