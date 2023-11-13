@@ -285,6 +285,7 @@ type (
 	sms struct {
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
+		Template            string            `toml:"template"`
 		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
 		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
 		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`

@@ -99,6 +99,8 @@ enable_confirmations = false
 enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
+# Template for sending OTP to users
+template = "Your code is {{ .Code }} ."
 
 # Use pre-defined map of phone number to OTP for testing.
 [auth.sms.test_otp]
