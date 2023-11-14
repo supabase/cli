@@ -79,6 +79,7 @@ SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%[1]s';
 DO 'BEGIN WHILE (
 	SELECT COUNT(*) FROM pg_replication_slots WHERE database = ''%[1]s''
 ) > 0 LOOP END LOOP; END';`
+	SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot the error."
 )
 
 var (
