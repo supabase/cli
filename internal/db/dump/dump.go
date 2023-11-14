@@ -25,7 +25,7 @@ var (
 )
 
 func Run(ctx context.Context, path string, config pgconn.Config, schema []string, dataOnly, roleOnly, keepComments, useCopy, dryRun bool, fsys afero.Fs) error {
-	// Initialise output stream
+	// Initialize output stream
 	var outStream afero.File
 	if len(path) > 0 {
 		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)

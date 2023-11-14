@@ -184,7 +184,7 @@ var Config = config{
 // Use `mapstructure:"anon_key"` tag only if you want inject values from a predictable environment
 // variable, such as SUPABASE_AUTH_ANON_KEY.
 //
-// Default values for internal configs should be added to `var Config` initialiser.
+// Default values for internal configs should be added to `var Config` initializer.
 type (
 	config struct {
 		ProjectId string              `toml:"project_id"`

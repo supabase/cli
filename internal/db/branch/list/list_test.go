@@ -51,7 +51,7 @@ func TestListCommand(t *testing.T) {
 		}, lines)
 	})
 
-	t.Run("lists uninitialised branch", func(t *testing.T) {
+	t.Run("lists uninitialized branch", func(t *testing.T) {
 		require.NoError(t, Run(afero.NewMemMapFs(), io.Discard))
 	})
 

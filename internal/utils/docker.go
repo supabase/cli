@@ -36,7 +36,7 @@ import (
 var Docker = NewDocker()
 
 func NewDocker() *client.Client {
-	// TODO: refactor to initialise lazily
+	// TODO: refactor to initialize lazily
 	cli, err := command.NewDockerCli()
 	if err != nil {
 		log.Fatalln("Failed to create Docker client:", err)

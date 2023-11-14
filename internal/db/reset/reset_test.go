@@ -88,7 +88,7 @@ func TestResetCommand(t *testing.T) {
 }
 
 func TestInitDatabase(t *testing.T) {
-	t.Run("initialises postgres database", func(t *testing.T) {
+	t.Run("initializes postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.InitialSchemaSql = "CREATE SCHEMA public"
 		// Setup mock postgres
