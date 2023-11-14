@@ -19,9 +19,11 @@ func TestNewCommand(t *testing.T) {
 		assert.NoError(t, Run(context.Background(), "test-func", fsys))
 		// Validate output
 		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
-		content, err := afero.ReadFile(fsys, funcPath)
+		contains, err := afero.FileContainsBytes(fsys, funcPath, []byte(
+			`curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/test-func'`,
+		))
 		assert.NoError(t, err)
-		assert.Equal(t, index, string(content))
+		assert.True(t, contains)
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {
