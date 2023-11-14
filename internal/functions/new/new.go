@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 
@@ -14,8 +15,15 @@ import (
 
 var (
 	//go:embed templates/index.ts
-	index string
+	indexEmbed    string
+	indexTemplate = template.Must(template.New("indexl").Parse(indexEmbed))
 )
+
+type indexConfig struct {
+	Port  uint16
+	Slug  string
+	Token string
+}
 
 func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -34,7 +42,23 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 			return err
 		}
-		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "index.ts"), []byte(index), 0644); err != nil {
+		path := filepath.Join(funcDir, "index.ts")
+		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		// Templatize index.ts by config.toml if available
+		utils.Config.Api.Port = 54321
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			utils.CmdSuggestion = utils.SuggestDebugFlag
+		}
+		config := indexConfig{
+			Port:  uint16(utils.Config.Api.Port),
+			Slug:  slug,
+			Token: utils.Config.Auth.AnonKey,
+		}
+		if err := indexTemplate.Execute(f, config); err != nil {
 			return err
 		}
 	}
