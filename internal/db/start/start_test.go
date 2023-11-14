@@ -55,7 +55,7 @@ func TestStartDatabase(t *testing.T) {
 		utils.Volumes = []string{}
 	}
 
-	t.Run("initialise main branch", func(t *testing.T) {
+	t.Run("initialize main branch", func(t *testing.T) {
 		defer teardown()
 		utils.Config.Db.MajorVersion = 15
 		utils.Config.Db.Image = utils.Pg15Image
@@ -258,7 +258,7 @@ func TestStartCommand(t *testing.T) {
 func TestSetupDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 15
 
-	t.Run("initialises database 14", func(t *testing.T) {
+	t.Run("initializes database 14", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
 		defer func() {
 			utils.Config.Db.MajorVersion = 15

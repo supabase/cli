@@ -128,7 +128,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
 		return ErrDatabase
 	}
-	// Initialise if we are on PG14 and there's no existing db volume
+	// Initialize if we are on PG14 and there's no existing db volume
 	if noBackupVolume {
 		if err := setupDatabase(ctx, fsys, w, options...); err != nil {
 			return err

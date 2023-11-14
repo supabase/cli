@@ -26,5 +26,5 @@
 node_modules
 package-lock.json
 
-# Initialised by cli for local testing
+# Initialized by cli for local testing
 /supabase
