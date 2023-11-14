@@ -18,7 +18,6 @@ import (
 const (
 	groupLocalDev      = "local-dev"
 	groupManagementAPI = "management-api"
-	suggestDebugFlag   = "Try rerunning the command with --debug to troubleshoot the error."
 )
 
 func IsManagementAPI(cmd *cobra.Command) bool {
@@ -91,7 +90,7 @@ var (
 				ctx = utils.WithTraceContext(ctx)
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 			} else {
-				utils.CmdSuggestion = suggestDebugFlag
+				utils.CmdSuggestion = utils.SuggestDebugFlag
 			}
 			cmd.SetContext(ctx)
 			return nil
@@ -108,7 +107,7 @@ func Execute() {
 		}
 		os.Exit(1)
 	}
-	if utils.CmdSuggestion != suggestDebugFlag {
+	if utils.CmdSuggestion != utils.SuggestDebugFlag {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
 }
