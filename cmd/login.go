@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -64,6 +65,17 @@ var (
 				params.Token = token
 			}
 
+			// Login encryption and Session ID are only required for end-to-end communication.
+			// We can skip it if token is already provided by user.
+			if params.Token == "" {
+				enc, err := login.NewLoginEncryption()
+				if err != nil {
+					return err
+				}
+				params.Encryption = enc
+				params.SessionId = uuid.New().String()
+			}
+
 			if !term.IsTerminal(int(os.Stdin.Fd())) && params.Token == "" {
 				return ErrMissingToken
 			}
@@ -73,13 +85,13 @@ var (
 				if err != nil {
 					return fmt.Errorf("cannot parse 'name' flag: %w", err)
 				}
-				params.Name = name
+				params.TokenName = name
 			} else {
 				name, err := generateTokenName()
 				if err != nil {
-					params.Name = fmt.Sprintf("cli_%d", time.Now().Unix())
+					params.TokenName = fmt.Sprintf("cli_%d", time.Now().Unix())
 				} else {
-					params.Name = name
+					params.TokenName = name
 				}
 			}
 
@@ -90,7 +102,7 @@ var (
 				params.OpenBrowser = isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd())
 			}
 
-			return login.Run(cmd.Context(), os.Stdin, params)
+			return login.Run(cmd.Context(), os.Stdout, params)
 		},
 	}
 )

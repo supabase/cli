@@ -39,7 +39,7 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 
 func PromptLogin(ctx context.Context, fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
-		return login.Run(ctx, os.Stdin, login.RunParams{
+		return login.Run(ctx, os.Stdout, login.RunParams{
 			Fsys: fsys,
 		})
 	} else {

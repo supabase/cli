@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -25,8 +24,10 @@ import (
 
 type RunParams struct {
 	Token       string
-	Name        string
+	TokenName   string
 	OpenBrowser bool
+	SessionId   string
+	Encryption  LoginEncryptor
 	Fsys        afero.Fs
 }
 
@@ -43,28 +44,63 @@ const decryptionErrorMsg = "cannot decrypt access token"
 
 var loggedInMsg = "You are now logged in. " + utils.Aqua("Happy coding!")
 
-func decryptAccessToken(accessTokenResponse AccessTokenResponse, curve ecdh.Curve, privateKey *ecdh.PrivateKey) (string, error) {
-	decodedAccessToken, err := hex.DecodeString(accessTokenResponse.AccessToken)
+type LoginEncryptor interface {
+	encodedPublicKey() string
+	decryptAccessToken(accessToken string, publicKey string, nonce string) (string, error)
+}
+
+type LoginEncryption struct {
+	curve      ecdh.Curve
+	privateKey *ecdh.PrivateKey
+	publicKey  *ecdh.PublicKey
+}
+
+func NewLoginEncryption() (LoginEncryption, error) {
+	enc := LoginEncryption{}
+	err := enc.generateKeys()
+	if err != nil {
+		return enc, fmt.Errorf("cannot generate crypto keys: %w", err)
+	}
+	return enc, nil
+}
+
+func (enc *LoginEncryption) generateKeys() error {
+	enc.curve = ecdh.P256()
+	privateKey, err := enc.curve.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("cannot generate encryption key: %w", err)
+	}
+	enc.privateKey = privateKey
+	enc.publicKey = privateKey.PublicKey()
+	return nil
+}
+
+func (enc LoginEncryption) encodedPublicKey() string {
+	return hex.EncodeToString(enc.publicKey.Bytes())
+}
+
+func (enc LoginEncryption) decryptAccessToken(accessToken string, publicKey string, nonce string) (string, error) {
+	decodedAccessToken, err := hex.DecodeString(accessToken)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
-	nonce, err := hex.DecodeString(accessTokenResponse.Nonce)
+	decodedNonce, err := hex.DecodeString(nonce)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
-	publicKey, err := hex.DecodeString(accessTokenResponse.PublicKey)
+	decodedPublicKey, err := hex.DecodeString(publicKey)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
-	remotePublicKey, err := curve.NewPublicKey(publicKey)
+	remotePublicKey, err := enc.curve.NewPublicKey(decodedPublicKey)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
-	secret, err := privateKey.ECDH(remotePublicKey)
+	secret, err := enc.privateKey.ECDH(remotePublicKey)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
@@ -79,7 +115,7 @@ func decryptAccessToken(accessTokenResponse AccessTokenResponse, curve ecdh.Curv
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
-	decryptedAccessToken, err := aesgcm.Open(nil, nonce, decodedAccessToken, nil)
+	decryptedAccessToken, err := aesgcm.Open(nil, decodedNonce, decodedAccessToken, nil)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
@@ -132,7 +168,7 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 	return accessTokenResponse, fmt.Errorf("HTTP %s: cannot retrieve access token", resp.Status)
 }
 
-func Run(ctx context.Context, stdin *os.File, params RunParams) error {
+func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 	if params.Token != "" {
 		err := utils.SaveAccessToken(params.Token, params.Fsys)
 		if err != nil {
@@ -143,45 +179,38 @@ func Run(ctx context.Context, stdin *os.File, params RunParams) error {
 	}
 
 	if params.OpenBrowser {
-		fmt.Print("Hello from ", utils.Aqua("Supabase"), "! Press ", utils.Aqua("Enter"), " to open browser and login automatically.\n")
+		fmt.Fprint(stdout, "Hello from ", utils.Aqua("Supabase"), "! Press ", utils.Aqua("Enter"), " to open browser and login automatically.\n")
 		fmt.Scanln()
 	}
 
-	sessionId := uuid.New().String()
-	tokenName := params.Name
-	curve := ecdh.P256()
-	privateKey, err := curve.GenerateKey(rand.Reader)
-	if err != nil {
-		return fmt.Errorf("cannot generate encryption key: %w", err)
-	}
-	publicKey := privateKey.PublicKey()
-	encodedPublicKey := hex.EncodeToString(publicKey.Bytes())
+	tokenName := params.TokenName
+	encodedPublicKey := params.Encryption.encodedPublicKey()
 
 	createLoginSessionPath := "/cli/login"
-	createLoginSessionQuery := "?session_id=" + sessionId + "&token_name=" + tokenName + "&public_key=" + encodedPublicKey
+	createLoginSessionQuery := "?session_id=" + params.SessionId + "&token_name=" + tokenName + "&public_key=" + encodedPublicKey
 	createLoginSessionUrl := utils.GetSupabaseDashboardURL() + createLoginSessionPath + createLoginSessionQuery
 
 	if params.OpenBrowser {
-		fmt.Printf("Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
+		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
 
 		openCmd := exec.CommandContext(ctx, "open", createLoginSessionUrl)
 		if err := openCmd.Run(); err != nil {
 			return fmt.Errorf("cannot open default browser: %w", err)
 		}
 	} else {
-		fmt.Printf("Here is your login link, open it in the browser %s\n\n", utils.Bold(createLoginSessionUrl))
+		fmt.Fprintf(stdout, "Here is your login link, open it in the browser %s\n\n", utils.Bold(createLoginSessionUrl))
 	}
 
-	err = utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+	err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		p.Send(utils.StatusMsg("Your token is now being generated and securely encrypted. Waiting for it to arrive..."))
 
-		sessionPollingUrl := utils.GetSupabaseAPIHost() + "/platform/cli/login/" + sessionId
+		sessionPollingUrl := utils.GetSupabaseAPIHost() + "/platform/cli/login/" + params.SessionId
 		accessTokenResponse, err := pollForAccessToken(ctx, sessionPollingUrl)
 		if err != nil {
 			return err
 		}
 
-		decryptedAccessToken, err := decryptAccessToken(accessTokenResponse, curve, privateKey)
+		decryptedAccessToken, err := params.Encryption.decryptAccessToken(accessTokenResponse.AccessToken, accessTokenResponse.PublicKey, accessTokenResponse.Nonce)
 		if err != nil {
 			return err
 		}
@@ -193,8 +222,8 @@ func Run(ctx context.Context, stdin *os.File, params RunParams) error {
 		return err
 	}
 
-	fmt.Printf("Token %s created successfully.\n\n", utils.Bold(tokenName))
-	fmt.Println(loggedInMsg)
+	fmt.Fprintf(stdout, "Token %s created successfully.\n\n", utils.Bold(tokenName))
+	fmt.Fprintln(stdout, loggedInMsg)
 
 	return nil
 }
