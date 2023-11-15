@@ -87,12 +87,15 @@ func decryptAccessToken(accessTokenResponse AccessTokenResponse, curve ecdh.Curv
 	return string(decryptedAccessToken), nil
 }
 
-func pollForAccessToken(url string) (AccessTokenResponse, error) {
+func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, error) {
 	var accessTokenResponse AccessTokenResponse
 
-	// We fully control the url here, so it's safe to perform the request and ignore the G107 gosec rule.
 	// TODO: Move to OpenAPI-generated http client once we reach v1 on API schema.
-	resp, err := http.Get(url) //nolint:gosec
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return accessTokenResponse, fmt.Errorf("cannot fetch access token: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return accessTokenResponse, fmt.Errorf("cannot fetch access token: %w", err)
 	}
@@ -103,8 +106,13 @@ func pollForAccessToken(url string) (AccessTokenResponse, error) {
 		if err != nil {
 			retryAfterSeconds = defaultRetryAfterSeconds
 		}
-		time.Sleep(time.Duration(retryAfterSeconds) * time.Second)
-		return pollForAccessToken(url)
+		t := time.NewTimer(time.Duration(retryAfterSeconds) * time.Second)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+		case <-t.C:
+		}
+		return pollForAccessToken(ctx, url)
 	}
 
 	if resp.StatusCode == http.StatusOK {
@@ -168,7 +176,7 @@ func Run(ctx context.Context, stdin *os.File, params RunParams) error {
 		p.Send(utils.StatusMsg("Your token is now being generated and securely encrypted. Waiting for it to arrive..."))
 
 		sessionPollingUrl := utils.GetSupabaseAPIHost() + "/platform/cli/login/" + sessionId
-		accessTokenResponse, err := pollForAccessToken(sessionPollingUrl)
+		accessTokenResponse, err := pollForAccessToken(ctx, sessionPollingUrl)
 		if err != nil {
 			return err
 		}
@@ -180,6 +188,7 @@ func Run(ctx context.Context, stdin *os.File, params RunParams) error {
 
 		return utils.SaveAccessToken(decryptedAccessToken, params.Fsys)
 	})
+
 	if err != nil {
 		return err
 	}
