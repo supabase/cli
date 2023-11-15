@@ -23,7 +23,7 @@ require (
 	github.com/matoous/go-nanoid/v2 v2.0.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/reflow v0.3.0
-	github.com/oapi-codegen/runtime v1.0.0
+	github.com/oapi-codegen/runtime v1.1.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.17.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
