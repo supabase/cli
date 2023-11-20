@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"os"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
@@ -11,8 +9,6 @@ import (
 	"github.com/supabase/cli/internal/functions/list"
 	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
-	"github.com/supabase/cli/internal/login"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -122,12 +118,4 @@ func init() {
 	functionsCmd.AddCommand(functionsServeCmd)
 	functionsCmd.AddCommand(functionsDownloadCmd)
 	rootCmd.AddCommand(functionsCmd)
-}
-
-func PromptLogin(fsys afero.Fs) error {
-	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
-		return login.Run(os.Stdin, fsys)
-	} else {
-		return err
-	}
 }

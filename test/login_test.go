@@ -50,6 +50,8 @@ func (suite *LoginTestSuite) TestLink() {
 	defer func() { os.Stdin = oldStdin }()
 	os.Stdin = tmpfile
 
+	err = login.Flags().Set("token", key)
+	require.NoError(suite.T(), err)
 	require.NoError(suite.T(), login.RunE(login, []string{}))
 
 	// check token is saved
