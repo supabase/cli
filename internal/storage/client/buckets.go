@@ -10,14 +10,14 @@ import (
 )
 
 type BucketResponse struct {
-	Id               string  `json:"id"`                 // "test"
-	Name             string  `json:"name"`               // "test"
-	Owner            string  `json:"owner"`              // ""
-	Public           bool    `json:"public"`             // true
-	FileSizeLimit    *int    `json:"file_size_limit"`    // null
-	AllowedMimeTypes *string `json:"allowed_mime_types"` // null
-	CreatedAt        string  `json:"created_at"`         // "2023-10-13T17:48:58.491Z"
-	UpdatedAt        string  `json:"updated_at"`         // "2023-10-13T17:48:58.491Z"
+	Id               string   `json:"id"`                 // "test"
+	Name             string   `json:"name"`               // "test"
+	Owner            string   `json:"owner"`              // ""
+	Public           bool     `json:"public"`             // true
+	FileSizeLimit    *int     `json:"file_size_limit"`    // null
+	AllowedMimeTypes []string `json:"allowed_mime_types"` // null
+	CreatedAt        string   `json:"created_at"`         // "2023-10-13T17:48:58.491Z"
+	UpdatedAt        string   `json:"updated_at"`         // "2023-10-13T17:48:58.491Z"
 }
 
 func ListStorageBuckets(ctx context.Context, projectRef string) ([]BucketResponse, error) {
