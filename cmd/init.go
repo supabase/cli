@@ -12,6 +12,7 @@ import (
 
 var (
 	createVscodeWorkspace = new(bool)
+	useOrioleDB           bool
 
 	initCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -24,12 +25,15 @@ var (
 			}
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
+		PreRun: func(cmd *cobra.Command, args []string) {
+			cmd.MarkFlagsRequiredTogether("use-orioledb", "experimental")
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if !cmd.Flags().Changed("with-vscode-workspace") {
 				createVscodeWorkspace = nil
 			}
-			if err := _init.Run(fsys, createVscodeWorkspace); err != nil {
+			if err := _init.Run(fsys, createVscodeWorkspace, useOrioleDB); err != nil {
 				return err
 			}
 
@@ -42,5 +46,6 @@ var (
 func init() {
 	flags := initCmd.Flags()
 	flags.BoolVar(createVscodeWorkspace, "with-vscode-workspace", false, "Generate VS Code workspace.")
+	flags.BoolVar(&useOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres")
 	rootCmd.AddCommand(initCmd)
 }

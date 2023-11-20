@@ -28,7 +28,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef, dbUrl string) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef string) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -46,13 +46,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		var dbConfig pgconn.Config
-		if len(dbUrl) > 0 {
-			config, err := pgconn.ParseConfig(dbUrl)
-			if err != nil {
-				return err
-			}
-			dbConfig = *config
-		} else if len(projectRef) > 0 {
+		if len(projectRef) > 0 {
 			branch := keys.GetGitBranch(fsys)
 			if err := keys.GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
 				return err
