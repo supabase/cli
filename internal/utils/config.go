@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -361,9 +362,15 @@ type (
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
-	if _, err := toml.Decode(initConfigEmbed, &Config); err != nil {
+	var buf bytes.Buffer
+	if err := initConfigTemplate.Execute(&buf, nil); err != nil {
 		return err
 	}
+	dec := toml.NewDecoder(&buf)
+	if _, err := dec.Decode(&Config); err != nil {
+		return err
+	}
+	// Load user defined config
 	if metadata, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
 		CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
 		cwd, osErr := os.Getwd()
