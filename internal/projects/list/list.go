@@ -28,7 +28,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 
-	table := `LINKED|ORG ID|ID|NAME|REGION|CREATED AT (UTC)
+	table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
 |-|-|-|-|-|-|
 `
 	for _, project := range *resp.JSON200 {
