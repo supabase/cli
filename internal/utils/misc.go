@@ -38,7 +38,7 @@ const (
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	GotrueImage      = "supabase/gotrue:v2.99.0"
 	RealtimeImage    = "supabase/realtime:v2.25.35"
-	StorageImage     = "supabase/storage-api:v0.40.4"
+	StorageImage     = "supabase/storage-api:v0.43.11"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
