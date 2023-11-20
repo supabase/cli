@@ -3,7 +3,7 @@
 --
 
 -- Dumped from database version 14.5 (Debian 14.5-2.pgdg110+2)
--- Dumped by pg_dump version 15.0
+-- Dumped by pg_dump version 15.3
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -942,9 +942,9 @@ SET default_table_access_method = heap;
 
 CREATE TABLE IF NOT EXISTS _realtime.extensions (
     id uuid NOT NULL,
-    type character varying(255),
+    type text,
     settings jsonb,
-    tenant_external_id character varying(255),
+    tenant_external_id text,
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL
 );
@@ -970,17 +970,18 @@ ALTER TABLE _realtime.schema_migrations OWNER TO postgres;
 
 CREATE TABLE IF NOT EXISTS _realtime.tenants (
     id uuid NOT NULL,
-    name character varying(255),
-    external_id character varying(255),
-    jwt_secret character varying(500),
+    name text,
+    external_id text,
+    jwt_secret text,
     max_concurrent_users integer DEFAULT 200 NOT NULL,
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL,
     max_events_per_second integer DEFAULT 100 NOT NULL,
-    postgres_cdc_default character varying(255) DEFAULT 'postgres_cdc_rls'::character varying,
+    postgres_cdc_default text DEFAULT 'postgres_cdc_rls'::text,
     max_bytes_per_second integer DEFAULT 100000 NOT NULL,
     max_channels_per_client integer DEFAULT 100 NOT NULL,
-    max_joins_per_second integer DEFAULT 500 NOT NULL
+    max_joins_per_second integer DEFAULT 500 NOT NULL,
+    suspend boolean DEFAULT false
 );
 
 
@@ -1247,6 +1248,7 @@ CREATE TABLE IF NOT EXISTS auth.saml_relay_states (
     from_ip_address inet,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
+    flow_state_id uuid,
     CONSTRAINT "request_id not empty" CHECK ((char_length(request_id) > 0))
 );
 
@@ -1433,11 +1435,19 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
     public boolean DEFAULT false,
     avif_autodetection boolean DEFAULT false,
     file_size_limit bigint,
-    allowed_mime_types text[]
+    allowed_mime_types text[],
+    owner_id text
 );
 
 
 ALTER TABLE storage.buckets OWNER TO supabase_storage_admin;
+
+--
+-- Name: COLUMN buckets.owner; Type: COMMENT; Schema: storage; Owner: supabase_storage_admin
+--
+
+COMMENT ON COLUMN storage.buckets.owner IS 'Field is deprecated, use owner_id instead';
+
 
 --
 -- Name: migrations; Type: TABLE; Schema: storage; Owner: supabase_storage_admin
@@ -1467,11 +1477,19 @@ CREATE TABLE IF NOT EXISTS storage.objects (
     last_accessed_at timestamp with time zone DEFAULT now(),
     metadata jsonb,
     path_tokens text[] GENERATED ALWAYS AS (string_to_array(name, '/'::text)) STORED,
-    version text
+    version text,
+    owner_id text
 );
 
 
 ALTER TABLE storage.objects OWNER TO supabase_storage_admin;
+
+--
+-- Name: COLUMN objects.owner; Type: COMMENT; Schema: storage; Owner: supabase_storage_admin
+--
+
+COMMENT ON COLUMN storage.objects.owner IS 'Field is deprecated, use owner_id instead';
+
 
 --
 -- Name: hooks; Type: TABLE; Schema: supabase_functions; Owner: supabase_functions_admin
@@ -1546,7 +1564,7 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 -- Data for Name: extensions; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('4a4557ef-8e02-44b2-bd31-d828660385e1', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-04-27 04:30:58', '2023-04-27 04:30:58');
+INSERT INTO _realtime.extensions (id, type, settings, tenant_external_id, inserted_at, updated_at) VALUES ('832b3aeb-9d7f-41aa-ad31-60ea054c294f', 'postgres_cdc_rls', '{"region": "us-east-1", "db_host": "ABK7kBu27y/PVdL10i/b+A==", "db_name": "sWBpZNdjggEPTQVlI52Zfw==", "db_port": "+enMDFi1J/3IrrquHHwUmA==", "db_user": "uxbEq/zz8DXVD53TOI1zmw==", "slot_name": "supabase_realtime_replication_slot", "ip_version": 4, "db_password": "sWBpZNdjggEPTQVlI52Zfw==", "publication": "supabase_realtime", "ssl_enforced": false, "poll_interval_ms": 100, "poll_max_changes": 100, "poll_max_record_bytes": 1048576}', 'realtime-dev', '2023-11-20 22:04:38', '2023-11-20 22:04:38');
 
 
 --
@@ -1565,13 +1583,16 @@ INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (202210181
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221102172703, '2023-03-16 02:25:36');
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20221223010058, '2023-03-16 02:25:36');
 INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230110180046, '2023-03-16 02:25:36');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230810220907, '2023-11-20 21:54:23');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20230810220924, '2023-11-20 21:54:23');
+INSERT INTO _realtime.schema_migrations (version, inserted_at) VALUES (20231024094642, '2023-11-20 21:54:23');
 
 
 --
 -- Data for Name: tenants; Type: TABLE DATA; Schema: _realtime; Owner: postgres
 --
 
-INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second) VALUES ('33811002-8eb1-4100-bad2-f6f9881501c3', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-04-27 04:30:58', '2023-04-27 04:30:58', 100, 'postgres_cdc_rls', 100000, 100, 500);
+INSERT INTO _realtime.tenants (id, name, external_id, jwt_secret, max_concurrent_users, inserted_at, updated_at, max_events_per_second, postgres_cdc_default, max_bytes_per_second, max_channels_per_client, max_joins_per_second, suspend) VALUES ('f418662c-07b5-4160-9338-4db7fbaaabbd', 'realtime-dev', 'realtime-dev', 'iNjicxc4+llvc9wovDvqymwfnj9teWMlyOIbJ8Fh6j2WNU8CIJ2ZgjR6MUIKqSmeDmvpsKLsZ9jgXJmQPpwL8w==', 200, '2023-11-20 22:04:38', '2023-11-20 22:04:38', 100, 'postgres_cdc_rls', 100000, 100, 100, false);
 
 
 --
@@ -1682,6 +1703,10 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20230131181311');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230322519590');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230402418590');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230411005111');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230508135423');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230523124323');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230818113222');
+INSERT INTO auth.schema_migrations (version) VALUES ('20230914180801');
 
 
 --
@@ -1734,6 +1759,8 @@ INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (12, 'add-bu
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (13, 'use-bytes-for-max-size', '7a158ebce8a0c2801c9c65b7e9b2f98f68b3874e', '2023-03-16 02:25:37.643598');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (14, 'add-can-insert-object-function', '273193826bca7e0990b458d1ba72f8aa27c0d825', '2023-04-06 09:18:55.232202');
 INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (15, 'add-version', 'e821a779d26612899b8c2dfe20245f904a327c4f', '2023-04-06 09:18:55.239444');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (16, 'drop-owner-foreign-key', '536b33f8878eed09d0144219777dcac96bdb25da', '2023-11-20 21:54:33.540386');
+INSERT INTO storage.migrations (id, name, hash, executed_at) VALUES (17, 'add_owner_id_column_deprecate_owner', '7545f216a39358b5487df75d941d05dbcd75eb46', '2023-11-20 22:04:38.959686');
 
 
 --
@@ -2044,6 +2071,13 @@ CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, 
 
 
 --
+-- Name: flow_state_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX flow_state_created_at_idx ON auth.flow_state USING btree (created_at DESC);
+
+
+--
 -- Name: identities_email_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2079,10 +2113,24 @@ CREATE INDEX idx_user_id_auth_method ON auth.flow_state USING btree (user_id, au
 
 
 --
+-- Name: mfa_challenge_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX mfa_challenge_created_at_idx ON auth.mfa_challenges USING btree (created_at DESC);
+
+
+--
 -- Name: mfa_factors_user_friendly_name_unique; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE UNIQUE INDEX mfa_factors_user_friendly_name_unique ON auth.mfa_factors USING btree (friendly_name, user_id) WHERE (TRIM(BOTH FROM friendly_name) <> ''::text);
+
+
+--
+-- Name: mfa_factors_user_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX mfa_factors_user_id_idx ON auth.mfa_factors USING btree (user_id);
 
 
 --
@@ -2128,10 +2176,24 @@ CREATE INDEX refresh_tokens_session_id_revoked_idx ON auth.refresh_tokens USING 
 
 
 --
+-- Name: refresh_tokens_updated_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX refresh_tokens_updated_at_idx ON auth.refresh_tokens USING btree (updated_at DESC);
+
+
+--
 -- Name: saml_providers_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
 --
 
 CREATE INDEX saml_providers_sso_provider_id_idx ON auth.saml_providers USING btree (sso_provider_id);
+
+
+--
+-- Name: saml_relay_states_created_at_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX saml_relay_states_created_at_idx ON auth.saml_relay_states USING btree (created_at DESC);
 
 
 --
@@ -2146,6 +2208,13 @@ CREATE INDEX saml_relay_states_for_email_idx ON auth.saml_relay_states USING btr
 --
 
 CREATE INDEX saml_relay_states_sso_provider_id_idx ON auth.saml_relay_states USING btree (sso_provider_id);
+
+
+--
+-- Name: sessions_not_after_idx; Type: INDEX; Schema: auth; Owner: supabase_auth_admin
+--
+
+CREATE INDEX sessions_not_after_idx ON auth.sessions USING btree (not_after DESC);
 
 
 --
@@ -2310,6 +2379,14 @@ ALTER TABLE ONLY auth.saml_providers
 
 
 --
+-- Name: saml_relay_states saml_relay_states_flow_state_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.saml_relay_states
+    ADD CONSTRAINT saml_relay_states_flow_state_id_fkey FOREIGN KEY (flow_state_id) REFERENCES auth.flow_state(id) ON DELETE CASCADE;
+
+
+--
 -- Name: saml_relay_states saml_relay_states_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
 --
 
@@ -2334,27 +2411,11 @@ ALTER TABLE ONLY auth.sso_domains
 
 
 --
--- Name: buckets buckets_owner_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
---
-
-ALTER TABLE ONLY storage.buckets
-    ADD CONSTRAINT buckets_owner_fkey FOREIGN KEY (owner) REFERENCES auth.users(id);
-
-
---
 -- Name: objects objects_bucketId_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
 --
 
 ALTER TABLE ONLY storage.objects
     ADD CONSTRAINT "objects_bucketId_fkey" FOREIGN KEY (bucket_id) REFERENCES storage.buckets(id);
-
-
---
--- Name: objects objects_owner_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: supabase_storage_admin
---
-
-ALTER TABLE ONLY storage.objects
-    ADD CONSTRAINT objects_owner_fkey FOREIGN KEY (owner) REFERENCES auth.users(id);
 
 
 --
@@ -3304,6 +3365,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON SEQUENCES  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3314,6 +3385,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 
 
 --
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON FUNCTIONS  TO service_role;
+
+
+--
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: supabase_admin
 --
 
@@ -3321,6 +3402,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: postgres
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA graphql GRANT ALL ON TABLES  TO service_role;
 
 
 --
