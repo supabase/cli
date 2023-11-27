@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -193,8 +192,7 @@ func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 	if params.OpenBrowser {
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
 
-		openCmd := exec.CommandContext(ctx, "open", createLoginSessionUrl)
-		if err := openCmd.Run(); err != nil {
+		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
 			return fmt.Errorf("cannot open default browser: %w", err)
 		}
 	} else {
