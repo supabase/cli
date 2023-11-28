@@ -119,7 +119,7 @@ serve(async (req: Request) => {
   console.error(`serving the request with ${servicePath}`);
 
   const memoryLimitMb = 150;
-  const workerTimeoutMs = 5 * 60 * 1000;
+  const workerTimeoutMs = 400 * 1000;
   const noModuleCache = false;
   const envVarsObj = Deno.env.toObject();
   const envVars = Object.entries(envVarsObj)
@@ -128,9 +128,8 @@ serve(async (req: Request) => {
     );
   const forceCreate = true;
   const customModuleRoot = ""; // empty string to allow any local path
-  const cpuTimeThresholdMs = 50;
-  const cpuBurstIntervalMs = 100;
-  const maxCpuBursts = 100;
+  const cpuTimeSoftLimitMs = 10000;
+  const cpuTimeHardLimitMs = 20000;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
@@ -141,9 +140,8 @@ serve(async (req: Request) => {
       envVars,
       forceCreate,
       customModuleRoot,
-      cpuTimeThresholdMs,
-      cpuBurstIntervalMs,
-      maxCpuBursts,
+      cpuTimeSoftLimitMs,
+      cpuTimeHardLimitMs,
     });
     const controller = new AbortController();
 
