@@ -66,16 +66,12 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 				Image: utils.PgmetaImage,
 				Env: []string{
 					"PG_META_DB_URL=" + escaped,
+					"PG_META_GENERATE_TYPES=typescript",
+					"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, []string{"public"}), ","),
+					// Can't detect the PostgREST version when using --db-url, so just default to `true`.
+					"PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=true",
 				},
-				Cmd: []string{
-					"node",
-					"dist/server/server.js",
-					"gen",
-					"types",
-					"typescript",
-					"--include-schemas",
-					strings.Join(coalesce(schemas, []string{"public"}), ","),
-				},
+				Cmd: []string{"node", "dist/server/server.js"},
 			},
 			container.HostConfig{
 				NetworkMode: container.NetworkMode("host"),
@@ -97,21 +93,21 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
+		detectOneToOneRelationships := "true"
+		if strings.Contains(utils.Config.Api.Image, "v9") {
+			detectOneToOneRelationships = "false"
+		}
+
 		return utils.DockerRunOnceWithStream(
 			ctx,
 			utils.PgmetaImage,
 			[]string{
 				"PG_META_DB_HOST=" + utils.DbId,
+				"PG_META_GENERATE_TYPES=typescript",
+				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
+				"PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=" + detectOneToOneRelationships,
 			},
-			[]string{
-				"node",
-				"dist/server/server.js",
-				"gen",
-				"types",
-				"typescript",
-				"--include-schemas",
-				strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
-			},
+			[]string{"node", "dist/server/server.js"},
 			os.Stdout,
 			os.Stderr,
 		)
