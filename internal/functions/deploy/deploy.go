@@ -7,16 +7,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
+	"os"
 	"path/filepath"
 
+	"github.com/andybalholm/brotli"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-units"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
-const eszipContentType = "application/vnd.denoland.eszip"
+const (
+	eszipContentType = "application/vnd.denoland.eszip"
+
+	dockerFuncDirPath = utils.DockerDenoDir + "/functions"
+	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
+	dockerImportMapPath = utils.DockerDenoDir + "/import_map.json"
+)
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// Load function config if any for fallbacks for some flags, but continue on error.
@@ -56,21 +67,84 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	return slugs, nil
 }
 
-func bundleFunction(ctx context.Context, entrypointPath, importMapPath, buildScriptPath string) (*bytes.Buffer, error) {
-	denoPath, err := utils.GetDenoPath()
+func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
+	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	// Bundle function and import_map with deno
-	args := []string{"run", "-A", buildScriptPath, entrypointPath, importMapPath}
-	cmd := exec.CommandContext(ctx, denoPath, args...)
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("Error bundling function: %w\n%v", err, errBuf.String())
+
+	// create temp directory to store generated eszip
+	tmpDir, err := os.MkdirTemp("", "eszip")
+	if err != nil {
+		return nil, err
 	}
-	return &outBuf, nil
+	defer os.RemoveAll(tmpDir)
+	outputPath := "/root/eszips/output.eszip"
+
+	binds := []string{
+		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
+		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":ro,z",
+		tmpDir + ":/root/eszips:rw,z",
+	}
+
+	if importMapPath != "" {
+		modules, err := utils.BindImportMap(importMapPath, dockerImportMapPath, fsys)
+		if err != nil {
+			return nil, err
+		}
+		binds = append(binds, modules...)
+	}
+
+	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath, "--import-map", dockerImportMapPath}
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
+	}
+
+	err = utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.EdgeRuntimeImage,
+			Env:   []string{},
+			Cmd:   cmd,
+		},
+		start.WithSyslogConfig(container.HostConfig{
+			Binds:      binds,
+			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		}),
+		network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				utils.NetId: {
+					Aliases: utils.EdgeRuntimeAliases,
+				},
+			},
+		},
+		"edge-runtime-bundle",
+		os.Stdout,
+		os.Stderr,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	eszipBytes, err := os.ReadFile(filepath.Join(tmpDir, "output.eszip"))
+	eszipBuf := bytes.NewBuffer(eszipBytes)
+
+	compressedBuf := &bytes.Buffer{}
+	_, err = compressedBuf.WriteString("EZBR")
+	if err != nil {
+		return nil, err
+	}
+
+	brw := brotli.NewWriter(compressedBuf)
+	_, err = eszipBuf.WriteTo(brw)
+	if err != nil {
+		return nil, err
+	}
+	brw.Close()
+
+	return compressedBuf, nil
 }
 
 func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
@@ -116,7 +190,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 	return nil
 }
 
-func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScriptPath string, noVerifyJWT *bool, fsys afero.Fs) error {
+func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
 	// 1. Ensure noVerifyJWT is not nil.
 	if noVerifyJWT == nil {
 		x := false
@@ -138,12 +212,12 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScript
 	}
 	importMapPath = resolved
 	// 2. Bundle Function.
-	entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
+	dockerEntrypointPath, err := filepath.Abs(filepath.Join(dockerFuncDirPath, slug, "index.ts"))
 	if err != nil {
 		return err
 	}
 	fmt.Println("Bundling " + utils.Bold(slug))
-	functionBody, err := bundleFunction(ctx, entrypointPath, importMapPath, buildScriptPath)
+	functionBody, err := bundleFunction(ctx, dockerEntrypointPath, importMapPath, fsys)
 	if err != nil {
 		return err
 	}
@@ -154,8 +228,8 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScript
 		ctx,
 		projectRef,
 		slug,
-		"file://"+entrypointPath,
-		"file://"+importMapPath,
+		"file://"+dockerEntrypointPath,
+		"file://"+dockerImportMapPath,
 		!*noVerifyJWT,
 		functionBody,
 	)
@@ -165,14 +239,6 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath, buildScript
 const maxConcurrency = 1
 
 func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
-	// Setup deno binaries
-	if err := utils.InstallOrUpgradeDeno(ctx, fsys); err != nil {
-		return err
-	}
-	scriptDir, err := utils.CopyDenoScripts(ctx, fsys)
-	if err != nil {
-		return err
-	}
 	errCh := make(chan error, maxConcurrency)
 	errCh <- nil
 	for _, slug := range slugs {
@@ -181,7 +247,7 @@ func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath st
 			return err
 		}
 		go func(slug string) {
-			errCh <- deployOne(ctx, slug, projectRef, importMapPath, scriptDir.BuildPath, noVerifyJWT, fsys)
+			errCh <- deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys)
 		}(slug)
 	}
 	return <-errCh

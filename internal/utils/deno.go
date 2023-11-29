@@ -334,3 +334,34 @@ func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error)
 	}
 	return resolved, nil
 }
+
+func AbsTempImportMapPath(cwd, hostPath string) string {
+	name := GetPathHash(hostPath) + ".json"
+	return filepath.Join(cwd, ImportMapsDir, name)
+}
+
+func BindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs) ([]string, error) {
+	importMap, err := NewImportMap(hostImportMapPath, fsys)
+	if err != nil {
+		return nil, err
+	}
+	resolved := importMap.Resolve(fsys)
+	binds := importMap.BindModules(resolved)
+	if len(binds) > 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		contents, err := json.MarshalIndent(resolved, "", "    ")
+		if err != nil {
+			return nil, err
+		}
+		// Rewrite import map to temporary host path
+		hostImportMapPath = AbsTempImportMapPath(cwd, hostImportMapPath)
+		if err := WriteFile(hostImportMapPath, contents, fsys); err != nil {
+			return nil, err
+		}
+	}
+	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro,z")
+	return binds, nil
+}

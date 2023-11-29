@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,22 +22,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Setup fake deno binary
-	if len(os.Args) > 1 && (os.Args[1] == "bundle" || os.Args[1] == "upgrade" || os.Args[1] == "run") {
-		msg := os.Getenv("TEST_DENO_ERROR")
-		if msg != "" {
-			fmt.Fprintln(os.Stderr, msg)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-	denoPath, err := os.Executable()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	utils.DenoPathOverride = denoPath
-	// Run test suite
-	os.Exit(m.Run())
 }
 
 func TestDeployOne(t *testing.T) {
@@ -72,7 +55,7 @@ func TestDeployOne(t *testing.T) {
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
 		noVerifyJWT := true
-		err = deployOne(context.Background(), slug, project, "", "", &noVerifyJWT, fsys)
+		err = deployOne(context.Background(), slug, project, "", &noVerifyJWT, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -100,7 +83,7 @@ func TestDeployOne(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Run test
-		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
+		err = deployOne(context.Background(), slug, project, "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -112,7 +95,7 @@ func TestDeployOne(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := deployOne(context.Background(), slug, project, "import_map.json", "", nil, fsys)
+		err := deployOne(context.Background(), slug, project, "import_map.json", nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -138,7 +121,7 @@ func TestDeployOne(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 		// Run test
-		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
+		err = deployOne(context.Background(), slug, project, "", nil, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
