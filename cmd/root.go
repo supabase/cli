@@ -37,7 +37,8 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 
 func PromptLogin(ctx context.Context, fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
-		return errors.New("You need to be logged-in in order to use Management API commands. Run `supabase login` first.")
+		utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+		return errors.New("You need to be logged-in in order to use Management API commands.")
 	} else {
 		return err
 	}
