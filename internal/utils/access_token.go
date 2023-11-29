@@ -84,6 +84,23 @@ func fallbackSaveToken(accessToken string, fsys afero.Fs) error {
 	return afero.WriteFile(fsys, path, []byte(accessToken), 0600)
 }
 
+func DeleteAccessToken(fsys afero.Fs) error {
+	// Delete from native credentials store
+	if err := credentials.Delete(AccessTokenKey); err == nil {
+		return nil
+	}
+	// Fallback to token file
+	return fallbackDeleteToken(fsys)
+}
+
+func fallbackDeleteToken(fsys afero.Fs) error {
+	path, err := getAccessTokenPath()
+	if err != nil {
+		return err
+	}
+	return fsys.Remove(path)
+}
+
 func getAccessTokenPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
