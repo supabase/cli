@@ -25,8 +25,9 @@ var (
 
 // PromptItem is exposed as prompt input, empty summary + details will be excluded.
 type PromptItem struct {
-	Summary string
-	Details string
+	Summary  string
+	Details  string
+	Metadata interface{}
 }
 
 func (i PromptItem) Title() string       { return i.Summary }

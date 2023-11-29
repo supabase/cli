@@ -40,6 +40,8 @@ var (
 	orgId       string
 	dbPassword  string
 
+	projectRefId string
+
 	region = utils.EnumFlag{
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
@@ -111,12 +113,18 @@ var (
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
-		Args:  cobra.ExactArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return delete.PreRun(args[0])
+			if interactive {
+				cobra.CheckErr(PromptDeleteFlags(cmd))
+			} else if len(args) == 0 {
+				return cmd.Help()
+			} else {
+				projectRefId = args[0]
+			}
+			return delete.PreRun(projectRefId)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(cmd.Context(), args[0], afero.NewOsFs())
+			return delete.Run(cmd.Context(), projectRefId, afero.NewOsFs())
 		},
 	}
 )
@@ -141,6 +149,9 @@ func init() {
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
 	apiKeysFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+
+	deleteFlags := projectsDeleteCmd.Flags()
+	deleteFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
 
 	// Add commands to root
 	projectsCmd.AddCommand(projectsCreateCmd)
@@ -202,6 +213,29 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 	if dbPassword == "" {
 		dbPassword = link.PromptPassword(os.Stdin)
 	}
+	return nil
+}
+
+func PromptDeleteFlags(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+	title := "Which project do you want to delete?"
+	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
+	if err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
+	}
+	items := make([]utils.PromptItem, len(*resp.JSON200))
+	for i, project := range *resp.JSON200 {
+		items[i] = utils.PromptItem{Summary: project.Name, Details: fmt.Sprintf("id: %s, orgId: %s, region: %s", project.Id, project.OrganizationId, project.Region), Metadata: project.Id}
+	}
+	choice, err := utils.PromptChoice(ctx, title, items)
+	if err != nil {
+		return err
+	}
+	projectRefId = choice.Metadata.(string)
+	fmt.Fprintln(os.Stderr, printKeyValue("Selected project", projectRefId))
 	return nil
 }
 
