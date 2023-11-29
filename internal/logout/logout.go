@@ -4,17 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
 type RunParams struct {
-	Fsys        afero.Fs
+	Fsys afero.Fs
 }
 
-
 var loggedOutMsg = "You are now logged out."
-
 
 func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 	err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {

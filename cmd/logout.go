@@ -8,7 +8,6 @@ import (
 	"github.com/supabase/cli/internal/logout"
 )
 
-
 var (
 	logoutCmd = &cobra.Command{
 		GroupID: groupLocalDev,

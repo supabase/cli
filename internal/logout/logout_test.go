@@ -30,7 +30,7 @@ func TestLogoutCommand(t *testing.T) {
 
 		// logout
 		assert.NoError(t, Run(context.Background(), os.Stdout, RunParams{
-			Fsys:  fs,
+			Fsys: fs,
 		}))
 		saved, err = credentials.Get(utils.AccessTokenKey)
 		assert.Equal(t, err, keyring.ErrNotFound)
