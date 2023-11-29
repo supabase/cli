@@ -24,7 +24,7 @@ var (
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
 )
 
-func Run(fsys afero.Fs, createVscodeWorkspace *bool) error {
+func Run(fsys afero.Fs, createVscodeWorkspace *bool, useOrioleDB bool) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
@@ -35,7 +35,7 @@ func Run(fsys afero.Fs, createVscodeWorkspace *bool) error {
 	}
 
 	// 1. Write `config.toml`.
-	if err := utils.WriteConfig(fsys, false); err != nil {
+	if err := utils.InitConfig(utils.InitParams{UseOrioleDB: useOrioleDB}, fsys); err != nil {
 		return err
 	}
 

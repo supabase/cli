@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -187,16 +188,17 @@ var Config = config{
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	config struct {
-		ProjectId string              `toml:"project_id"`
-		Api       api                 `toml:"api"`
-		Db        db                  `toml:"db" mapstructure:"db"`
-		Realtime  realtime            `toml:"realtime"`
-		Studio    studio              `toml:"studio"`
-		Inbucket  inbucket            `toml:"inbucket"`
-		Storage   storage             `toml:"storage"`
-		Auth      auth                `toml:"auth" mapstructure:"auth"`
-		Functions map[string]function `toml:"functions"`
-		Analytics analytics           `toml:"analytics"`
+		ProjectId    string              `toml:"project_id"`
+		Api          api                 `toml:"api"`
+		Db           db                  `toml:"db" mapstructure:"db"`
+		Realtime     realtime            `toml:"realtime"`
+		Studio       studio              `toml:"studio"`
+		Inbucket     inbucket            `toml:"inbucket"`
+		Storage      storage             `toml:"storage"`
+		Auth         auth                `toml:"auth" mapstructure:"auth"`
+		Functions    map[string]function `toml:"functions"`
+		Analytics    analytics           `toml:"analytics"`
+		Experimental experimental        `toml:"experimental" mapstructure:"-"`
 		// TODO
 		// Scripts   scripts
 	}
@@ -347,6 +349,10 @@ type (
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
 	}
 
+	experimental struct {
+		OrioleDBVersion string `toml:"orioledb_version"`
+	}
+
 	// TODO
 	// scripts struct {
 	// 	BeforeMigrations string `toml:"before_migrations"`
@@ -356,9 +362,15 @@ type (
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
-	if _, err := toml.Decode(initConfigEmbed, &Config); err != nil {
+	var buf bytes.Buffer
+	if err := initConfigTemplate.Execute(&buf, nil); err != nil {
 		return err
 	}
+	dec := toml.NewDecoder(&buf)
+	if _, err := dec.Decode(&Config); err != nil {
+		return err
+	}
+	// Load user defined config
 	if metadata, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
 		CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
 		cwd, osErr := os.Getwd()
@@ -429,7 +441,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			Config.Db.Image = Pg14Image
 			InitialSchemaSql = InitialSchemaPg14Sql
 		case 15:
-			if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && len(version) > 0 {
+			if len(Config.Experimental.OrioleDBVersion) > 0 {
+				Config.Db.Image = "supabase/postgres:orioledb-" + Config.Experimental.OrioleDBVersion
+			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && len(version) > 0 {
 				index := strings.IndexByte(Pg15Image, ':')
 				Config.Db.Image = Pg15Image[:index+1] + string(version)
 			}
@@ -634,16 +648,21 @@ func sanitizeProjectId(src string) string {
 	return strings.TrimLeft(sanitized, "_.-")
 }
 
-func InitConfig(projectId string, fsys afero.Fs) error {
+type InitParams struct {
+	ProjectId   string
+	UseOrioleDB bool
+}
+
+func InitConfig(params InitParams, fsys afero.Fs) error {
 	// Defaults to current directory name as project id
-	if len(projectId) == 0 {
+	if len(params.ProjectId) == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		projectId = filepath.Base(cwd)
+		params.ProjectId = filepath.Base(cwd)
 	}
-	projectId = sanitizeProjectId(projectId)
+	params.ProjectId = sanitizeProjectId(params.ProjectId)
 	// Create config file
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
@@ -654,13 +673,11 @@ func InitConfig(projectId string, fsys afero.Fs) error {
 	}
 	defer f.Close()
 	// Update from template
-	return initConfigTemplate.Execute(f, struct{ ProjectId string }{
-		ProjectId: projectId,
-	})
+	return initConfigTemplate.Execute(f, params)
 }
 
 func WriteConfig(fsys afero.Fs, _test bool) error {
-	return InitConfig("", fsys)
+	return InitConfig(InitParams{}, fsys)
 }
 
 func removeDuplicates(slice []string) (result []string) {

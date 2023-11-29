@@ -19,7 +19,7 @@ func TestServeCommand(t *testing.T) {
 	t.Run("serves all functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.InitConfig("test", fsys))
+		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		require.NoError(t, afero.WriteFile(fsys, ".env", []byte{}, 0644))
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte{}, 0644))
 		// Setup mock docker
@@ -55,7 +55,7 @@ func TestServeCommand(t *testing.T) {
 	t.Run("throws error on missing db", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.InitConfig("test", fsys))
+		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -71,7 +71,7 @@ func TestServeCommand(t *testing.T) {
 	t.Run("throws error on missing env file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.InitConfig("test", fsys))
+		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -88,7 +88,7 @@ func TestServeCommand(t *testing.T) {
 	t.Run("throws error on missing import map", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.InitConfig("test", fsys))
+		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		require.NoError(t, afero.WriteFile(fsys, ".env", []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))

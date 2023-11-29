@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -32,6 +34,16 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 		cmd = cmd.Parent()
 	}
 	return false
+}
+
+func PromptLogin(ctx context.Context, fsys afero.Fs) error {
+	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
+		return login.Run(ctx, os.Stdout, login.RunParams{
+			Fsys: fsys,
+		})
+	} else {
+		return err
+	}
 }
 
 var experimental = []*cobra.Command{
@@ -72,7 +84,7 @@ var (
 			// Add common flags
 			ctx := cmd.Context()
 			if IsManagementAPI(cmd) {
-				if err := PromptLogin(fsys); err != nil {
+				if err := PromptLogin(ctx, fsys); err != nil {
 					return err
 				}
 				if cmd.Flags().Lookup("project-ref") != nil {
