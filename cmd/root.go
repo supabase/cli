@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -38,9 +37,8 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 
 func PromptLogin(ctx context.Context, fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
-		return login.Run(ctx, os.Stdout, login.RunParams{
-			Fsys: fsys,
-		})
+		utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+		return errors.New("You need to be logged-in in order to use Management API commands.")
 	} else {
 		return err
 	}
