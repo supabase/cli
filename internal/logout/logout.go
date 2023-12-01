@@ -2,7 +2,6 @@ package logout
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -14,17 +13,19 @@ type RunParams struct {
 	Fsys afero.Fs
 }
 
-func PreRun() error {
-	if !utils.PromptYesNo("Do you want to log out, which will remove the token from your system?", true, os.Stdin) {
-		return errors.New("Not deleting the token")
-	}
-	return nil
-}
-
 func Run(ctx context.Context, stdout *os.File, params RunParams) error {
+	if !utils.PromptYesNo("Do you want to log out, which will remove the token from your system?", true, os.Stdin) {
+		fmt.Fprintln(stdout, "Not deleting token")
+		return nil
+	}
+
 	fmt.Fprintln(stdout, "Deleting the access token. Please wait...")
 
 	if err := utils.DeleteAccessToken(params.Fsys); err != nil {
+		if err == utils.ErrMissingToken {
+			fmt.Fprintln(stdout, "You were not logged in, nothing to do.")
+			return nil
+		}
 		return err
 	}
 

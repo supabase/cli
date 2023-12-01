@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"syscall"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -98,7 +100,11 @@ func fallbackDeleteToken(fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	return fsys.Remove(path)
+	if err := fsys.Remove(path); err != nil && strings.Contains(err.Error(), syscall.ENOENT.Error()) {
+		return ErrMissingToken
+	} else {
+		return err
+	}
 }
 
 func getAccessTokenPath() (string, error) {
