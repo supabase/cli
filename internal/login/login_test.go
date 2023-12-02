@@ -42,7 +42,7 @@ func TestLoginCommand(t *testing.T) {
 		}))
 		saved, err := credentials.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
-		assert.Equal(t, token, saved)
+		assert.Equal(t, saved, token)
 	})
 
 	t.Run("goes through automated flow successfully", func(t *testing.T) {
@@ -85,6 +85,6 @@ func TestLoginCommand(t *testing.T) {
 
 		saved, err := credentials.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
-		assert.Equal(t, token, saved)
+		assert.Equal(t, saved, token)
 	})
 }

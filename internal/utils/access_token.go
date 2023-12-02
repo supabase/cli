@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
-	"syscall"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -16,6 +14,7 @@ var (
 	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
 	ErrInvalidToken    = errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 	ErrMissingToken    = errors.New("Access token not provided. Supply an access token by running " + Aqua("supabase login") + " or setting the SUPABASE_ACCESS_TOKEN environment variable.")
+	ErrNotLoggedIn     = errors.New("You were not logged in, nothing to do.")
 )
 
 const AccessTokenKey = "access-token"
@@ -100,11 +99,10 @@ func fallbackDeleteToken(fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	if err := fsys.Remove(path); err != nil && strings.Contains(err.Error(), syscall.ENOENT.Error()) {
-		return ErrMissingToken
-	} else {
-		return err
+	if err := fsys.Remove(path); errors.Is(err, os.ErrNotExist) {
+		return ErrNotLoggedIn
 	}
+	return err
 }
 
 func getAccessTokenPath() (string, error) {
