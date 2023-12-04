@@ -15,7 +15,7 @@ require (
 	github.com/docker/go-connections v0.4.0
 	github.com/go-git/go-git/v5 v5.10.1
 	github.com/go-xmlfmt/xmlfmt v1.1.2
-	github.com/golang-jwt/jwt/v5 v5.1.0
+	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/google/go-github/v53 v53.2.0
 	github.com/google/uuid v1.4.0
 	github.com/jackc/pgx/v4 v4.18.1
