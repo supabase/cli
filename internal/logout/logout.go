@@ -16,16 +16,15 @@ type RunParams struct {
 }
 
 func Run(ctx context.Context, stdout *os.File, params RunParams) error {
-	if !utils.PromptYesNo("Do you want to log out? This will remove the acces token from your system.", params.DefaultAnswer, os.Stdin) {
-		fmt.Fprintln(stdout, "Not deleting token.")
+	if !utils.PromptYesNo("Do you want to log out? This will remove the access token from your system.", params.DefaultAnswer, os.Stdin) {
+		fmt.Fprintln(os.Stderr, "Not deleting access token.")
 		return nil
 	}
 
-	if err := utils.DeleteAccessToken(params.Fsys); err != nil {
-		if errors.Is(err, utils.ErrNotLoggedIn) {
-			fmt.Fprintln(stdout, err)
-			return nil
-		}
+	if err := utils.DeleteAccessToken(params.Fsys); errors.Is(err, utils.ErrNotLoggedIn) {
+		fmt.Fprintln(os.Stderr, err)
+		return nil
+	} else if err != nil {
 		return err
 	}
 
