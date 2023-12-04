@@ -18,7 +18,6 @@ var (
 				Fsys:          afero.NewOsFs(),
 				DefaultAnswer: false,
 			}
-
 			return logout.Run(cmd.Context(), os.Stdout, params)
 		},
 	}

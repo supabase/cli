@@ -40,7 +40,9 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("skips logout by default", func(t *testing.T) {
 		require.NoError(t, credentials.Set(utils.AccessTokenKey, token))
-		defer credentials.Delete(utils.AccessTokenKey)
+		defer func() {
+			_ = credentials.Delete(utils.AccessTokenKey)
+		}()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
