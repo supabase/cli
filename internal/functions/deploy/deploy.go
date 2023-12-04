@@ -74,7 +74,7 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	}
 
 	// create temp directory to store generated eszip
-	tmpDir, err := os.MkdirTemp("", "eszip")
+	tmpDir, err := afero.TempDir(fsys, "eszip")
 	if err != nil {
 		return nil, err
 	}
