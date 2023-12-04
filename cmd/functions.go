@@ -53,7 +53,7 @@ var (
 	importMapPath   string
 
 	functionsDeployCmd = &cobra.Command{
-		Use:   "deploy <Function name>",
+		Use:   "deploy [Function name]",
 		Short: "Deploy a Function to Supabase",
 		Long:  "Deploy a Function to the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
