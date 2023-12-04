@@ -32,7 +32,11 @@ var (
 		Long:  "Create a preview branch for the linked project.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(cmd.Context(), args[0], branchRegion.Value, afero.NewOsFs())
+			var name string
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return create.Run(cmd.Context(), name, branchRegion.Value, afero.NewOsFs())
 		},
 	}
 
