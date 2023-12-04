@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	eszipContentType = "application/vnd.denoland.eszip"
+	eszipContentType       = "application/vnd.denoland.eszip"
+	compressedEszipMagicId = "EZBR"
 
-	dockerFuncDirPath = utils.DockerDenoDir + "/functions"
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
 	dockerImportMapPath = utils.DockerDenoDir + "/import_map.json"
+	dockerOutputDir     = "/root/eszips"
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
@@ -74,19 +75,19 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	}
 
 	// create temp directory to store generated eszip
-	tmpDir, err := afero.TempDir(fsys, "eszip")
+	tmpDir, err := os.MkdirTemp("", "eszip")
 	if err != nil {
 		return nil, err
 	}
-	defer fsys.RemoveAll(tmpDir)
-	outputPath := "/root/eszips/output.eszip"
+	defer os.RemoveAll(tmpDir)
+	outputPath := dockerOutputDir + "/output.eszip"
 
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":ro,z",
-		tmpDir + ":/root/eszips:rw,z",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro,z",
+		tmpDir + ":" + dockerOutputDir + ":rw,z",
 	}
 
 	if importMapPath != "" {
@@ -120,7 +121,7 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 				},
 			},
 		},
-		"edge-runtime-bundle",
+		"",
 		os.Stdout,
 		os.Stderr,
 	)
@@ -128,24 +129,19 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 		return nil, err
 	}
 
-	eszipBytes, err := os.ReadFile(filepath.Join(tmpDir, "output.eszip"))
+	eszipBytes, err := afero.ReadFile(fsys, filepath.Join(tmpDir, "output.eszip"))
 	if err != nil {
 		return nil, err
 	}
 	eszipBuf := bytes.NewBuffer(eszipBytes)
 
-	compressedBuf := &bytes.Buffer{}
-	_, err = compressedBuf.WriteString("EZBR")
-	if err != nil {
-		return nil, err
-	}
-
+	compressedBuf := bytes.NewBufferString(compressedEszipMagicId)
 	brw := brotli.NewWriter(compressedBuf)
 	_, err = eszipBuf.WriteTo(brw)
 	if err != nil {
 		return nil, err
 	}
-	brw.Close()
+	defer brw.Close()
 
 	return compressedBuf, nil
 }
@@ -215,7 +211,7 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	}
 	importMapPath = resolved
 	// 2. Bundle Function.
-	dockerEntrypointPath, err := filepath.Abs(filepath.Join(dockerFuncDirPath, slug, "index.ts"))
+	dockerEntrypointPath, err := filepath.Abs(filepath.Join(utils.DockerFuncDirPath, slug, "index.ts"))
 	if err != nil {
 		return err
 	}

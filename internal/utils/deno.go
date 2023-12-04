@@ -30,6 +30,12 @@ var (
 	DenoPathOverride string
 )
 
+const (
+	DockerDenoDir     = "/home/deno"
+	DockerModsDir     = DockerDenoDir + "/modules"
+	DockerFuncDirPath = DockerDenoDir + "/functions"
+)
+
 func GetDenoPath() (string, error) {
 	if len(DenoPathOverride) > 0 {
 		return DenoPathOverride, nil
@@ -266,11 +272,6 @@ func (m *ImportMap) BindModules(resolved ImportMap) []string {
 	}
 	return binds
 }
-
-const (
-	DockerDenoDir = "/home/deno"
-	DockerModsDir = DockerDenoDir + "/modules"
-)
 
 func resolveHostPath(hostPath string, fsys afero.Fs) string {
 	// All local fs imports will be mounted to /home/deno/modules

@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	dockerFuncDirPath = utils.DockerDenoDir + "/functions"
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
 	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
 	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
@@ -92,7 +91,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_DB_URL=" + dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
-		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + dockerFuncDirPath,
+		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + utils.DockerFuncDirPath,
 	}
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
@@ -102,7 +101,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + dockerFuncDirPath + ":rw,z",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":rw,z",
 	}
 	if importMapPath != "" {
 		modules, err := utils.BindImportMap(importMapPath, dockerFlagImportMapPath, fsys)
