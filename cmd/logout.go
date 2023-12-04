@@ -12,7 +12,7 @@ var (
 	logoutCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "logout",
-		Short:   "Logging out and delete access tokens",
+		Short:   "Log out and delete access tokens locally",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := logout.RunParams{
 				Fsys:          afero.NewOsFs(),
