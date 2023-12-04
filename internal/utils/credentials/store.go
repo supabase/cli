@@ -10,6 +10,8 @@ import (
 
 const namespace = "Supabase CLI"
 
+var ErrNotSupported = errors.New("Keyring is not supported on WSL")
+
 // Retrieves the stored password of a project and username
 func Get(project string) (string, error) {
 	if err := assertKeyringSupported(); err != nil {
@@ -37,7 +39,7 @@ func Delete(project string) error {
 func assertKeyringSupported() error {
 	// Suggested check: https://github.com/microsoft/WSL/issues/423
 	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil && bytes.Contains(f, []byte("WSL")) {
-		return errors.New("Keyring is not supported on WSL")
+		return ErrNotSupported
 	}
 	return nil
 }

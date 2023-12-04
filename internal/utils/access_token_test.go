@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
 )
 
@@ -158,5 +159,46 @@ func TestSaveTokenFallback(t *testing.T) {
 		err = fallbackSaveToken(token, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "permission denied")
+	})
+}
+
+func TestDeleteToken(t *testing.T) {
+	t.Run("deletes both keyring and fallback", func(t *testing.T) {
+		token := string(apitest.RandomAccessToken(t))
+		require.NoError(t, credentials.Set(AccessTokenKey, token))
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fallbackSaveToken(token, fsys))
+		// Run test
+		err := DeleteAccessToken(fsys)
+		// Check error
+		assert.NoError(t, err)
+		_, err = credentials.Get(AccessTokenKey)
+		assert.ErrorIs(t, err, keyring.ErrNotFound)
+		path, err := getAccessTokenPath()
+		assert.NoError(t, err)
+		exists, err := afero.Exists(fsys, path)
+		assert.NoError(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("throws error if not logged in", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := DeleteAccessToken(fsys)
+		// Check error
+		assert.ErrorIs(t, err, ErrNotLoggedIn)
+	})
+
+	t.Run("throws error on home dir failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Setup empty home directory
+		t.Setenv("HOME", "")
+		// Run test
+		err := DeleteAccessToken(fsys)
+		// Check error
+		assert.ErrorContains(t, err, "$HOME is not defined")
 	})
 }
