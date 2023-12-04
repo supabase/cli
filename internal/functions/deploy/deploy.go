@@ -129,6 +129,9 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	}
 
 	eszipBytes, err := os.ReadFile(filepath.Join(tmpDir, "output.eszip"))
+	if err != nil {
+		return nil, err
+	}
 	eszipBuf := bytes.NewBuffer(eszipBytes)
 
 	compressedBuf := &bytes.Buffer{}
