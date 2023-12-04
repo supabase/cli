@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/zalando/go-keyring"
 )
 
 var (
@@ -86,12 +87,21 @@ func fallbackSaveToken(accessToken string, fsys afero.Fs) error {
 }
 
 func DeleteAccessToken(fsys afero.Fs) error {
-	// Delete from native credentials store
-	if err := credentials.Delete(AccessTokenKey); err == nil {
+	// Always delete the fallback token file to handle legacy CLI
+	if err := fallbackDeleteToken(fsys); err == nil {
+		// Typically user system should only have either token file or keyring.
+		// But we delete from both just in case.
+		_ = credentials.Delete(AccessTokenKey)
 		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	// Fallback to token file
-	return fallbackDeleteToken(fsys)
+	// Fallback not found, delete from native credentials store
+	err := credentials.Delete(AccessTokenKey)
+	if errors.Is(err, credentials.ErrNotSupported) || errors.Is(err, keyring.ErrNotFound) {
+		return ErrNotLoggedIn
+	}
+	return err
 }
 
 func fallbackDeleteToken(fsys afero.Fs) error {
@@ -99,10 +109,7 @@ func fallbackDeleteToken(fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	if err := fsys.Remove(path); errors.Is(err, os.ErrNotExist) {
-		return ErrNotLoggedIn
-	}
-	return err
+	return fsys.Remove(path)
 }
 
 func getAccessTokenPath() (string, error) {
