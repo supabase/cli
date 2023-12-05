@@ -23,7 +23,7 @@ func TestOrganizationListCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/organizations").
 			Reply(http.StatusOK).
-			JSON([]api.OrganizationResponse{
+			JSON([]api.OrganizationResponseV1{
 				{
 					Id:   "combined-fuchsia-lion",
 					Name: "Test Organization",
