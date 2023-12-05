@@ -25,7 +25,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			Reply(http.StatusCreated).
-			JSON(api.OrganizationResponse{
+			JSON(api.OrganizationResponseV1{
 				Id:   "combined-fuchsia-lion",
 				Name: orgName,
 			})
