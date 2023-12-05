@@ -79,7 +79,7 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer fsys.RemoveAll(tmpDir)
 	outputPath := dockerOutputDir + "/output.eszip"
 
 	binds := []string{
