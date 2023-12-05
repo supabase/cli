@@ -21,9 +21,6 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestMain(m *testing.M) {
-}
-
 func TestDeployOne(t *testing.T) {
 	const slug = "test-func"
 

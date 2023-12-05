@@ -75,19 +75,23 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	}
 
 	// create temp directory to store generated eszip
-	tmpDir, err := afero.TempDir(fsys, "", "eszip")
+	hostOutputDir, err := afero.TempDir(fsys, "", "eszip")
 	if err != nil {
 		return nil, err
 	}
-	defer fsys.RemoveAll(tmpDir)
-	outputPath := dockerOutputDir + "/output.eszip"
+	defer func() {
+		if err := fsys.RemoveAll(hostOutputDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
 
+	outputPath := dockerOutputDir + "/output.eszip"
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro,z",
-		tmpDir + ":" + dockerOutputDir + ":rw,z",
+		hostOutputDir + ":" + dockerOutputDir + ":rw,z",
 	}
 
 	if importMapPath != "" {
@@ -129,19 +133,20 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 		return nil, err
 	}
 
-	eszipBytes, err := afero.ReadFile(fsys, filepath.Join(tmpDir, "output.eszip"))
+	eszipBytes, err := fsys.Open(filepath.Join(hostOutputDir, "output.eszip"))
 	if err != nil {
 		return nil, err
 	}
-	eszipBuf := bytes.NewBuffer(eszipBytes)
+	defer eszipBytes.Close()
 
 	compressedBuf := bytes.NewBufferString(compressedEszipMagicId)
 	brw := brotli.NewWriter(compressedBuf)
-	_, err = eszipBuf.WriteTo(brw)
+	defer brw.Close()
+
+	_, err = io.Copy(brw, eszipBytes)
 	if err != nil {
 		return nil, err
 	}
-	defer brw.Close()
 
 	return compressedBuf, nil
 }
