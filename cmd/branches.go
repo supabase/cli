@@ -59,8 +59,9 @@ var (
 		},
 	}
 
-	branchName string
-	gitBranch  string
+	branchName  string
+	gitBranch   string
+	resetOnPush bool
 
 	branchUpdateCmd = &cobra.Command{
 		Use:   "update <branch-id>",
@@ -74,6 +75,9 @@ var (
 			}
 			if cmd.Flags().Changed("git-branch") {
 				body.GitBranch = &gitBranch
+			}
+			if cmd.Flags().Changed("reset-on-push") {
+				body.ResetOnPush = &resetOnPush
 			}
 			return update.Run(cmd.Context(), args[0], body, afero.NewOsFs())
 		},
@@ -115,6 +119,7 @@ func init() {
 	updateFlags := branchUpdateCmd.Flags()
 	updateFlags.StringVar(&branchName, "name", "", "Rename the preview branch.")
 	updateFlags.StringVar(&gitBranch, "git-branch", "", "Change the associated git branch.")
+	updateFlags.BoolVar(&resetOnPush, "reset-on-push", false, "Reset the preview branch on git push.")
 	branchesCmd.AddCommand(branchUpdateCmd)
 	branchesCmd.AddCommand(branchDeleteCmd)
 	branchesCmd.AddCommand(branchDisableCmd)
