@@ -4725,7 +4725,7 @@ func (r TokenResponse) StatusCode() int {
 type GetOrganizationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]OrganizationResponse
+	JSON200      *[]OrganizationResponseV1
 }
 
 // Status returns HTTPResponse.Status
@@ -4747,7 +4747,7 @@ func (r GetOrganizationsResponse) StatusCode() int {
 type CreateOrganizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *OrganizationResponse
+	JSON201      *OrganizationResponseV1
 }
 
 // Status returns HTTPResponse.Status
@@ -5839,6 +5839,7 @@ func (r GetTypescriptTypesResponse) StatusCode() int {
 type UpgradeProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON201      *ProjectUpgradeInitiateResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -6934,7 +6935,7 @@ func ParseGetOrganizationsResponse(rsp *http.Response) (*GetOrganizationsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []OrganizationResponse
+		var dest []OrganizationResponseV1
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -6960,7 +6961,7 @@ func ParseCreateOrganizationResponse(rsp *http.Response) (*CreateOrganizationRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest OrganizationResponse
+		var dest OrganizationResponseV1
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -8173,6 +8174,16 @@ func ParseUpgradeProjectResponse(rsp *http.Response) (*UpgradeProjectResponse, e
 	response := &UpgradeProjectResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ProjectUpgradeInitiateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	}
 
 	return response, nil

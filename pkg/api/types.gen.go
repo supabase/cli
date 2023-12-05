@@ -136,6 +136,7 @@ const (
 // Defines values for ServiceHealthResponseName.
 const (
 	ServiceHealthResponseNameAuth     ServiceHealthResponseName = "auth"
+	ServiceHealthResponseNameDb       ServiceHealthResponseName = "db"
 	ServiceHealthResponseNameRealtime ServiceHealthResponseName = "realtime"
 	ServiceHealthResponseNameRest     ServiceHealthResponseName = "rest"
 	ServiceHealthResponseNameStorage  ServiceHealthResponseName = "storage"
@@ -214,6 +215,7 @@ const (
 // Defines values for CheckServiceHealthParamsServices.
 const (
 	CheckServiceHealthParamsServicesAuth     CheckServiceHealthParamsServices = "auth"
+	CheckServiceHealthParamsServicesDb       CheckServiceHealthParamsServices = "db"
 	CheckServiceHealthParamsServicesRealtime CheckServiceHealthParamsServices = "realtime"
 	CheckServiceHealthParamsServicesRest     CheckServiceHealthParamsServices = "rest"
 	CheckServiceHealthParamsServicesStorage  CheckServiceHealthParamsServices = "storage"
@@ -295,14 +297,16 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt        string  `json:"created_at"`
-	GitBranch        *string `json:"git_branch,omitempty"`
-	Id               string  `json:"id"`
-	IsDefault        bool    `json:"is_default"`
-	Name             string  `json:"name"`
-	ParentProjectRef string  `json:"parent_project_ref"`
-	ProjectRef       string  `json:"project_ref"`
-	UpdatedAt        string  `json:"updated_at"`
+	CreatedAt        string   `json:"created_at"`
+	GitBranch        *string  `json:"git_branch,omitempty"`
+	Id               string   `json:"id"`
+	IsDefault        bool     `json:"is_default"`
+	Name             string   `json:"name"`
+	ParentProjectRef string   `json:"parent_project_ref"`
+	PrNumber         *float32 `json:"pr_number,omitempty"`
+	ProjectRef       string   `json:"project_ref"`
+	ResetOnPush      bool     `json:"reset_on_push"`
+	UpdatedAt        string   `json:"updated_at"`
 }
 
 // CreateBranchBody defines model for CreateBranchBody.
@@ -320,8 +324,8 @@ type CreateFunctionBody struct {
 	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
 }
 
-// CreateOrganizationBody defines model for CreateOrganizationBody.
-type CreateOrganizationBody struct {
+// CreateOrganizationBodyV1 defines model for CreateOrganizationBodyV1.
+type CreateOrganizationBodyV1 struct {
 	Name string `json:"name"`
 }
 
@@ -338,14 +342,15 @@ type CreateProjectBody struct {
 	// OrganizationId Slug of your organization
 	OrganizationId string `json:"organization_id"`
 
-	// Plan Subscription plan
+	// Plan Subscription plan is now set on organization level and is ignored in this request
+	// Deprecated:
 	Plan CreateProjectBodyPlan `json:"plan"`
 
 	// Region Region you want your server to reside in
 	Region CreateProjectBodyRegion `json:"region"`
 }
 
-// CreateProjectBodyPlan Subscription plan
+// CreateProjectBodyPlan Subscription plan is now set on organization level and is ignored in this request
 type CreateProjectBodyPlan string
 
 // CreateProjectBodyRegion Region you want your server to reside in
@@ -529,8 +534,8 @@ type OAuthTokenResponse struct {
 // OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
 type OAuthTokenResponseTokenType string
 
-// OrganizationResponse defines model for OrganizationResponse.
-type OrganizationResponse struct {
+// OrganizationResponseV1 defines model for OrganizationResponseV1.
+type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -602,11 +607,19 @@ type ProjectResponse struct {
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
 type ProjectUpgradeEligibilityResponse struct {
 	CurrentAppVersion          string           `json:"current_app_version"`
+	DurationEstimateHours      float32          `json:"duration_estimate_hours"`
 	Eligible                   bool             `json:"eligible"`
+	ExtensionDependentObjects  []string         `json:"extension_dependent_objects"`
 	LatestAppVersion           string           `json:"latest_app_version"`
+	LegacyAuthCustomRoles      []string         `json:"legacy_auth_custom_roles"`
 	PotentialBreakingChanges   []string         `json:"potential_breaking_changes"`
 	RequiresManualIntervention *string          `json:"requires_manual_intervention"`
 	TargetUpgradeVersions      []ProjectVersion `json:"target_upgrade_versions"`
+}
+
+// ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
+type ProjectUpgradeInitiateResponse struct {
+	TrackingId string `json:"tracking_id"`
 }
 
 // ProjectVersion defines model for ProjectVersion.
@@ -784,8 +797,9 @@ type UpdateAuthConfigBody struct {
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
-	BranchName *string `json:"branch_name,omitempty"`
-	GitBranch  *string `json:"git_branch,omitempty"`
+	BranchName  *string `json:"branch_name,omitempty"`
+	GitBranch   *string `json:"git_branch,omitempty"`
+	ResetOnPush *bool   `json:"reset_on_push,omitempty"`
 }
 
 // UpdateCustomHostnameBody defines model for UpdateCustomHostnameBody.
@@ -864,10 +878,11 @@ type UpgradeDatabaseBody struct {
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
 type V1OrganizationMemberResponse struct {
-	Email    *string `json:"email,omitempty"`
-	RoleName string  `json:"role_name"`
-	UserId   string  `json:"user_id"`
-	UserName string  `json:"user_name"`
+	Email      *string `json:"email,omitempty"`
+	MfaEnabled bool    `json:"mfa_enabled"`
+	RoleName   string  `json:"role_name"`
+	UserId     string  `json:"user_id"`
+	UserName   string  `json:"user_name"`
 }
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
@@ -970,7 +985,7 @@ type UpdateBranchJSONRequestBody = UpdateBranchBody
 type TokenFormdataRequestBody = OAuthTokenBody
 
 // CreateOrganizationJSONRequestBody defines body for CreateOrganization for application/json ContentType.
-type CreateOrganizationJSONRequestBody = CreateOrganizationBody
+type CreateOrganizationJSONRequestBody = CreateOrganizationBodyV1
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectBody

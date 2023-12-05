@@ -21,9 +21,9 @@ paths:
                 $ref: '#/components/schemas/BranchDetailResponse'
         '500':
           description: Failed to retrieve database branch
-      tags: &ref_0
+      tags:
         - database branches (beta)
-      security: &ref_1
+      security:
         - bearer: []
     patch:
       operationId: updateBranch
@@ -51,8 +51,10 @@ paths:
                 $ref: '#/components/schemas/BranchResponse'
         '500':
           description: Failed to update database branch
-      tags: *ref_0
-      security: *ref_1
+      tags:
+        - database branches (beta)
+      security:
+        - bearer: []
     delete:
       operationId: deleteBranch
       summary: Delete a database branch
@@ -69,8 +71,10 @@ paths:
           description: ''
         '500':
           description: Failed to delete database branch
-      tags: *ref_0
-      security: *ref_1
+      tags:
+        - database branches (beta)
+      security:
+        - bearer: []
   /v1/projects:
     get:
       operationId: getProjects
@@ -86,9 +90,9 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProjectResponse'
-      tags: &ref_2
+      tags:
         - projects
-      security: &ref_3
+      security:
         - bearer: []
     post:
       operationId: createProject
@@ -113,8 +117,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProjectResponse'
-      tags: *ref_2
-      security: *ref_3
+      tags:
+        - projects
+      security:
+        - bearer: []
   /v1/organizations:
     get:
       operationId: getOrganizations
@@ -129,12 +135,12 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/OrganizationResponse'
+                  $ref: '#/components/schemas/OrganizationResponseV1'
         '500':
           description: Unexpected error listing organizations
-      tags: &ref_4
+      tags:
         - organizations
-      security: &ref_5
+      security:
         - bearer: []
     post:
       operationId: createOrganization
@@ -145,18 +151,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrganizationBody'
+              $ref: '#/components/schemas/CreateOrganizationBodyV1'
       responses:
         '201':
           description: ''
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrganizationResponse'
+                $ref: '#/components/schemas/OrganizationResponseV1'
         '500':
           description: Unexpected error creating an organization
-      tags: *ref_4
-      security: *ref_5
+      tags:
+        - organizations
+      security:
+        - bearer: []
   /v1/oauth/authorize:
     get:
       operationId: authorize
@@ -213,7 +221,7 @@ paths:
       responses:
         '303':
           description: ''
-      tags: &ref_6
+      tags:
         - oauth (beta)
   /v1/oauth/token:
     post:
@@ -233,7 +241,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
-      tags: *ref_6
+      tags:
+        - oauth (beta)
   /v1/snippets:
     get:
       operationId: listSnippets
@@ -253,9 +262,9 @@ paths:
                 $ref: '#/components/schemas/SnippetList'
         '500':
           description: Failed to list user's SQL snippets
-      tags: &ref_7
+      tags:
         - snippets
-      security: &ref_8
+      security:
         - bearer: []
   /v1/snippets/{id}:
     get:
@@ -276,8 +285,10 @@ paths:
                 $ref: '#/components/schemas/SnippetResponse'
         '500':
           description: Failed to retrieve SQL snippet
-      tags: *ref_7
-      security: *ref_8
+      tags:
+        - snippets
+      security:
+        - bearer: []
   /v1/projects/{ref}/api-keys:
     get:
       operationId: getProjectApiKeys
@@ -330,9 +341,9 @@ paths:
                   $ref: '#/components/schemas/BranchResponse'
         '500':
           description: Failed to retrieve database branches
-      tags: &ref_9
+      tags:
         - database branches (beta)
-      security: &ref_10
+      security:
         - bearer: []
     post:
       operationId: createBranch
@@ -362,8 +373,10 @@ paths:
                 $ref: '#/components/schemas/BranchResponse'
         '500':
           description: Failed to create database branch
-      tags: *ref_9
-      security: *ref_10
+      tags:
+        - database branches (beta)
+      security:
+        - bearer: []
     delete:
       operationId: disableBranch
       summary: Disables preview branching
@@ -382,8 +395,10 @@ paths:
           description: ''
         '500':
           description: Failed to disable preview branching
-      tags: *ref_9
-      security: *ref_10
+      tags:
+        - database branches (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/custom-hostname:
     get:
       operationId: getCustomHostnameConfig
@@ -408,9 +423,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's custom hostname config
-      tags: &ref_11
+      tags:
         - custom hostname (beta)
-      security: &ref_12
+      security:
         - bearer: []
     delete:
       operationId: removeCustomHostnameConfig
@@ -431,8 +446,10 @@ paths:
           description: ''
         '500':
           description: Failed to delete project custom hostname configuration
-      tags: *ref_11
-      security: *ref_12
+      tags:
+        - custom hostname (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/custom-hostname/initialize:
     post:
       operationId: createCustomHostnameConfig
@@ -463,8 +480,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project custom hostname configuration
-      tags: *ref_11
-      security: *ref_12
+      tags:
+        - custom hostname (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/custom-hostname/reverify:
     post:
       operationId: reverify
@@ -491,8 +510,10 @@ paths:
           description: ''
         '500':
           description: Failed to verify project custom hostname configuration
-      tags: *ref_11
-      security: *ref_12
+      tags:
+        - custom hostname (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/custom-hostname/activate:
     post:
       operationId: activate
@@ -517,8 +538,10 @@ paths:
           description: ''
         '500':
           description: Failed to activate project custom hostname configuration
-      tags: *ref_11
-      security: *ref_12
+      tags:
+        - custom hostname (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/network-bans/retrieve:
     post:
       operationId: getNetworkBans
@@ -543,9 +566,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network bans
-      tags: &ref_13
+      tags:
         - network bans (beta)
-      security: &ref_14
+      security:
         - bearer: []
   /v1/projects/{ref}/network-bans:
     delete:
@@ -573,8 +596,10 @@ paths:
           description: ''
         '500':
           description: Failed to remove network bans.
-      tags: *ref_13
-      security: *ref_14
+      tags:
+        - network bans (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/network-restrictions:
     get:
       operationId: getNetworkRestrictions
@@ -599,9 +624,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's network restrictions
-      tags: &ref_15
+      tags:
         - network restrictions (beta)
-      security: &ref_16
+      security:
         - bearer: []
   /v1/projects/{ref}/network-restrictions/apply:
     post:
@@ -633,8 +658,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project network restrictions
-      tags: *ref_15
-      security: *ref_16
+      tags:
+        - network restrictions (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/pgsodium:
     get:
       operationId: getPgsodiumConfig
@@ -659,9 +686,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's pgsodium config
-      tags: &ref_17
+      tags:
         - pgsodium (beta)
-      security: &ref_18
+      security:
         - bearer: []
     put:
       operationId: updatePgsodiumConfig
@@ -694,8 +721,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project's pgsodium config
-      tags: *ref_17
-      security: *ref_18
+      tags:
+        - pgsodium (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/postgrest:
     get:
       operationId: getPostgRESTConfig
@@ -720,9 +749,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's postgrest config
-      tags: &ref_19
+      tags:
         - services
-      security: &ref_20
+      security:
         - bearer: []
     patch:
       operationId: updatePostgRESTConfig
@@ -753,8 +782,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project's postgrest config
-      tags: *ref_19
-      security: *ref_20
+      tags:
+        - services
+      security:
+        - bearer: []
   /v1/projects/{ref}:
     delete:
       operationId: deleteProject
@@ -808,9 +839,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's secrets
-      tags: &ref_21
+      tags:
         - secrets
-      security: &ref_22
+      security:
         - bearer: []
     post:
       operationId: createSecrets
@@ -840,8 +871,10 @@ paths:
           description: ''
         '500':
           description: Failed to create project's secrets
-      tags: *ref_21
-      security: *ref_22
+      tags:
+        - secrets
+      security:
+        - bearer: []
     delete:
       operationId: deleteSecrets
       summary: Bulk delete secrets
@@ -874,8 +907,10 @@ paths:
           description: ''
         '500':
           description: Failed to delete secrets with given names
-      tags: *ref_21
-      security: *ref_22
+      tags:
+        - secrets
+      security:
+        - bearer: []
   /v1/projects/{ref}/ssl-enforcement:
     get:
       operationId: getSslEnforcementConfig
@@ -900,9 +935,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's SSL enforcement config
-      tags: &ref_23
+      tags:
         - ssl enforcement (beta)
-      security: &ref_24
+      security:
         - bearer: []
     put:
       operationId: updateSslEnforcementConfig
@@ -933,8 +968,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project's SSL enforcement configuration.
-      tags: *ref_23
-      security: *ref_24
+      tags:
+        - ssl enforcement (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/types/typescript:
     get:
       operationId: getTypescriptTypes
@@ -994,9 +1031,9 @@ paths:
           description: ''
         '500':
           description: Failed to get project vanity subdomain configuration
-      tags: &ref_25
+      tags:
         - vanity subdomain (beta)
-      security: &ref_26
+      security:
         - bearer: []
     delete:
       operationId: removeVanitySubdomainConfig
@@ -1017,8 +1054,10 @@ paths:
           description: ''
         '500':
           description: Failed to delete project vanity subdomain configuration
-      tags: *ref_25
-      security: *ref_26
+      tags:
+        - vanity subdomain (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/vanity-subdomain/check-availability:
     post:
       operationId: checkVanitySubdomainAvailability
@@ -1049,8 +1088,10 @@ paths:
           description: ''
         '500':
           description: Failed to check project vanity subdomain configuration
-      tags: *ref_25
-      security: *ref_26
+      tags:
+        - vanity subdomain (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/vanity-subdomain/activate:
     post:
       operationId: activateVanitySubdomainPlease
@@ -1081,8 +1122,10 @@ paths:
           description: ''
         '500':
           description: Failed to activate project vanity subdomain configuration
-      tags: *ref_25
-      security: *ref_26
+      tags:
+        - vanity subdomain (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/upgrade:
     post:
       operationId: upgradeProject
@@ -1105,13 +1148,17 @@ paths:
       responses:
         '201':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectUpgradeInitiateResponse'
         '403':
           description: ''
         '500':
           description: Failed to initiate project upgrade
-      tags: &ref_27
+      tags:
         - database version upgrade (beta)
-      security: &ref_28
+      security:
         - bearer: []
   /v1/projects/{ref}/upgrade/eligibility:
     get:
@@ -1137,8 +1184,10 @@ paths:
           description: ''
         '500':
           description: Failed to determine project upgrade eligibility
-      tags: *ref_27
-      security: *ref_28
+      tags:
+        - database version upgrade (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/upgrade/status:
     get:
       operationId: getUpgradeStatus
@@ -1163,8 +1212,10 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project upgrade status
-      tags: *ref_27
-      security: *ref_28
+      tags:
+        - database version upgrade (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/readonly:
     get:
       operationId: getReadOnlyModeStatus
@@ -1187,9 +1238,9 @@ paths:
                 $ref: '#/components/schemas/ReadOnlyStatusResponse'
         '500':
           description: Failed to get project readonly mode status
-      tags: &ref_29
+      tags:
         - database readonly mode
-      security: &ref_30
+      security:
         - bearer: []
   /v1/projects/{ref}/readonly/temporary-disable:
     post:
@@ -1209,8 +1260,10 @@ paths:
           description: ''
         '500':
           description: Failed to disable project's readonly mode
-      tags: *ref_29
-      security: *ref_30
+      tags:
+        - database readonly mode
+      security:
+        - bearer: []
   /v1/projects/{ref}/health:
     get:
       operationId: checkServiceHealth
@@ -1240,6 +1293,7 @@ paths:
               type: string
               enum:
                 - auth
+                - db
                 - realtime
                 - rest
                 - storage
@@ -1280,9 +1334,9 @@ paths:
                 $ref: '#/components/schemas/PostgresConfigResponse'
         '500':
           description: Failed to retrieve project's Postgres config
-      tags: &ref_31
+      tags:
         - projects config
-      security: &ref_32
+      security:
         - bearer: []
     put:
       operationId: updateConfig
@@ -1311,8 +1365,10 @@ paths:
                 $ref: '#/components/schemas/PostgresConfigResponse'
         '500':
           description: Failed to update project's Postgres config
-      tags: *ref_31
-      security: *ref_32
+      tags:
+        - projects config
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/database/pgbouncer:
     get:
       operationId: v1GetPgbouncerConfig
@@ -1361,9 +1417,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's auth config
-      tags: &ref_33
+      tags:
         - projects config
-      security: &ref_34
+      security:
         - bearer: []
     patch:
       operationId: updateV1AuthConfig
@@ -1394,8 +1450,10 @@ paths:
           description: ''
         '500':
           description: Failed to update project's auth config
-      tags: *ref_33
-      security: *ref_34
+      tags:
+        - projects config
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/query:
     post:
       operationId: v1RunQuery
@@ -1502,10 +1560,12 @@ paths:
       requestBody:
         required: true
         content:
-          application/json: &ref_35
+          application/json:
             schema:
               $ref: '#/components/schemas/CreateFunctionBody'
-          application/vnd.denoland.eszip: *ref_35
+          application/vnd.denoland.eszip:
+            schema:
+              $ref: '#/components/schemas/CreateFunctionBody'
       responses:
         '201':
           description: ''
@@ -1517,9 +1577,9 @@ paths:
           description: ''
         '500':
           description: Failed to create project's function
-      tags: &ref_36
+      tags:
         - functions
-      security: &ref_37
+      security:
         - bearer: []
     get:
       operationId: getFunctions
@@ -1547,8 +1607,10 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve project's functions
-      tags: *ref_36
-      security: *ref_37
+      tags:
+        - functions
+      security:
+        - bearer: []
   /v1/projects/{ref}/functions/{function_slug}:
     get:
       operationId: getFunction
@@ -1581,9 +1643,9 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve function with given slug
-      tags: &ref_39
+      tags:
         - functions
-      security: &ref_40
+      security:
         - bearer: []
     patch:
       operationId: updateFunction
@@ -1639,10 +1701,12 @@ paths:
       requestBody:
         required: true
         content:
-          application/json: &ref_38
+          application/json:
             schema:
               $ref: '#/components/schemas/UpdateFunctionBody'
-          application/vnd.denoland.eszip: *ref_38
+          application/vnd.denoland.eszip:
+            schema:
+              $ref: '#/components/schemas/UpdateFunctionBody'
       responses:
         '200':
           description: ''
@@ -1654,8 +1718,10 @@ paths:
           description: ''
         '500':
           description: Failed to update function with given slug
-      tags: *ref_39
-      security: *ref_40
+      tags:
+        - functions
+      security:
+        - bearer: []
     delete:
       operationId: deleteFunction
       summary: Delete a function
@@ -1683,8 +1749,10 @@ paths:
           description: ''
         '500':
           description: Failed to delete function with given slug
-      tags: *ref_39
-      security: *ref_40
+      tags:
+        - functions
+      security:
+        - bearer: []
   /v1/projects/{ref}/functions/{function_slug}/body:
     get:
       operationId: getFunctionBody
@@ -1713,8 +1781,10 @@ paths:
           description: ''
         '500':
           description: Failed to retrieve function body with given slug
-      tags: *ref_39
-      security: *ref_40
+      tags:
+        - functions
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers:
     post:
       operationId: createProviderForProject
@@ -1745,9 +1815,9 @@ paths:
           description: ''
         '404':
           description: SAML 2.0 support is not enabled for this project
-      tags: &ref_41
+      tags:
         - sso
-      security: &ref_42
+      security:
         - bearer: []
     get:
       operationId: listAllProviders
@@ -1772,8 +1842,10 @@ paths:
           description: ''
         '404':
           description: SAML 2.0 support is not enabled for this project
-      tags: *ref_41
-      security: *ref_42
+      tags:
+        - sso
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers/{provider_id}:
     get:
       operationId: getProviderById
@@ -1805,8 +1877,10 @@ paths:
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
-      tags: *ref_41
-      security: *ref_42
+      tags:
+        - sso
+      security:
+        - bearer: []
     put:
       operationId: updateProviderById
       summary: Updates a SSO provider by its UUID
@@ -1843,8 +1917,10 @@ paths:
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
-      tags: *ref_41
-      security: *ref_42
+      tags:
+        - sso
+      security:
+        - bearer: []
     delete:
       operationId: removeProviderById
       summary: Removes a SSO provider by its UUID
@@ -1875,8 +1951,10 @@ paths:
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
-      tags: *ref_41
-      security: *ref_42
+      tags:
+        - sso
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/backups/restore-pitr:
     post:
       operationId: v1RestorePitr
@@ -1988,6 +2066,8 @@ components:
           type: string
         git_branch:
           type: string
+        reset_on_push:
+          type: boolean
     BranchResponse:
       type: object
       properties:
@@ -2003,6 +2083,10 @@ components:
           type: boolean
         git_branch:
           type: string
+        pr_number:
+          type: number
+        reset_on_push:
+          type: boolean
         created_at:
           type: string
         updated_at:
@@ -2013,6 +2097,7 @@ components:
         - project_ref
         - parent_project_ref
         - is_default
+        - reset_on_push
         - created_at
         - updated_at
     DatabaseResponse:
@@ -2072,8 +2157,11 @@ components:
           enum:
             - free
             - pro
-          description: Subscription plan
+          description: >-
+            Subscription plan is now set on organization level and is ignored in
+            this request
           example: free
+          deprecated: true
         region:
           type: string
           enum:
@@ -2102,7 +2190,7 @@ components:
         - organization_id
         - plan
         - region
-    OrganizationResponse:
+    OrganizationResponseV1:
       type: object
       properties:
         id:
@@ -2112,7 +2200,7 @@ components:
       required:
         - id
         - name
-    CreateOrganizationBody:
+    CreateOrganizationBodyV1:
       type: object
       properties:
         name:
@@ -2192,11 +2280,11 @@ components:
           type: string
         type:
           type: string
-          enum: &ref_43
+          enum:
             - sql
         visibility:
           type: string
-          enum: &ref_44
+          enum:
             - user
             - project
             - org
@@ -2256,9 +2344,14 @@ components:
           type: string
         type:
           type: string
-          enum: *ref_43
+          enum:
+            - sql
         visibility:
-          enum: *ref_44
+          enum:
+            - user
+            - project
+            - org
+            - public
           type: string
         name:
           type: string
@@ -2543,6 +2636,13 @@ components:
           type: number
       required:
         - target_version
+    ProjectUpgradeInitiateResponse:
+      type: object
+      properties:
+        tracking_id:
+          type: string
+      required:
+        - tracking_id
     ProjectVersion:
       type: object
       properties:
@@ -2573,6 +2673,16 @@ components:
           type: array
           items:
             type: string
+        duration_estimate_hours:
+          type: number
+        legacy_auth_custom_roles:
+          type: array
+          items:
+            type: string
+        extension_dependent_objects:
+          type: array
+          items:
+            type: string
       required:
         - eligible
         - current_app_version
@@ -2580,6 +2690,9 @@ components:
         - target_upgrade_versions
         - requires_manual_intervention
         - potential_breaking_changes
+        - duration_estimate_hours
+        - legacy_auth_custom_roles
+        - extension_dependent_objects
     DatabaseUpgradeStatus:
       type: object
       properties:
@@ -2678,6 +2791,7 @@ components:
         name:
           enum:
             - auth
+            - db
             - realtime
             - rest
             - storage
@@ -2857,7 +2971,7 @@ components:
         name:
           type: string
         status:
-          enum: &ref_45
+          enum:
             - ACTIVE
             - REMOVED
             - THROTTLED
@@ -2894,7 +3008,10 @@ components:
         name:
           type: string
         status:
-          enum: *ref_45
+          enum:
+            - ACTIVE
+            - REMOVED
+            - THROTTLED
           type: string
         version:
           type: number
@@ -3125,7 +3242,10 @@ components:
           type: string
         role_name:
           type: string
+        mfa_enabled:
+          type: boolean
       required:
         - user_id
         - user_name
         - role_name
+        - mfa_enabled
