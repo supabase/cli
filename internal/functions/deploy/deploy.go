@@ -118,13 +118,7 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 			Binds:      binds,
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		}),
-		network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				utils.NetId: {
-					Aliases: utils.EdgeRuntimeAliases,
-				},
-			},
-		},
+		network.NetworkingConfig{},
 		"",
 		os.Stdout,
 		os.Stderr,
