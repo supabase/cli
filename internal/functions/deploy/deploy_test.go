@@ -23,6 +23,7 @@ import (
 
 func TestDeployOne(t *testing.T) {
 	const slug = "test-func"
+	utils.EdgeRuntimeId = "test-edge-runtime"
 
 	t.Run("deploys new function (ESZIP)", func(t *testing.T) {
 		entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
@@ -127,6 +128,7 @@ func TestDeployOne(t *testing.T) {
 
 func TestDeployAll(t *testing.T) {
 	const slug = "test-func"
+	utils.EdgeRuntimeId = "test-edge-runtime"
 
 	t.Run("deploys multiple functions", func(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
@@ -140,6 +142,7 @@ func TestDeployAll(t *testing.T) {
 		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
+
 		// Setup mock api
 		defer gock.OffAll()
 		for i := range functions {
@@ -188,6 +191,7 @@ func TestDeployAll(t *testing.T) {
 
 func TestDeployCommand(t *testing.T) {
 	const slug = "test-func"
+	utils.EdgeRuntimeId = "test-edge-runtime"
 
 	t.Run("deploys multiple functions", func(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
@@ -201,6 +205,9 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
+		// Set the fallback import map file
+		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+
 		// Setup mock api
 		defer gock.OffAll()
 		for i := range functions {
@@ -358,6 +365,7 @@ func TestDeployFunction(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	utils.EdgeRuntimeId = "test-edge-runtime"
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup mock api

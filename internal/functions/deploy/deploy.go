@@ -94,17 +94,19 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 		hostOutputDir + ":" + dockerOutputDir + ":rw,z",
 	}
 
+	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath}
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
+	}
+
 	if importMapPath != "" {
+		fmt.Println("import map path exists")
 		modules, err := utils.BindImportMap(importMapPath, dockerImportMapPath, fsys)
 		if err != nil {
 			return nil, err
 		}
 		binds = append(binds, modules...)
-	}
-
-	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath, "--import-map", dockerImportMapPath}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
+		cmd = append(cmd, "--import-map", dockerImportMapPath)
 	}
 
 	err = utils.DockerRunOnceWithConfig(
@@ -208,7 +210,13 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			return err
 		}
 	}
-	importMapPath = resolved
+	exists, _ := afero.Exists(fsys, resolved)
+	if exists {
+		importMapPath = resolved
+	} else {
+		importMapPath = ""
+	}
+
 	// 2. Bundle Function.
 	dockerEntrypointPath, err := filepath.Abs(filepath.Join(utils.DockerFuncDirPath, slug, "index.ts"))
 	if err != nil {
