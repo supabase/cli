@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,57 +21,46 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-func TestMain(m *testing.M) {
-	// Setup fake deno binary
-	if len(os.Args) > 1 && (os.Args[1] == "bundle" || os.Args[1] == "upgrade" || os.Args[1] == "run") {
-		msg := os.Getenv("TEST_DENO_ERROR")
-		if msg != "" {
-			fmt.Fprintln(os.Stderr, msg)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-	denoPath, err := os.Executable()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	utils.DenoPathOverride = denoPath
-	// Run test suite
-	os.Exit(m.Run())
-}
-
 func TestDeployOne(t *testing.T) {
 	const slug = "test-func"
+	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	utils.EdgeRuntimeId = "test-edge-runtime"
+	const containerId = "test-container"
 
 	t.Run("deploys new function (ESZIP)", func(t *testing.T) {
-		entrypointPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug, "index.ts"))
-		require.NoError(t, err)
-		importMapPath, err := filepath.Abs(utils.FallbackImportMapPath)
-		require.NoError(t, err)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup valid deno path
-		_, err = fsys.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
+
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound)
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
-			MatchParam("entrypoint_path", "file://"+entrypointPath).
-			MatchParam("import_map_path", "file://"+importMapPath).
+			Post("/v1/projects/" + project + "/functions").
+			ParamPresent("import_map_path").
+			ParamPresent("entrypoint_path").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+
 		// Run test
 		noVerifyJWT := true
-		err = deployOne(context.Background(), slug, project, "", "", &noVerifyJWT, fsys)
+		err := deployOne(context.Background(), slug, project, "", &noVerifyJWT, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -99,8 +87,18 @@ func TestDeployOne(t *testing.T) {
 			Patch("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
 			JSON(api.FunctionResponse{Id: "1"})
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+
 		// Run test
-		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
+		err = deployOne(context.Background(), slug, project, "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -112,7 +110,7 @@ func TestDeployOne(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := deployOne(context.Background(), slug, project, "import_map.json", "", nil, fsys)
+		err := deployOne(context.Background(), slug, project, "import_map.json", nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -137,16 +135,25 @@ func TestDeployOne(t *testing.T) {
 			Get("/denoland/deno/releases/download/v" + utils.DenoVersion).
 			Reply(http.StatusOK).
 			Body(&body)
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogsExitCode(utils.Docker, containerId, 1))
+
 		// Run test
-		err = deployOne(context.Background(), slug, project, "", "", nil, fsys)
+		err = deployOne(context.Background(), slug, project, "", nil, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Error bundling function: exit status 1\nbundle failed\n")
+		assert.ErrorContains(t, err, "error running container: exit 1")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestDeployAll(t *testing.T) {
 	const slug = "test-func"
+	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	utils.EdgeRuntimeId = "test-edge-runtime"
+	const containerId = "test-container"
 
 	t.Run("deploys multiple functions", func(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
@@ -157,9 +164,7 @@ func TestDeployAll(t *testing.T) {
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup valid deno path
-		_, err := fsys.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
+
 		// Setup mock api
 		defer gock.OffAll()
 		for i := range functions {
@@ -171,10 +176,22 @@ func TestDeployAll(t *testing.T) {
 				Post("/v1/projects/" + project + "/functions").
 				Reply(http.StatusCreated).
 				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
+
+			// Setup mock docker
+			require.NoError(t, apitest.MockDocker(utils.Docker))
+			apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+			require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		}
+
+		// Setup output file
+		for _, v := range functions {
+			outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", v))
+			require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		}
+
 		// Run test
 		noVerifyJWT := true
-		err = deployAll(context.Background(), functions, project, "", &noVerifyJWT, fsys)
+		err := deployAll(context.Background(), functions, project, "", &noVerifyJWT, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -208,6 +225,9 @@ func TestDeployAll(t *testing.T) {
 
 func TestDeployCommand(t *testing.T) {
 	const slug = "test-func"
+	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	utils.EdgeRuntimeId = "test-edge-runtime"
+	const containerId = "test-container"
 
 	t.Run("deploys multiple functions", func(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
@@ -221,6 +241,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
+
 		// Setup mock api
 		defer gock.OffAll()
 		for i := range functions {
@@ -232,7 +253,19 @@ func TestDeployCommand(t *testing.T) {
 				Post("/v1/projects/" + project + "/functions").
 				Reply(http.StatusCreated).
 				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
+
+				// Setup mock docker
+			require.NoError(t, apitest.MockDocker(utils.Docker))
+			apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+			require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		}
+
+		// Setup output file
+		for _, v := range functions {
+			outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", v))
+			require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		}
+
 		// Run test
 		noVerifyJWT := true
 		err = Run(context.Background(), functions, project, &noVerifyJWT, "", fsys)
@@ -268,9 +301,19 @@ func TestDeployCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/"+project+"/functions").
 			MatchParam("slug", slug).
-			MatchParam("import_map_path", "file://"+importMapPath).
+			ParamPresent("import_map_path").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+
 		// Run test
 		err = Run(context.Background(), nil, project, nil, "", fsys)
 		// Check error
@@ -327,6 +370,16 @@ verify_jwt = false
 			MatchParam("verify_jwt", "false").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+
 		// Run test
 		assert.NoError(t, Run(context.Background(), []string{slug}, project, nil, "", fsys))
 		// Validate api
@@ -363,6 +416,16 @@ verify_jwt = false
 			MatchParam("verify_jwt", "true").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+
 		// Run test
 		noVerifyJwt := false
 		assert.NoError(t, Run(context.Background(), []string{slug}, project, &noVerifyJwt, "", fsys))
@@ -378,6 +441,7 @@ func TestDeployFunction(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	utils.EdgeRuntimeId = "test-edge-runtime"
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup mock api
