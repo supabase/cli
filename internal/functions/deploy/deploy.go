@@ -68,14 +68,15 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	return slugs, nil
 }
 
-func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
+func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 
 	// create temp directory to store generated eszip
-	hostOutputDir, err := afero.TempDir(fsys, "", "eszip")
+	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+	err = fsys.MkdirAll(hostOutputDir, 0755)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro,z",
-		hostOutputDir + ":" + dockerOutputDir + ":rw,z",
+		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw,z",
 	}
 
 	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath}
@@ -100,7 +101,6 @@ func bundleFunction(ctx context.Context, dockerEntrypointPath, importMapPath str
 	}
 
 	if importMapPath != "" {
-		fmt.Println("import map path exists")
 		modules, err := utils.BindImportMap(importMapPath, dockerImportMapPath, fsys)
 		if err != nil {
 			return nil, err
@@ -223,7 +223,7 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 		return err
 	}
 	fmt.Println("Bundling " + utils.Bold(slug))
-	functionBody, err := bundleFunction(ctx, dockerEntrypointPath, importMapPath, fsys)
+	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, importMapPath, fsys)
 	if err != nil {
 		return err
 	}
