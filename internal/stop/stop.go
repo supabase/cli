@@ -16,9 +16,12 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
+func Run(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if len(projectId) > 0 {
+		utils.Config.ProjectId = projectId
+		utils.UpdateDockerIds()
+	} else if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
 

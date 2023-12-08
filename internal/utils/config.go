@@ -69,6 +69,26 @@ func GetId(name string) string {
 	return "supabase_" + name + "_" + Config.ProjectId
 }
 
+func UpdateDockerIds() {
+	NetId = GetId("network")
+	DbId = GetId(DbAliases[0])
+	ConfigId = GetId("config")
+	KongId = GetId(KongAliases[0])
+	GotrueId = GetId(GotrueAliases[0])
+	InbucketId = GetId(InbucketAliases[0])
+	RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+	RestId = GetId(RestAliases[0])
+	StorageId = GetId(StorageAliases[0])
+	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+	DifferId = GetId("differ")
+	PgmetaId = GetId(PgmetaAliases[0])
+	StudioId = GetId(StudioAliases[0])
+	EdgeRuntimeId = GetId(EdgeRuntimeAliases[0])
+	LogflareId = GetId(LogflareAliases[0])
+	VectorId = GetId(VectorAliases[0])
+	PoolerId = GetId(PoolerAliases[0])
+}
+
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
 type sizeInBytes int64
 
@@ -393,25 +413,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
-		} else {
-			NetId = GetId("network")
-			DbId = GetId(DbAliases[0])
-			ConfigId = GetId("config")
-			KongId = GetId(KongAliases[0])
-			GotrueId = GetId(GotrueAliases[0])
-			InbucketId = GetId(InbucketAliases[0])
-			RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
-			RestId = GetId(RestAliases[0])
-			StorageId = GetId(StorageAliases[0])
-			ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
-			DifferId = GetId("differ")
-			PgmetaId = GetId(PgmetaAliases[0])
-			StudioId = GetId(StudioAliases[0])
-			EdgeRuntimeId = GetId(EdgeRuntimeAliases[0])
-			LogflareId = GetId(LogflareAliases[0])
-			VectorId = GetId(VectorAliases[0])
-			PoolerId = GetId(PoolerAliases[0])
 		}
+		UpdateDockerIds()
 		// Validate api config
 		if Config.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
