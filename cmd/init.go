@@ -33,12 +33,10 @@ var (
 			if !cmd.Flags().Changed("with-vscode-workspace") {
 				createVscodeWorkspace = nil
 			}
-			if err := _init.Run(fsys, createVscodeWorkspace, useOrioleDB); err != nil {
-				return err
-			}
-
+			return _init.Run(fsys, createVscodeWorkspace, useOrioleDB)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
-			return nil
 		},
 	}
 )
