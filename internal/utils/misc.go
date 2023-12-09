@@ -36,7 +36,7 @@ const (
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.29.1"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
-	GotrueImage      = "supabase/gotrue:v2.99.0"
+	GotrueImage      = "supabase/gotrue:v2.125.1"
 	RealtimeImage    = "supabase/realtime:v2.25.35"
 	StorageImage     = "supabase/storage-api:v0.43.11"
 	LogflareImage    = "supabase/logflare:1.4.0"
