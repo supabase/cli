@@ -351,6 +351,10 @@ type (
 
 	experimental struct {
 		OrioleDBVersion string `toml:"orioledb_version"`
+		S3Host          string `toml:"s3_host"`
+		S3Region        string `toml:"s3_region"`
+		S3AccessKey     string `toml:"s3_access_key"`
+		S3SecretKey     string `toml:"s3_secret_key"`
 	}
 
 	// TODO
@@ -443,6 +447,19 @@ func LoadConfigFS(fsys afero.Fs) error {
 		case 15:
 			if len(Config.Experimental.OrioleDBVersion) > 0 {
 				Config.Db.Image = "supabase/postgres:orioledb-" + Config.Experimental.OrioleDBVersion
+				var err error
+				if Config.Experimental.S3Host, err = maybeLoadEnv(Config.Experimental.S3Host); err != nil {
+					return err
+				}
+				if Config.Experimental.S3Region, err = maybeLoadEnv(Config.Experimental.S3Region); err != nil {
+					return err
+				}
+				if Config.Experimental.S3AccessKey, err = maybeLoadEnv(Config.Experimental.S3AccessKey); err != nil {
+					return err
+				}
+				if Config.Experimental.S3SecretKey, err = maybeLoadEnv(Config.Experimental.S3SecretKey); err != nil {
+					return err
+				}
 			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && len(version) > 0 {
 				index := strings.IndexByte(Pg15Image, ':')
 				Config.Db.Image = Pg15Image[:index+1] + string(version)
