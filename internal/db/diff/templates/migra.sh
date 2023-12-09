@@ -10,7 +10,7 @@ trap 'kill -9 %1' TERM
 run_migra() {
     # additional flags for diffing extensions
     [ "$schema" = "extensions" ] && set -- --create-extensions-only --ignore-extension-versions "$@"
-    migra --unsafe --schema="$schema" "$@"
+    migra --with-privileges --unsafe --schema="$schema" "$@"
 }
 
 # accepts command line args as a list of schema to generate
