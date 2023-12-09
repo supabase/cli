@@ -137,10 +137,10 @@ backend = "postgres"
 # Configures Postgres storage engine to use OrioleDB (S3)
 orioledb_version = "15.1.0.148"
 # Configures S3 bucket URL, eg. <bucket>.s3-accelerate.amazonaws.com
-s3_host = "env(S3_HOST)"
+s3_host = "orioledb.s3-accelerate.amazonaws.com"
 # Configures S3 bucket region, eg. us-east-1
-s3_region = "env(S3_REGION)"
+s3_region = "ap-southeast-1"
 # Configures AWS_ACCESS_KEY_ID for S3 bucket
-s3_access_key = "env(S3_ACCESS_KEY)"
+s3_access_key = ""
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
-s3_secret_key = "env(S3_SECRET_KEY)"
+s3_secret_key = ""
