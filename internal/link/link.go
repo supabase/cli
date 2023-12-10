@@ -55,7 +55,7 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 		if err := linkDatabase(ctx, pgconn.Config{
 			Host:     utils.GetSupabaseDbHost(projectRef),
 			Port:     6543,
-			User:     "postgres",
+			User:     fmt.Sprintf("postgres.%s", projectRef),
 			Password: password,
 			Database: "postgres",
 		}, options...); err != nil {

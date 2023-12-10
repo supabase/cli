@@ -285,13 +285,14 @@ func GetSupabaseDashboardURL() string {
 
 func GetSupabaseDbHost(projectRef string) string {
 	// TODO: query projects api for db_host
+	// TODO: Decide whether to support pgbouncer still via a flag +also check if the region varies between staging and prod
 	switch GetSupabaseAPIHost() {
 	case DefaultApiHost, DeprecatedApiHost:
-		return fmt.Sprintf("db.%s.supabase.co", projectRef)
+		return fmt.Sprintf("aws-0-us-east-1.pooler.supabase.com")
 	case "https://api.supabase.green":
-		return fmt.Sprintf("db.%s.supabase.red", projectRef)
+		return fmt.Sprintf("aws-0-us-east-1.pooler.supabase.com", projectRef)
 	default:
-		return fmt.Sprintf("db.%s.supabase.red", projectRef)
+		return fmt.Sprintf("aws-0-us-east-1.pooler.supabase.com", projectRef)
 	}
 }
 
