@@ -46,8 +46,9 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 		RemoveVolumes: true,
 		Force:         true,
 	})
+	// Use network alias because Deno cannot resolve `_` in hostname
+	dbUrl := "postgresql://postgres:postgres@" + utils.DbAliases[0] + ":5432/postgres"
 	// 3. Serve and log to console
-	dbUrl := "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
 	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, os.Stderr, fsys); err != nil {
 		return err
 	}
@@ -85,7 +86,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	env := []string{
-		"SUPABASE_URL=http://" + utils.KongId + ":8000",
+		"SUPABASE_URL=http://" + utils.KongAliases[0] + ":8000",
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"SUPABASE_DB_URL=" + dbUrl,
