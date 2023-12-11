@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,11 @@ func AssertDockerIsRunning(ctx context.Context) error {
 	return nil
 }
 
+const (
+	cliProjectLabel     = "com.supabase.cli.project"
+	composeProjectLabel = "com.docker.compose.projecta"
+)
+
 func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
 	_, err := Docker.NetworkCreate(
 		ctx,
@@ -62,8 +68,8 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 		types.NetworkCreate{
 			CheckDuplicate: true,
 			Labels: map[string]string{
-				"com.supabase.cli.project":   Config.ProjectId,
-				"com.docker.compose.project": Config.ProjectId,
+				cliProjectLabel:     Config.ProjectId,
+				composeProjectLabel: Config.ProjectId,
 			},
 		},
 	)
@@ -125,9 +131,13 @@ func DockerRemoveAll(ctx context.Context) {
 	_ = WaitAll(Volumes, func(name string) error {
 		return Docker.VolumeRemove(ctx, name, true)
 	})
-	_, _ = Docker.NetworksPrune(ctx, filters.NewArgs(
-		filters.Arg("label", "com.supabase.cli.project="+Config.ProjectId),
-	))
+	_, _ = Docker.NetworksPrune(ctx, CliProjectFilter())
+}
+
+func CliProjectFilter() filters.Args {
+	return filters.NewArgs(
+		filters.Arg("label", cliProjectLabel+"="+Config.ProjectId),
+	)
 }
 
 func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
@@ -258,8 +268,8 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if config.Labels == nil {
 		config.Labels = map[string]string{}
 	}
-	config.Labels["com.supabase.cli.project"] = Config.ProjectId
-	config.Labels["com.docker.compose.project"] = Config.ProjectId
+	config.Labels[cliProjectLabel] = Config.ProjectId
+	config.Labels[composeProjectLabel] = Config.ProjectId
 	if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
@@ -302,7 +312,22 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		}
 	}
 	// Run container in background
-	return resp.ID, Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
+	err = Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
+	if err != nil {
+		if hostPort := parsePortBindError(err); len(hostPort) > 0 {
+			CmdSuggestion = suggestDockerStop(ctx, hostPort)
+			prefix := "Or configure"
+			if len(CmdSuggestion) == 0 {
+				prefix = "Try configuring"
+			}
+			name := containerName
+			if endpoint, ok := networkingConfig.EndpointsConfig[NetId]; ok && len(endpoint.Aliases) > 0 {
+				name = endpoint.Aliases[0]
+			}
+			CmdSuggestion += fmt.Sprintf("\n%s a different %s port in %s", prefix, name, Bold(ConfigPath))
+		}
+	}
+	return resp.ID, err
 }
 
 func DockerRemove(containerId string) {
@@ -412,4 +437,35 @@ func DockerExecOnceWithStream(ctx context.Context, container, workdir string, en
 		err = errors.New("error executing command")
 	}
 	return err
+}
+
+var portErrorPattern = regexp.MustCompile("Bind for (.*) failed: port is already allocated")
+
+func parsePortBindError(err error) string {
+	matches := portErrorPattern.FindStringSubmatch(err.Error())
+	if len(matches) > 1 {
+		return matches[len(matches)-1]
+	}
+	return ""
+}
+
+func suggestDockerStop(ctx context.Context, hostPort string) string {
+	if containers, err := Docker.ContainerList(ctx, types.ContainerListOptions{}); err == nil {
+		for _, c := range containers {
+			for _, p := range c.Ports {
+				if fmt.Sprintf("%s:%d", p.IP, p.PublicPort) == hostPort {
+					if project, ok := c.Labels[cliProjectLabel]; ok {
+						return "\nTry stopping the running project with " + Aqua("supabase stop --project-id "+project)
+					} else {
+						name := c.ID
+						if len(c.Names) > 0 {
+							name = c.Names[0]
+						}
+						return "\nTry stopping the running container with " + Aqua("docker stop "+name)
+					}
+				}
+			}
+		}
+	}
+	return ""
 }

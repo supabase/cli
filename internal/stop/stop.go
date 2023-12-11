@@ -10,15 +10,17 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/errdefs"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
+func Run(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if len(projectId) > 0 {
+		utils.Config.ProjectId = projectId
+		utils.UpdateDockerIds()
+	} else if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
 
@@ -35,9 +37,7 @@ func Run(ctx context.Context, backup bool, fsys afero.Fs) error {
 }
 
 func stop(ctx context.Context, backup bool, w io.Writer) error {
-	args := filters.NewArgs(
-		filters.Arg("label", "com.supabase.cli.project="+utils.Config.ProjectId),
-	)
+	args := utils.CliProjectFilter()
 	containers, err := utils.Docker.ContainerList(ctx, types.ContainerListOptions{
 		All:     true,
 		Filters: args,

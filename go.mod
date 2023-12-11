@@ -14,7 +14,7 @@ require (
 	github.com/docker/cli v24.0.7+incompatible
 	github.com/docker/docker v24.0.7+incompatible
 	github.com/docker/go-connections v0.4.0
-	github.com/go-git/go-git/v5 v5.10.1
+	github.com/go-git/go-git/v5 v5.11.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/google/go-github/v53 v53.2.0
@@ -26,7 +26,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/runtime v1.1.0
 	github.com/spf13/cobra v1.8.0
-	github.com/spf13/viper v1.18.0
+	github.com/spf13/viper v1.18.1
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.3
 	gopkg.in/yaml.v3 v3.0.1

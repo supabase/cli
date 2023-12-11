@@ -38,7 +38,7 @@ func TestStopCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
 		// Run test
-		err := Run(context.Background(), true, fsys)
+		err := Run(context.Background(), true, "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -48,7 +48,7 @@ func TestStopCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, fsys)
+		err := Run(context.Background(), false, "", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -64,7 +64,7 @@ func TestStopCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), false, afero.NewReadOnlyFs(fsys))
+		err := Run(context.Background(), false, "test", afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
