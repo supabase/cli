@@ -5,12 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -20,7 +25,7 @@ var (
 	legacyImportMapPath  = "file:///src/import_map.json"
 )
 
-func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
+func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	{
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
@@ -101,4 +106,82 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 		return fmt.Errorf("Error downloading function: %w\n%v", err, errBuf.String())
 	}
 	return nil
+}
+
+const dockerEszipDir = "/root/eszips"
+
+func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
+	if useLegacyBundle {
+		return RunLegacy(ctx, slug, projectRef, fsys)
+	}
+	// 1. Sanity check
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	// 2. Download eszip to temp file
+	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := fsys.Remove(eszipPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	// Extract eszip to functions directory
+	return extractOne(ctx, eszipPath, slug, fsys)
+}
+
+func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero.Fs) (string, error) {
+	fmt.Println("Downloading " + utils.Bold(slug))
+	resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return "", errors.New("Unexpected error downloading Function: " + string(resp.Body))
+	}
+
+	// Create temp file to store downloaded eszip
+	eszipFile, err := afero.TempFile(fsys, "", slug)
+	if err != nil {
+		return "", err
+	}
+	defer eszipFile.Close()
+
+	body := bytes.NewReader(resp.Body)
+	_, err = io.Copy(eszipFile, body)
+	return eszipFile.Name(), err
+}
+
+func extractOne(ctx context.Context, hostEszipPath, slug string, fsys afero.Fs) error {
+	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
+	if err != nil {
+		return err
+	}
+
+	dockerEszipPath := path.Join(dockerEszipDir, filepath.Base(hostEszipPath))
+	binds := []string{
+		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
+		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
+		hostEszipPath + ":" + dockerEszipPath + ":ro,z",
+		hostFuncDirPath + ":" + utils.DockerFuncDirPath + ":rw,z",
+	}
+
+	return utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.EdgeRuntimeImage,
+			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", utils.DockerDenoDir},
+		},
+		start.WithSyslogConfig(container.HostConfig{
+			Binds:      binds,
+			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		}),
+		network.NetworkingConfig{},
+		"",
+		os.Stdout,
+		os.Stderr,
+	)
 }
