@@ -129,7 +129,11 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 		}
 	}()
 	// Extract eszip to functions directory
-	return extractOne(ctx, eszipPath, slug, fsys)
+	err = extractOne(ctx, eszipPath)
+	if err != nil {
+		utils.CmdSuggestion += suggestLegacyBundle(slug)
+	}
+	return err
 }
 
 func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero.Fs) (string, error) {
@@ -154,7 +158,7 @@ func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero
 	return eszipFile.Name(), err
 }
 
-func extractOne(ctx context.Context, hostEszipPath, slug string, fsys afero.Fs) error {
+func extractOne(ctx context.Context, hostEszipPath string) error {
 	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
 	if err != nil {
 		return err
@@ -184,4 +188,8 @@ func extractOne(ctx context.Context, hostEszipPath, slug string, fsys afero.Fs) 
 		os.Stdout,
 		os.Stderr,
 	)
+}
+
+func suggestLegacyBundle(slug string) string {
+	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
 }
