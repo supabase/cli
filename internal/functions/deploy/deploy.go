@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/andybalholm/brotli"
@@ -218,11 +219,8 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	}
 
 	// 2. Bundle Function.
-	dockerEntrypointPath, err := filepath.Abs(filepath.Join(utils.DockerFuncDirPath, slug, "index.ts"))
-	if err != nil {
-		return err
-	}
 	fmt.Println("Bundling " + utils.Bold(slug))
+	dockerEntrypointPath := path.Join(utils.DockerFuncDirPath, slug, "index.ts")
 	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, importMapPath, fsys)
 	if err != nil {
 		return err
