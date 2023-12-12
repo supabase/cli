@@ -233,6 +233,7 @@ func TestDeployCommand(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -277,6 +278,7 @@ func TestDeployCommand(t *testing.T) {
 	t.Run("deploys functions from directory", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		importMapPath, err := filepath.Abs(utils.FallbackImportMapPath)
 		require.NoError(t, err)
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
@@ -324,6 +326,7 @@ func TestDeployCommand(t *testing.T) {
 	t.Run("throws error on malformed slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
 		err := Run(context.Background(), []string{"_invalid"}, "", nil, "", fsys)
 		// Check error
@@ -333,6 +336,7 @@ func TestDeployCommand(t *testing.T) {
 	t.Run("throws error on empty functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		require.NoError(t, fsys.MkdirAll(utils.FunctionsDir, 0755))
 		// Run test
 		err := Run(context.Background(), nil, "", nil, "", fsys)
