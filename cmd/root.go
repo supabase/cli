@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -65,6 +67,16 @@ func IsExperimental(cmd *cobra.Command) bool {
 }
 
 var (
+	sentryOpts = sentry.ClientOptions{
+		Dsn:        utils.SentryDsn,
+		Release:    utils.Version,
+		ServerName: "<redacted>",
+		// Set TracesSampleRate to 1.0 to capture 100%
+		// of transactions for performance monitoring.
+		// We recommend adjusting this value in production,
+		TracesSampleRate: 1.0,
+	}
+
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
 		Short:   "Supabase CLI " + utils.Version,
@@ -103,7 +115,8 @@ var (
 				utils.CmdSuggestion = utils.SuggestDebugFlag
 			}
 			cmd.SetContext(ctx)
-			return nil
+			// Setup sentry last to ignore errors from parsing cli flags
+			return sentry.Init(sentryOpts)
 		},
 		SilenceErrors: true,
 	}
@@ -114,6 +127,11 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, utils.Red(err.Error()))
 		if len(utils.CmdSuggestion) > 0 {
 			fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
+		}
+		if event := sentry.CaptureException(err); event != nil {
+			if len(utils.SentryDsn) > 0 && sentry.Flush(2*time.Second) {
+				fmt.Fprintln(os.Stderr, "Sent crash report:", *event)
+			}
 		}
 		os.Exit(1)
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,12 +13,16 @@ import (
 	"time"
 
 	"github.com/docker/docker/client"
+	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 
-// Version is assigned using `-ldflags` https://stackoverflow.com/q/11354518.
-var Version string
+// Assigned using `-ldflags` https://stackoverflow.com/q/11354518
+var (
+	Version   string
+	SentryDsn string
+)
 
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
@@ -183,7 +186,7 @@ var (
 
 	ErrNotLinked  = errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
 	ErrInvalidRef = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-	ErrNotRunning = errors.New(Aqua("supabase start") + " is not running.")
+	ErrNotRunning = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
 
 func GetCurrentTimestamp() string {
@@ -233,7 +236,7 @@ func NewError(s string) error {
 func AssertSupabaseDbIsRunning() error {
 	_, err := Docker.ContainerInspect(context.Background(), DbId)
 	if client.IsErrNotFound(err) {
-		return ErrNotRunning
+		return errors.New(ErrNotRunning)
 	}
 	if client.IsErrConnectionFailed(err) {
 		CmdSuggestion = suggestDockerInstall
