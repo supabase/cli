@@ -50,6 +50,9 @@ func NewDocker() *client.Client {
 
 func AssertDockerIsRunning(ctx context.Context) error {
 	if _, err := Docker.Ping(ctx); err != nil {
+		if client.IsErrConnectionFailed(err) {
+			CmdSuggestion = suggestDockerInstall
+		}
 		return NewError(err.Error())
 	}
 
@@ -78,24 +81,6 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 		return nil
 	}
 	return err
-}
-
-func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
-	exec, err := Docker.ContainerExecCreate(
-		ctx,
-		container,
-		types.ExecConfig{Cmd: cmd, AttachStderr: true, AttachStdout: true},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return nil, err
-	}
-
-	return resp.Reader, nil
 }
 
 // Used by unit tests
@@ -258,9 +243,14 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
+var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
+
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
+		if client.IsErrConnectionFailed(err) {
+			CmdSuggestion = suggestDockerInstall
+		}
 		return "", err
 	}
 	// Setup default config

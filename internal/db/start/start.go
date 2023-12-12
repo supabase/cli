@@ -36,12 +36,11 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if err := utils.AssertDockerIsRunning(ctx); err != nil {
-		return err
-	}
-	if _, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil {
+	if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 		fmt.Fprintln(os.Stderr, "Postgres database is already running.")
 		return nil
+	} else if !errors.Is(err, utils.ErrNotRunning) {
+		return err
 	}
 	// Skip logflare container in db start
 	utils.Config.Analytics.Enabled = false

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
@@ -230,11 +231,14 @@ func NewError(s string) error {
 }
 
 func AssertSupabaseDbIsRunning() error {
-	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
+	_, err := Docker.ContainerInspect(context.Background(), DbId)
+	if client.IsErrNotFound(err) {
 		return ErrNotRunning
 	}
-
-	return nil
+	if client.IsErrConnectionFailed(err) {
+		CmdSuggestion = suggestDockerInstall
+	}
+	return err
 }
 
 func IsGitRepo() bool {
