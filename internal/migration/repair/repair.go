@@ -190,7 +190,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Lines) {
 			stat = m.Lines[i]
 		}
-		return fmt.Errorf("%w\nAt statement %d: %s", err, i, utils.Aqua(stat))
+		return fmt.Errorf("%w\nAt statement %d: %s", err, i, stat)
 	}
 	return nil
 }
