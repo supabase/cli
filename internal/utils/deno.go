@@ -303,6 +303,9 @@ func getModulePath(hostPath string) string {
 	if strings.HasSuffix(hostPath, "/") {
 		mod += "/"
 	}
+	if ext := filepath.Ext(hostPath); len(ext) > 0 {
+		mod += ext
+	}
 	return mod
 }
 
