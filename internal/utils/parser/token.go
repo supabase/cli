@@ -2,14 +2,12 @@ package parser
 
 import (
 	"bufio"
-	"errors"
-	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/utils"
 )
 
 // Equal to `startBufSize` from `bufio/scan.go`
@@ -105,10 +103,10 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 	}
 	err = scanner.Err()
 	if err != nil {
-		err = fmt.Errorf("%w\nAfter statement %d: %s", err, len(stats), utils.Aqua(token))
+		err = errors.Errorf("%w\nAfter statement %d: %s", err, len(stats), token)
 	}
 	if errors.Is(err, bufio.ErrTooLong) {
-		err = fmt.Errorf("%w\nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is %dKB)", err, maxbuf>>10)
+		err = errors.Errorf("%w\nTry setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is %dKB)", err, maxbuf>>10)
 	}
 	return stats, err
 }

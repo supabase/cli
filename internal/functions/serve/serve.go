@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -66,7 +66,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			envFilePath = utils.FallbackEnvFilePath
 		}
 	} else if _, err := fsys.Stat(envFilePath); err != nil {
-		return fmt.Errorf("Failed to read env file: %w", err)
+		return errors.Errorf("Failed to read env file: %w", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -77,7 +77,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			importMapPath = filepath.Join(cwd, importMapPath)
 		}
 		if _, err := fsys.Stat(importMapPath); err != nil {
-			return fmt.Errorf("Failed to read import map: %w", err)
+			return errors.Errorf("Failed to read import map: %w", err)
 		}
 	}
 	// 2. Parse user defined env
@@ -114,7 +114,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 
 	fallbackImportMapPath := filepath.Join(cwd, utils.FallbackImportMapPath)
 	if exists, err := afero.Exists(fsys, fallbackImportMapPath); err != nil {
-		return fmt.Errorf("Failed to read fallback import map: %w", err)
+		return errors.Errorf("Failed to read fallback import map: %w", err)
 	} else if !exists {
 		fallbackImportMapPath = utils.AbsTempImportMapPath(cwd, utils.ImportMapsDir)
 		if err := utils.WriteFile(fallbackImportMapPath, []byte(`{"imports":{}}`), fsys); err != nil {
@@ -193,7 +193,7 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	}
 	for name, value := range envMap {
 		if strings.HasPrefix(name, "SUPABASE_") {
-			return env, errors.New("Invalid env name: " + name + ". Env names cannot start with SUPABASE_.")
+			return env, errors.Errorf("Invalid env name: %s. Env names cannot start with SUPABASE_.", name)
 		}
 		env = append(env, name+"="+value)
 	}

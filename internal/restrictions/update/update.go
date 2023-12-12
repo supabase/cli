@@ -2,10 +2,10 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -15,13 +15,13 @@ func validateCidrs(cidrs []string, bypassChecks bool) error {
 	for _, cidr := range cidrs {
 		ip, _, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return fmt.Errorf("failed to parse IP: %s", cidr)
+			return errors.Errorf("failed to parse IP: %s", cidr)
 		}
 		if ip.IsPrivate() && !bypassChecks {
-			return fmt.Errorf("private IP provided: %s", cidr)
+			return errors.Errorf("private IP provided: %s", cidr)
 		}
 		if ip.To4() == nil {
-			return fmt.Errorf("only IPv4 supported at the moment: %s", cidr)
+			return errors.Errorf("only IPv4 supported at the moment: %s", cidr)
 		}
 	}
 	return nil

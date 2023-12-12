@@ -3,7 +3,6 @@ package stop
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -80,7 +80,7 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 		}
 		result = utils.WaitAll(volumes, func(name string) error {
 			if err := utils.Docker.VolumeRemove(ctx, name, true); err != nil && !errdefs.IsNotFound(err) {
-				return fmt.Errorf("Failed to remove volume %s: %w", name, err)
+				return errors.Errorf("Failed to remove volume %s: %w", name, err)
 			}
 			return nil
 		})

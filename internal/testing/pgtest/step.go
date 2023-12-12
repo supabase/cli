@@ -1,9 +1,9 @@
 package pgtest
 
 import (
-	"fmt"
 	"reflect"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgmock"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgtype"
@@ -26,7 +26,7 @@ func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 	if m, ok := msg.(*pgproto3.Parse); ok {
 		want := &pgproto3.Parse{Name: m.Name, Query: e.sql, ParameterOIDs: m.ParameterOIDs}
 		if !reflect.DeepEqual(m, want) {
-			return fmt.Errorf("msg => %#v, e.want => %#v", m, want)
+			return errors.Errorf("msg => %#v, e.want => %#v", m, want)
 		}
 		// Anonymous ps falls through
 		if m.Name != "" {
@@ -62,7 +62,7 @@ func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 			PreparedStatement:    m.PreparedStatement,
 		}
 		if !reflect.DeepEqual(m, want) {
-			return fmt.Errorf("msg => %#v, e.want => %#v", msg, want)
+			return errors.Errorf("msg => %#v, e.want => %#v", msg, want)
 		}
 		e.reply.Steps = append([]pgmock.Step{
 			pgmock.ExpectMessage(&pgproto3.Describe{ObjectType: 'P'}),
@@ -80,7 +80,7 @@ func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 		return e.reply.Run(backend)
 	}
 
-	return fmt.Errorf("msg => %#v, e.want => %#v", msg, want)
+	return errors.Errorf("msg => %#v, e.want => %#v", msg, want)
 }
 
 // Expects a SQL query in any form: simple, prepared, or anonymous.
@@ -101,7 +101,7 @@ func (e *terminateStep) Step(backend *pgproto3.Backend) error {
 		return nil
 	}
 
-	return fmt.Errorf("msg => %#v, e.want => %#v", msg, &pgproto3.Terminate{})
+	return errors.Errorf("msg => %#v, e.want => %#v", msg, &pgproto3.Terminate{})
 }
 
 func ExpectTerminate() pgmock.Step {

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -134,7 +135,7 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
+		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	updateApiConfig(*resp.JSON200)
 	return nil
@@ -242,7 +243,7 @@ func linkPooler(ctx context.Context, projectRef string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
+		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	updatePoolerConfig(*resp.JSON200)
 	return nil

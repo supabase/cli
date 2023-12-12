@@ -3,7 +3,6 @@ package utils
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/go-errors/errors"
 	"golang.org/x/term"
 )
 
@@ -132,7 +132,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 	prog := tea.NewProgram(initial)
 	state, err := prog.Run()
 	if err != nil {
-		return initial.choice, err
+		return initial.choice, errors.Errorf("failed to prompt choice: %w", err)
 	}
 	if ctx.Err() != nil {
 		return initial.choice, ctx.Err()

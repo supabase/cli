@@ -3,13 +3,13 @@ package delete
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -51,7 +51,7 @@ func deleteBranchDir(branch string, fsys afero.Fs) error {
 	}
 
 	if err := fsys.RemoveAll(branchPath); err != nil {
-		return fmt.Errorf("Failed deleting branch %s: %w", utils.Aqua(branch), err)
+		return errors.Errorf("Failed deleting branch %s: %w", utils.Aqua(branch), err)
 	}
 
 	return nil

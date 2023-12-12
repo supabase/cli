@@ -2,10 +2,10 @@
 package pgxv5
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgx/v4"
 )
@@ -18,18 +18,14 @@ func CollectRows[T any](rows pgx.Rows) ([]T, error) {
 
 	for rows.Next() {
 		var value T
-		err := ScanRowToStruct(rows, &value)
-		if err != nil {
-			return nil, err
-		}
-		if err != nil {
+		if err := ScanRowToStruct(rows, &value); err != nil {
 			return nil, err
 		}
 		slice = append(slice, value)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to collect rows: %w", err)
 	}
 
 	return slice, nil
@@ -38,23 +34,25 @@ func CollectRows[T any](rows pgx.Rows) ([]T, error) {
 func ScanRowToStruct(rows pgx.Rows, dst any) error {
 	dstValue := reflect.ValueOf(dst)
 	if dstValue.Kind() != reflect.Ptr {
-		return fmt.Errorf("dst not a pointer")
+		return errors.Errorf("dst not a pointer")
 	}
 
 	dstElemValue := dstValue.Elem()
 	scanTargets, err := appendScanTargets(dstElemValue, nil, rows.FieldDescriptions())
-
 	if err != nil {
 		return err
 	}
 
 	for i, t := range scanTargets {
 		if t == nil {
-			return fmt.Errorf("struct doesn't have corresponding row field %s", rows.FieldDescriptions()[i].Name)
+			return errors.Errorf("struct doesn't have corresponding row field %s", rows.FieldDescriptions()[i].Name)
 		}
 	}
 
-	return rows.Scan(scanTargets...)
+	if err := rows.Scan(scanTargets...); err != nil {
+		return errors.Errorf("failed to scan targets: %w", err)
+	}
+	return nil
 }
 
 const structTagKey = "db"
@@ -104,7 +102,7 @@ func appendScanTargets(dstElemValue reflect.Value, scanTargets []any, fldDescs [
 			}
 			fpos := fieldPosByName(fldDescs, colName)
 			if fpos == -1 || fpos >= len(scanTargets) {
-				return nil, fmt.Errorf("cannot find field %s in returned row", colName)
+				return nil, errors.Errorf("cannot find field %s in returned row", colName)
 			}
 			scanTargets[fpos] = dstElemValue.Field(i).Addr().Interface()
 		}

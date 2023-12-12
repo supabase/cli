@@ -3,12 +3,12 @@ package flags
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
@@ -30,13 +30,13 @@ func ParseProjectRef(fsys afero.Fs) error {
 		ProjectRef = string(bytes.TrimSpace(projectRefBytes))
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return errors.Errorf("failed to load project ref: %w", err)
 	}
 	// Prompt as the last resort
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		return promptProjectRef(os.Stdin)
 	}
-	return utils.ErrNotLinked
+	return errors.New(utils.ErrNotLinked)
 }
 
 func promptProjectRef(stdin io.Reader) error {
@@ -46,7 +46,7 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 	scanner := bufio.NewScanner(stdin)
 	scanner.Scan()
 	if err := scanner.Err(); err != nil {
-		return err
+		return errors.Errorf("failed to read project ref: %w", err)
 	}
 	ProjectRef = strings.TrimSpace(scanner.Text())
 	return utils.AssertProjectRefIsValid(ProjectRef)

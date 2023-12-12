@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -105,7 +106,7 @@ func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath 
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
+		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
 	return nil
 }
@@ -133,7 +134,7 @@ func DownloadStorageObject(ctx context.Context, projectRef, remotePath, localPat
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("Error status %d: %s", resp.StatusCode, body)
+		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
 	// Streams to file
 	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)

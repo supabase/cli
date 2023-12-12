@@ -2,10 +2,10 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -15,7 +15,7 @@ func validateIps(ips []string) error {
 	for _, ip := range ips {
 		ip := net.ParseIP(ip)
 		if ip.To4() == nil {
-			return fmt.Errorf("only IPv4 supported at the moment: %s", ip)
+			return errors.Errorf("only IPv4 supported at the moment: %s", ip)
 		}
 	}
 	return nil

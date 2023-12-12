@@ -3,10 +3,10 @@ package hostnames
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -26,10 +26,10 @@ func VerifyCNAME(ctx context.Context, projectRef string, customHostname string) 
 	expectedEndpoint := fmt.Sprintf("%s.", utils.GetSupabaseHost(projectRef))
 	cname, err := utils.ResolveCNAME(ctx, customHostname)
 	if err != nil {
-		return fmt.Errorf("expected custom hostname '%s' to have a CNAME record pointing to your project at '%s', but it failed to resolve: %w", customHostname, expectedEndpoint, err)
+		return errors.Errorf("expected custom hostname '%s' to have a CNAME record pointing to your project at '%s', but it failed to resolve: %w", customHostname, expectedEndpoint, err)
 	}
 	if cname != expectedEndpoint {
-		return fmt.Errorf("expected custom hostname '%s' to have a CNAME record pointing to your project at '%s', but it is currently set to '%s'", customHostname, expectedEndpoint, cname)
+		return errors.Errorf("expected custom hostname '%s' to have a CNAME record pointing to your project at '%s', but it is currently set to '%s'", customHostname, expectedEndpoint, cname)
 	}
 	return nil
 }
@@ -83,11 +83,11 @@ func TranslateStatus(response *api.UpdateCustomHostnameResponse, includeRawOutpu
 		var res RawResponse
 		rawBody, err := json.Marshal(response.Data)
 		if err != nil {
-			return "", fmt.Errorf("failed to serialize body: %w", err)
+			return "", errors.Errorf("failed to serialize body: %w", err)
 		}
 		err = json.Unmarshal(rawBody, &res)
 		if err != nil {
-			return "", fmt.Errorf("failed to deserialize body: %w", err)
+			return "", errors.Errorf("failed to deserialize body: %w", err)
 		}
 		return appendRawOutputIfNeeded(fmt.Sprintf(`Custom hostname configuration complete, and ready for activation.
 
@@ -98,11 +98,11 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 		var res RawResponse
 		rawBody, err := json.Marshal(response.Data)
 		if err != nil {
-			return "", fmt.Errorf("failed to serialize body: %w", err)
+			return "", errors.Errorf("failed to serialize body: %w", err)
 		}
 		err = json.Unmarshal(rawBody, &res)
 		if err != nil {
-			return "", fmt.Errorf("failed to deserialize body: %w", err)
+			return "", errors.Errorf("failed to deserialize body: %w", err)
 		}
 		owner := res.Result.OwnershipVerification
 		ssl := res.Result.Ssl.ValidationRecords
@@ -121,7 +121,7 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 			return appendRawOutputIfNeeded(fmt.Sprintf("SSL validation errors: \n\t- %s\n", valErrors), response, includeRawOutput), nil
 		}
 		if len(ssl) != 1 {
-			return "", fmt.Errorf("expected a single SSL verification record, received: %+v", ssl)
+			return "", errors.Errorf("expected a single SSL verification record, received: %+v", ssl)
 		}
 		records := ""
 		if owner.Name != "" {

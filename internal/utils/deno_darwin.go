@@ -3,8 +3,9 @@
 package utils
 
 import (
-	"fmt"
 	"syscall"
+
+	"github.com/go-errors/errors"
 )
 
 func getDenoAssetFileName() (string, error) {
@@ -19,7 +20,7 @@ func getDenoAssetFileName() (string, error) {
 			// Running on Intel Mac.
 			return "deno-x86_64-apple-darwin.zip", nil
 		} else {
-			return "", fmt.Errorf("failed to determine OS triple: %w", err)
+			return "", errors.Errorf("failed to determine OS triple: %w", err)
 		}
 	} else {
 		// Running on Apple Silicon.

@@ -2,9 +2,9 @@ package tenant
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -21,7 +21,7 @@ func GetStorageVersion(ctx context.Context, projectRef string) (string, error) {
 		return "", err
 	}
 	if len(data) == 0 || data == "0.0.0" {
-		return "", errStorageVersion
+		return "", errors.New(errStorageVersion)
 	}
 	return "v" + data, nil
 }

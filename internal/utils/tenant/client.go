@@ -2,11 +2,10 @@ package tenant
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -32,11 +31,11 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 	keyOnce.Do(func() {
 		resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
 		if err != nil {
-			errKey = err
+			errKey = errors.Errorf("failed to get api keys: %w", err)
 			return
 		}
 		if resp.JSON200 == nil {
-			errKey = fmt.Errorf("%w: %s", ErrAuthToken, string(resp.Body))
+			errKey = errors.Errorf("%w: %s", ErrAuthToken, string(resp.Body))
 			return
 		}
 		for _, key := range *resp.JSON200 {
@@ -48,7 +47,7 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 			}
 		}
 		if apiKey.IsEmpty() {
-			errKey = errMissingKey
+			errKey = errors.New(errMissingKey)
 		}
 	})
 	return apiKey, errKey

@@ -3,14 +3,13 @@ package saml
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -57,7 +56,7 @@ func ReadAttributeMappingFile(fsys afero.Fs, path string) (*api.AttributeMapping
 
 func ValidateMetadata(data []byte, source string) error {
 	if !utf8.Valid(data) {
-		return fmt.Errorf("SAML Metadata XML at %q is not UTF-8 encoded", source)
+		return errors.Errorf("SAML Metadata XML at %q is not UTF-8 encoded", source)
 	}
 
 	return nil
@@ -87,7 +86,7 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received HTTP %v when fetching metatada at %q", resp.Status, metadataURL)
+		return errors.Errorf("received HTTP %v when fetching metatada at %q", resp.Status, metadataURL)
 	}
 
 	data, err := io.ReadAll(resp.Body)
