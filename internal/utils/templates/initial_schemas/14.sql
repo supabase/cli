@@ -1042,14 +1042,15 @@ COMMENT ON TABLE auth.flow_state IS 'stores metadata for pkce logins';
 --
 
 CREATE TABLE IF NOT EXISTS auth.identities (
-    id text NOT NULL,
+    provider_id text NOT NULL,
     user_id uuid NOT NULL,
     identity_data jsonb NOT NULL,
     provider text NOT NULL,
     last_sign_in_at timestamp with time zone,
     created_at timestamp with time zone,
     updated_at timestamp with time zone,
-    email text GENERATED ALWAYS AS (lower((identity_data ->> 'email'::text))) STORED
+    email text GENERATED ALWAYS AS (lower((identity_data ->> 'email'::text))) STORED,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
 );
 
 
@@ -1291,7 +1292,11 @@ CREATE TABLE IF NOT EXISTS auth.sessions (
     updated_at timestamp with time zone,
     factor_id uuid,
     aal auth.aal_level,
-    not_after timestamp with time zone
+    not_after timestamp with time zone,
+    refreshed_at timestamp without time zone,
+    user_agent text,
+    ip inet,
+    tag text
 );
 
 
@@ -1707,6 +1712,9 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20230508135423');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230523124323');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230818113222');
 INSERT INTO auth.schema_migrations (version) VALUES ('20230914180801');
+INSERT INTO auth.schema_migrations (version) VALUES ('20231027141322');
+INSERT INTO auth.schema_migrations (version) VALUES ('20231114161723');
+INSERT INTO auth.schema_migrations (version) VALUES ('20231117164230');
 
 
 --
@@ -1850,7 +1858,15 @@ ALTER TABLE ONLY auth.flow_state
 --
 
 ALTER TABLE ONLY auth.identities
-    ADD CONSTRAINT identities_pkey PRIMARY KEY (provider, id);
+    ADD CONSTRAINT identities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: identities identities_provider_id_provider_unique; Type: CONSTRAINT; Schema: auth; Owner: supabase_auth_admin
+--
+
+ALTER TABLE ONLY auth.identities
+    ADD CONSTRAINT identities_provider_id_provider_unique UNIQUE (provider_id, provider);
 
 
 --
@@ -2478,7 +2494,7 @@ GRANT USAGE ON SCHEMA graphql_public TO service_role;
 
 
 --
--- Name: SCHEMA net; Type: ACL; Schema: -; Owner: supabase_admin
+-- Name: SCHEMA net; Type: ACL; Schema: -; Owner: postgres
 --
 
 GRANT USAGE ON SCHEMA net TO supabase_functions_admin;
