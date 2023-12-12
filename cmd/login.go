@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/afero"
@@ -20,18 +20,18 @@ import (
 )
 
 var (
-	ErrMissingToken = errors.New("Cannot use automatic login flow inside non-TTY environments. Please provide " + utils.Aqua("--token") + " flag or set the " + utils.Aqua("SUPABASE_ACCESS_TOKEN") + " environment variable.")
+	ErrMissingToken = errors.Errorf("Cannot use automatic login flow inside non-TTY environments. Please provide %s flag or set the %s environment variable.", utils.Aqua("--token"), utils.Aqua("SUPABASE_ACCESS_TOKEN"))
 )
 
 func generateTokenName() (string, error) {
 	user, err := user.Current()
 	if err != nil {
-		return "", fmt.Errorf("cannot retrieve username: %w", err)
+		return "", errors.Errorf("cannot retrieve username: %w", err)
 	}
 
 	hostname, err := os.Hostname()
 	if err != nil {
-		return "", fmt.Errorf("cannot retrieve hostname: %w", err)
+		return "", errors.Errorf("cannot retrieve hostname: %w", err)
 	}
 
 	return fmt.Sprintf("cli_%s@%s_%d", user.Username, hostname, time.Now().Unix()), nil
@@ -58,7 +58,7 @@ var (
 			} else if cmd.Flags().Changed("token") {
 				token, err := cmd.Flags().GetString("token")
 				if err != nil {
-					return fmt.Errorf("cannot parse 'token' flag: %w", err)
+					return errors.Errorf("cannot parse 'token' flag: %w", err)
 				}
 				params.Token = token
 			} else if token := os.Getenv("SUPABASE_ACCESS_TOKEN"); token != "" {
@@ -83,7 +83,7 @@ var (
 			if cmd.Flags().Changed("name") {
 				name, err := cmd.Flags().GetString("name")
 				if err != nil {
-					return fmt.Errorf("cannot parse 'name' flag: %w", err)
+					return errors.Errorf("cannot parse 'name' flag: %w", err)
 				}
 				params.TokenName = name
 			} else {

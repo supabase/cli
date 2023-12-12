@@ -2,7 +2,6 @@ package utils
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
@@ -17,9 +17,13 @@ import (
 )
 
 func isDialError(err error) bool {
-	inner := errors.Unwrap(err)
-	opErr, ok := inner.(*net.OpError)
-	return ok && opErr.Op == "dial"
+	for err != nil {
+		if opErr, ok := err.(*net.OpError); ok && opErr.Op == "dial" {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
 
 func ToPostgresURL(config pgconn.Config) string {
@@ -93,7 +97,7 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	// Parse connection url
 	config, err := pgx.ParseConfig(url)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to parse postgres url: %w", err)
 	}
 	// Apply config overrides
 	for _, op := range options {
@@ -103,7 +107,11 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 		debug.SetupPGX(config)
 	}
 	// Connect to database
-	return pgx.ConnectConfig(ctx, config)
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, errors.Errorf("failed to connect to postgres: %w", err)
+	}
+	return conn, nil
 }
 
 func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {

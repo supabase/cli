@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/BurntSushi/toml"
+	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v2"
 )
@@ -35,30 +36,40 @@ func EncodeOutput(format string, w io.Writer, value any) error {
 	case OutputEnv:
 		mapvalue, ok := value.(map[string]string)
 		if !ok {
-			return fmt.Errorf("value is not a map[string]string and can't be encoded as an environment file")
+			return errors.Errorf("value is not a map[string]string and can't be encoded as an environment file")
 		}
 
 		out, err := godotenv.Marshal(mapvalue)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to marshal env map: %w", err)
 		}
 
-		_, err = fmt.Fprintln(w, out)
-		return err
+		if _, err := fmt.Fprintln(w, out); err != nil {
+			return errors.Errorf("failed to write encoded output: %w", err)
+		}
 
 	case OutputJson:
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 
-		return enc.Encode(value)
+		if err := enc.Encode(value); err != nil {
+			return errors.Errorf("failed to output json: %w", err)
+		}
 
 	case OutputYaml:
-		return yaml.NewEncoder(w).Encode(value)
+		enc := yaml.NewEncoder(w)
+		if err := enc.Encode(value); err != nil {
+			return errors.Errorf("failed to output yaml: %w", err)
+		}
 
 	case OutputToml:
-		return toml.NewEncoder(w).Encode(value)
+		enc := toml.NewEncoder(w)
+		if err := enc.Encode(value); err != nil {
+			return errors.Errorf("failed to output toml: %w", err)
+		}
 
 	default:
-		return fmt.Errorf("Unsupported output encoding %q", format)
+		return errors.Errorf("Unsupported output encoding %q", format)
 	}
+	return nil
 }

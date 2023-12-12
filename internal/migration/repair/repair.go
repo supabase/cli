@@ -2,13 +2,13 @@ package repair
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
@@ -36,7 +36,7 @@ var ErrInvalidVersion = errors.New("invalid version number")
 
 func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := strconv.Atoi(version); err != nil {
-		return ErrInvalidVersion
+		return errors.New(ErrInvalidVersion)
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -118,7 +118,7 @@ func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
 		return "", err
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("glob %s: %w", path, os.ErrNotExist)
+		return "", errors.Errorf("glob %s: %w", path, os.ErrNotExist)
 	}
 	return matches[0], nil
 }
@@ -190,7 +190,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Lines) {
 			stat = m.Lines[i]
 		}
-		return fmt.Errorf("%w\nAt statement %d: %s", err, i, stat)
+		return errors.Errorf("%w\nAt statement %d: %s", err, i, stat)
 	}
 	return nil
 }

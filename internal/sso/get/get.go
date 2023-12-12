@@ -2,11 +2,11 @@ package get
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -20,7 +20,7 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 
 	if resp.JSON200 == nil {
 		if resp.StatusCode() == http.StatusNotFound {
-			return fmt.Errorf("An identity provider with ID %q could not be found.", providerId)
+			return errors.Errorf("An identity provider with ID %q could not be found.", providerId)
 		}
 
 		return errors.New("Unexpected error fetching identity provider: " + string(resp.Body))

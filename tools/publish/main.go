@@ -15,6 +15,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/go-errors/errors"
 	"github.com/google/go-github/v53/github"
 	"github.com/supabase/cli/tools/shared"
 )
@@ -99,9 +100,9 @@ func checkStatus(resp *http.Response, status int) error {
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("status %d: %w", resp.StatusCode, err)
+		return errors.Errorf("status %d: %w", resp.StatusCode, err)
 	}
-	return fmt.Errorf("status %d: %s", resp.StatusCode, string(data))
+	return errors.Errorf("status %d: %s", resp.StatusCode, string(data))
 }
 
 func updatePackage(ctx context.Context, client *github.Client, repo, path string, tmpl *template.Template, config PackageConfig) error {

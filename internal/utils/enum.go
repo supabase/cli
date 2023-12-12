@@ -3,6 +3,8 @@ package utils
 import (
 	"fmt"
 	"strings"
+
+	"github.com/go-errors/errors"
 )
 
 // Ref: https://github.com/spf13/pflag/issues/236#issuecomment-931600452
@@ -25,7 +27,7 @@ func (a *EnumFlag) Set(p string) error {
 		return false
 	}
 	if !isIncluded(a.Allowed, p) {
-		return fmt.Errorf("must be one of [ %s ]", strings.Join(a.Allowed, " | "))
+		return errors.Errorf("must be one of [ %s ]", strings.Join(a.Allowed, " | "))
 	}
 	a.Value = p
 	return nil

@@ -3,7 +3,6 @@ package utils
 import (
 	"bytes"
 	_ "embed"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
+	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -388,11 +388,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
 	var buf bytes.Buffer
 	if err := initConfigTemplate.Execute(&buf, nil); err != nil {
-		return err
+		return errors.Errorf("failed to initialise config template: %w", err)
 	}
 	dec := toml.NewDecoder(&buf)
 	if _, err := dec.Decode(&Config); err != nil {
-		return err
+		return errors.Errorf("failed to decode config template: %w", err)
 	}
 	// Load user defined config
 	if metadata, err := toml.DecodeFS(afero.NewIOFS(fsys), ConfigPath, &Config); err != nil {
@@ -401,16 +401,16 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if osErr != nil {
 			cwd = "current directory"
 		}
-		return fmt.Errorf("cannot read config in %s: %w", cwd, err)
+		return errors.Errorf("cannot read config in %s: %w", Bold(cwd), err)
 	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
 		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 	}
 	// Load secrets from .env file
 	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
 	}
 	if err := viper.Unmarshal(&Config); err != nil {
-		return err
+		return errors.Errorf("failed to parse env to config: %w", err)
 	}
 
 	// Process decoded TOML.
@@ -468,20 +468,20 @@ func LoadConfigFS(fsys afero.Fs) error {
 				Config.Db.Image = Pg15Image[:index+1] + string(version)
 			}
 		default:
-			return fmt.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
+			return errors.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
 		}
 		// Validate pooler config
 		if Config.Db.Pooler.Enabled {
 			allowed := []PoolMode{TransactionMode, SessionMode}
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
-				return fmt.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
+				return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 			}
 		}
 		// Validate realtime config
 		if Config.Realtime.Enabled {
 			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 			if !SliceContains(allowed, Config.Realtime.IpVersion) {
-				return fmt.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
+				return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
 			}
 		}
 		// Validate storage config
@@ -516,7 +516,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			for _, tmpl := range Config.Auth.Email.Template {
 				if len(tmpl.ContentPath) > 0 {
 					if _, err := fsys.Stat(tmpl.ContentPath); err != nil {
-						return err
+						return errors.Errorf("failed to read file info: %w", err)
 					}
 				}
 			}
@@ -595,10 +595,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 					continue
 				}
 				if provider.ClientId == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+					return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				}
 				if provider.Secret == "" {
-					return fmt.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+					return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				}
 				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
 					return err
@@ -641,7 +641,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			break
 		default:
 			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
-			return fmt.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
+			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
 	return nil
@@ -658,7 +658,7 @@ func maybeLoadEnv(s string) (string, error) {
 		return value, nil
 	}
 
-	return "", fmt.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
+	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
 func sanitizeProjectId(src string) string {
@@ -678,7 +678,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if len(params.ProjectId) == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return err
+			return errors.Errorf("failed to get working directory: %w", err)
 		}
 		params.ProjectId = filepath.Base(cwd)
 	}
@@ -687,13 +687,16 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ConfigPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create config file: %w", err)
 	}
 	defer f.Close()
 	// Update from template
-	return initConfigTemplate.Execute(f, params)
+	if err := initConfigTemplate.Execute(f, params); err != nil {
+		return errors.Errorf("failed to initialise config: %w", err)
+	}
+	return nil
 }
 
 func WriteConfig(fsys afero.Fs, _test bool) error {

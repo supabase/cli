@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -151,7 +151,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 		&out,
 		&stderr,
 	); err != nil {
-		return "", fmt.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
+		return "", errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
 	}
 	return out.String(), nil
 }

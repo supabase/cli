@@ -3,7 +3,6 @@ package download
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
@@ -58,11 +58,11 @@ func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.Fun
 
 	switch resp.StatusCode() {
 	case http.StatusNotFound:
-		return nil, errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
+		return nil, errors.Errorf("Function %s does not exist on the Supabase project.", utils.Aqua(slug))
 	case http.StatusOK:
 		break
 	default:
-		return nil, errors.New("Failed to download Function " + utils.Aqua(slug) + " on the Supabase project: " + string(resp.Body))
+		return nil, errors.Errorf("Failed to download Function %s on the Supabase project: %s", utils.Aqua(slug), string(resp.Body))
 	}
 
 	if resp.JSON200.EntrypointPath == nil {
@@ -103,7 +103,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Error downloading function: %w\n%v", err, errBuf.String())
+		return errors.Errorf("Error downloading function: %w\n%v", err, errBuf.String())
 	}
 	return nil
 }

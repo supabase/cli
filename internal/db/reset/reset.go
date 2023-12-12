@@ -3,7 +3,6 @@ package reset
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -43,7 +43,7 @@ var (
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) > 0 {
 		if _, err := strconv.Atoi(version); err != nil {
-			return repair.ErrInvalidVersion
+			return errors.New(repair.ErrInvalidVersion)
 		}
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
@@ -217,7 +217,7 @@ func restartServices(ctx context.Context) error {
 	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("Failed to restart %s: %w", id, err)
+			return errors.Errorf("Failed to restart %s: %w", id, err)
 		}
 		return nil
 	})
@@ -253,7 +253,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 			}
 			logs.Close()
 		}
-		return fmt.Errorf("%w: %v", ErrUnhealthy, started)
+		return errors.Errorf("%w: %v", ErrUnhealthy, started)
 	}
 	return nil
 }

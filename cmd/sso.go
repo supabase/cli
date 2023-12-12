@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"fmt"
-
+	"github.com/go-errors/errors"
 	"github.com/spf13/cobra"
 
 	"github.com/supabase/cli/internal/sso/create"
@@ -66,7 +65,7 @@ var (
 		Example: `  supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
+				return errors.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			return remove.Run(cmd.Context(), flags.ProjectRef, args[0], ssoOutput.Value)
@@ -81,7 +80,7 @@ var (
 		Example: `  supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
+				return errors.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			return update.Run(cmd.Context(), update.RunParams{
@@ -108,7 +107,7 @@ var (
 		Example: `  supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !utils.UUIDPattern.MatchString(args[0]) {
-				return fmt.Errorf("identity provider ID %q is not a UUID", args[0])
+				return errors.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
 			format := ssoOutput.Value
