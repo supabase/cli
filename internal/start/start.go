@@ -34,13 +34,12 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertDockerIsRunning(ctx); err != nil {
-			return err
-		}
-		if _, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil {
+		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
-			fmt.Fprintln(os.Stderr, "Run "+utils.Aqua("supabase status")+" to show status of local Supabase containers.")
+			utils.CmdSuggestion = fmt.Sprintf("Run %s to show status of local Supabase containers.", utils.Aqua("supabase status"))
 			return nil
+		} else if !errors.Is(err, utils.ErrNotRunning) {
+			return err
 		}
 	}
 

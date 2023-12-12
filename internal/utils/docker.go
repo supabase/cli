@@ -50,6 +50,9 @@ func NewDocker() *client.Client {
 
 func AssertDockerIsRunning(ctx context.Context) error {
 	if _, err := Docker.Ping(ctx); err != nil {
+		if client.IsErrConnectionFailed(err) {
+			CmdSuggestion = suggestDockerInstall
+		}
 		return NewError(err.Error())
 	}
 
@@ -258,9 +261,14 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
+var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
+
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
+		if client.IsErrConnectionFailed(err) {
+			CmdSuggestion = suggestDockerInstall
+		}
 		return "", err
 	}
 	// Setup default config
