@@ -4,12 +4,9 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -201,36 +198,6 @@ func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
 	}
 
 	return string(branch), nil
-}
-
-// TODO: Make all errors use this.
-func NewError(s string) error {
-	// Ask runtime.Callers for up to 5 PCs, excluding runtime.Callers and NewError.
-	pc := make([]uintptr, 5)
-	n := runtime.Callers(2, pc)
-
-	pc = pc[:n] // pass only valid pcs to runtime.CallersFrames
-	frames := runtime.CallersFrames(pc)
-
-	// Loop to get frames.
-	// A fixed number of PCs can expand to an indefinite number of Frames.
-	for {
-		frame, more := frames.Next()
-
-		// Process this frame.
-		//
-		// We're only interested in the stack trace in this repo.
-		if strings.HasPrefix(frame.Function, "github.com/supabase/cli/internal") {
-			s += fmt.Sprintf("\n  in %s:%d", frame.Function, frame.Line)
-		}
-
-		// Check whether there are more frames to process after this one.
-		if !more {
-			break
-		}
-	}
-
-	return errors.New(s)
 }
 
 func AssertSupabaseDbIsRunning() error {

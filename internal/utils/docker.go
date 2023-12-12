@@ -53,7 +53,7 @@ func AssertDockerIsRunning(ctx context.Context) error {
 		if client.IsErrConnectionFailed(err) {
 			CmdSuggestion = suggestDockerInstall
 		}
-		return NewError(err.Error())
+		return errors.New(err)
 	}
 
 	return nil
