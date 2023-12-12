@@ -32,8 +32,10 @@ const (
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
-	// Load function config if any for fallbacks for some flags, but continue on error.
-	_ = utils.LoadConfigFS(fsys)
+	// Load function config and project id
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
 	if len(slugs) == 0 {
 		allSlugs, err := getFunctionSlugs(fsys)
 		if err != nil {
