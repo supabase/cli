@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"testing"
 
@@ -61,7 +60,7 @@ func TestServeCommand(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
-			ReplyError(errors.New("network error"))
+			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), "", nil, "", fsys)
 		// Check error

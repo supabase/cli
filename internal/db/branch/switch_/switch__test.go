@@ -87,7 +87,7 @@ func TestSwitchCommand(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error

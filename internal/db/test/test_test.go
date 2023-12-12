@@ -112,8 +112,8 @@ func TestRunCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
-			ReplyError(errors.New("network error"))
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
+			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), fsys)
 		// Check error
@@ -128,7 +128,7 @@ func TestRunCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
