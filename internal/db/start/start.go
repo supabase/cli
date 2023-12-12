@@ -227,7 +227,7 @@ func initSchema15(ctx context.Context, host string) error {
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
+	}, []string{"auth", "migrate"}, io.Discard, os.Stderr)
 }
 
 func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
