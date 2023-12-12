@@ -83,24 +83,6 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 	return err
 }
 
-func DockerExec(ctx context.Context, container string, cmd []string) (io.Reader, error) {
-	exec, err := Docker.ContainerExecCreate(
-		ctx,
-		container,
-		types.ExecConfig{Cmd: cmd, AttachStderr: true, AttachStdout: true},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
-	if err != nil {
-		return nil, err
-	}
-
-	return resp.Reader, nil
-}
-
 // Used by unit tests
 // NOTE: There's a risk of data race with reads & writes from `DockerRun` and
 // reads from `DockerRemoveAll`, but since they're expected to be run on the
