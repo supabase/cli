@@ -97,10 +97,10 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	jsonFile, err := os.Open(path)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-			if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
-				return err
-			}
-			return nil
+		if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
+			return err
+		}
+		return nil
 	}
 	defer jsonFile.Close()
 
@@ -112,7 +112,7 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	json.Unmarshal([]byte(template), &templateSettings)
 	// Merge tempalte into user settings.
 	maps.Copy(userSettings, templateSettings)
-	jsonString, err := json.MarshalIndent(userSettings, "", "  ") 
+	jsonString, err := json.MarshalIndent(userSettings, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func writeVscodeConfig(fsys afero.Fs) error {
 		if err := updateJsonFile(filepath.Join(vscodeDir, "settings.json"), vscodeSettings, fsys); err != nil {
 			return err
 		}
-		fmt.Println("Generated VS Code settings in " + utils.Aqua(filepath.Base(vscodeDir) + "/settings.json") + ". Please install the recommended extension!")
+		fmt.Println("Generated VS Code settings in " + utils.Aqua(filepath.Base(vscodeDir)+"/settings.json") + ". Please install the recommended extension!")
 	}
 	return nil
 }

@@ -12,7 +12,7 @@ import (
 
 var (
 	createVscodeSettings = new(bool)
-	useOrioleDB           bool
+	useOrioleDB          bool
 
 	initCmd = &cobra.Command{
 		GroupID: groupLocalDev,
