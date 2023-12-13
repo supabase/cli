@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/andybalholm/brotli v1.0.6
 	github.com/charmbracelet/bubbles v0.16.1
-	github.com/charmbracelet/bubbletea v0.24.2
+	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.6.0
 	github.com/charmbracelet/lipgloss v0.9.1
 	github.com/containers/common v0.57.1
