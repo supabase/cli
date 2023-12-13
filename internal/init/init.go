@@ -2,10 +2,14 @@ package init
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/exp/maps"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -18,13 +22,11 @@ var (
 	vscodeExtensions string
 	//go:embed templates/.vscode/settings.json
 	vscodeSettings string
-	//go:embed templates/.code-workspace
-	vscodeWorkspaceConfig string
 
 	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
 )
 
-func Run(fsys afero.Fs, createVscodeWorkspace *bool, useOrioleDB bool) error {
+func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
@@ -51,13 +53,13 @@ func Run(fsys afero.Fs, createVscodeWorkspace *bool, useOrioleDB bool) error {
 		}
 	}
 
-	// 4. Generate VS Code workspace settings.
-	if createVscodeWorkspace != nil {
-		if *createVscodeWorkspace {
+	// 4. Generate VS Code settings.
+	if createVscodeSettings != nil {
+		if *createVscodeSettings {
 			return writeVscodeConfig(fsys)
 		}
 	} else {
-		if isVscode := utils.PromptYesNo("Generate VS Code workspace settings?", false, os.Stdin); isVscode {
+		if isVscode := utils.PromptYesNo("Generate VS Code settings for Deno?", false, os.Stdin); isVscode {
 			return writeVscodeConfig(fsys)
 		}
 	}
@@ -90,39 +92,60 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 	return nil
 }
 
+func updateJsonFile(path string, template string, fsys afero.Fs) error {
+	// Open our jsonFile
+	jsonFile, err := os.Open(path)
+	// if we os.Open returns an error then handle it
+	if err != nil {
+			fmt.Println(err)
+			if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
+				return err
+			}
+			return nil
+	}
+	fmt.Println("Successfully Opened " + path)
+	// defer the closing of our jsonFile so that we can parse it later on
+	defer jsonFile.Close()
+
+	// Parse and unmarshal JSON file.
+	byteValue, _ := io.ReadAll(jsonFile)
+	var userSettings map[string]interface{}
+	json.Unmarshal([]byte(byteValue), &userSettings)
+	fmt.Println(userSettings)
+	var templateSettings map[string]interface{}
+	json.Unmarshal([]byte(template), &templateSettings)
+	// Merge tempalte into user settings.
+	maps.Copy(userSettings, templateSettings)
+	fmt.Println(userSettings)
+	jsonString, err := json.MarshalIndent(userSettings, "", "  ") 
+	if err != nil {
+		return err
+	}
+	if err := afero.WriteFile(fsys, path, []byte(jsonString), 0644); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func writeVscodeConfig(fsys afero.Fs) error {
 	{
-		// Create mutli-root code-workspace.
+		// Create VS Code settings for Deno.
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		codeWorkspaceConfigPath := filepath.Join(cwd, filepath.Base(cwd)+".code-workspace")
-		if _, err := fsys.Stat(codeWorkspaceConfigPath); !errors.Is(err, os.ErrNotExist) {
-			// TODO: prompt to overwrite if config already exists
-			return err
-		}
-		if err := afero.WriteFile(fsys, codeWorkspaceConfigPath, []byte(vscodeWorkspaceConfig), 0644); err != nil {
-			return err
-		}
-		fmt.Println("Open the " + utils.Aqua(filepath.Base(codeWorkspaceConfigPath)) + " file in VS Code.")
-	}
-
-	{
-		// Create functions workspace settings.
-		vscodeDir := filepath.Join(utils.FunctionsDir, ".vscode")
-		if _, err := fsys.Stat(vscodeDir); !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
+		vscodeDir := filepath.Join(cwd, ".vscode")
 		if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
 			return err
 		}
-		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "extensions.json"), []byte(vscodeExtensions), 0644); err != nil {
+		if err := updateJsonFile(filepath.Join(vscodeDir, "extensions.json"), vscodeExtensions, fsys); err != nil {
 			return err
 		}
-		if err := afero.WriteFile(fsys, filepath.Join(vscodeDir, "settings.json"), []byte(vscodeSettings), 0644); err != nil {
+		if err := updateJsonFile(filepath.Join(vscodeDir, "settings.json"), vscodeSettings, fsys); err != nil {
 			return err
 		}
+		fmt.Println("Generated VS Code settings in " + utils.Aqua(filepath.Base(vscodeDir) + "/settings.json") + ". Please install the recommended extension!")
 	}
 	return nil
 }

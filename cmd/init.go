@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	createVscodeWorkspace = new(bool)
+	createVscodeSettings = new(bool)
 	useOrioleDB           bool
 
 	initCmd = &cobra.Command{
@@ -30,10 +30,10 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if !cmd.Flags().Changed("with-vscode-workspace") {
-				createVscodeWorkspace = nil
+			if !cmd.Flags().Changed("with-vscode-settings") {
+				createVscodeSettings = nil
 			}
-			return _init.Run(fsys, createVscodeWorkspace, useOrioleDB)
+			return _init.Run(fsys, createVscodeSettings, useOrioleDB)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
@@ -43,7 +43,7 @@ var (
 
 func init() {
 	flags := initCmd.Flags()
-	flags.BoolVar(createVscodeWorkspace, "with-vscode-workspace", false, "Generate VS Code workspace.")
+	flags.BoolVar(createVscodeSettings, "with-vscode-settings", false, "Generate VS Code settings for Deno.")
 	flags.BoolVar(&useOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres")
 	rootCmd.AddCommand(initCmd)
 }
