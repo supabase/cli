@@ -97,26 +97,21 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	jsonFile, err := os.Open(path)
 	// if we os.Open returns an error then handle it
 	if err != nil {
-			fmt.Println(err)
 			if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
 				return err
 			}
 			return nil
 	}
-	fmt.Println("Successfully Opened " + path)
-	// defer the closing of our jsonFile so that we can parse it later on
 	defer jsonFile.Close()
 
 	// Parse and unmarshal JSON file.
 	byteValue, _ := io.ReadAll(jsonFile)
 	var userSettings map[string]interface{}
 	json.Unmarshal([]byte(byteValue), &userSettings)
-	fmt.Println(userSettings)
 	var templateSettings map[string]interface{}
 	json.Unmarshal([]byte(template), &templateSettings)
 	// Merge tempalte into user settings.
 	maps.Copy(userSettings, templateSettings)
-	fmt.Println(userSettings)
 	jsonString, err := json.MarshalIndent(userSettings, "", "  ") 
 	if err != nil {
 		return err
