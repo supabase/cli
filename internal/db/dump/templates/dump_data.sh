@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Disable triggers so that data dump can be restored exactly as it is
+echo "SET session_replication_role = replica;\n"
+
 # Explanation of pg_dump flags:
 #
 #   --exclude-schema omit data from internal schemas as they are maintained by platform
