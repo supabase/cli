@@ -56,18 +56,20 @@ func NewContainerConfig() container.Config {
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
 		"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
-		"POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8",
 		"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
 	}
 	if len(utils.Config.Experimental.OrioleDBVersion) > 0 {
 		env = append(env,
+			"POSTGRES_INITDB_ARGS=--lc-collate=C",
 			fmt.Sprintf("S3_ENABLED=%t", true),
 			"S3_HOST="+utils.Config.Experimental.S3Host,
 			"S3_REGION="+utils.Config.Experimental.S3Region,
 			"S3_ACCESS_KEY="+utils.Config.Experimental.S3AccessKey,
 			"S3_SECRET_KEY="+utils.Config.Experimental.S3SecretKey,
 		)
+	} else {
+		env = append(env, "POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8")
 	}
 	config := container.Config{
 		Image: utils.Config.Db.Image,
