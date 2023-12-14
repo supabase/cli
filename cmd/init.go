@@ -43,6 +43,8 @@ var (
 
 func init() {
 	flags := initCmd.Flags()
+	flags.BoolVar(createVscodeSettings, "with-vscode-workspace", false, "Generate VS Code workspace.")
+	cobra.CheckErr(flags.MarkHidden("with-vscode-workspace"))
 	flags.BoolVar(createVscodeSettings, "with-vscode-settings", false, "Generate VS Code settings for Deno.")
 	flags.BoolVar(&useOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres")
 	rootCmd.AddCommand(initCmd)
