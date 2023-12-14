@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -13,6 +14,10 @@ import (
 )
 
 var (
+	vscodeDir      = ".vscode"
+	extensionsPath = filepath.Join(vscodeDir, "extensions.json")
+	settingsPath   = filepath.Join(vscodeDir, "settings.json")
+
 	//go:embed templates/.gitignore
 	initGitignore []byte
 	//go:embed templates/.vscode/extensions.json
@@ -125,7 +130,7 @@ func saveUserSettings(path string, settings VSCodeSettings, fsys afero.Fs) error
 
 func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	userSettings, err := loadUserSettings(path, fsys)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, io.EOF) {
 		return afero.WriteFile(fsys, path, []byte(template), 0644)
 	} else if err != nil {
 		return err
@@ -139,14 +144,12 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 
 func writeVscodeConfig(fsys afero.Fs) error {
 	// Create VS Code settings for Deno.
-	vscodeDir := ".vscode"
 	if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
 		return err
 	}
-	if err := updateJsonFile(filepath.Join(vscodeDir, "extensions.json"), vscodeExtensions, fsys); err != nil {
+	if err := updateJsonFile(extensionsPath, vscodeExtensions, fsys); err != nil {
 		return err
 	}
-	settingsPath := filepath.Join(vscodeDir, "settings.json")
 	if err := updateJsonFile(settingsPath, vscodeSettings, fsys); err != nil {
 		return err
 	}
