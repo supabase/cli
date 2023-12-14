@@ -33,8 +33,8 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, utils.SeedDataPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
-		// Validate vscode workspace isn't generated
-		exists, err = afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		// Validate vscode settings file isn't generated
+		exists, err = afero.Exists(fsys, filepath.Join(cwd, ".vscode", "settings.json"))
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -73,28 +73,28 @@ func TestInitCommand(t *testing.T) {
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
-	t.Run("creates vscode workspace file", func(t *testing.T) {
+	t.Run("creates vscode settings file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
 		assert.NoError(t, Run(fsys, boolPointer(true), false))
-		// Validate generated vscode workspace
-		exists, err := afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		// Validate generated vscode settings
+		exists, err := afero.Exists(fsys, filepath.Join(cwd, ".vscode", "settings.json"))
 		assert.NoError(t, err)
 		assert.True(t, exists)
 	})
 
-	t.Run("does not create vscode workspace file", func(t *testing.T) {
+	t.Run("does not create vscode settings file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
 		assert.NoError(t, Run(fsys, boolPointer(false), false))
-		// Validate vscode workspace isn't generated
-		exists, err := afero.Exists(fsys, filepath.Join(cwd, "init.code-workspace"))
+		// Validate vscode settings file isn't generated
+		exists, err := afero.Exists(fsys, filepath.Join(cwd, ".vscode", "settings.json"))
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})
