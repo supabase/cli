@@ -107,7 +107,7 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	// Parse and unmarshal JSON file.
 	byteValue, _ := io.ReadAll(jsonFile)
 	var userSettings map[string]interface{}
-	err = json.Unmarshal([]byte(byteValue), &userSettings)
+	err = json.Unmarshal(byteValue, &userSettings)
 	if err != nil {
 		return fmt.Errorf("failed to parse user settings: %w", err)
 	}
