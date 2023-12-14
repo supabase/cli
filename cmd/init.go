@@ -30,7 +30,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
-			if !cmd.Flags().Changed("with-vscode-settings") {
+			if !cmd.Flags().Changed("with-vscode-settings") && !cmd.Flags().Changed("with-vscode-workspace") {
 				createVscodeSettings = nil
 			}
 			return _init.Run(fsys, createVscodeSettings, useOrioleDB)

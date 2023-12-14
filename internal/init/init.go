@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-
-	"golang.org/x/exp/maps"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -92,61 +89,67 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 	return nil
 }
 
-func updateJsonFile(path string, template string, fsys afero.Fs) error {
+type VSCodeSettings map[string]interface{}
+
+func loadUserSettings(path string, fsys afero.Fs) (VSCodeSettings, error) {
 	// Open our jsonFile
-	jsonFile, err := os.Open(path)
-	// if we os.Open returns an error then handle it
+	jsonFile, err := fsys.Open(path)
 	if err != nil {
-		if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
-			return err
-		}
-		return nil
+		return nil, fmt.Errorf("failed to load %s: %w", utils.Bold(path), err)
 	}
 	defer jsonFile.Close()
-
 	// Parse and unmarshal JSON file.
-	byteValue, _ := io.ReadAll(jsonFile)
-	var userSettings map[string]interface{}
-	err = json.Unmarshal(byteValue, &userSettings)
-	if err != nil {
-		return fmt.Errorf("failed to parse user settings: %w", err)
+	var userSettings VSCodeSettings
+	dec := json.NewDecoder(jsonFile)
+	if err := dec.Decode(&userSettings); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", utils.Bold(path), err)
 	}
-	var templateSettings map[string]interface{}
-	err = json.Unmarshal([]byte(template), &templateSettings)
-	if err != nil {
-		return fmt.Errorf("failed to parse template settings: %w", err)
-	}
-	// Merge template into user settings.
-	maps.Copy(userSettings, templateSettings)
-	jsonString, err := json.MarshalIndent(userSettings, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := afero.WriteFile(fsys, path, jsonString, 0644); err != nil {
-		return err
-	}
+	return userSettings, nil
+}
 
+func saveUserSettings(path string, settings VSCodeSettings, fsys afero.Fs) error {
+	// Open our jsonFile
+	jsonFile, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", utils.Bold(path), err)
+	}
+	defer jsonFile.Close()
+	// Marshal JSON to file.
+	enc := json.NewEncoder(jsonFile)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(settings); err != nil {
+		return fmt.Errorf("failed to save %s: %w", utils.Bold(path), err)
+	}
 	return nil
 }
 
-func writeVscodeConfig(fsys afero.Fs) error {
-	{
-		// Create VS Code settings for Deno.
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		vscodeDir := filepath.Join(cwd, ".vscode")
-		if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
-			return err
-		}
-		if err := updateJsonFile(filepath.Join(vscodeDir, "extensions.json"), vscodeExtensions, fsys); err != nil {
-			return err
-		}
-		if err := updateJsonFile(filepath.Join(vscodeDir, "settings.json"), vscodeSettings, fsys); err != nil {
-			return err
-		}
-		fmt.Println("Generated VS Code settings in " + utils.Aqua(filepath.Base(vscodeDir)+"/settings.json") + ". Please install the recommended extension!")
+func updateJsonFile(path string, template string, fsys afero.Fs) error {
+	userSettings, err := loadUserSettings(path, fsys)
+	if errors.Is(err, os.ErrNotExist) {
+		return afero.WriteFile(fsys, path, []byte(template), 0644)
+	} else if err != nil {
+		return err
 	}
+	// Merge template into user settings.
+	if err := json.Unmarshal([]byte(template), &userSettings); err != nil {
+		return fmt.Errorf("failed to copy template: %w", err)
+	}
+	return saveUserSettings(path, userSettings, fsys)
+}
+
+func writeVscodeConfig(fsys afero.Fs) error {
+	// Create VS Code settings for Deno.
+	vscodeDir := ".vscode"
+	if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
+		return err
+	}
+	if err := updateJsonFile(filepath.Join(vscodeDir, "extensions.json"), vscodeExtensions, fsys); err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(vscodeDir, "settings.json")
+	if err := updateJsonFile(settingsPath, vscodeSettings, fsys); err != nil {
+		return err
+	}
+	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ". Please install the recommended extension!")
 	return nil
 }

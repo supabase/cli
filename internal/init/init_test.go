@@ -76,12 +76,10 @@ func TestInitCommand(t *testing.T) {
 	t.Run("creates vscode settings file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
-		cwd, err := os.Getwd()
-		require.NoError(t, err)
 		// Run test
 		assert.NoError(t, Run(fsys, boolPointer(true), false))
 		// Validate generated vscode settings
-		exists, err := afero.Exists(fsys, filepath.Join(cwd, ".vscode", "settings.json"))
+		exists, err := afero.Exists(fsys, filepath.Join(".vscode", "settings.json"))
 		assert.NoError(t, err)
 		assert.True(t, exists)
 	})
