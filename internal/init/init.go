@@ -107,16 +107,22 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	// Parse and unmarshal JSON file.
 	byteValue, _ := io.ReadAll(jsonFile)
 	var userSettings map[string]interface{}
-	json.Unmarshal([]byte(byteValue), &userSettings)
+	err = json.Unmarshal([]byte(byteValue), &userSettings)
+	if err != nil {
+		return fmt.Errorf("failed to parse user settings: %w", err)
+	}
 	var templateSettings map[string]interface{}
-	json.Unmarshal([]byte(template), &templateSettings)
-	// Merge tempalte into user settings.
+	err = json.Unmarshal([]byte(template), &templateSettings)
+	if err != nil {
+		return fmt.Errorf("failed to parse template settings: %w", err)
+	}
+	// Merge template into user settings.
 	maps.Copy(userSettings, templateSettings)
 	jsonString, err := json.MarshalIndent(userSettings, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := afero.WriteFile(fsys, path, []byte(jsonString), 0644); err != nil {
+	if err := afero.WriteFile(fsys, path, jsonString, 0644); err != nil {
 		return err
 	}
 
