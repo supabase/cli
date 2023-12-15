@@ -281,8 +281,8 @@ func init() {
 	// Build reset command
 	resetFlags := dbResetCmd.Flags()
 	resetFlags.String("db-url", "", "Resets the database specified by the connection string (must be percent-encoded).")
-	resetFlags.Bool("linked", false, "Resets the linked project to current migrations.")
-	resetFlags.Bool("local", true, "Resets the local database to current migrations.")
+	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
+	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
