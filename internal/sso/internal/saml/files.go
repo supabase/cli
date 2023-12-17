@@ -19,12 +19,12 @@ var DefaultClient = http.DefaultClient
 func ReadMetadataFile(fsys afero.Fs, path string) (string, error) {
 	file, err := fsys.Open(path)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to open metadata file: %w", err)
 	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to read metadata file: %w", err)
 	}
 
 	if err := ValidateMetadata(data, path); err != nil {
@@ -37,18 +37,13 @@ func ReadMetadataFile(fsys afero.Fs, path string) (string, error) {
 func ReadAttributeMappingFile(fsys afero.Fs, path string) (*api.AttributeMapping, error) {
 	file, err := fsys.Open(path)
 	if err != nil {
-		return nil, err
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to open attribute mapping: %w", err)
 	}
 
 	var mapping api.AttributeMapping
-
-	if err := json.Unmarshal(data, &mapping); err != nil {
-		return nil, err
+	dec := json.NewDecoder(file)
+	if err := dec.Decode(&mapping); err != nil {
+		return nil, errors.Errorf("failed to parse attribute mapping: %w", err)
 	}
 
 	return &mapping, nil
@@ -65,7 +60,7 @@ func ValidateMetadata(data []byte, source string) error {
 func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 	parsed, err := url.ParseRequestURI(metadataURL)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to parse metadata uri: %w", err)
 	}
 
 	if strings.ToLower(parsed.Scheme) != "https" {
@@ -74,14 +69,14 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to initialise http request: %w", err)
 	}
 
 	req.Header.Add("Accept", "application/xml")
 
 	resp, err := DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to send http request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -91,12 +86,8 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to read http response: %w", err)
 	}
 
-	if err := ValidateMetadata(data, metadataURL); err != nil {
-		return err
-	}
-
-	return nil
+	return ValidateMetadata(data, metadataURL)
 }

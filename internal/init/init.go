@@ -3,12 +3,12 @@ package init
 import (
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -25,16 +25,16 @@ var (
 	//go:embed templates/.vscode/settings.json
 	vscodeSettings string
 
-	errAlreadyInitialized = errors.New("Project already initialized. Remove " + utils.Bold(utils.ConfigPath) + " to reinitialize.")
+	errAlreadyInitialized = errors.Errorf("Project already initialized. Remove %s to reinitialize.", utils.Bold(utils.ConfigPath))
 )
 
 func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
-			return errAlreadyInitialized
+			return errors.New(errAlreadyInitialized)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			return errors.Errorf("failed to read config file: %w", err)
 		}
 	}
 
@@ -45,7 +45,7 @@ func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
 
 	// 2. Create `seed.sql`.
 	if _, err := fsys.Create(utils.SeedDataPath); err != nil {
-		return err
+		return errors.Errorf("failed to create seed file: %w", err)
 	}
 
 	// 3. Append to `.gitignore`.
@@ -78,17 +78,17 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 		// Add a line break when appending
 		contents = append(contents, '\n')
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return errors.Errorf("failed to read git ignore file: %w", err)
 	}
 
 	f, err := fsys.OpenFile(ignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create git ignore file: %w", err)
 	}
 	defer f.Close()
 
 	if _, err := f.Write(append(contents, initGitignore...)); err != nil {
-		return err
+		return errors.Errorf("failed to write git ignore file: %w", err)
 	}
 
 	return nil
@@ -100,14 +100,14 @@ func loadUserSettings(path string, fsys afero.Fs) (VSCodeSettings, error) {
 	// Open our jsonFile
 	jsonFile, err := fsys.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load %s: %w", utils.Bold(path), err)
+		return nil, errors.Errorf("failed to load settings file: %w", err)
 	}
 	defer jsonFile.Close()
 	// Parse and unmarshal JSON file.
 	var userSettings VSCodeSettings
 	dec := json.NewDecoder(jsonFile)
 	if err := dec.Decode(&userSettings); err != nil {
-		return nil, fmt.Errorf("failed to parse %s: %w", utils.Bold(path), err)
+		return nil, errors.Errorf("failed to parse settings: %w", err)
 	}
 	return userSettings, nil
 }
@@ -116,14 +116,14 @@ func saveUserSettings(path string, settings VSCodeSettings, fsys afero.Fs) error
 	// Open our jsonFile
 	jsonFile, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open %s: %w", utils.Bold(path), err)
+		return errors.Errorf("failed to create settings file: %w", err)
 	}
 	defer jsonFile.Close()
 	// Marshal JSON to file.
 	enc := json.NewEncoder(jsonFile)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(settings); err != nil {
-		return fmt.Errorf("failed to save %s: %w", utils.Bold(path), err)
+		return errors.Errorf("failed to save settings: %w", err)
 	}
 	return nil
 }
@@ -137,7 +137,7 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	}
 	// Merge template into user settings.
 	if err := json.Unmarshal([]byte(template), &userSettings); err != nil {
-		return fmt.Errorf("failed to copy template: %w", err)
+		return errors.Errorf("failed to copy template: %w", err)
 	}
 	return saveUserSettings(path, userSettings, fsys)
 }

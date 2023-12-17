@@ -2,12 +2,12 @@ package mv
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
@@ -36,10 +36,10 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	srcBucket, srcPrefix := storage.SplitBucketPrefix(srcParsed)
 	dstBucket, dstPrefix := storage.SplitBucketPrefix(dstParsed)
 	if len(srcPrefix) == 0 && len(dstPrefix) == 0 {
-		return errMissingPath
+		return errors.New(errMissingPath)
 	}
 	if srcBucket != dstBucket {
-		return errUnsupportedMove
+		return errors.New(errUnsupportedMove)
 	}
 	fmt.Fprintln(os.Stderr, "Moving object:", srcParsed, "=>", dstParsed)
 	data, err := client.MoveStorageObject(ctx, projectRef, srcBucket, srcPrefix, dstPrefix)

@@ -70,7 +70,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get working directory: %w", err)
 	}
 	if importMapPath != "" {
 		if !filepath.IsAbs(importMapPath) {
@@ -184,12 +184,12 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	}
 	f, err := fsys.Open(envFilePath)
 	if err != nil {
-		return env, err
+		return env, errors.Errorf("failed to open env file: %w", err)
 	}
 	defer f.Close()
 	envMap, err := godotenv.Parse(f)
 	if err != nil {
-		return env, err
+		return env, errors.Errorf("failed to parse env file: %w", err)
 	}
 	for name, value := range envMap {
 		if strings.HasPrefix(name, "SUPABASE_") {
@@ -210,12 +210,12 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to get working directory: %w", err)
 	}
 
 	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to read directory: %w", err)
 	}
 	for _, function := range functions {
 		if !function.IsDir() {
@@ -257,7 +257,7 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 
 	functionsConfigBytes, err := json.Marshal(functionsConfig)
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
 
 	return binds, string(functionsConfigBytes), nil

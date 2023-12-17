@@ -10,6 +10,21 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
+func CollectStrings(rows pgx.Rows) ([]string, error) {
+	result := []string{}
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, errors.Errorf("failed to scan rows: %w", err)
+		}
+		result = append(result, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Errorf("failed to parse rows: %w", err)
+	}
+	return result, nil
+}
+
 // CollectRows iterates through rows, calling fn for each row, and collecting the results into a slice of T.
 func CollectRows[T any](rows pgx.Rows) ([]T, error) {
 	defer rows.Close()

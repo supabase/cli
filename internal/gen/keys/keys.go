@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/afero"
@@ -60,7 +60,7 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 	// Load JWT secret from api
 	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get postgrest config: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.New("Unexpected error retrieving JWT secret: " + string(resp.Body))
@@ -79,11 +79,14 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 	anonToken := NewJWTToken(projectRef, "anon", expiry)
 	utils.Config.Auth.AnonKey, err = anonToken.SignedString([]byte(utils.Config.Auth.JwtSecret))
 	if err != nil {
-		return err
+		return errors.Errorf("failed to sign anon key: %w", err)
 	}
 	serviceToken := NewJWTToken(projectRef, "service_role", expiry)
 	utils.Config.Auth.ServiceRoleKey, err = serviceToken.SignedString([]byte(utils.Config.Auth.JwtSecret))
-	return err
+	if err != nil {
+		return errors.Errorf("failed to sign service_role key: %w", err)
+	}
+	return nil
 }
 
 func GetGitBranch(fsys afero.Fs) string {

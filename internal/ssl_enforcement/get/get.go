@@ -21,9 +21,6 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			return errors.New("failed to retrieve SSL enforcement config; received: " + string(resp.Body))
 		}
 
-		if err != nil {
-			return err
-		}
 		if resp.JSON200.CurrentConfig.Database && resp.JSON200.AppliedSuccessfully {
 			fmt.Println("SSL is being enforced.")
 		} else {

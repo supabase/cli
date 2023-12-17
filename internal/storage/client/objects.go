@@ -66,19 +66,19 @@ func ListStorageObjects(ctx context.Context, projectRef, bucket, prefix string, 
 func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
 	f, err := fsys.Open(localPath)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
 	// Decode mimetype
 	header := io.LimitReader(f, 512)
 	buf, err := io.ReadAll(header)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to read file: %w", err)
 	}
 	mimetype := http.DetectContentType(buf)
 	_, err = f.Seek(0, io.SeekStart)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to seek file: %w", err)
 	}
 	// Prepare request
 	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
@@ -89,7 +89,7 @@ func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath 
 	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, f)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to initialise http request: %w", err)
 	}
 	req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
 	req.Header.Add("Content-Type", mimetype)
@@ -98,13 +98,13 @@ func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath 
 	// Sends request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to send http request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to read http response: %w", err)
 		}
 		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
@@ -120,30 +120,32 @@ func DownloadStorageObject(ctx context.Context, projectRef, remotePath, localPat
 	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to initialise http request: %w", err)
 	}
 	req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
 	// Sends request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to send http request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to read http response: %w", err)
 		}
 		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
 	// Streams to file
 	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	if _, err = io.Copy(f, resp.Body); err != nil {
+		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }
 
 type MoveObjectRequest struct {

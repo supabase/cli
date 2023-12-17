@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -89,7 +90,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to query rows: %w", err)
 	}
 	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {

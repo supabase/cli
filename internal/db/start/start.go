@@ -3,11 +3,9 @@ package start
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -137,7 +136,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		return err
 	}
 	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
-		return ErrDatabase
+		return errors.New(ErrDatabase)
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
 	if noBackupVolume {
@@ -181,14 +180,12 @@ func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
 
 func initCurrentBranch(fsys afero.Fs) error {
 	// Create _current_branch file to avoid breaking db branch commands
-	if _, err := fsys.Stat(utils.CurrBranchPath); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return err
+	if _, err := fsys.Stat(utils.CurrBranchPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed init current branch: %w", err)
 	}
-	branchDir := filepath.Dir(utils.CurrBranchPath)
-	if err := utils.MkdirIfNotExistFS(fsys, branchDir); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644)
+	return utils.WriteFile(utils.CurrBranchPath, []byte("main"), fsys)
 }
 
 func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {

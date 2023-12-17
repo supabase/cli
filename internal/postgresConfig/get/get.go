@@ -7,9 +7,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -41,20 +41,9 @@ func PrintOutPostgresConfigOverrides(config map[string]interface{}) error {
 		))
 	}
 
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
+	if err := list.RenderTable(strings.Join(markdownTable, "")); err != nil {
 		return err
 	}
-
-	out, err := r.Render(strings.Join(markdownTable, ""))
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(out)
 	fmt.Println("- End of Custom Postgres Config -")
 	return nil
 }

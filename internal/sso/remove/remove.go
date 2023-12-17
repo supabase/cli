@@ -14,7 +14,7 @@ import (
 func Run(ctx context.Context, ref, providerId, format string) error {
 	resp, err := utils.GetSupabase().RemoveProviderByIdWithResponse(ctx, ref, providerId)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to remove sso provider: %w", err)
 	}
 
 	if resp.JSON200 == nil {

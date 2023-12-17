@@ -2,12 +2,12 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -16,7 +16,7 @@ import (
 func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list projects: %w", err)
 	}
 
 	if resp.JSON200 == nil {

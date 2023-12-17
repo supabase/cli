@@ -164,7 +164,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	}
 	defer utils.DockerRemove(shadow)
 	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return "", start.ErrDatabase
+		return "", errors.New(start.ErrDatabase)
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err

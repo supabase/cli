@@ -21,9 +21,6 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			return errors.New("failed to retrieve network restrictions; received: " + string(resp.Body))
 		}
 
-		if err != nil {
-			return err
-		}
 		fmt.Printf("DB Allowed CIDRs: %+v\n", resp.JSON200.Config.DbAllowedCidrs)
 		fmt.Printf("Restrictions applied successfully: %+v\n", resp.JSON200.Status == "applied")
 		return nil

@@ -2,10 +2,10 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -13,7 +13,7 @@ import (
 func Run(ctx context.Context) error {
 	resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list organizations: %w", err)
 	}
 
 	if resp.JSON200 == nil {

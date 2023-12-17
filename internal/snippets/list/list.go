@@ -2,10 +2,10 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -19,7 +19,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 	resp, err := utils.GetSupabase().ListSnippetsWithResponse(ctx, &api.ListSnippetsParams{ProjectRef: &ref})
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list snippets: %w", err)
 	}
 
 	if resp.JSON200 == nil {

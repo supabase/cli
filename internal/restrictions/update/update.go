@@ -42,7 +42,7 @@ func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypass
 			DbAllowedCidrs: dbCidrsToAllow,
 		})
 		if err != nil {
-			return err
+			return errors.Errorf("failed to apply network restrictions: %w", err)
 		}
 		if resp.JSON201 == nil {
 			return errors.New("failed to update network restrictions: " + string(resp.Body))

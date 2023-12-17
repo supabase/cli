@@ -2,11 +2,11 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/pkg/api"
@@ -19,7 +19,7 @@ func Run(ctx context.Context, projectRef string, stdin *os.File) error {
 		RootKey: strings.TrimSpace(input),
 	})
 	if err != nil {
-		return err
+		return errors.Errorf("failed to update pgsodium config: %w", err)
 	}
 
 	if resp.JSON200 == nil {

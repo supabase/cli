@@ -2,9 +2,9 @@ package create
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -17,7 +17,7 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 
 	resp, err := utils.GetSupabase().CreateProjectWithResponse(ctx, params)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create project: %w", err)
 	}
 
 	if resp.JSON201 == nil {

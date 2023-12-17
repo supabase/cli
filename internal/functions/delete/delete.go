@@ -2,10 +2,10 @@ package delete
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -21,7 +21,7 @@ func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) err
 	// 2. Delete Function.
 	resp, err := utils.GetSupabase().DeleteFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to delete function: %w", err)
 	}
 	switch resp.StatusCode() {
 	case http.StatusNotFound:
