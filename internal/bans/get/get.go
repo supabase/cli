@@ -18,11 +18,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			return errors.Errorf("failed to retrieve network bans: %w", err)
 		}
 		if resp.JSON201 == nil {
-			return errors.New("failed to retrieve network bans; received: " + string(resp.Body))
-		}
-
-		if err != nil {
-			return err
+			return errors.New("Unexpected error retrieving network bans: " + string(resp.Body))
 		}
 		fmt.Printf("DB banned IPs: %+v\n", resp.JSON201.BannedIpv4Addresses)
 		return nil

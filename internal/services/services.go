@@ -2,11 +2,11 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -85,7 +85,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 func GetDatabaseVersion(ctx context.Context, projectRef string) (string, error) {
 	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to retrieve projects: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return "", errors.New("Unexpected error retrieving projects: " + string(resp.Body))
@@ -95,5 +95,5 @@ func GetDatabaseVersion(ctx context.Context, projectRef string) (string, error) 
 			return project.Database.Version, nil
 		}
 	}
-	return "", errDatabaseVersion
+	return "", errors.New(errDatabaseVersion)
 }

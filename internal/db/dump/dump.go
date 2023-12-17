@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -30,7 +31,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 	if len(path) > 0 {
 		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to open dump file: %w", err)
 		}
 		defer f.Close()
 		outStream = f

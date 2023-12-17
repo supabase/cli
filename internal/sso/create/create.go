@@ -63,7 +63,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	resp, err := utils.GetSupabase().CreateProviderForProjectWithResponse(ctx, params.ProjectRef, body)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create sso provider: %w", err)
 	}
 
 	if resp.JSON201 == nil {

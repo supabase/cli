@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,10 +68,7 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 	}
 
 	// 3. Save project ref
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.ProjectRefPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644)
+	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
 }
 
 func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
@@ -83,7 +79,10 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 	enc := toml.NewEncoder(stdout)
 	enc.Indent = ""
-	return enc.Encode(updatedConfig)
+	if err := enc.Encode(updatedConfig); err != nil {
+		return errors.Errorf("failed to marshal toml config: %w", err)
+	}
+	return nil
 }
 
 func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
@@ -132,7 +131,7 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 func linkPostgrest(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get postgrest config: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
@@ -146,10 +145,7 @@ func linkPostgrestVersion(ctx context.Context, projectRef string, fsys afero.Fs)
 	if err != nil {
 		return err
 	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.RestVersionPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.RestVersionPath, []byte(version), 0644)
+	return utils.WriteFile(utils.RestVersionPath, []byte(version), fsys)
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
@@ -182,10 +178,7 @@ func linkGotrueVersion(ctx context.Context, projectRef string, fsys afero.Fs) er
 	if err != nil {
 		return err
 	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.GotrueVersionPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.GotrueVersionPath, []byte(version), 0644)
+	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
 func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -193,10 +186,7 @@ func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) e
 	if err != nil {
 		return err
 	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.StorageVersionPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.StorageVersionPath, []byte(version), 0644)
+	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -215,10 +205,7 @@ func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(utils.PostgresVersionPath)); err != nil {
-		return err
-	}
-	return afero.WriteFile(fsys, utils.PostgresVersionPath, []byte(version), 0644)
+	return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {
@@ -240,7 +227,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 func linkPooler(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().V1GetPgbouncerConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get pooler config: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
@@ -22,7 +23,7 @@ func SaveDiff(out, file string, fsys afero.Fs) error {
 	} else if len(file) > 0 {
 		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
 		if err := afero.WriteFile(fsys, path, []byte(out), 0644); err != nil {
-			return err
+			return errors.Errorf("failed to save diff: %w", err)
 		}
 		fmt.Fprintln(os.Stderr, warnDiff)
 	} else {
@@ -63,7 +64,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	}
 	defer utils.DockerRemove(shadow)
 	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return start.ErrDatabase
+		return errors.New(start.ErrDatabase)
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
 		return err

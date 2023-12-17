@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -80,13 +81,16 @@ func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) erro
 	// Pretty print output
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(filtered)
+	if err := enc.Encode(filtered); err != nil {
+		return errors.Errorf("failed to print result json: %w", err)
+	}
+	return nil
 }
 
 func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Result, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to begin transaction: %w", err)
 	}
 	if len(schema) == 0 {
 		schema, err = diff.LoadUserSchemas(ctx, conn, utils.InternalSchemas...)
@@ -101,7 +105,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		}
 	}()
 	if _, err := conn.Exec(ctx, ENABLE_PGSQL_CHECK); err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to enable pgsql_check: %w", err)
 	}
 	// Batch prepares statements
 	batch := pgx.Batch{}
@@ -115,18 +119,18 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		fmt.Fprintln(os.Stderr, "Linting schema:", s)
 		rows, err := br.Query()
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("failed to query rows: %w", err)
 		}
 		// Parse result row
 		for rows.Next() {
 			var name string
 			var data []byte
 			if err := rows.Scan(&name, &data); err != nil {
-				return nil, err
+				return nil, errors.Errorf("failed to scan rows: %w", err)
 			}
 			var r Result
 			if err := json.Unmarshal(data, &r); err != nil {
-				return nil, err
+				return nil, errors.Errorf("failed to marshal json: %w", err)
 			}
 			// Update function name
 			r.Function = s + "." + name
@@ -134,7 +138,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		}
 		err = rows.Err()
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("failed to parse rows: %w", err)
 		}
 	}
 	return result, nil

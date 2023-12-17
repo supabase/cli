@@ -22,17 +22,14 @@ var (
 
 func Run(ctx context.Context, name, template string, fsys afero.Fs) error {
 	path := filepath.Join(utils.DbTestsDir, fmt.Sprintf("%s_test.sql", name))
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
-		return err
-	}
 	if _, err := fsys.Stat(path); err == nil {
 		return errors.New(path + " already exists.")
 	}
-	err := afero.WriteFile(fsys, path, getTemplate(template), 0644)
-	if err == nil {
-		fmt.Printf("Created new %s test at %s.\n", template, utils.Bold(path))
+	if err := utils.WriteFile(path, getTemplate(template), fsys); err != nil {
+		return err
 	}
-	return err
+	fmt.Printf("Created new %s test at %s.\n", template, utils.Bold(path))
+	return nil
 }
 
 func getTemplate(name string) []byte {

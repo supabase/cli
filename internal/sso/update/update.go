@@ -33,7 +33,7 @@ type RunParams struct {
 func Run(ctx context.Context, params RunParams) error {
 	getResp, err := utils.GetSupabase().GetProviderByIdWithResponse(ctx, params.ProjectRef, params.ProviderID)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get sso provider: %w", err)
 	}
 
 	if getResp.JSON200 == nil {
@@ -103,7 +103,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	putResp, err := utils.GetSupabase().UpdateProviderByIdWithResponse(ctx, params.ProjectRef, params.ProviderID, body)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to update sso provider: %w", err)
 	}
 
 	if putResp.JSON200 == nil {

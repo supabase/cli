@@ -55,7 +55,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 		}
 		resp, err := utils.GetSupabase().UpdateConfigWithBodyWithResponse(ctx, projectRef, "application/json", bytes.NewReader(bts))
 		if err != nil {
-			return err
+			return errors.Errorf("failed to update config overrides: %w", err)
 		}
 		if resp.JSON200 == nil {
 			if resp.StatusCode() == 400 {

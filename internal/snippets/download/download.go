@@ -2,9 +2,9 @@ package download
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -12,7 +12,7 @@ import (
 func Run(ctx context.Context, snippetId string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetSnippetWithResponse(ctx, snippetId)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to download snippet: %w", err)
 	}
 
 	if resp.JSON200 == nil {

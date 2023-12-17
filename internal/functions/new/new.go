@@ -3,12 +3,12 @@ package new
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"html/template"
 	"os"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -32,9 +32,6 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		if err := utils.ValidateFunctionSlug(slug); err != nil {
 			return err
 		}
-		if _, err := fsys.Stat(funcDir); !errors.Is(err, os.ErrNotExist) {
-			return errors.New("Function " + utils.Aqua(slug) + " already exists locally.")
-		}
 	}
 
 	// 2. Create new function.
@@ -43,9 +40,9 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			return err
 		}
 		path := filepath.Join(funcDir, "index.ts")
-		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to create function entrypoint: %w", err)
 		}
 		defer f.Close()
 		// Templatize index.ts by config.toml if available
@@ -59,7 +56,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			Token: utils.Config.Auth.AnonKey,
 		}
 		if err := indexTemplate.Execute(f, config); err != nil {
-			return err
+			return errors.Errorf("failed to initialise function entrypoint: %w", err)
 		}
 	}
 

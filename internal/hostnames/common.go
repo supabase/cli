@@ -14,7 +14,7 @@ import (
 func GetCustomHostnameConfig(ctx context.Context, projectRef string) (*api.GetCustomHostnameConfigResponse, error) {
 	resp, err := utils.GetSupabase().GetCustomHostnameConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to get custom hostname: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return nil, errors.New("failed to get custom hostname config; received: " + string(resp.Body))
@@ -59,7 +59,7 @@ type RawResponse struct {
 func serializeRawOutput(response *api.UpdateCustomHostnameResponse) (string, error) {
 	output, err := json.MarshalIndent(response, "", "    ")
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to serialize json: %w", err)
 	}
 	return string(output), nil
 }

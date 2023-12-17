@@ -2,9 +2,9 @@ package create
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
@@ -27,7 +27,7 @@ func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
 		Region:     &region,
 	})
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create preview branch: %w", err)
 	}
 
 	if resp.JSON201 == nil {

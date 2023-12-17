@@ -43,7 +43,7 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 		Filters: args,
 	})
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list containers: %w", err)
 	}
 	// Gracefully shutdown containers
 	var ids []string
@@ -54,13 +54,16 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 	}
 	fmt.Fprintln(w, "Stopping containers...")
 	result := utils.WaitAll(ids, func(id string) error {
-		return utils.Docker.ContainerStop(ctx, id, container.StopOptions{})
+		if err := utils.Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+			return errors.Errorf("failed to stop container: %w", err)
+		}
+		return nil
 	})
 	if err := errors.Join(result...); err != nil {
 		return err
 	}
 	if _, err := utils.Docker.ContainersPrune(ctx, args); err != nil {
-		return err
+		return errors.Errorf("failed to prune containers: %w", err)
 	}
 	// Remove named volumes
 	if backup {
@@ -89,6 +92,8 @@ func stop(ctx context.Context, backup bool, w io.Writer) error {
 		}
 	}
 	// Remove networks.
-	_, err = utils.Docker.NetworksPrune(ctx, args)
-	return err
+	if _, err = utils.Docker.NetworksPrune(ctx, args); err != nil {
+		return errors.Errorf("failed to prune networks: %w", err)
+	}
+	return nil
 }

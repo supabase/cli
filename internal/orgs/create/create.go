@@ -2,9 +2,9 @@ package create
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -12,7 +12,7 @@ import (
 func Run(ctx context.Context, name string) error {
 	resp, err := utils.GetSupabase().CreateOrganizationWithResponse(ctx, api.CreateOrganizationJSONRequestBody{Name: name})
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create organization: %w", err)
 	}
 
 	if resp.JSON201 == nil {

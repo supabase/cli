@@ -15,7 +15,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	{
 		response, err := utils.GetSupabase().GetVanitySubdomainConfigWithResponse(ctx, projectRef)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to get vanity subdomain: %w", err)
 		}
 		if response.JSON200 == nil {
 			return errors.Errorf("failed to obtain vanity subdomain config: %+v", string(response.Body))

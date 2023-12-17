@@ -2,9 +2,9 @@ package delete
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -15,7 +15,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	{
 		resp, err := utils.GetSupabase().RemoveCustomHostnameConfigWithResponse(ctx, projectRef)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to delete custom hostname: %w", err)
 		}
 		if resp.StatusCode() != 200 {
 			return errors.New("failed to delete custom hostname config; received: " + resp.Status())

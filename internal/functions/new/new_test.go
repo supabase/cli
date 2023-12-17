@@ -33,8 +33,8 @@ func TestNewCommand(t *testing.T) {
 	t.Run("throws error on duplicate slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		funcDir := filepath.Join(utils.FunctionsDir, "test-func")
-		require.NoError(t, fsys.Mkdir(funcDir, 0755))
+		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, funcPath, []byte{}, 0644))
 		// Run test
 		assert.Error(t, Run(context.Background(), "test-func", fsys))
 	})
