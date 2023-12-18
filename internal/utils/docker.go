@@ -170,7 +170,7 @@ func GetRegistryAuth() string {
 	registryOnce.Do(func() {
 		config := dockerConfig.LoadDefaultConfigFile(os.Stderr)
 		// Ref: https://docs.docker.com/engine/api/sdk/examples/#pull-an-image-with-authentication
-		auth, err := config.GetAuthConfig(getRegistry())
+		auth, err := config.GetAuthConfig(GetRegistry())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to load registry credentials:", err)
 			return
@@ -188,7 +188,7 @@ func GetRegistryAuth() string {
 // Defaults to Supabase public ECR for faster image pull
 const defaultRegistry = "public.ecr.aws"
 
-func getRegistry() string {
+func GetRegistry() string {
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
 	if len(registry) == 0 {
 		return defaultRegistry
@@ -197,7 +197,7 @@ func getRegistry() string {
 }
 
 func GetRegistryImageUrl(imageName string) string {
-	registry := getRegistry()
+	registry := GetRegistry()
 	if registry == "docker.io" {
 		return imageName
 	}

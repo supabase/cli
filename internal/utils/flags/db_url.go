@@ -62,7 +62,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		DbConfig.Password = utils.Config.Db.Password
 		DbConfig.Database = "postgres"
 	case linked:
-		projectRef, err := utils.LoadProjectRef(fsys)
+		projectRef, err := LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		projectRef, err := utils.LoadProjectRef(fsys)
+		projectRef, err := LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}

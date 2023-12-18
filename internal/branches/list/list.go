@@ -9,10 +9,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	ref, err := utils.LoadProjectRef(fsys)
+	ref, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}

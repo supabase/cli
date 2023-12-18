@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -44,7 +45,7 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		}
 		groups[bucket] = append(groups[bucket], prefix)
 	}
-	projectRef, err := utils.LoadProjectRef(fsys)
+	projectRef, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}

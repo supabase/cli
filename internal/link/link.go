@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/repair"
-	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -201,7 +200,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 }
 
 func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := services.GetDatabaseVersion(ctx, projectRef)
+	version, err := tenant.GetDatabaseVersion(ctx, projectRef)
 	if err != nil {
 		return err
 	}

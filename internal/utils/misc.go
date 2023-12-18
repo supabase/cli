@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"os"
@@ -95,7 +94,7 @@ var (
 
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
+	ProjectHostPattern = regexp.MustCompile(`^(db\.)([a-z]{20})\.supabase\.(co|red)$`)
 	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
@@ -287,20 +286,6 @@ func AssertProjectRefIsValid(projectRef string) error {
 		return errors.New(ErrInvalidRef)
 	}
 	return nil
-}
-
-func LoadProjectRef(fsys afero.Fs) (string, error) {
-	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New(ErrNotLinked)
-	} else if err != nil {
-		return "", errors.Errorf("failed to load project ref: %w", err)
-	}
-	projectRef := string(bytes.TrimSpace(projectRefBytes))
-	if !ProjectRefPattern.MatchString(projectRef) {
-		return "", errors.New(ErrInvalidRef)
-	}
-	return projectRef, nil
 }
 
 func ValidateFunctionSlug(slug string) error {
