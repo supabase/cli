@@ -20,19 +20,7 @@ var (
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	_ = utils.LoadConfigFS(fsys)
-	serviceImages := []string{
-		utils.Config.Db.Image,
-		utils.Config.Auth.Image,
-		utils.Config.Api.Image,
-		utils.RealtimeImage,
-		utils.Config.Storage.Image,
-		utils.EdgeRuntimeImage,
-		utils.StudioImage,
-		utils.PgmetaImage,
-		utils.LogflareImage,
-		utils.PgbouncerImage,
-		utils.ImageProxyImage,
-	}
+	serviceImages := GetServiceImages()
 
 	linked := make(map[string]string)
 	if projectRef, err := utils.LoadProjectRef(fsys); err == nil {
@@ -80,6 +68,22 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	return list.RenderTable(table)
+}
+
+func GetServiceImages() []string {
+	return []string{
+		utils.Config.Db.Image,
+		utils.Config.Auth.Image,
+		utils.Config.Api.Image,
+		utils.RealtimeImage,
+		utils.Config.Storage.Image,
+		utils.EdgeRuntimeImage,
+		utils.StudioImage,
+		utils.PgmetaImage,
+		utils.LogflareImage,
+		utils.PgbouncerImage,
+		utils.ImageProxyImage,
+	}
 }
 
 func GetDatabaseVersion(ctx context.Context, projectRef string) (string, error) {
