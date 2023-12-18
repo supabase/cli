@@ -133,22 +133,44 @@ var (
 )
 
 func Execute() {
+	defer recoverAndExit()
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, utils.Red(err.Error()))
-		if len(utils.CmdSuggestion) > 0 {
-			fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
-		}
-		if createTicket && len(utils.SentryDsn) > 0 {
-			sentry.ConfigureScope(addSentryScope)
-			if event := sentry.CaptureException(err); event != nil && sentry.Flush(2*time.Second) {
-				fmt.Fprintln(os.Stderr, "Sent crash report:", *event)
-			}
-		}
-		os.Exit(1)
+		panic(err)
 	}
 	if utils.CmdSuggestion != utils.SuggestDebugFlag {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func recoverAndExit() {
+	err := recover()
+	if err == nil {
+		return
+	}
+	var msg string
+	switch err := err.(type) {
+	case string:
+		msg = err
+	case error:
+		msg = err.Error()
+	default:
+		msg = fmt.Sprintf("%#v", err)
+	}
+	// Log error to console
+	fmt.Fprintln(os.Stderr, utils.Red(msg))
+	if len(utils.CmdSuggestion) > 0 {
+		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
+	}
+	// Report error to sentry
+	if createTicket && len(utils.SentryDsn) > 0 {
+		sentry.ConfigureScope(addSentryScope)
+		eventId := sentry.CurrentHub().Recover(err)
+		if eventId != nil && sentry.Flush(2*time.Second) {
+			fmt.Fprintln(os.Stderr, "Sent crash report:", *eventId)
+			fmt.Fprintln(os.Stderr, "Quote the crash ID above when filing a bug report: https://github.com/supabase/cli/issues/new/choose")
+		}
+	}
+	os.Exit(1)
 }
 
 func init() {
