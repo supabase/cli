@@ -26,11 +26,8 @@ func ParseProjectRef(fsys afero.Fs) error {
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
 	// Followed by linked ref file
-	if projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath); err == nil {
-		ProjectRef = string(bytes.TrimSpace(projectRefBytes))
-		return utils.AssertProjectRefIsValid(ProjectRef)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load project ref: %w", err)
+	if _, err := LoadProjectRef(fsys); !errors.Is(err, utils.ErrNotLinked) {
+		return err
 	}
 	// Prompt as the last resort
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -50,4 +47,18 @@ Enter your project ref: `, utils.GetSupabaseDashboardURL())
 	}
 	ProjectRef = strings.TrimSpace(scanner.Text())
 	return utils.AssertProjectRefIsValid(ProjectRef)
+}
+
+func LoadProjectRef(fsys afero.Fs) (string, error) {
+	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errors.New(utils.ErrNotLinked)
+	} else if err != nil {
+		return "", errors.Errorf("failed to load project ref: %w", err)
+	}
+	ProjectRef := string(bytes.TrimSpace(projectRefBytes))
+	if err := utils.AssertProjectRefIsValid(ProjectRef); err != nil {
+		return "", err
+	}
+	return ProjectRef, nil
 }

@@ -212,7 +212,7 @@ func addSentryScope(scope *sentry.Scope) {
 	}
 	scope.SetContext("Services", imageToVersion)
 	scope.SetContext("Config", map[string]interface{}{
-		"INTERNAL_IMAGE_REGISTRY": viper.Get("INTERNAL_IMAGE_REGISTRY"),
-		"PROJECT_ID":              flags.ProjectRef,
+		"Image Registry": utils.GetRegistry(),
+		"Project ID":     flags.ProjectRef,
 	})
 }

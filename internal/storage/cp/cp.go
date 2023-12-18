@@ -16,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var errUnsupportedOperation = errors.New("Unsupported operation")
@@ -29,7 +30,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	if err != nil {
 		return errors.Errorf("failed to parse dst url: %w", err)
 	}
-	projectRef, err := utils.LoadProjectRef(fsys)
+	projectRef, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}
