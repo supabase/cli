@@ -81,7 +81,7 @@ func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	}
 	poolerConfig := dbConfig.Copy()
 	poolerConfig.Host = host
-	if poolerPort, err := strconv.ParseUint(port, 10, 0); err == nil {
+	if poolerPort, err := strconv.ParseUint(port, 10, 16); err == nil {
 		poolerConfig.Port = uint16(poolerPort)
 	}
 	poolerConfig.User = fmt.Sprintf("%s.%s", poolerConfig.User, ref)
