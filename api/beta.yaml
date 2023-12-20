@@ -1264,6 +1264,62 @@ paths:
         - database readonly mode
       security:
         - bearer: []
+  /v1/projects/{ref}/read-replicas/setup:
+    post:
+      operationId: setUpReadReplica
+      summary: Set up a read replica
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetUpReadReplicaBody'
+      responses:
+        '201':
+          description: ''
+        '500':
+          description: Failed to set up read replica
+      tags:
+        - read replicas (beta)
+      security:
+        - bearer: []
+  /v1/projects/{ref}/read-replicas/remove:
+    post:
+      operationId: removeReadReplica
+      summary: Remove a read replica
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveReadReplicaBody'
+      responses:
+        '201':
+          description: ''
+        '500':
+          description: Failed to remove read replica
+      tags:
+        - read replicas (beta)
+      security:
+        - bearer: []
   /v1/projects/{ref}/health:
     get:
       operationId: checkServiceHealth
@@ -1294,6 +1350,7 @@ paths:
               enum:
                 - auth
                 - db
+                - pooler
                 - realtime
                 - rest
                 - storage
@@ -2755,6 +2812,37 @@ components:
         - enabled
         - override_enabled
         - override_active_until
+    SetUpReadReplicaBody:
+      type: object
+      properties:
+        read_replica_region:
+          type: string
+          enum:
+            - us-east-1
+            - us-west-1
+            - us-west-2
+            - ap-southeast-1
+            - ap-northeast-1
+            - ap-northeast-2
+            - ap-southeast-2
+            - eu-west-1
+            - eu-west-2
+            - eu-west-3
+            - eu-central-1
+            - ca-central-1
+            - ap-south-1
+            - sa-east-1
+          description: Region you want your read replica to reside in
+          example: us-east-1
+      required:
+        - read_replica_region
+    RemoveReadReplicaBody:
+      type: object
+      properties:
+        database_identifier:
+          type: string
+      required:
+        - database_identifier
     AuthHealthResponse:
       type: object
       properties:
@@ -2792,17 +2880,25 @@ components:
           enum:
             - auth
             - db
+            - pooler
             - realtime
             - rest
             - storage
           type: string
         healthy:
           type: boolean
+        status:
+          enum:
+            - COMING_UP
+            - ACTIVE_HEALTHY
+            - UNHEALTHY
+          type: string
         error:
           type: string
       required:
         - name
         - healthy
+        - status
     PostgresConfigResponse:
       type: object
       properties:
@@ -2896,6 +2992,8 @@ components:
           type: string
         max_client_conn:
           type: number
+        connection_string:
+          type: string
     AuthConfigResponse:
       type: object
       properties:

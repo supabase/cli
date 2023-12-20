@@ -36,20 +36,20 @@ const (
 
 // Defines values for CreateProjectBodyRegion.
 const (
-	ApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
-	ApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
-	ApSouth1     CreateProjectBodyRegion = "ap-south-1"
-	ApSoutheast1 CreateProjectBodyRegion = "ap-southeast-1"
-	ApSoutheast2 CreateProjectBodyRegion = "ap-southeast-2"
-	CaCentral1   CreateProjectBodyRegion = "ca-central-1"
-	EuCentral1   CreateProjectBodyRegion = "eu-central-1"
-	EuWest1      CreateProjectBodyRegion = "eu-west-1"
-	EuWest2      CreateProjectBodyRegion = "eu-west-2"
-	EuWest3      CreateProjectBodyRegion = "eu-west-3"
-	SaEast1      CreateProjectBodyRegion = "sa-east-1"
-	UsEast1      CreateProjectBodyRegion = "us-east-1"
-	UsWest1      CreateProjectBodyRegion = "us-west-1"
-	UsWest2      CreateProjectBodyRegion = "us-west-2"
+	CreateProjectBodyRegionApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
+	CreateProjectBodyRegionApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
+	CreateProjectBodyRegionApSouth1     CreateProjectBodyRegion = "ap-south-1"
+	CreateProjectBodyRegionApSoutheast1 CreateProjectBodyRegion = "ap-southeast-1"
+	CreateProjectBodyRegionApSoutheast2 CreateProjectBodyRegion = "ap-southeast-2"
+	CreateProjectBodyRegionCaCentral1   CreateProjectBodyRegion = "ca-central-1"
+	CreateProjectBodyRegionEuCentral1   CreateProjectBodyRegion = "eu-central-1"
+	CreateProjectBodyRegionEuWest1      CreateProjectBodyRegion = "eu-west-1"
+	CreateProjectBodyRegionEuWest2      CreateProjectBodyRegion = "eu-west-2"
+	CreateProjectBodyRegionEuWest3      CreateProjectBodyRegion = "eu-west-3"
+	CreateProjectBodyRegionSaEast1      CreateProjectBodyRegion = "sa-east-1"
+	CreateProjectBodyRegionUsEast1      CreateProjectBodyRegion = "us-east-1"
+	CreateProjectBodyRegionUsWest1      CreateProjectBodyRegion = "us-west-1"
+	CreateProjectBodyRegionUsWest2      CreateProjectBodyRegion = "us-west-2"
 )
 
 // Defines values for CreateProviderBodyType.
@@ -137,9 +137,35 @@ const (
 const (
 	ServiceHealthResponseNameAuth     ServiceHealthResponseName = "auth"
 	ServiceHealthResponseNameDb       ServiceHealthResponseName = "db"
+	ServiceHealthResponseNamePooler   ServiceHealthResponseName = "pooler"
 	ServiceHealthResponseNameRealtime ServiceHealthResponseName = "realtime"
 	ServiceHealthResponseNameRest     ServiceHealthResponseName = "rest"
 	ServiceHealthResponseNameStorage  ServiceHealthResponseName = "storage"
+)
+
+// Defines values for ServiceHealthResponseStatus.
+const (
+	ACTIVEHEALTHY ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	COMINGUP      ServiceHealthResponseStatus = "COMING_UP"
+	UNHEALTHY     ServiceHealthResponseStatus = "UNHEALTHY"
+)
+
+// Defines values for SetUpReadReplicaBodyReadReplicaRegion.
+const (
+	SetUpReadReplicaBodyReadReplicaRegionApNortheast1 SetUpReadReplicaBodyReadReplicaRegion = "ap-northeast-1"
+	SetUpReadReplicaBodyReadReplicaRegionApNortheast2 SetUpReadReplicaBodyReadReplicaRegion = "ap-northeast-2"
+	SetUpReadReplicaBodyReadReplicaRegionApSouth1     SetUpReadReplicaBodyReadReplicaRegion = "ap-south-1"
+	SetUpReadReplicaBodyReadReplicaRegionApSoutheast1 SetUpReadReplicaBodyReadReplicaRegion = "ap-southeast-1"
+	SetUpReadReplicaBodyReadReplicaRegionApSoutheast2 SetUpReadReplicaBodyReadReplicaRegion = "ap-southeast-2"
+	SetUpReadReplicaBodyReadReplicaRegionCaCentral1   SetUpReadReplicaBodyReadReplicaRegion = "ca-central-1"
+	SetUpReadReplicaBodyReadReplicaRegionEuCentral1   SetUpReadReplicaBodyReadReplicaRegion = "eu-central-1"
+	SetUpReadReplicaBodyReadReplicaRegionEuWest1      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-1"
+	SetUpReadReplicaBodyReadReplicaRegionEuWest2      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-2"
+	SetUpReadReplicaBodyReadReplicaRegionEuWest3      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-3"
+	SetUpReadReplicaBodyReadReplicaRegionSaEast1      SetUpReadReplicaBodyReadReplicaRegion = "sa-east-1"
+	SetUpReadReplicaBodyReadReplicaRegionUsEast1      SetUpReadReplicaBodyReadReplicaRegion = "us-east-1"
+	SetUpReadReplicaBodyReadReplicaRegionUsWest1      SetUpReadReplicaBodyReadReplicaRegion = "us-west-1"
+	SetUpReadReplicaBodyReadReplicaRegionUsWest2      SetUpReadReplicaBodyReadReplicaRegion = "us-west-2"
 )
 
 // Defines values for SnippetMetaType.
@@ -216,6 +242,7 @@ const (
 const (
 	CheckServiceHealthParamsServicesAuth     CheckServiceHealthParamsServices = "auth"
 	CheckServiceHealthParamsServicesDb       CheckServiceHealthParamsServices = "db"
+	CheckServiceHealthParamsServicesPooler   CheckServiceHealthParamsServices = "pooler"
 	CheckServiceHealthParamsServicesRealtime CheckServiceHealthParamsServices = "realtime"
 	CheckServiceHealthParamsServicesRest     CheckServiceHealthParamsServices = "rest"
 	CheckServiceHealthParamsServicesStorage  CheckServiceHealthParamsServices = "storage"
@@ -656,6 +683,11 @@ type RemoveNetworkBanRequest struct {
 	Ipv4Addresses []string `json:"ipv4_addresses"`
 }
 
+// RemoveReadReplicaBody defines model for RemoveReadReplicaBody.
+type RemoveReadReplicaBody struct {
+	DatabaseIdentifier string `json:"database_identifier"`
+}
+
 // RunQueryBody defines model for RunQueryBody.
 type RunQueryBody struct {
 	Query string `json:"query"`
@@ -682,6 +714,7 @@ type ServiceHealthResponse struct {
 	Healthy bool                        `json:"healthy"`
 	Info    *ServiceHealthResponse_Info `json:"info,omitempty"`
 	Name    ServiceHealthResponseName   `json:"name"`
+	Status  ServiceHealthResponseStatus `json:"status"`
 }
 
 // ServiceHealthResponse_Info defines model for ServiceHealthResponse.Info.
@@ -691,6 +724,18 @@ type ServiceHealthResponse_Info struct {
 
 // ServiceHealthResponseName defines model for ServiceHealthResponse.Name.
 type ServiceHealthResponseName string
+
+// ServiceHealthResponseStatus defines model for ServiceHealthResponse.Status.
+type ServiceHealthResponseStatus string
+
+// SetUpReadReplicaBody defines model for SetUpReadReplicaBody.
+type SetUpReadReplicaBody struct {
+	// ReadReplicaRegion Region you want your read replica to reside in
+	ReadReplicaRegion SetUpReadReplicaBodyReadReplicaRegion `json:"read_replica_region"`
+}
+
+// SetUpReadReplicaBodyReadReplicaRegion Region you want your read replica to reside in
+type SetUpReadReplicaBodyReadReplicaRegion string
 
 // SnippetContent defines model for SnippetContent.
 type SnippetContent struct {
@@ -887,6 +932,7 @@ type V1OrganizationMemberResponse struct {
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
+	ConnectionString        *string                            `json:"connection_string,omitempty"`
 	DefaultPoolSize         *float32                           `json:"default_pool_size,omitempty"`
 	IgnoreStartupParameters *string                            `json:"ignore_startup_parameters,omitempty"`
 	MaxClientConn           *float32                           `json:"max_client_conn,omitempty"`
@@ -1031,6 +1077,12 @@ type UpdatePgsodiumConfigJSONRequestBody = UpdatePgsodiumConfigBody
 
 // UpdatePostgRESTConfigJSONRequestBody defines body for UpdatePostgRESTConfig for application/json ContentType.
 type UpdatePostgRESTConfigJSONRequestBody = UpdatePostgrestConfigBody
+
+// RemoveReadReplicaJSONRequestBody defines body for RemoveReadReplica for application/json ContentType.
+type RemoveReadReplicaJSONRequestBody = RemoveReadReplicaBody
+
+// SetUpReadReplicaJSONRequestBody defines body for SetUpReadReplica for application/json ContentType.
+type SetUpReadReplicaJSONRequestBody = SetUpReadReplicaBody
 
 // DeleteSecretsJSONRequestBody defines body for DeleteSecrets for application/json ContentType.
 type DeleteSecretsJSONRequestBody = DeleteSecretsJSONBody
