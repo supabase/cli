@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,16 +16,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
 )
-
-func isDialError(err error) bool {
-	for err != nil {
-		if opErr, ok := err.(*net.OpError); ok && opErr.Op == "dial" {
-			return true
-		}
-		err = errors.Unwrap(err)
-	}
-	return false
-}
 
 func ToPostgresURL(config pgconn.Config) string {
 	timeoutSecond := int64(config.ConnectTimeout.Seconds())
@@ -56,18 +47,45 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 			cc.LookupFunc = FallbackLookupIP
 		}
 	})
-	// Use port 6543 for connection pooling
-	conn, err := ConnectByUrl(ctx, ToPostgresURL(config), opts...)
-	if !pgconn.Timeout(err) && !isDialError(err) {
-		return conn, err
+	// Try connection pooler when available
+	if poolerConfig := getPoolerConfig(config); poolerConfig != nil {
+		if conn, err := ConnectByUrl(ctx, ToPostgresURL(*poolerConfig), opts...); err == nil {
+			return conn, nil
+		}
+		fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
 	}
-	if !ProjectHostPattern.MatchString(config.Host) || config.Port != 6543 {
-		return conn, err
-	}
-	// Fallback to 5432 when pgbouncer is unavailable
-	config.Port = 5432
-	fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
 	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
+}
+
+func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
+	if len(Config.Db.Pooler.ConnectionString) == 0 {
+		return nil
+	}
+	matches := ProjectHostPattern.FindStringSubmatch(dbConfig.Host)
+	if len(matches) != 4 {
+		return nil
+	}
+	ref := matches[2]
+	parts := strings.Split(Config.Db.Pooler.ConnectionString, "@")
+	stripped := parts[len(parts)-1]
+	if len(parts) > 1 {
+		stripped = "postgres://" + stripped
+	}
+	parsed, err := url.Parse(stripped)
+	if err != nil {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		return nil
+	}
+	poolerConfig := dbConfig.Copy()
+	poolerConfig.Host = host
+	if poolerPort, err := strconv.ParseUint(port, 10, 0); err == nil {
+		poolerConfig.Port = uint16(poolerPort)
+	}
+	poolerConfig.User = fmt.Sprintf("%s.%s", poolerConfig.User, ref)
+	return poolerConfig
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
