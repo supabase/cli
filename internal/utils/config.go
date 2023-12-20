@@ -9,10 +9,12 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -125,6 +127,29 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+type CustomClaims struct {
+	// Overrides Issuer to maintain json order when marshalling
+	Issuer string `json:"iss,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+const (
+	defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
+	defaultJwtExpiry = 1983812996
+)
+
+func (c CustomClaims) NewToken() *jwt.Token {
+	if c.ExpiresAt == nil {
+		c.ExpiresAt = jwt.NewNumericDate(time.Unix(defaultJwtExpiry, 0))
+	}
+	if len(c.Issuer) == 0 {
+		c.Issuer = "supabase-demo"
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
+}
+
 var Config = config{
 	Api: api{
 		Image: PostgrestImage,
@@ -173,10 +198,8 @@ var Config = config{
 			"workos":    {},
 			"zoom":      {},
 		},
-		JwtExpiry:      3600,
-		JwtSecret:      "super-secret-jwt-token-with-at-least-32-characters-long",
-		AnonKey:        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
-		ServiceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+		JwtExpiry: 3600,
+		JwtSecret: defaultJwtSecret,
 	},
 	Analytics: analytics{
 		ApiKey: "api-key",
@@ -411,6 +434,24 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	if err := viper.Unmarshal(&Config); err != nil {
 		return errors.Errorf("failed to parse env to config: %w", err)
+	}
+
+	// Generate JWT tokens
+	if len(Config.Auth.AnonKey) == 0 {
+		anonToken := CustomClaims{Role: "anon"}.NewToken()
+		if signed, err := anonToken.SignedString([]byte(Config.Auth.JwtSecret)); err != nil {
+			return errors.Errorf("failed to generate anon key: %w", err)
+		} else {
+			Config.Auth.AnonKey = signed
+		}
+	}
+	if len(Config.Auth.ServiceRoleKey) == 0 {
+		anonToken := CustomClaims{Role: "service_role"}.NewToken()
+		if signed, err := anonToken.SignedString([]byte(Config.Auth.JwtSecret)); err != nil {
+			return errors.Errorf("failed to generate service_role key: %w", err)
+		} else {
+			Config.Auth.ServiceRoleKey = signed
+		}
 	}
 
 	// Process decoded TOML.
