@@ -120,7 +120,7 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPooler(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
+		if err := linkPooler(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -223,7 +223,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 	}
 }
 
-func linkPooler(ctx context.Context, projectRef string) error {
+func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetPgbouncerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
@@ -232,6 +232,10 @@ func linkPooler(ctx context.Context, projectRef string) error {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	updatePoolerConfig(*resp.JSON200)
+	if resp.JSON200.ConnectionString != nil {
+		utils.Config.Db.Pooler.ConnectionString = *resp.JSON200.ConnectionString
+		return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
+	}
 	return nil
 }
 

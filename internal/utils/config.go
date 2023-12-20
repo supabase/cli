@@ -266,11 +266,12 @@ type (
 	}
 
 	pooler struct {
-		Enabled         bool     `toml:"enabled"`
-		Port            uint16   `toml:"port"`
-		PoolMode        PoolMode `toml:"pool_mode"`
-		DefaultPoolSize uint     `toml:"default_pool_size"`
-		MaxClientConn   uint     `toml:"max_client_conn"`
+		Enabled          bool     `toml:"enabled"`
+		Port             uint16   `toml:"port"`
+		PoolMode         PoolMode `toml:"pool_mode"`
+		DefaultPoolSize  uint     `toml:"default_pool_size"`
+		MaxClientConn    uint     `toml:"max_client_conn"`
+		ConnectionString string   `toml:"-"`
 	}
 
 	realtime struct {
@@ -517,6 +518,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
 				return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 			}
+		}
+		if connString, err := afero.ReadFile(fsys, PoolerUrlPath); err == nil && len(connString) > 0 {
+			Config.Db.Pooler.ConnectionString = string(connString)
 		}
 		// Validate realtime config
 		if Config.Realtime.Enabled {

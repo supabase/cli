@@ -166,7 +166,7 @@ var (
 	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
 	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
 	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
-	RemoteDbPath          = filepath.Join(TempDir, "remote-db-url")
+	PoolerUrlPath         = filepath.Join(TempDir, "pooler-url")
 	PostgresVersionPath   = filepath.Join(TempDir, "postgres-version")
 	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
