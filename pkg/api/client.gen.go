@@ -269,6 +269,16 @@ type ClientInterface interface {
 
 	UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemoveReadReplicaWithBody request with any body
+	RemoveReadReplicaWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RemoveReadReplica(ctx context.Context, ref string, body RemoveReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetUpReadReplicaWithBody request with any body
+	SetUpReadReplicaWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetUpReadReplica(ctx context.Context, ref string, body SetUpReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReadOnlyModeStatus request
 	GetReadOnlyModeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1115,6 +1125,54 @@ func (c *Client) UpdatePostgRESTConfigWithBody(ctx context.Context, ref string, 
 
 func (c *Client) UpdatePostgRESTConfig(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdatePostgRESTConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveReadReplicaWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveReadReplicaRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveReadReplica(ctx context.Context, ref string, body RemoveReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveReadReplicaRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetUpReadReplicaWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetUpReadReplicaRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetUpReadReplica(ctx context.Context, ref string, body SetUpReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetUpReadReplicaRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3634,6 +3692,100 @@ func NewUpdatePostgRESTConfigRequestWithBody(server string, ref string, contentT
 	return req, nil
 }
 
+// NewRemoveReadReplicaRequest calls the generic RemoveReadReplica builder with application/json body
+func NewRemoveReadReplicaRequest(server string, ref string, body RemoveReadReplicaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRemoveReadReplicaRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewRemoveReadReplicaRequestWithBody generates requests for RemoveReadReplica with any type of body
+func NewRemoveReadReplicaRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/read-replicas/remove", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSetUpReadReplicaRequest calls the generic SetUpReadReplica builder with application/json body
+func NewSetUpReadReplicaRequest(server string, ref string, body SetUpReadReplicaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetUpReadReplicaRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewSetUpReadReplicaRequestWithBody generates requests for SetUpReadReplica with any type of body
+func NewSetUpReadReplicaRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/read-replicas/setup", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReadOnlyModeStatusRequest generates requests for GetReadOnlyModeStatus
 func NewGetReadOnlyModeStatusRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -4549,6 +4701,16 @@ type ClientWithResponsesInterface interface {
 	UpdatePostgRESTConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
 
 	UpdatePostgRESTConfigWithResponse(ctx context.Context, ref string, body UpdatePostgRESTConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgRESTConfigResponse, error)
+
+	// RemoveReadReplicaWithBodyWithResponse request with any body
+	RemoveReadReplicaWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveReadReplicaResponse, error)
+
+	RemoveReadReplicaWithResponse(ctx context.Context, ref string, body RemoveReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveReadReplicaResponse, error)
+
+	// SetUpReadReplicaWithBodyWithResponse request with any body
+	SetUpReadReplicaWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetUpReadReplicaResponse, error)
+
+	SetUpReadReplicaWithResponse(ctx context.Context, ref string, body SetUpReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetUpReadReplicaResponse, error)
 
 	// GetReadOnlyModeStatusWithResponse request
 	GetReadOnlyModeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetReadOnlyModeStatusResponse, error)
@@ -5662,6 +5824,48 @@ func (r UpdatePostgRESTConfigResponse) StatusCode() int {
 	return 0
 }
 
+type RemoveReadReplicaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveReadReplicaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveReadReplicaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type SetUpReadReplicaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r SetUpReadReplicaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetUpReadReplicaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReadOnlyModeStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6607,6 +6811,40 @@ func (c *ClientWithResponses) UpdatePostgRESTConfigWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseUpdatePostgRESTConfigResponse(rsp)
+}
+
+// RemoveReadReplicaWithBodyWithResponse request with arbitrary body returning *RemoveReadReplicaResponse
+func (c *ClientWithResponses) RemoveReadReplicaWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveReadReplicaResponse, error) {
+	rsp, err := c.RemoveReadReplicaWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveReadReplicaResponse(rsp)
+}
+
+func (c *ClientWithResponses) RemoveReadReplicaWithResponse(ctx context.Context, ref string, body RemoveReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveReadReplicaResponse, error) {
+	rsp, err := c.RemoveReadReplica(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveReadReplicaResponse(rsp)
+}
+
+// SetUpReadReplicaWithBodyWithResponse request with arbitrary body returning *SetUpReadReplicaResponse
+func (c *ClientWithResponses) SetUpReadReplicaWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetUpReadReplicaResponse, error) {
+	rsp, err := c.SetUpReadReplicaWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetUpReadReplicaResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetUpReadReplicaWithResponse(ctx context.Context, ref string, body SetUpReadReplicaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetUpReadReplicaResponse, error) {
+	rsp, err := c.SetUpReadReplica(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetUpReadReplicaResponse(rsp)
 }
 
 // GetReadOnlyModeStatusWithResponse request returning *GetReadOnlyModeStatusResponse
@@ -7970,6 +8208,38 @@ func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTCon
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseRemoveReadReplicaResponse parses an HTTP response from a RemoveReadReplicaWithResponse call
+func ParseRemoveReadReplicaResponse(rsp *http.Response) (*RemoveReadReplicaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveReadReplicaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseSetUpReadReplicaResponse parses an HTTP response from a SetUpReadReplicaWithResponse call
+func ParseSetUpReadReplicaResponse(rsp *http.Response) (*SetUpReadReplicaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetUpReadReplicaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
