@@ -3,17 +3,18 @@ package deploy
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/andybalholm/brotli"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-units"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
@@ -31,8 +32,10 @@ const (
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
-	// Load function config if any for fallbacks for some flags, but continue on error.
-	_ = utils.LoadConfigFS(fsys)
+	// Load function config and project id
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
 	if len(slugs) == 0 {
 		allSlugs, err := getFunctionSlugs(fsys)
 		if err != nil {
@@ -56,7 +59,7 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to glob function slugs: %w", err)
 	}
 	var slugs []string
 	for _, path := range paths {
@@ -71,14 +74,13 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to get working directory: %w", err)
 	}
 
 	// create temp directory to store generated eszip
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
-	err = fsys.MkdirAll(hostOutputDir, 0755)
-	if err != nil {
-		return nil, err
+	if err := fsys.MkdirAll(hostOutputDir, 0755); err != nil {
+		return nil, errors.Errorf("failed to mkdir: %w", err)
 	}
 	defer func() {
 		if err := fsys.RemoveAll(hostOutputDir); err != nil {
@@ -131,7 +133,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 
 	eszipBytes, err := fsys.Open(filepath.Join(hostOutputDir, "output.eszip"))
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to open eszip: %w", err)
 	}
 	defer eszipBytes.Close()
 
@@ -141,7 +143,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 
 	_, err = io.Copy(brw, eszipBytes)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to compress brotli: %w", err)
 	}
 
 	return compressedBuf, nil
@@ -150,7 +152,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
 	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to retrieve function: %w", err)
 	}
 
 	switch resp.StatusCode() {
@@ -163,7 +165,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 			EntrypointPath: &entrypointUrl,
 		}, eszipContentType, functionBody)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to create function: %w", err)
 		}
 		if resp.JSON201 == nil {
 			return errors.New("Failed to create a new Function on the Supabase project: " + string(resp.Body))
@@ -175,7 +177,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 			EntrypointPath: &entrypointUrl,
 		}, eszipContentType, functionBody)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to update function: %w", err)
 		}
 		if resp.JSON200 == nil {
 			return errors.New("Failed to update an existing Function's body on the Supabase project: " + string(resp.Body))
@@ -207,7 +209,7 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	if importMapPath == "" {
 		resolved, err = filepath.Abs(utils.FallbackImportMapPath)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to resolve absolute path: %w", err)
 		}
 	}
 	exists, _ := afero.Exists(fsys, resolved)
@@ -218,11 +220,8 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	}
 
 	// 2. Bundle Function.
-	dockerEntrypointPath, err := filepath.Abs(filepath.Join(utils.DockerFuncDirPath, slug, "index.ts"))
-	if err != nil {
-		return err
-	}
 	fmt.Println("Bundling " + utils.Bold(slug))
+	dockerEntrypointPath := path.Join(utils.DockerFuncDirPath, slug, "index.ts")
 	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, importMapPath, fsys)
 	if err != nil {
 		return err

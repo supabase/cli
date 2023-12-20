@@ -2,13 +2,13 @@ package repair
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
@@ -36,7 +36,7 @@ var ErrInvalidVersion = errors.New("invalid version number")
 
 func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if _, err := strconv.Atoi(version); err != nil {
-		return ErrInvalidVersion
+		return errors.New(ErrInvalidVersion)
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -63,8 +63,10 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status s
 	case Reverted:
 		DeleteVersionSQL(&batch, version)
 	}
-	_, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
-	return err
+	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		return errors.Errorf("failed to update migration table: %w", err)
+	}
+	return nil
 }
 
 func batchCreateTable() pgconn.Batch {
@@ -79,8 +81,10 @@ func batchCreateTable() pgconn.Batch {
 
 func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 	batch := batchCreateTable()
-	_, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll()
-	return err
+	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		return errors.Errorf("failed to create migration table: %w", err)
+	}
+	return nil
 }
 
 func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
@@ -115,10 +119,10 @@ func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
 	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
 	matches, err := afero.Glob(fsys, path)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to glob migration files: %w", err)
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("glob %s: %w", path, os.ErrNotExist)
+		return "", errors.Errorf("glob %s: %w", path, os.ErrNotExist)
 	}
 	return matches[0], nil
 }
@@ -140,7 +144,7 @@ func NewMigrationFromVersion(version string, fsys afero.Fs) (*MigrationFile, err
 func NewMigrationFromFile(path string, fsys afero.Fs) (*MigrationFile, error) {
 	sql, err := fsys.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to open migration file: %w", err)
 	}
 	defer sql.Close()
 	// Unless explicitly specified, Use file length as max buffer size
@@ -190,7 +194,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Lines) {
 			stat = m.Lines[i]
 		}
-		return fmt.Errorf("%w\nAt statement %d: %s", err, i, utils.Aqua(stat))
+		return errors.Errorf("%w\nAt statement %d: %s", err, i, stat)
 	}
 	return nil
 }
@@ -202,5 +206,8 @@ func (m *MigrationFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn) 
 		batch.Queue(line)
 	}
 	// No need to track version here because there are no schema changes
-	return conn.SendBatch(ctx, &batch).Close()
+	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+		return errors.Errorf("failed to send batch: %w", err)
+	}
+	return nil
 }

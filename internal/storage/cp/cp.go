@@ -2,7 +2,6 @@ package cp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -11,11 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var errUnsupportedOperation = errors.New("Unsupported operation")
@@ -23,13 +24,13 @@ var errUnsupportedOperation = errors.New("Unsupported operation")
 func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
 	srcParsed, err := url.Parse(src)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to parse src url: %w", err)
 	}
 	dstParsed, err := url.Parse(dst)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to parse dst url: %w", err)
 	}
-	projectRef, err := utils.LoadProjectRef(fsys)
+	projectRef, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 		return errors.New("Copying between buckets is not supported")
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to copy between local directories.", utils.Aqua("cp -r <src> <dst>"))
-	return errUnsupportedOperation
+	return errors.New(errUnsupportedOperation)
 }
 
 func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
@@ -96,14 +97,14 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 	baseName := filepath.Base(localPath)
 	return afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return errors.New(err)
 		}
 		if !info.Mode().IsRegular() {
 			return nil
 		}
 		relPath, err := filepath.Rel(localPath, filePath)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
 		dstPath := remotePath
 		// Copying single file

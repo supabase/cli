@@ -63,7 +63,7 @@ func TestDownloadCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
 		// Run test
-		err = Run(context.Background(), slug, project, fsys)
+		err = Run(context.Background(), slug, project, true, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -75,7 +75,7 @@ func TestDownloadCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "@", project, fsys)
+		err := Run(context.Background(), "@", project, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -86,7 +86,7 @@ func TestDownloadCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), slug, project, fsys)
+		err := Run(context.Background(), slug, project, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -100,7 +100,7 @@ func TestDownloadCommand(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Run test
-		err = Run(context.Background(), slug, project, afero.NewReadOnlyFs(fsys))
+		err = Run(context.Background(), slug, project, true, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -123,7 +123,7 @@ func TestDownloadCommand(t *testing.T) {
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"message": "Function not found"})
 		// Run test
-		err = Run(context.Background(), slug, project, fsys)
+		err = Run(context.Background(), slug, project, true, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
 	})

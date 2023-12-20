@@ -2,13 +2,11 @@ package create
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/sso/internal/saml"
 	"github.com/supabase/cli/internal/utils"
@@ -43,7 +41,7 @@ func Run(ctx context.Context, params RunParams) error {
 	} else if params.MetadataURL != "" {
 		if !params.SkipURLValidation {
 			if err := saml.ValidateMetadataURL(ctx, params.MetadataURL); err != nil {
-				return fmt.Errorf("%w Use --skip-url-validation to suppress this error", err)
+				return errors.Errorf("%w Use --skip-url-validation to suppress this error", err)
 			}
 		}
 
@@ -65,7 +63,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	resp, err := utils.GetSupabase().CreateProviderForProjectWithResponse(ctx, params.ProjectRef, body)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create sso provider: %w", err)
 	}
 
 	if resp.JSON201 == nil {

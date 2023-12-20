@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"fmt"
-
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/ssl_enforcement/get"
@@ -25,7 +24,7 @@ var (
 		Short: "Update SSL enforcement configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !dbEnforceSsl && !dbDisableSsl {
-				return fmt.Errorf("enable/disable not specified")
+				return errors.New("enable/disable not specified")
 			}
 			return update.Run(cmd.Context(), flags.ProjectRef, dbEnforceSsl, afero.NewOsFs())
 		},

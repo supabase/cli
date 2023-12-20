@@ -2,11 +2,10 @@ package remove
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -15,12 +14,12 @@ import (
 func Run(ctx context.Context, ref, providerId, format string) error {
 	resp, err := utils.GetSupabase().RemoveProviderByIdWithResponse(ctx, ref, providerId)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to remove sso provider: %w", err)
 	}
 
 	if resp.JSON200 == nil {
 		if resp.StatusCode() == http.StatusNotFound {
-			return fmt.Errorf("An identity provider with ID %q could not be found.", providerId)
+			return errors.Errorf("An identity provider with ID %q could not be found.", providerId)
 		}
 
 		return errors.New("Unexpected error removing identity provider: " + string(resp.Body))

@@ -2,7 +2,6 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -11,11 +10,13 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
 const LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
@@ -52,17 +53,9 @@ func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error)
 			// If migration history table is undefined, the remote project has no migrations
 			return nil, nil
 		}
-		return nil, err
+		return nil, errors.Errorf("failed to query rows: %w", err)
 	}
-	versions := []string{}
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return nil, err
-		}
-		versions = append(versions, version)
-	}
-	return versions, nil
+	return pgxv5.CollectStrings(rows)
 }
 
 const (
@@ -118,11 +111,11 @@ func RenderTable(markdown string) error {
 		glamour.WithWordWrap(-1),
 	)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to initialise terminal renderer: %w", err)
 	}
 	out, err := r.Render(markdown)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to render markdown: %w", err)
 	}
 	fmt.Print(out)
 	return nil
@@ -152,7 +145,7 @@ func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
 	}
 	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to read directory: %w", err)
 	}
 	var names []string
 	for i, migration := range localMigrations {

@@ -2,11 +2,11 @@ package push
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -63,7 +63,7 @@ func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, w io.Writer, fsys af
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
-		return err
+		return errors.Errorf("failed to load custom roles: %w", err)
 	}
 	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
 	return apply.BatchExecDDL(ctx, conn, roles)

@@ -1,29 +1,29 @@
 package utils
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"strings"
 	"time"
 
+	"github.com/docker/docker/client"
+	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 
-// Version is assigned using `-ldflags` https://stackoverflow.com/q/11354518.
-var Version string
+// Assigned using `-ldflags` https://stackoverflow.com/q/11354518
+var (
+	Version   string
+	SentryDsn string
+)
 
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.117"
+	Pg15Image = "supabase/postgres:15.1.0.147"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -94,7 +94,7 @@ var (
 
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	ProjectHostPattern = regexp.MustCompile(`^(db\.)[a-z]{20}\.supabase\.(co|red)$`)
+	ProjectHostPattern = regexp.MustCompile(`^(db\.)([a-z]{20})\.supabase\.(co|red)$`)
 	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
@@ -163,14 +163,14 @@ var (
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
 	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir               = ".temp"
-	ImportMapsDir         = filepath.Join(SupabaseDirPath, TempDir, "import_maps")
-	ProjectRefPath        = filepath.Join(SupabaseDirPath, TempDir, "project-ref")
-	RemoteDbPath          = filepath.Join(SupabaseDirPath, TempDir, "remote-db-url")
-	PostgresVersionPath   = filepath.Join(SupabaseDirPath, TempDir, "postgres-version")
-	GotrueVersionPath     = filepath.Join(SupabaseDirPath, TempDir, "gotrue-version")
-	RestVersionPath       = filepath.Join(SupabaseDirPath, TempDir, "rest-version")
-	StorageVersionPath    = filepath.Join(SupabaseDirPath, TempDir, "storage-version")
+	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
+	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
+	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
+	RemoteDbPath          = filepath.Join(TempDir, "remote-db-url")
+	PostgresVersionPath   = filepath.Join(TempDir, "postgres-version")
+	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
+	RestVersionPath       = filepath.Join(TempDir, "rest-version")
+	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
@@ -180,9 +180,10 @@ var (
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 
-	ErrNotLinked  = errors.New("Cannot find project ref. Have you run " + Aqua("supabase link") + "?")
-	ErrInvalidRef = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
-	ErrNotRunning = errors.New(Aqua("supabase start") + " is not running.")
+	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
+	ErrInvalidRef  = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
+	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
+	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
 
 func GetCurrentTimestamp() string {
@@ -193,47 +194,22 @@ func GetCurrentTimestamp() string {
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
 	branch, err := afero.ReadFile(fsys, CurrBranchPath)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to load current branch: %w", err)
 	}
 
 	return string(branch), nil
 }
 
-// TODO: Make all errors use this.
-func NewError(s string) error {
-	// Ask runtime.Callers for up to 5 PCs, excluding runtime.Callers and NewError.
-	pc := make([]uintptr, 5)
-	n := runtime.Callers(2, pc)
-
-	pc = pc[:n] // pass only valid pcs to runtime.CallersFrames
-	frames := runtime.CallersFrames(pc)
-
-	// Loop to get frames.
-	// A fixed number of PCs can expand to an indefinite number of Frames.
-	for {
-		frame, more := frames.Next()
-
-		// Process this frame.
-		//
-		// We're only interested in the stack trace in this repo.
-		if strings.HasPrefix(frame.Function, "github.com/supabase/cli/internal") {
-			s += fmt.Sprintf("\n  in %s:%d", frame.Function, frame.Line)
-		}
-
-		// Check whether there are more frames to process after this one.
-		if !more {
-			break
-		}
-	}
-
-	return errors.New(s)
-}
-
 func AssertSupabaseDbIsRunning() error {
 	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
-		return ErrNotRunning
+		if client.IsErrNotFound(err) {
+			return errors.New(ErrNotRunning)
+		}
+		if client.IsErrConnectionFailed(err) {
+			CmdSuggestion = suggestDockerInstall
+		}
+		return errors.Errorf("failed to inspect database container: %w", err)
 	}
-
 	return nil
 }
 
@@ -258,7 +234,10 @@ func GetProjectRoot(fsys afero.Fs) (string, error) {
 			break
 		}
 	}
-	return origWd, err
+	if err != nil {
+		return "", errors.Errorf("failed to find project root: %w", err)
+	}
+	return origWd, nil
 }
 
 func IsBranchNameReserved(branch string) bool {
@@ -276,7 +255,7 @@ func MkdirIfNotExist(path string) error {
 
 func MkdirIfNotExistFS(fsys afero.Fs, path string) error {
 	if err := fsys.MkdirAll(path, 0755); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
+		return errors.Errorf("failed to mkdir: %w", err)
 	}
 
 	return nil
@@ -286,14 +265,17 @@ func WriteFile(path string, contents []byte, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
-	return afero.WriteFile(fsys, path, contents, 0644)
+	if err := afero.WriteFile(fsys, path, contents, 0644); err != nil {
+		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }
 
 func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
-		return errors.New("Cannot find " + Bold(ConfigPath) + " in the current directory. Have you set up the project with " + Aqua("supabase init") + "?")
+		return errors.Errorf("Cannot find %s in the current directory. Have you set up the project with %s?", Bold(ConfigPath), Aqua("supabase init"))
 	} else if err != nil {
-		return err
+		return errors.Errorf("failed to read config file: %w", err)
 	}
 
 	return nil
@@ -301,28 +283,14 @@ func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
 
 func AssertProjectRefIsValid(projectRef string) error {
 	if !ProjectRefPattern.MatchString(projectRef) {
-		return ErrInvalidRef
+		return errors.New(ErrInvalidRef)
 	}
 	return nil
 }
 
-func LoadProjectRef(fsys afero.Fs) (string, error) {
-	projectRefBytes, err := afero.ReadFile(fsys, ProjectRefPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrNotLinked
-	} else if err != nil {
-		return "", err
-	}
-	projectRef := string(bytes.TrimSpace(projectRefBytes))
-	if !ProjectRefPattern.MatchString(projectRef) {
-		return "", ErrInvalidRef
-	}
-	return projectRef, nil
-}
-
 func ValidateFunctionSlug(slug string) error {
 	if !FuncSlugPattern.MatchString(slug) {
-		return errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
+		return errors.New(ErrInvalidSlug)
 	}
 
 	return nil

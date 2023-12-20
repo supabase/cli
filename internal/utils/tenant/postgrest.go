@@ -2,10 +2,10 @@ package tenant
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -33,7 +33,7 @@ func GetPostgrestVersion(ctx context.Context, projectRef string) (string, error)
 		return "", err
 	}
 	if len(data.Info.Version) == 0 {
-		return "", errPostgrestVersion
+		return "", errors.New(errPostgrestVersion)
 	}
 	parts := strings.Split(data.Info.Version, " ")
 	return "v" + parts[0], nil

@@ -2,11 +2,11 @@ package set
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -21,7 +21,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 		if envFilePath != "" {
 			envMap, err := godotenv.Read(envFilePath)
 			if err != nil {
-				return err
+				return errors.Errorf("failed to read env file: %w", err)
 			}
 			for name, value := range envMap {
 				secret := api.CreateSecretBody{
@@ -49,7 +49,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 
 		resp, err := utils.GetSupabase().CreateSecretsWithResponse(ctx, projectRef, secrets)
 		if err != nil {
-			return err
+			return errors.Errorf("failed to set secrets: %w", err)
 		}
 
 		// TODO: remove the StatusOK case after 2022-08-20

@@ -2,10 +2,10 @@ package check
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -26,7 +26,7 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 			VanitySubdomain: subdomain,
 		})
 		if err != nil {
-			return err
+			return errors.Errorf("failed to check vanity subdomain: %w", err)
 		}
 		if resp.JSON201 == nil {
 			return errors.New("failed to check subdomain availability: " + string(resp.Body))

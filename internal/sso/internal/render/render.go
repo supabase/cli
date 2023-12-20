@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
+	"github.com/go-errors/errors"
 	"github.com/go-xmlfmt/xmlfmt"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -32,7 +33,7 @@ func formatMetadataSource(provider api.Provider) string {
 func formatAttributeMapping(attributeMapping *api.AttributeMapping) (string, error) {
 	data, err := json.MarshalIndent(attributeMapping, "", "  ")
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to marshal attribute mapping: %w", err)
 	}
 
 	return string(data), nil
@@ -91,21 +92,7 @@ func ListMarkdown(providers []api.Provider) error {
 		))
 	}
 
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-
-	out, err := r.Render(strings.Join(markdownTable, ""))
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(out)
-	return nil
+	return list.RenderTable(strings.Join(markdownTable, ""))
 }
 
 func SingleMarkdown(provider api.Provider) error {
@@ -165,21 +152,7 @@ func SingleMarkdown(provider api.Provider) error {
 		markdownTable = append(markdownTable, "", "## SAML 2.0 Metadata XML", "```xml", prettyXML, "```")
 	}
 
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-
-	out, err := r.Render(strings.Join(markdownTable, "\n"))
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(out)
-	return nil
+	return list.RenderTable(strings.Join(markdownTable, "\n"))
 }
 
 func InfoMarkdown(ref string) error {
@@ -203,19 +176,5 @@ func InfoMarkdown(ref string) error {
 		fmt.Sprintf("https://%s.supabase.co", ref),
 	))
 
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return err
-	}
-
-	out, err := r.Render(strings.Join(markdownTable, "\n"))
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(out)
-	return nil
+	return list.RenderTable(strings.Join(markdownTable, "\n"))
 }

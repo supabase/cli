@@ -2,10 +2,10 @@ package create
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/hostnames"
 	"github.com/supabase/cli/internal/utils"
@@ -32,7 +32,7 @@ func Run(ctx context.Context, projectRef string, customHostname string, includeR
 			CustomHostname: hostname,
 		})
 		if err != nil {
-			return err
+			return errors.Errorf("failed to create custom hostname: %w", err)
 		}
 		if resp.JSON201 == nil {
 			return errors.New("failed to create custom hostname config: " + string(resp.Body))

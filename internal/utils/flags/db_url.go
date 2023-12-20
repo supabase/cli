@@ -3,6 +3,7 @@ package flags
 import (
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
@@ -47,7 +48,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if flag := flagSet.Lookup("db-url"); flag != nil {
 			config, err := pgconn.ParseConfig(flag.Value.String())
 			if err != nil {
-				return err
+				return errors.Errorf("failed to parse connection string: %w", err)
 			}
 			DbConfig = *config
 		}
@@ -61,7 +62,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		DbConfig.Password = utils.Config.Db.Password
 		DbConfig.Database = "postgres"
 	case linked:
-		projectRef, err := utils.LoadProjectRef(fsys)
+		projectRef, err := LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
@@ -75,7 +76,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		projectRef, err := utils.LoadProjectRef(fsys)
+		projectRef, err := LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}

@@ -2,9 +2,9 @@ package tenant
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -27,7 +27,7 @@ func GetGotrueVersion(ctx context.Context, projectRef string) (string, error) {
 		return "", err
 	}
 	if len(data.Version) == 0 {
-		return "", errGotrueVersion
+		return "", errors.New(errGotrueVersion)
 	}
 	return data.Version, nil
 }

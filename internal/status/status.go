@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/docker/docker/client"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -99,9 +100,9 @@ func AssertContainerHealthy(ctx context.Context, container string) error {
 	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
 		return err
 	} else if !resp.State.Running {
-		return fmt.Errorf("%s container is not running: %s", container, resp.State.Status)
+		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
 	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
-		return fmt.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
+		return errors.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
 	}
 	return nil
 }

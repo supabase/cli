@@ -2,10 +2,10 @@ package list
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -14,7 +14,7 @@ import (
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetFunctionsWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list functions: %w", err)
 	}
 
 	if resp.JSON200 == nil {

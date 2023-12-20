@@ -2,13 +2,11 @@ package update
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/sso/internal/saml"
 	"github.com/supabase/cli/internal/utils"
@@ -35,12 +33,12 @@ type RunParams struct {
 func Run(ctx context.Context, params RunParams) error {
 	getResp, err := utils.GetSupabase().GetProviderByIdWithResponse(ctx, params.ProjectRef, params.ProviderID)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get sso provider: %w", err)
 	}
 
 	if getResp.JSON200 == nil {
 		if getResp.StatusCode() == http.StatusNotFound {
-			return fmt.Errorf("An identity provider with ID %q could not be found.", params.ProviderID)
+			return errors.Errorf("An identity provider with ID %q could not be found.", params.ProviderID)
 		}
 
 		return errors.New("unexpected error fetching identity provider: " + string(getResp.Body))
@@ -58,7 +56,7 @@ func Run(ctx context.Context, params RunParams) error {
 	} else if params.MetadataURL != "" {
 		if !params.SkipURLValidation {
 			if err := saml.ValidateMetadataURL(ctx, params.MetadataURL); err != nil {
-				return fmt.Errorf("%w Use --skip-url-validation to suppress this error.", err)
+				return errors.Errorf("%w Use --skip-url-validation to suppress this error.", err)
 			}
 		}
 
@@ -105,7 +103,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	putResp, err := utils.GetSupabase().UpdateProviderByIdWithResponse(ctx, params.ProjectRef, params.ProviderID, body)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to update sso provider: %w", err)
 	}
 
 	if putResp.JSON200 == nil {

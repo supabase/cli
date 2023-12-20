@@ -3,10 +3,10 @@ package pull
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -20,10 +20,15 @@ import (
 )
 
 var (
-	errConflict = errors.New("The remote database's migration history is not in sync with the contents of " + utils.Bold(utils.MigrationsDir) + `. Resolve this by:
-- Updating the project from version control to get the latest ` + utils.Bold(utils.MigrationsDir) + `,
-- Pushing unapplied migrations with ` + utils.Aqua("supabase db push") + `,
-- Or failing that, manually editing supabase_migrations.schema_migrations table with ` + utils.Aqua("supabase migration repair") + ".")
+	errConflict = errors.Errorf(`The remote database's migration history is not in sync with the contents of %s. Resolve this by:
+- Updating the project from version control to get the latest %s,
+- Pushing unapplied migrations with %s,
+- Or failing that, manually editing supabase_migrations.schema_migrations table with %s.`,
+		utils.Bold(utils.MigrationsDir),
+		utils.Bold(utils.MigrationsDir),
+		utils.Aqua("supabase db push"),
+		utils.Aqua("supabase migration repair"),
+	)
 	errMissing = errors.New("no migrations found")
 	errInSync  = errors.New("no schema changes found")
 )
@@ -61,7 +66,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 func run(p utils.Program, ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys afero.Fs) error {
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	if err := assertRemoteInSync(ctx, conn, fsys); err == errMissing {
+	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
 		return dumpRemoteSchema(p, ctx, path, config, fsys)
 	} else if err != nil {
 		return err
@@ -82,7 +87,7 @@ func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config 
 	p.Send(utils.StatusMsg("Dumping schema from remote database..."))
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
 	return dump.DumpSchema(ctx, config, nil, false, false, f)
@@ -96,9 +101,12 @@ func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, pat
 		return err
 	}
 	if len(output) == 0 {
-		return errInSync
+		return errors.New(errInSync)
 	}
-	return afero.WriteFile(fsys, path, []byte(output), 0644)
+	if err := afero.WriteFile(fsys, path, []byte(output), 0644); err != nil {
+		return errors.Errorf("failed to write dump file: %w", err)
+	}
+	return nil
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
@@ -115,18 +123,18 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 	}
 
 	if len(remoteMigrations) != len(localMigrations) {
-		return errConflict
+		return errors.New(errConflict)
 	}
 	for i, remoteTimestamp := range remoteMigrations {
 		// LoadLocalMigrations guarantees we always have a match
 		localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1]
 		if localTimestamp != remoteTimestamp {
-			return errConflict
+			return errors.New(errConflict)
 		}
 	}
 
 	if len(localMigrations) == 0 {
-		return errMissing
+		return errors.New(errMissing)
 	}
 	return nil
 }

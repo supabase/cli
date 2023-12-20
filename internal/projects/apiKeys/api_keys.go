@@ -2,10 +2,10 @@ package apiKeys
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -14,7 +14,7 @@ import (
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get api keys: %w", err)
 	}
 
 	if resp.JSON200 == nil {

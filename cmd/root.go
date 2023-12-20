@@ -4,14 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -65,12 +70,24 @@ func IsExperimental(cmd *cobra.Command) bool {
 }
 
 var (
+	sentryOpts = sentry.ClientOptions{
+		Dsn:        utils.SentryDsn,
+		Release:    utils.Version,
+		ServerName: "<redacted>",
+		// Set TracesSampleRate to 1.0 to capture 100%
+		// of transactions for performance monitoring.
+		// We recommend adjusting this value in production,
+		TracesSampleRate: 1.0,
+	}
+
+	createTicket bool
+
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
 		Short:   "Supabase CLI " + utils.Version,
 		Version: utils.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if IsExperimental(cmd) && !viper.GetBool("experimental") {
+			if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
 				return errors.New("must set the --experimental flag to run this command")
 			}
 			cmd.SilenceUsage = true
@@ -103,23 +120,57 @@ var (
 				utils.CmdSuggestion = utils.SuggestDebugFlag
 			}
 			cmd.SetContext(ctx)
-			return nil
+			// Setup sentry last to ignore errors from parsing cli flags
+			apiHost, err := url.Parse(utils.GetSupabaseAPIHost())
+			if err != nil {
+				return err
+			}
+			sentryOpts.Environment = apiHost.Host
+			return sentry.Init(sentryOpts)
 		},
 		SilenceErrors: true,
 	}
 )
 
 func Execute() {
+	defer recoverAndExit()
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, utils.Red(err.Error()))
-		if len(utils.CmdSuggestion) > 0 {
-			fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
-		}
-		os.Exit(1)
+		panic(err)
 	}
 	if utils.CmdSuggestion != utils.SuggestDebugFlag {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func recoverAndExit() {
+	err := recover()
+	if err == nil {
+		return
+	}
+	var msg string
+	switch err := err.(type) {
+	case string:
+		msg = err
+	case error:
+		msg = err.Error()
+	default:
+		msg = fmt.Sprintf("%#v", err)
+	}
+	// Log error to console
+	fmt.Fprintln(os.Stderr, utils.Red(msg))
+	if len(utils.CmdSuggestion) > 0 {
+		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
+	}
+	// Report error to sentry
+	if createTicket && len(utils.SentryDsn) > 0 {
+		sentry.ConfigureScope(addSentryScope)
+		eventId := sentry.CurrentHub().Recover(err)
+		if eventId != nil && sentry.Flush(2*time.Second) {
+			fmt.Fprintln(os.Stderr, "Sent crash report:", *eventId)
+			fmt.Fprintln(os.Stderr, "Quote the crash ID above when filing a bug report: https://github.com/supabase/cli/issues/new/choose")
+		}
+	}
+	os.Exit(1)
 }
 
 func init() {
@@ -144,6 +195,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
+	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
@@ -166,4 +218,23 @@ func changeWorkDir(fsys afero.Fs) error {
 		}
 	}
 	return os.Chdir(workdir)
+}
+
+func addSentryScope(scope *sentry.Scope) {
+	serviceImages := services.GetServiceImages()
+	imageToVersion := make(map[string]interface{}, len(serviceImages))
+	for _, image := range services.GetServiceImages() {
+		parts := strings.Split(image, ":")
+		// Bypasses sentry's IP sanitization rule, ie. 15.1.0.147
+		if net.ParseIP(parts[1]) != nil {
+			imageToVersion[parts[0]] = "v" + parts[1]
+		} else {
+			imageToVersion[parts[0]] = parts[1]
+		}
+	}
+	scope.SetContext("Services", imageToVersion)
+	scope.SetContext("Config", map[string]interface{}{
+		"Image Registry": utils.GetRegistry(),
+		"Project ID":     flags.ProjectRef,
+	})
 }

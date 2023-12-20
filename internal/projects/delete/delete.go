@@ -2,11 +2,11 @@ package delete
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -26,7 +26,7 @@ func PreRun(ref string) error {
 func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().DeleteProjectWithResponse(ctx, ref)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to delete project: %w", err)
 	}
 
 	switch resp.StatusCode() {
@@ -35,7 +35,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	case http.StatusOK:
 		break
 	default:
-		return errors.New("Failed to delete project " + utils.Aqua(ref) + ": " + string(resp.Body))
+		return errors.Errorf("Failed to delete project %s: %s", utils.Aqua(ref), string(resp.Body))
 	}
 
 	// Unlink project

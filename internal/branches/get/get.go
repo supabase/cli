@@ -2,9 +2,9 @@ package get
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -12,7 +12,7 @@ import (
 func Run(ctx context.Context, branchId string) error {
 	resp, err := utils.GetSupabase().GetBranchDetailsWithResponse(ctx, branchId)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to retrieve preview branch: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.New("Unexpected error retrieving preview branch: " + string(resp.Body))

@@ -2,17 +2,18 @@ package rm
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -37,14 +38,14 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		bucket, prefix := storage.SplitBucketPrefix(remotePath)
 		// Ignore attempts to delete all buckets
 		if len(bucket) == 0 {
-			return errMissingBucket
+			return errors.New(errMissingBucket)
 		}
 		if cp.IsDir(prefix) && !recursive {
-			return errMissingFlag
+			return errors.New(errMissingFlag)
 		}
 		groups[bucket] = append(groups[bucket], prefix)
 	}
-	projectRef, err := utils.LoadProjectRef(fsys)
+	projectRef, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string
 			return err
 		}
 		if len(paths) == 0 && len(prefix) > 0 {
-			return fmt.Errorf("%w: %s/%s", errMissingObject, bucket, prefix)
+			return errors.Errorf("%w: %s/%s", errMissingObject, bucket, prefix)
 		}
 		var files []string
 		for _, objectName := range paths {

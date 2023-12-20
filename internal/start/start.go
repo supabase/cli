@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -17,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -34,13 +34,12 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertDockerIsRunning(ctx); err != nil {
-			return err
-		}
-		if _, err := utils.Docker.ContainerInspect(ctx, utils.DbId); err == nil {
+		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
-			fmt.Fprintln(os.Stderr, "Run "+utils.Aqua("supabase status")+" to show status of local Supabase containers.")
+			utils.CmdSuggestion = fmt.Sprintf("Run %s to show status of local Supabase containers.", utils.Aqua("supabase status"))
 			return nil
+		} else if !errors.Is(err, utils.ErrNotRunning) {
+			return err
 		}
 	}
 
@@ -143,7 +142,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			DbId:          utils.DbId,
 		}); err != nil {
-			return err
+			return errors.Errorf("failed to exec template: %w", err)
 		}
 		p.Send(utils.StatusMsg("Starting syslog driver..."))
 		if _, err := utils.DockerStart(
@@ -223,7 +222,7 @@ EOF
 		case utils.LogflareBigQuery:
 			workdir, err := os.Getwd()
 			if err != nil {
-				return err
+				return errors.Errorf("failed to get working directory: %w", err)
 			}
 			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
@@ -297,7 +296,7 @@ EOF
 			LogflareId:    utils.LogflareId,
 			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
-			return err
+			return errors.Errorf("failed to exec template: %w", err)
 		}
 
 		binds := []string{}
@@ -310,7 +309,7 @@ EOF
 				var err error
 				hostPath, err = filepath.Abs(hostPath)
 				if err != nil {
-					return err
+					return errors.Errorf("failed to resolve absolute path: %w", err)
 				}
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))

@@ -47,6 +47,6 @@ func TestSplitAndTrim(t *testing.T) {
 	stats, err := SplitAndTrim(strings.NewReader(sql))
 	// Check error
 	assert.ErrorIs(t, err, bufio.ErrTooLong)
-	assert.ErrorContains(t, err, "After statement 1:     BEGIN;")
+	assert.ErrorContains(t, err, "After statement 1: \tBEGIN;")
 	assert.ElementsMatch(t, []string{"BEGIN"}, stats)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -43,7 +44,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 	rows, err := conn.Query(ctx, QUERY)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to query rows: %w", err)
 	}
 	result, err := pgxv5.CollectRows[Result](rows)
 	if err != nil {
@@ -57,9 +58,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		sum += r.Active_connections
 	}
 
-	err = list.RenderTable(table)
-	if err != nil {
-		fmt.Println(err)
+	if err := list.RenderTable(table); err != nil {
 		return err
 	}
 
@@ -67,13 +66,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		fmt.Printf("\nActive connections %d/%d\n\n", sum, result[0].Connection_limit)
 	}
 
-	ref, err := utils.LoadProjectRef(fsys)
-	if err != nil {
-		return err
+	if matches := utils.ProjectHostPattern.FindStringSubmatch(config.Host); len(matches) == 4 {
+		fmt.Println("Go to the dashboard for more here:")
+		fmt.Printf("https://app.supabase.com/project/%s/database/roles\n", matches[2])
 	}
-
-	fmt.Println("Go to the dashboard for more here:")
-	fmt.Printf("https://app.supabase.com/project/%s/database/roles\n", ref)
 
 	return nil
 }

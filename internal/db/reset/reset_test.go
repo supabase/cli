@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/errdefs"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -57,7 +56,7 @@ func TestResetCommand(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), "", dbConfig, fsys)
 		// Check error
@@ -276,7 +275,7 @@ func TestRestartDatabase(t *testing.T) {
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.True(t, errdefs.IsUnavailable(err))
+		assert.ErrorContains(t, err, "failed to restart container")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

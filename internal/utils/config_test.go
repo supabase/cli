@@ -134,3 +134,24 @@ func TestSanitizeProjectI(t *testing.T) {
 	// Replaces consecutive invalid characters with a single _
 	assert.Equal(t, "a_bc-", sanitizeProjectId("a@@bc-"))
 }
+
+const (
+	defaultAnonKey        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+	defaultServiceRoleKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+)
+
+func TestSigningJWT(t *testing.T) {
+	t.Run("signs default anon key", func(t *testing.T) {
+		anonToken := CustomClaims{Role: "anon"}.NewToken()
+		signed, err := anonToken.SignedString([]byte(defaultJwtSecret))
+		assert.NoError(t, err)
+		assert.Equal(t, defaultAnonKey, signed)
+	})
+
+	t.Run("signs default service_role key", func(t *testing.T) {
+		anonToken := CustomClaims{Role: "service_role"}.NewToken()
+		signed, err := anonToken.SignedString([]byte(defaultJwtSecret))
+		assert.NoError(t, err)
+		assert.Equal(t, defaultServiceRoleKey, signed)
+	})
+}

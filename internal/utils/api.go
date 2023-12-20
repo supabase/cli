@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"sync"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
 	supabase "github.com/supabase/cli/pkg/api"
 )
@@ -69,9 +70,9 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 		}
 	}
 	if len(resolved) == 0 {
-		err = fmt.Errorf("failed to locate valid IP for %s; resolves to %#v", host, data.Answer)
+		return nil, errors.Errorf("failed to locate valid IP for %s; resolves to %#v", host, data.Answer)
 	}
-	return resolved, err
+	return resolved, nil
 }
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
@@ -93,9 +94,9 @@ func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	serialized, err := json.MarshalIndent(data.Answer, "", "    ")
 	if err != nil {
 		// we ignore the error (not great), and use the underlying struct in our error message
-		return "", fmt.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, data.Answer)
+		return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, data.Answer)
 	}
-	return "", fmt.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, serialized)
+	return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, serialized)
 }
 
 func WithTraceContext(ctx context.Context) context.Context {
@@ -158,13 +159,17 @@ func withFallbackDNS(dialContext DialContextFunc) DialContextFunc {
 	dnsOverHttps := func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("failed to split host port: %w", err)
 		}
 		ip, err := FallbackLookupIP(ctx, host)
 		if err != nil {
 			return nil, err
 		}
-		return dialContext(ctx, network, net.JoinHostPort(ip[0], port))
+		conn, err := dialContext(ctx, network, net.JoinHostPort(ip[0], port))
+		if err != nil {
+			return nil, errors.Errorf("failed to dial fallback: %w", err)
+		}
+		return conn, nil
 	}
 	if DNSResolver.Value == DNS_OVER_HTTPS {
 		return dnsOverHttps
@@ -174,10 +179,13 @@ func withFallbackDNS(dialContext DialContextFunc) DialContextFunc {
 		// Workaround when pure Go DNS resolver fails https://github.com/golang/go/issues/12524
 		if err, ok := err.(net.Error); ok && err.Timeout() {
 			if conn, err := dnsOverHttps(ctx, network, address); err == nil {
-				return conn, err
+				return conn, nil
 			}
 		}
-		return conn, err
+		if err != nil {
+			return nil, errors.Errorf("failed to dial native: %w", err)
+		}
+		return conn, nil
 	}
 	return nativeWithFallback
 }

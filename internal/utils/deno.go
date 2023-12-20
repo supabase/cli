@@ -8,7 +8,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -20,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 )
 
@@ -218,7 +218,7 @@ type ImportMap struct {
 func NewImportMap(path string, fsys afero.Fs) (*ImportMap, error) {
 	contents, err := fsys.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to load import map: %w", err)
 	}
 	defer contents.Close()
 	return NewFromReader(contents)
@@ -228,7 +228,7 @@ func NewFromReader(r io.Reader) (*ImportMap, error) {
 	decoder := json.NewDecoder(r)
 	importMap := &ImportMap{}
 	if err := decoder.Decode(importMap); err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to parse import map: %w", err)
 	}
 	return importMap, nil
 }
@@ -303,6 +303,9 @@ func getModulePath(hostPath string) string {
 	if strings.HasSuffix(hostPath, "/") {
 		mod += "/"
 	}
+	if ext := filepath.Ext(hostPath); len(ext) > 0 {
+		mod += ext
+	}
 	return mod
 }
 
@@ -329,7 +332,7 @@ func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error)
 		return "", err
 	}
 	if f, err := fsys.Stat(resolved); err != nil {
-		return "", fmt.Errorf("Failed to read import map: %w", err)
+		return "", errors.Errorf("Failed to read import map: %w", err)
 	} else if f.IsDir() {
 		return "", errors.New("Importing directory is unsupported: " + resolved)
 	}
@@ -351,11 +354,11 @@ func BindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 	if len(binds) > 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("failed to get working directory: %w", err)
 		}
 		contents, err := json.MarshalIndent(resolved, "", "    ")
 		if err != nil {
-			return nil, err
+			return nil, errors.Errorf("failed to encode json: %w", err)
 		}
 		// Rewrite import map to temporary host path
 		hostImportMapPath = AbsTempImportMapPath(cwd, hostImportMapPath)

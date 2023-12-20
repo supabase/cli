@@ -2,9 +2,9 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -20,7 +20,7 @@ func Run(ctx context.Context, projectRef string, enforceDbSsl bool, fsys afero.F
 			},
 		})
 		if err != nil {
-			return err
+			return errors.Errorf("failed to update ssl enforcement: %w", err)
 		}
 		if resp.JSON200 == nil {
 			return errors.New("failed to update SSL enforcement confnig: " + string(resp.Body))

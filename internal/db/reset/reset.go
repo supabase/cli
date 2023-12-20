@@ -3,7 +3,6 @@ package reset
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
@@ -26,6 +26,7 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
 const (
@@ -43,7 +44,7 @@ var (
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) > 0 {
 		if _, err := strconv.Atoi(version); err != nil {
-			return repair.ErrInvalidVersion
+			return errors.New(repair.ErrInvalidVersion)
 		}
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
@@ -51,7 +52,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 	}
 	if !utils.IsLoopback(config.Host) {
 		if shouldReset := utils.PromptYesNo("Confirm resetting the remote database?", true, os.Stdin); !shouldReset {
-			return context.Canceled
+			return errors.New(context.Canceled)
 		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
@@ -116,10 +117,10 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 
 func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, types.ContainerRemoveOptions{Force: true}); err != nil {
-		return err
+		return errors.Errorf("failed to remove container: %w", err)
 	}
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
-		return err
+		return errors.Errorf("failed to remove volume: %w", err)
 	}
 	// Skip syslog if vector container is not started
 	if _, err := utils.Docker.ContainerInspect(ctx, utils.VectorId); err != nil {
@@ -139,7 +140,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 		return err
 	}
 	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {
-		return start.ErrDatabase
+		return errors.New(start.ErrDatabase)
 	}
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
@@ -191,12 +192,14 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	if _, err := conn.Exec(ctx, disconn); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName {
-			return err
+			return errors.Errorf("failed to disconnect clients: %w", err)
 		}
 	}
 	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")
-	_, err := conn.Exec(ctx, term)
-	return err
+	if _, err := conn.Exec(ctx, term); err != nil {
+		return errors.Errorf("failed to terminate backend: %w", err)
+	}
+	return nil
 }
 
 func RestartDatabase(ctx context.Context, w io.Writer) error {
@@ -204,10 +207,10 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
-		return err
+		return errors.Errorf("failed to restart container: %w", err)
 	}
 	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {
-		return start.ErrDatabase
+		return errors.New(start.ErrDatabase)
 	}
 	return restartServices(ctx)
 }
@@ -217,7 +220,7 @@ func restartServices(ctx context.Context) error {
 	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("Failed to restart %s: %w", id, err)
+			return errors.Errorf("Failed to restart %s: %w", id, err)
 		}
 		return nil
 	})
@@ -253,7 +256,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 			}
 			logs.Close()
 		}
-		return fmt.Errorf("%w: %v", ErrUnhealthy, started)
+		return errors.Errorf("%w: %v", ErrUnhealthy, started)
 	}
 	return nil
 }
@@ -287,19 +290,14 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 
 func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
 	exclude = likeEscapeSchema(exclude)
+	if len(exclude) == 0 {
+		exclude = append(exclude, "")
+	}
 	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
 	if err != nil {
-		return nil, err
+		return nil, errors.Errorf("failed to list schemas: %w", err)
 	}
-	schemas := []string{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		schemas = append(schemas, name)
-	}
-	return schemas, rows.Err()
+	return pgxv5.CollectStrings(rows)
 }
 
 func likeEscapeSchema(schemas []string) (result []string) {

@@ -45,10 +45,7 @@ func TestStartCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			ReplyError(errors.New("network error"))
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), fsys, []string{}, false, "")

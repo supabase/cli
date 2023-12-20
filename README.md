@@ -32,7 +32,7 @@ npm i supabase@beta --save-dev
 ```
 
 > **Note**
-For Bun users, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
+For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
 
 <details>
   <summary><b>macOS</b></summary>

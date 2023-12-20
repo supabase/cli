@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
@@ -58,7 +59,7 @@ func NewLoginEncryption() (LoginEncryption, error) {
 	enc := LoginEncryption{}
 	err := enc.generateKeys()
 	if err != nil {
-		return enc, fmt.Errorf("cannot generate crypto keys: %w", err)
+		return enc, errors.Errorf("cannot generate crypto keys: %w", err)
 	}
 	return enc, nil
 }
@@ -67,7 +68,7 @@ func (enc *LoginEncryption) generateKeys() error {
 	enc.curve = ecdh.P256()
 	privateKey, err := enc.curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return fmt.Errorf("cannot generate encryption key: %w", err)
+		return errors.Errorf("cannot generate encryption key: %w", err)
 	}
 	enc.privateKey = privateKey
 	enc.publicKey = privateKey.PublicKey()
@@ -81,42 +82,42 @@ func (enc LoginEncryption) encodedPublicKey() string {
 func (enc LoginEncryption) decryptAccessToken(accessToken string, publicKey string, nonce string) (string, error) {
 	decodedAccessToken, err := hex.DecodeString(accessToken)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	decodedNonce, err := hex.DecodeString(nonce)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	decodedPublicKey, err := hex.DecodeString(publicKey)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	remotePublicKey, err := enc.curve.NewPublicKey(decodedPublicKey)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	secret, err := enc.privateKey.ECDH(remotePublicKey)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	block, err := aes.NewCipher(secret)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	decryptedAccessToken, err := aesgcm.Open(nil, decodedNonce, decodedAccessToken, nil)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", decryptionErrorMsg, err)
+		return "", errors.Errorf("%s: %w", decryptionErrorMsg, err)
 	}
 
 	return string(decryptedAccessToken), nil
@@ -128,11 +129,11 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 	// TODO: Move to OpenAPI-generated http client once we reach v1 on API schema.
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return accessTokenResponse, fmt.Errorf("cannot fetch access token: %w", err)
+		return accessTokenResponse, errors.Errorf("cannot fetch access token: %w", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return accessTokenResponse, fmt.Errorf("cannot fetch access token: %w", err)
+		return accessTokenResponse, errors.Errorf("cannot fetch access token: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -154,24 +155,24 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 		body, err := io.ReadAll(resp.Body)
 
 		if err != nil {
-			return accessTokenResponse, fmt.Errorf("cannot read access token response body: %w", err)
+			return accessTokenResponse, errors.Errorf("cannot read access token response body: %w", err)
 		}
 
 		if err := json.Unmarshal(body, &accessTokenResponse); err != nil {
-			return accessTokenResponse, fmt.Errorf("cannot unmarshal access token response: %w", err)
+			return accessTokenResponse, errors.Errorf("cannot unmarshal access token response: %w", err)
 		}
 
 		return accessTokenResponse, nil
 	}
 
-	return accessTokenResponse, fmt.Errorf("HTTP %s: cannot retrieve access token", resp.Status)
+	return accessTokenResponse, errors.Errorf("HTTP %s: cannot retrieve access token", resp.Status)
 }
 
 func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 	if params.Token != "" {
 		err := utils.SaveAccessToken(params.Token, params.Fsys)
 		if err != nil {
-			return fmt.Errorf("cannot save provided token: %w", err)
+			return errors.Errorf("cannot save provided token: %w", err)
 		}
 		fmt.Println(loggedInMsg)
 		return nil
@@ -193,7 +194,7 @@ func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
 
 		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
-			return fmt.Errorf("cannot open default browser: %w", err)
+			return errors.Errorf("cannot open default browser: %w", err)
 		}
 	} else {
 		fmt.Fprintf(stdout, "Here is your login link, open it in the browser %s\n\n", utils.Bold(createLoginSessionUrl))

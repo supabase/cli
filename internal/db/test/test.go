@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/api/types"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -38,10 +39,10 @@ func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
 	// Copy tests into database container
 	var buf bytes.Buffer
 	if err := compress(utils.DbTestsDir, &buf, fsys); err != nil {
-		return err
+		return errors.Errorf("failed to compress directory: %w", err)
 	}
 	if err := utils.Docker.CopyToContainer(ctx, utils.DbId, dstPath, &buf, types.CopyToContainerOptions{}); err != nil {
-		return err
+		return errors.Errorf("failed to copy into container: %w", err)
 	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + filepath.ToSlash(utils.DbTestsDir) + ";"

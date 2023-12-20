@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -46,8 +46,9 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 		RemoveVolumes: true,
 		Force:         true,
 	})
+	// Use network alias because Deno cannot resolve `_` in hostname
+	dbUrl := "postgresql://postgres:postgres@" + utils.DbAliases[0] + ":5432/postgres"
 	// 3. Serve and log to console
-	dbUrl := "postgresql://postgres:postgres@" + utils.DbId + ":5432/postgres"
 	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, os.Stderr, fsys); err != nil {
 		return err
 	}
@@ -65,18 +66,18 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			envFilePath = utils.FallbackEnvFilePath
 		}
 	} else if _, err := fsys.Stat(envFilePath); err != nil {
-		return fmt.Errorf("Failed to read env file: %w", err)
+		return errors.Errorf("Failed to read env file: %w", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return err
+		return errors.Errorf("failed to get working directory: %w", err)
 	}
 	if importMapPath != "" {
 		if !filepath.IsAbs(importMapPath) {
 			importMapPath = filepath.Join(cwd, importMapPath)
 		}
 		if _, err := fsys.Stat(importMapPath); err != nil {
-			return fmt.Errorf("Failed to read import map: %w", err)
+			return errors.Errorf("Failed to read import map: %w", err)
 		}
 	}
 	// 2. Parse user defined env
@@ -85,7 +86,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	env := []string{
-		"SUPABASE_URL=http://" + utils.KongId + ":8000",
+		"SUPABASE_URL=http://" + utils.KongAliases[0] + ":8000",
 		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SUPABASE_SERVICE_ROLE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"SUPABASE_DB_URL=" + dbUrl,
@@ -113,7 +114,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 
 	fallbackImportMapPath := filepath.Join(cwd, utils.FallbackImportMapPath)
 	if exists, err := afero.Exists(fsys, fallbackImportMapPath); err != nil {
-		return fmt.Errorf("Failed to read fallback import map: %w", err)
+		return errors.Errorf("Failed to read fallback import map: %w", err)
 	} else if !exists {
 		fallbackImportMapPath = utils.AbsTempImportMapPath(cwd, utils.ImportMapsDir)
 		if err := utils.WriteFile(fallbackImportMapPath, []byte(`{"imports":{}}`), fsys); err != nil {
@@ -183,16 +184,16 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	}
 	f, err := fsys.Open(envFilePath)
 	if err != nil {
-		return env, err
+		return env, errors.Errorf("failed to open env file: %w", err)
 	}
 	defer f.Close()
 	envMap, err := godotenv.Parse(f)
 	if err != nil {
-		return env, err
+		return env, errors.Errorf("failed to parse env file: %w", err)
 	}
 	for name, value := range envMap {
 		if strings.HasPrefix(name, "SUPABASE_") {
-			return env, errors.New("Invalid env name: " + name + ". Env names cannot start with SUPABASE_.")
+			return env, errors.Errorf("Invalid env name: %s. Env names cannot start with SUPABASE_.", name)
 		}
 		env = append(env, name+"="+value)
 	}
@@ -209,12 +210,12 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to get working directory: %w", err)
 	}
 
 	functions, err := afero.ReadDir(fsys, utils.FunctionsDir)
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to read directory: %w", err)
 	}
 	for _, function := range functions {
 		if !function.IsDir() {
@@ -256,7 +257,7 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 
 	functionsConfigBytes, err := json.Marshal(functionsConfig)
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
 
 	return binds, string(functionsConfigBytes), nil

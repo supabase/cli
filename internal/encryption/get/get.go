@@ -2,16 +2,16 @@ package get
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().GetPgsodiumConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to retrieve pgsodium config: %w", err)
 	}
 
 	if resp.JSON200 == nil {

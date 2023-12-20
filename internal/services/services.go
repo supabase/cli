@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,37 +9,23 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 )
 
-var (
-	errDatabaseVersion = errors.New("Database version not found.")
-	suggestLinkCommand = fmt.Sprintf("Run %s to sync your local image versions with the linked project.", utils.Aqua("supabase link"))
-)
+var suggestLinkCommand = fmt.Sprintf("Run %s to sync your local image versions with the linked project.", utils.Aqua("supabase link"))
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	_ = utils.LoadConfigFS(fsys)
-	serviceImages := []string{
-		utils.Config.Db.Image,
-		utils.Config.Auth.Image,
-		utils.Config.Api.Image,
-		utils.RealtimeImage,
-		utils.Config.Storage.Image,
-		utils.EdgeRuntimeImage,
-		utils.StudioImage,
-		utils.PgmetaImage,
-		utils.LogflareImage,
-		utils.PgbouncerImage,
-		utils.ImageProxyImage,
-	}
+	serviceImages := GetServiceImages()
 
 	linked := make(map[string]string)
-	if projectRef, err := utils.LoadProjectRef(fsys); err == nil {
+	if projectRef, err := flags.LoadProjectRef(fsys); err == nil {
 		var wg sync.WaitGroup
 		wg.Add(4)
 		go func() {
 			defer wg.Done()
-			if version, err := GetDatabaseVersion(ctx, projectRef); err == nil {
+			if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
 				linked[utils.Config.Db.Image] = version
 			}
 		}()
@@ -82,18 +67,18 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	return list.RenderTable(table)
 }
 
-func GetDatabaseVersion(ctx context.Context, projectRef string) (string, error) {
-	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
-	if err != nil {
-		return "", err
+func GetServiceImages() []string {
+	return []string{
+		utils.Config.Db.Image,
+		utils.Config.Auth.Image,
+		utils.Config.Api.Image,
+		utils.RealtimeImage,
+		utils.Config.Storage.Image,
+		utils.EdgeRuntimeImage,
+		utils.StudioImage,
+		utils.PgmetaImage,
+		utils.LogflareImage,
+		utils.PgbouncerImage,
+		utils.ImageProxyImage,
 	}
-	if resp.JSON200 == nil {
-		return "", errors.New("Unexpected error retrieving projects: " + string(resp.Body))
-	}
-	for _, project := range *resp.JSON200 {
-		if project.Id == projectRef && len(project.Database.Version) > 0 {
-			return project.Database.Version, nil
-		}
-	}
-	return "", errDatabaseVersion
 }

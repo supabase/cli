@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/postgresConfig/get"
 	"github.com/supabase/cli/internal/utils"
@@ -19,7 +19,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 	for _, config := range values {
 		splits := strings.Split(config, "=")
 		if len(splits) != 2 {
-			return fmt.Errorf("expected config value in key:value format, received: '%s'", config)
+			return errors.Errorf("expected config value in key:value format, received: '%s'", config)
 		}
 		newConfigOverrides[splits[0]] = splits[1]
 	}
@@ -51,17 +51,17 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 	{
 		bts, err := json.Marshal(finalOverrides)
 		if err != nil {
-			return fmt.Errorf("failed to serialize config overrides: %w", err)
+			return errors.Errorf("failed to serialize config overrides: %w", err)
 		}
 		resp, err := utils.GetSupabase().UpdateConfigWithBodyWithResponse(ctx, projectRef, "application/json", bytes.NewReader(bts))
 		if err != nil {
-			return err
+			return errors.Errorf("failed to update config overrides: %w", err)
 		}
 		if resp.JSON200 == nil {
 			if resp.StatusCode() == 400 {
-				return fmt.Errorf("failed to update config overrides: %s (%s). This usually indicates that an unsupported or invalid config override was attempted. Please refer to https://supabase.com/docs/guides/platform/custom-postgres-config", resp.Status(), string(resp.Body))
+				return errors.Errorf("failed to update config overrides: %s (%s). This usually indicates that an unsupported or invalid config override was attempted. Please refer to https://supabase.com/docs/guides/platform/custom-postgres-config", resp.Status(), string(resp.Body))
 			}
-			return fmt.Errorf("failed to update config overrides: %s (%s)", resp.Status(), string(resp.Body))
+			return errors.Errorf("failed to update config overrides: %s (%s)", resp.Status(), string(resp.Body))
 		}
 	}
 	return get.Run(ctx, projectRef, fsys)

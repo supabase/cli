@@ -87,7 +87,7 @@ func TestSwitchCommand(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusServiceUnavailable)
+			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error
@@ -175,7 +175,7 @@ func TestSwitchCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), branch, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "Error switching to branch target: conn closed")
+		assert.ErrorContains(t, err, "Error switching to branch target")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

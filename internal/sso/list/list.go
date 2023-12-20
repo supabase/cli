@@ -2,10 +2,10 @@ package list
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"os"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -13,7 +13,7 @@ import (
 func Run(ctx context.Context, ref, format string) error {
 	resp, err := utils.GetSupabase().ListAllProvidersWithResponse(ctx, ref)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to list sso providers: %w", err)
 	}
 
 	if resp.JSON200 == nil {

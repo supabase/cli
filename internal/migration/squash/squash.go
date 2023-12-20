@@ -2,12 +2,12 @@ package squash
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -23,7 +23,7 @@ var ErrMissingVersion = errors.New("version not found")
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) > 0 {
 		if _, err := strconv.Atoi(version); err != nil {
-			return repair.ErrInvalidVersion
+			return errors.New(repair.ErrInvalidVersion)
 		}
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
@@ -49,7 +49,7 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 		return err
 	}
 	if len(migrations) == 0 {
-		return ErrMissingVersion
+		return errors.New(ErrMissingVersion)
 	}
 	// Migrate to target version and dump
 	path := filepath.Join(utils.MigrationsDir, migrations[len(migrations)-1])
@@ -86,7 +86,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	path := filepath.Join(utils.MigrationsDir, migrations[len(migrations)-1])
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to open migration file: %w", err)
 	}
 	defer f.Close()
 	config := pgconn.Config{
@@ -126,5 +126,8 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 	batch := pgx.Batch{}
 	batch.Queue(DELETE_MIGRATION_BEFORE, m.Version)
 	batch.Queue(repair.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Lines)
-	return conn.SendBatch(ctx, &batch).Close()
+	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+		return errors.Errorf("failed to update migration history: %w", err)
+	}
+	return nil
 }

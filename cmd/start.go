@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/start"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -23,11 +22,9 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()
 			if preview {
-				projectRef, err := utils.LoadProjectRef(fsys)
-				if err != nil {
+				if _, err := flags.LoadProjectRef(fsys); err != nil {
 					return err
 				}
-				flags.ProjectRef = projectRef
 			}
 			return start.Run(cmd.Context(), fsys, excludedContainers, ignoreHealthCheck, flags.ProjectRef)
 		},

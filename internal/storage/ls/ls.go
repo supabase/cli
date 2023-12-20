@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) error {
@@ -18,7 +18,7 @@ func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	projectRef, err := utils.LoadProjectRef(fsys)
+	projectRef, err := flags.LoadProjectRef(fsys)
 	if err != nil {
 		return err
 	}
