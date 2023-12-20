@@ -62,12 +62,15 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		DbConfig.Password = utils.Config.Db.Password
 		DbConfig.Database = "postgres"
 	case linked:
+		if err := utils.LoadConfigFS(fsys); err != nil {
+			return err
+		}
 		projectRef, err := LoadProjectRef(fsys)
 		if err != nil {
 			return err
 		}
 		DbConfig.Host = utils.GetSupabaseDbHost(projectRef)
-		DbConfig.Port = 6543
+		DbConfig.Port = 5432
 		DbConfig.User = "postgres"
 		DbConfig.Password = getPassword(projectRef)
 		DbConfig.Database = "postgres"
