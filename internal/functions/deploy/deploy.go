@@ -79,7 +79,8 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 
 	// create temp directory to store generated eszip
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
-	if err := fsys.MkdirAll(hostOutputDir, 0755); err != nil {
+	// BitBucket pipelines require docker bind mounts to be world writable
+	if err := fsys.MkdirAll(hostOutputDir, 0777); err != nil {
 		return nil, errors.Errorf("failed to mkdir: %w", err)
 	}
 	defer func() {
