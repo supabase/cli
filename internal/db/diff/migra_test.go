@@ -358,3 +358,8 @@ func TestUserSchema(t *testing.T) {
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"test"}, schemas)
 }
+
+func TestDropStatements(t *testing.T) {
+	drops := findDropStatements("create table t(); drop table t; alter table t drop column c")
+	assert.Equal(t, []string{"drop table t", "alter table t drop column c"}, drops)
+}

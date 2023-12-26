@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/parser"
 )
 
 //go:embed templates/migra.sh
@@ -48,7 +50,32 @@ func RunMigra(ctx context.Context, schema []string, file string, config pgconn.C
 	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
-	return SaveDiff(out, file, fsys)
+	if err := SaveDiff(out, file, fsys); err != nil {
+		return err
+	}
+	drops := findDropStatements(out)
+	if len(drops) > 0 {
+		fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
+		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
+	}
+	return nil
+}
+
+// https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
+var dropStatementPattern = regexp.MustCompile(`(?i)drop\s+`)
+
+func findDropStatements(out string) []string {
+	lines, err := parser.SplitAndTrim(strings.NewReader(out))
+	if err != nil {
+		return nil
+	}
+	var drops []string
+	for _, line := range lines {
+		if dropStatementPattern.MatchString(line) {
+			drops = append(drops, line)
+		}
+	}
+	return drops
 }
 
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
