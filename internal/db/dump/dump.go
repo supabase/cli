@@ -56,10 +56,10 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
 	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|")}
 	if len(schema) > 0 {
-		env[0] = "INCLUDED_SCHEMAS=" + strings.Join(schema, "|")
+		env[0] = "EXTRA_FLAGS=--schema " + strings.Join(schema, "|")
 	}
 	if !keepComments {
-		env = append(env, "DELETE_COMMENTS=1")
+		env = append(env, "EXTRA_SED=/^--/d")
 	}
 	return dump(ctx, config, dumpSchemaScript, env, dryRun, stdout)
 }
@@ -95,12 +95,14 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 		// "supabase_functions",
 		// "supabase_migrations",
 	}
-	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|")}
+	var env []string
 	if len(schema) > 0 {
-		env[0] = "INCLUDED_SCHEMAS=" + strings.Join(schema, "|")
+		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, "|"))
+	} else {
+		env = append(env, "INCLUDED_SCHEMAS=*", "EXCLUDED_SCHEMAS="+strings.Join(excludedSchemas, "|"))
 	}
 	if !useCopy {
-		env = append(env, "COLUMN_INSERTS=1")
+		env = append(env, "EXTRA_FLAGS=--column-inserts --rows-per-insert 100000")
 	}
 	return dump(ctx, config, dumpDataScript, env, dryRun, stdout)
 }
@@ -108,31 +110,42 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 func dumpRole(ctx context.Context, config pgconn.Config, keepComments, dryRun bool, stdout io.Writer) error {
 	env := []string{}
 	if !keepComments {
-		env = append(env, "DELETE_COMMENTS=1")
+		env = append(env, "EXTRA_SED=/^--/d")
 	}
 	return dump(ctx, config, dumpRoleScript, env, dryRun, stdout)
 }
 
 func dump(ctx context.Context, config pgconn.Config, script string, env []string, dryRun bool, stdout io.Writer) error {
+	allEnvs := append(env,
+		"PGHOST="+config.Host,
+		fmt.Sprintf("PGPORT=%d", config.Port),
+		"PGUSER="+config.User,
+		"PGPASSWORD="+config.Password,
+		"PGDATABASE="+config.Database,
+		"RESERVED_ROLES="+strings.Join(utils.ReservedRoles, "|"),
+		"ALLOWED_CONFIGS="+strings.Join(utils.AllowedConfigs, "|"),
+	)
 	if dryRun {
-		script = `cat <<EOF
-` + strings.ReplaceAll(script, "\\\n", "\\\\\n") + `
-EOF`
+		envMap := make(map[string]string, len(allEnvs))
+		for _, e := range allEnvs {
+			parts := strings.Split(e, "=")
+			envMap[parts[0]] = parts[1]
+		}
+		expanded := os.Expand(script, func(key string) string {
+			// Bash variable expansion is unsupported:
+			// https://github.com/golang/go/issues/47187
+			parts := strings.Split(key, ":")
+			return envMap[parts[0]]
+		})
+		fmt.Println(expanded)
+		return nil
 	}
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Pg15Image,
-			Env: append(env,
-				"PGHOST="+config.Host,
-				fmt.Sprintf("PGPORT=%d", config.Port),
-				"PGUSER="+config.User,
-				"PGPASSWORD="+config.Password,
-				"RESERVED_ROLES="+strings.Join(utils.ReservedRoles, "|"),
-				"ALLOWED_CONFIGS="+strings.Join(utils.AllowedConfigs, "|"),
-				"DB_URL="+config.Database,
-			),
-			Cmd: []string{"bash", "-c", script, "--"},
+			Env:   allEnvs,
+			Cmd:   []string{"bash", "-c", script, "--"},
 		},
 		container.HostConfig{
 			NetworkMode: container.NetworkMode("host"),
