@@ -93,7 +93,7 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 		// "storage",
 		"_analytics",
 		// "supabase_functions",
-		"supabase_migrations",
+		// "supabase_migrations",
 	}
 	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(excludedSchemas, "|")}
 	if len(schema) > 0 {

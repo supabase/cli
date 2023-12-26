@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -93,7 +93,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		return nil, errors.Errorf("failed to begin transaction: %w", err)
 	}
 	if len(schema) == 0 {
-		schema, err = diff.LoadUserSchemas(ctx, conn, utils.InternalSchemas...)
+		schema, err = reset.ListSchemas(ctx, conn, utils.InternalSchemas...)
 		if err != nil {
 			return nil, err
 		}

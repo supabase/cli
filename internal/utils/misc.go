@@ -129,7 +129,6 @@ var (
 		"storage",
 		"_analytics",
 		"supabase_functions",
-		"supabase_migrations",
 	}, SystemSchemas...)
 	ReservedRoles = []string{
 		"anon",

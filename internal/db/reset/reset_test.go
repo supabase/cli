@@ -311,11 +311,9 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
 			Reply("SELECT 1", []interface{}{"private"}).
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
-			Reply("DROP SCHEMA").
-			Query("DROP SCHEMA IF EXISTS supabase_migrations CASCADE").
 			Reply("DROP SCHEMA").
 			Query(dropObjects).
 			Reply("INSERT 0")
@@ -340,7 +338,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
@@ -354,11 +352,10 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", "'{public,auth,extensions,pgbouncer,realtime,\"\\\\_realtime\",storage,\"\\\\_analytics\",\"supabase\\\\_functions\",\"supabase\\\\_migrations\",\"information\\\\_schema\",\"pg\\\\_%\",cron,graphql,\"graphql\\\\_public\",net,pgsodium,\"pgsodium\\\\_masks\",pgtle,repack,tiger,\"tiger\\\\_data\",\"timescaledb\\\\_%\",\"\\\\_timescaledb\\\\_%\",topology,vault}'")).
+		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
 			Reply("SELECT 0").
-			Query("DROP SCHEMA IF EXISTS supabase_migrations CASCADE").
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(dropObjects)
+			Query(dropObjects).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
