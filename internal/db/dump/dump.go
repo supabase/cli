@@ -93,7 +93,7 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 		// "storage",
 		"_analytics",
 		// "supabase_functions",
-		"supabase_migrations",
+		// "supabase_migrations",
 	}
 	var env []string
 	if len(schema) > 0 {

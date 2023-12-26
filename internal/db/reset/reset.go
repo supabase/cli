@@ -274,7 +274,6 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	if err != nil {
 		return err
 	}
-	userSchemas = append(userSchemas, "supabase_migrations")
 	// Drop user defined objects
 	migration := repair.MigrationFile{}
 	for _, schema := range userSchemas {
