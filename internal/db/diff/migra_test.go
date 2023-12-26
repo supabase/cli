@@ -345,7 +345,7 @@ func TestUserSchema(t *testing.T) {
 	// Setup mock postgres
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
-	conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", "'{public}'")).
+	conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `'{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()
@@ -353,7 +353,7 @@ func TestUserSchema(t *testing.T) {
 	require.NoError(t, err)
 	defer mock.Close(ctx)
 	// Run test
-	schemas, err := LoadUserSchemas(ctx, mock, "public")
+	schemas, err := LoadUserSchemas(ctx, mock)
 	// Check error
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, []string{"test"}, schemas)
