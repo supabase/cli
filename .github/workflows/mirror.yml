@@ -1,4 +1,4 @@
-name: Mirror Image
+name: Mirror Dependencies
 # We mirror upstream container images like Migra, imgproxy, etc. because these
 # are usually only available on certain image registry and not others (e.g. only
 # on Docker Hub and not on ghcr.io or AWS ECR).
@@ -47,39 +47,15 @@ jobs:
           git checkout main
           echo "tags=$(go run tools/listdep/main.go)" >> $GITHUB_OUTPUT
 
-  mirror:
-    runs-on: ubuntu-latest
+  publish:
     needs:
       - setup
     if: ${{ needs.setup.outputs.tags != needs.setup.outputs.curr }}
     strategy:
       matrix:
         src: ${{ fromJson(needs.setup.outputs.tags) }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    steps:
-      - id: strip
-        run: |
-          TAG=${{ matrix.src }}
-          echo "dst=${TAG##*/}" >> $GITHUB_OUTPUT
-      - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v4.0.1
-        with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
-          aws-region: us-east-1
-      - uses: docker/login-action@v3
-        with:
-          registry: public.ecr.aws
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: akhilerm/tag-push-action@v2.1.0
-        with:
-          src: docker.io/${{ matrix.src }}
-          dst: |
-            public.ecr.aws/supabase/${{ steps.strip.outputs.dst }}
-            ghcr.io/supabase/${{ steps.strip.outputs.dst }}
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/mirror-image.yml
+    with:
+      image: ${{ matrix.src }}
+    secrets: inherit
