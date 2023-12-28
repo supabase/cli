@@ -1,140 +1,103 @@
 package test
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io/fs"
-	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
 )
 
-type MockFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *MockFs) Open(name string) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.Open(name)
-}
-
-func TestTarDirectory(t *testing.T) {
-	t.Run("tars a given directory", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		pgtap := "/tests/order_test.sql"
-		require.NoError(t, afero.WriteFile(fsys, pgtap, []byte("SELECT 0;"), 0644))
-		// Run test
-		var buf bytes.Buffer
-		assert.NoError(t, compress(filepath.Dir(pgtap), &buf, fsys))
-	})
-
-	t.Run("throws error on permission denied", func(t *testing.T) {
-		// Setup in-memory fs
-		pgtap := "/tests/order_test.sql"
-		fsys := &MockFs{DenyPath: pgtap}
-		require.NoError(t, afero.WriteFile(fsys, pgtap, []byte("SELECT 0;"), 0644))
-		// Run test
-		var buf bytes.Buffer
-		err := compress(filepath.Dir(pgtap), &buf, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "permission denied")
-	})
+var dbConfig = pgconn.Config{
+	Host:     "db.supabase.co",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
 }
 
 func TestPgProve(t *testing.T) {
-	t.Run("throws error on copy failure", func(t *testing.T) {
-		utils.DbId = "test_db"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, fsys.Mkdir(utils.DbTestsDir, 0755))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		gock.New(utils.Docker.DaemonHost()).
-			Put("/v" + utils.Docker.ClientVersion() + "/containers/test_db/archive").
-			Reply(http.StatusServiceUnavailable)
+	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Run test
-		err := pgProve(context.Background(), "/tmp", fsys)
+		err := pgProve(context.Background(), nil, dbConfig)
 		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.ErrorContains(t, err, "failed to connect to postgres")
 	})
 
-	t.Run("throws error on exec failure", func(t *testing.T) {
-		utils.DbId = "test_db"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, fsys.Mkdir(utils.DbTestsDir, 0755))
+	t.Run("throws error on pgtap failure", func(t *testing.T) {
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(ENABLE_PGTAP).
+			ReplyError(pgerrcode.DuplicateObject, `extension "pgtap" already exists, skipping`)
+		// Run test
+		err := pgProve(context.Background(), nil, dbConfig, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "failed to enable pgTAP")
+	})
+
+	t.Run("throws error on network failure", func(t *testing.T) {
+		errNetwork := errors.New("network error")
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(ENABLE_PGTAP).
+			Reply("CREATE EXTENSION").
+			Query(DISABLE_PGTAP).
+			Reply("DROP EXTENSION")
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Put("/v" + utils.Docker.ClientVersion() + "/containers/test_db/archive").
-			Reply(http.StatusOK)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/test_db/exec").
-			ReplyError(errors.New("network error"))
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.PgProveImage) + "/json").
+			ReplyError(errNetwork)
 		// Run test
-		err := pgProve(context.Background(), "/tmp", fsys)
+		err := pgProve(context.Background(), nil, dbConfig, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "network error")
+		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestRunCommand(t *testing.T) {
+	t.Run("runs tests with pg_prove", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(ENABLE_PGTAP).
+			Reply("CREATE EXTENSION").
+			Query(DISABLE_PGTAP).
+			Reply("DROP EXTENSION")
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		containerId := "test-pg-prove"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgProveImage), containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "Result: SUCCESS"))
+		// Run test
+		err := Run(context.Background(), []string{"nested"}, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on missing config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), nil, dbConfig, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-
-	t.Run("throws error on missing database", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusNotFound)
-		// Run test
-		err := Run(context.Background(), fsys)
-		// Check error
-		assert.ErrorIs(t, err, utils.ErrNotRunning)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("throws error on missing tests", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
-		// Run test
-		err := Run(context.Background(), fsys)
-		// Check error
-		assert.ErrorContains(t, err, "open supabase/tests: file does not exist")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

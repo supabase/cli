@@ -1,112 +1,97 @@
 package test
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	_ "embed"
-	"io"
+	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-var (
-	//go:embed templates/test.sh
-	testScript string
+const (
+	ENABLE_PGTAP  = "create extension if not exists pgtap with schema extensions"
+	DISABLE_PGTAP = "drop extension if exists pgtap"
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, testFiles []string, dbConfig pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
-	}
-
-	return pgProve(ctx, "/tmp", fsys)
-}
-
-func pgProve(ctx context.Context, dstPath string, fsys afero.Fs) error {
-	// Copy tests into database container
-	var buf bytes.Buffer
-	if err := compress(utils.DbTestsDir, &buf, fsys); err != nil {
-		return errors.Errorf("failed to compress directory: %w", err)
-	}
-	if err := utils.Docker.CopyToContainer(ctx, utils.DbId, dstPath, &buf, types.CopyToContainerOptions{}); err != nil {
-		return errors.Errorf("failed to copy into container: %w", err)
-	}
-	// Passing in script string means command line args must be set manually, ie. "$@"
-	args := "set -- " + filepath.ToSlash(utils.DbTestsDir) + ";"
-	// Requires unix path inside container
-	cmd := []string{"/bin/bash", "-c", args + testScript}
-	return utils.DockerExecOnceWithStream(ctx, utils.DbId, dstPath, nil, cmd, os.Stdout, os.Stderr)
-}
-
-// Ref 1: https://medium.com/@skdomino/taring-untaring-files-in-go-6b07cf56bc07
-// Ref 2: https://gist.github.com/mimoo/25fc9716e0f1353791f5908f94d6e726
-func compress(src string, buf io.Writer, fsys afero.Fs) error {
-	tw := tar.NewWriter(buf)
-
-	// walk through every file in the folder
-	if err := afero.Walk(fsys, src, func(file string, fi os.FileInfo, err error) error {
-		// return on any error
-		if err != nil {
-			return err
-		}
-
-		// return on non-regular files
-		if !fi.Mode().IsRegular() {
-			return nil
-		}
-
-		// create a new dir/file header
-		header, err := tar.FileInfoHeader(fi, fi.Name())
-		if err != nil {
-			return err
-		}
-
-		// must provide real name
-		header.Name = filepath.ToSlash(file)
-
-		// write the header
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-
-		// open files for taring
-		f, err := fsys.Open(file)
-		if err != nil {
-			return err
-		}
-
-		// copy file data into tar writer
-		if _, err := io.Copy(tw, f); err != nil {
-			return err
-		}
-
-		// manually close here after each file operation; defering would cause each file close
-		// to wait until all operations have completed.
-		if err := f.Close(); err != nil {
-			return err
-		}
-
-		return nil
-	}); err != nil {
+	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
 
-	// produce tar
-	if err := tw.Close(); err != nil {
+	return pgProve(ctx, testFiles, dbConfig, options...)
+}
+
+func pgProve(ctx context.Context, testFiles []string, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+	// Build test command
+	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
+	for _, fp := range testFiles {
+		relPath, err := filepath.Rel(utils.DbTestsDir, fp)
+		if err != nil {
+			return errors.Errorf("failed to resolve relative path: %w", err)
+		}
+		cmd = append(cmd, relPath)
+	}
+	// Mount tests directory into container as working directory
+	srcPath, err := filepath.Abs(utils.DbTestsDir)
+	if err != nil {
+		return errors.Errorf("failed to resolve absolute path: %w", err)
+	}
+	dstPath := "/tmp"
+	binds := []string{fmt.Sprintf("%s:%s:ro,z", srcPath, dstPath)}
+	// Enable pgTAP if not already exists
+	alreadyExists := false
+	options = append(options, func(cc *pgx.ConnConfig) {
+		cc.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
+			alreadyExists = n.Code == pgerrcode.DuplicateObject
+		}
+	})
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
+	if err != nil {
 		return err
 	}
-	return nil
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(ctx, ENABLE_PGTAP); err != nil {
+		return errors.Errorf("failed to enable pgTAP: %w", err)
+	}
+	if !alreadyExists {
+		defer func() {
+			if _, err := conn.Exec(ctx, DISABLE_PGTAP); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to disable pgTAP:", err)
+			}
+		}()
+	}
+	// Run pg_prove on volume mount
+	return utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.PgProveImage,
+			Env: []string{
+				"PGHOST=" + config.Host,
+				fmt.Sprintf("PGPORT=%d", config.Port),
+				"PGUSER=" + config.User,
+				"PGPASSWORD=" + config.Password,
+				"PGDATABASE=" + config.Database,
+			},
+			Cmd:        cmd,
+			WorkingDir: dstPath,
+		},
+		container.HostConfig{
+			NetworkMode: container.NetworkMode("host"),
+			Binds:       binds,
+		},
+		network.NetworkingConfig{},
+		"",
+		os.Stdout,
+		os.Stderr,
+	)
 }

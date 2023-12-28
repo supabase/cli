@@ -18,7 +18,7 @@ var (
 	}
 
 	testDbCmd = &cobra.Command{
-		Use:   "db",
+		Use:   "db [path] ...",
 		Short: dbTestCmd.Short,
 		RunE:  dbTestCmd.RunE,
 	}
@@ -40,9 +40,17 @@ var (
 )
 
 func init() {
+	// Build db command
+	dbFlags := testDbCmd.Flags()
+	dbFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
+	dbFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
+	dbFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
+	testDbCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	testCmd.AddCommand(testDbCmd)
+	// Build new command
 	newFlags := testNewCmd.Flags()
 	newFlags.VarP(&template, "template", "t", "Template framework to generate.")
 	testCmd.AddCommand(testNewCmd)
+	// Build test command
 	rootCmd.AddCommand(testCmd)
 }
