@@ -40,6 +40,8 @@ max_client_conn = 100
 enabled = true
 # Bind realtime via either IPv4 or IPv6. (default: IPv6)
 # ip_version = "IPv6"
+# The maximum length in bytes of HTTP request headers. (default: 4096)
+# max_header_length = 4096
 
 [studio]
 enabled = true

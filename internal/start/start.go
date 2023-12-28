@@ -592,6 +592,7 @@ EOF
 					"DNS_NODES=''",
 					"RLIMIT_NOFILE=",
 					"REALTIME_IP_VERSION=" + string(utils.Config.Realtime.IpVersion),
+					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",
