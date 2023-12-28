@@ -1,0 +1,84 @@
+name: Publish pg_prove
+
+on:
+  workflow_dispatch:
+
+jobs:
+  settings:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: supabase/pg_prove:${{ steps.version.outputs.pg_prove }}
+    steps:
+      - run: docker context create builders
+      - uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: builders
+      - uses: docker/build-push-action@v5
+        with:
+          load: true
+          context: https://github.com/horrendo/pg_prove.git
+          target: builder
+          tags: builder
+      - id: version
+        # Replace space with equal to get the raw version string, ie. pg_prove=3.36
+        run: docker run --rm -it builder pg_prove --version | tr ' ' '=' >> $GITHUB_OUTPUT
+
+  build_image:
+    needs:
+      - settings
+    strategy:
+      matrix:
+        include:
+          - runner: [self-hosted, X64]
+            arch: amd64
+          - runner: arm-runner
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - run: docker context create builders
+      - uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: builders
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          context: https://github.com/horrendo/pg_prove.git
+          tags: ${{ needs.settings.outputs.image_tag }}_${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ github.ref_name }}-pg_prove-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-pg_prove-${{ matrix.arch }}
+
+  merge_manifest:
+    needs:
+      - settings
+      - build_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Merge multi-arch manifests
+        run: |
+          docker buildx imagetools create -t ${{ needs.settings.outputs.image_tag }} \
+          ${{ needs.settings.outputs.image_tag }}_amd64 \
+          ${{ needs.settings.outputs.image_tag }}_arm64
+
+  publish:
+    needs:
+      - settings
+      - merge_manifest
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/mirror-image.yml
+    with:
+      image: ${{ needs.settings.outputs.image_tag }}
+    secrets: inherit
