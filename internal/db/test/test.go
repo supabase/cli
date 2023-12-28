@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -40,6 +41,9 @@ func pgProve(ctx context.Context, testFiles []string, config pgconn.Config, opti
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
 		cmd = append(cmd, relPath)
+	}
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
 	}
 	// Mount tests directory into container as working directory
 	srcPath, err := filepath.Abs(utils.DbTestsDir)
