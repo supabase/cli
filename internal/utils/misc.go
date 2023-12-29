@@ -61,6 +61,7 @@ var ServiceImages = []string{
 	LogflareImage,
 	VectorImage,
 	PgbouncerImage,
+	PgProveImage,
 }
 
 func ShortContainerImageName(imageName string) string {
