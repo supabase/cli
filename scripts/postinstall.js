@@ -8,6 +8,7 @@ import binLinks from "bin-links";
 import { createHash } from "crypto";
 import fs from "fs";
 import fetch from "node-fetch";
+import { Agent } from "https";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import path from "path";
 import tar from "tar";
@@ -128,7 +129,12 @@ async function main() {
     process.env.npm_config_https_proxy ||
     process.env.npm_config_http_proxy ||
     process.env.npm_config_proxy;
-  const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+
+  // Keeps the TCP connection alive when sending multiple requests
+  // Ref: https://github.com/node-fetch/node-fetch/issues/1735
+  const agent = proxyUrl
+    ? new HttpsProxyAgent(proxyUrl, { keepAlive: true })
+    : new Agent({ keepAlive: true });
   const resp = await fetch(url, { agent });
 
   const hash = createHash("sha256");
