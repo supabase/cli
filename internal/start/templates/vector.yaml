@@ -132,7 +132,7 @@ transforms:
     inputs:
       - router.db
     source: |-
-      .message, err = to_string(.message)
+      .message, err = to_string(.event_message)
       if err != null {
         log("Failed to convert .message to string: " + err, level: "error")
       } else if !contains(.message, "_analytics") {
