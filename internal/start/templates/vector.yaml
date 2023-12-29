@@ -132,13 +132,18 @@ transforms:
     inputs:
       - router.db
     source: |-
-      .metadata.host = "db-default"
-      .metadata.parsed.timestamp = .timestamp
-      .metadata.parsed.error_severity = replace!(.severity, r'^err$', "warning")
-      if .metadata.parsed.error_severity == "info" {
-          .metadata.parsed.error_severity = "log"
+      .message, err = to_string(.message)
+      if err != null {
+        log("Failed to convert .message to string: " + err, level: "error")
+      } else if !contains(.message, "_analytics") {
+        .metadata.host = "db-default"
+        .metadata.parsed.timestamp = .timestamp
+        .metadata.parsed.error_severity = replace!(.severity, r'^err$', "warning")
+        if .metadata.parsed.error_severity == "info" {
+            .metadata.parsed.error_severity = "log"
+        }
+        .metadata.parsed.error_severity = upcase(.metadata.parsed.error_severity)
       }
-      .metadata.parsed.error_severity = upcase(.metadata.parsed.error_severity)
 sinks:
   logflare_auth:
     type: "http"
