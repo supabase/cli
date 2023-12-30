@@ -21,9 +21,9 @@
     "supabase": "bin/supabase"
   },
   "dependencies": {
-    "bin-links": "^4.0.1",
-    "node-fetch": "^3.2.10",
+    "bin-links": "^4.0.3",
     "https-proxy-agent": "^7.0.2",
+    "node-fetch": "^3.3.2",
     "tar": "6.2.0"
   },
   "release": {
