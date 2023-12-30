@@ -56,7 +56,7 @@ func LoadProjectRef(fsys afero.Fs) (string, error) {
 	} else if err != nil {
 		return "", errors.Errorf("failed to load project ref: %w", err)
 	}
-	ProjectRef := string(bytes.TrimSpace(projectRefBytes))
+	ProjectRef = string(bytes.TrimSpace(projectRefBytes))
 	if err := utils.AssertProjectRefIsValid(ProjectRef); err != nil {
 		return "", err
 	}
