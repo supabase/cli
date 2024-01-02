@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -19,9 +19,8 @@ jobs:
           cache: true
 
       - run: |
-          if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
-          go tool cover -func coverage.out | grep total
+          go run gotest.tools/gotestsum -- ./... -race -v -count=1 \
+          -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
         with:
@@ -29,7 +28,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +40,6 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.53
           args: --timeout 3m --verbose
 
   start:
@@ -61,7 +59,7 @@ jobs:
 
   codegen:
     name: Codegen
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

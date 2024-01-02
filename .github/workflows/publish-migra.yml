@@ -1,4 +1,4 @@
-name: Publish pg_prove
+name: Publish migra
 
 on:
   workflow_dispatch:
@@ -7,20 +7,20 @@ jobs:
   settings:
     runs-on: ubuntu-latest
     outputs:
-      image_tag: supabase/pg_prove:${{ steps.version.outputs.pg_prove }}
+      image_tag: supabase/migra:${{ steps.version.outputs.migra }}
     steps:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v5
         with:
           load: true
-          context: https://github.com/horrendo/pg_prove.git
-          target: builder
-          tags: supabase/pg_prove:builder
+          context: https://github.com/djrobstep/migra.git
+          tags: supabase/migra:builder
       - id: version
-        # Replace space with equal to get the raw version string, ie. pg_prove=3.36
+        # Replace space with equal to get the raw version string, ie. migra=3.0.1663481299
         run: |
-          docker run --rm -a STDOUT supabase/pg_prove:builder pg_prove --version \
-          | tr ' ' '=' \
+          docker run --rm -a STDOUT supabase/migra:builder pip show migra \
+          | grep 'Version' \
+          | sed -E 's/Version: (.*)/migra=\1/g' \
           >> $GITHUB_OUTPUT
         shell: bash
 
@@ -51,11 +51,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           push: true
-          context: https://github.com/horrendo/pg_prove.git
+          context: https://github.com/djrobstep/migra.git
           tags: ${{ needs.settings.outputs.image_tag }}_${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
-          cache-from: type=gha,scope=${{ github.ref_name }}-pg_prove-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-pg_prove-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ github.ref_name }}-migra-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-migra-${{ matrix.arch }}
 
   merge_manifest:
     needs:
