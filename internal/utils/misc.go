@@ -29,7 +29,7 @@ const (
 	InbucketImage    = "inbucket/inbucket:3.0.3"
 	PostgrestImage   = "postgrest/postgrest:v12.0.1"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage       = "djrobstep/migra:3.0.1621480950"
+	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.75.0"
 	StudioImage      = "supabase/studio:20231123-64a766a"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
