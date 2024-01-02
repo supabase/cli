@@ -19,7 +19,7 @@ jobs:
       - id: version
         # Replace space with equal to get the raw version string, ie. pg_prove=3.36
         run: |
-          docker run --rm -a STDOUT -t supabase/pg_prove:builder pg_prove --version \
+          docker run --rm -a STDOUT supabase/pg_prove:builder pg_prove --version \
           | tr ' ' '=' \
           >> $GITHUB_OUTPUT
         shell: bash
