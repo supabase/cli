@@ -202,10 +202,10 @@ var (
 
 	dbTestCmd = &cobra.Command{
 		Hidden: true,
-		Use:    "test",
+		Use:    "test [path] ...",
 		Short:  "Tests local database with pgTAP",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return test.Run(cmd.Context(), afero.NewOsFs())
+			return test.Run(cmd.Context(), args, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 )
@@ -299,5 +299,10 @@ func init() {
 	dbCmd.AddCommand(dbStartCmd)
 	// Build test command
 	dbCmd.AddCommand(dbTestCmd)
+	testFlags := dbTestCmd.Flags()
+	testFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
+	testFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
+	testFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
+	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	rootCmd.AddCommand(dbCmd)
 }
