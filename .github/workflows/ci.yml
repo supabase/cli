@@ -19,7 +19,8 @@ jobs:
           cache: true
 
       - run: |
-          go run gotest.tools/gotestsum -- ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
+          go run gotest.tools/gotestsum -- ./... -race -v -count=1 \
+          -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
         with:
@@ -37,15 +38,8 @@ jobs:
           # Linter requires no cache
           cache: false
 
-      - id: version
-        run: |
-          go list -m github.com/golangci/golangci-lint \
-          | sed -E 's/ (.*)/linter=\1/g' \
-          >> $GITHUB_OUTPUT
-
       - uses: golangci/golangci-lint-action@v3
         with:
-          version: ${{ steps.version.outputs.linter }}
           args: --timeout 3m --verbose
 
   start:
