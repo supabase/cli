@@ -20,7 +20,7 @@ jobs:
 
       - run: |
           if [ ! -z $(gofmt -l .) ]; then echo 'Make sure to run "go fmt ./..." before commit!' && exit 1; fi
-          go test ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
+          go run gotest.tools/gotestsum@latest -- ./... -race -v -count=1 -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
           go tool cover -func coverage.out | grep total
 
       - uses: shogo82148/actions-goveralls@v1
