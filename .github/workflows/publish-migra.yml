@@ -9,10 +9,7 @@ jobs:
     outputs:
       image_tag: supabase/migra:${{ steps.version.outputs.migra }}
     steps:
-      - run: docker context create builders
       - uses: docker/setup-buildx-action@v3
-        with:
-          endpoint: builders
       - uses: docker/build-push-action@v5
         with:
           load: true
@@ -22,6 +19,7 @@ jobs:
         # Replace space with equal to get the raw version string, ie. migra=3.0.1663481299
         run: |
           docker run --rm -t supabase/migra:builder pip show migra \
+          | tee \
           | grep 'Version' \
           | sed -E 's/Version: (.*)/migra=\1/g' \
           >> $GITHUB_OUTPUT
