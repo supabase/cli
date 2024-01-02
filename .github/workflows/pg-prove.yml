@@ -18,10 +18,14 @@ jobs:
           load: true
           context: https://github.com/horrendo/pg_prove.git
           target: builder
-          tags: builder
+          tags: supabase/pg_prove:builder
       - id: version
         # Replace space with equal to get the raw version string, ie. pg_prove=3.36
-        run: docker run --rm -it builder pg_prove --version | tr ' ' '=' >> $GITHUB_OUTPUT
+        run: |
+          docker run --rm -t supabase/pg_prove:builder pg_prove --version \
+          | tr ' ' '=' \
+          >> $GITHUB_OUTPUT
+        shell: bash
 
   build_image:
     needs:
