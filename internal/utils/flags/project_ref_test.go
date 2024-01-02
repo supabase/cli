@@ -3,9 +3,10 @@ package flags
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
-	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -74,12 +75,13 @@ func TestProjectPrompt(t *testing.T) {
 
 	t.Run("throws error on read failure", func(t *testing.T) {
 		// Setup long token
-		var stdin bytes.Buffer
-		_, err := stdin.WriteString(strings.Repeat("a", bufio.MaxScanTokenSize))
-		require.NoError(t, err)
+		stdin := iotest.ErrReader(bufio.ErrTooLong)
 		// Run test
-		err = promptProjectRef(&stdin)
+		err := promptProjectRef(stdin)
 		// Check error
 		assert.ErrorIs(t, err, bufio.ErrTooLong)
+		// Workaround for gotestsum mis-reporting test output as failure:
+		// https://github.com/gotestyourself/gotestsum/issues/141
+		fmt.Println()
 	})
 }
