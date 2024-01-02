@@ -19,7 +19,6 @@ jobs:
         # Replace space with equal to get the raw version string, ie. migra=3.0.1663481299
         run: |
           docker run --rm -a STDOUT supabase/migra:builder pip show migra \
-          | tee \
           | grep 'Version' \
           | sed -E 's/Version: (.*)/migra=\1/g' \
           >> $GITHUB_OUTPUT
