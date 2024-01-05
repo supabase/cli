@@ -39,7 +39,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/muesli/reflow v0.3.0
-	github.com/oapi-codegen/runtime v1.1.0
+	github.com/oapi-codegen/runtime v1.1.1
 	github.com/slack-go/slack v0.12.3
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.0
