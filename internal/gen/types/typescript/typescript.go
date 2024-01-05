@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, dbUrl string, schemas []string, fsys afero.Fs) error {
+func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, dbUrl string, schemas []string, postgrestV9Compat bool, fsys afero.Fs) error {
 	coalesce := func(args ...[]string) []string {
 		for _, arg := range args {
 			if len(arg) != 0 {
@@ -69,8 +69,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 					"PG_META_DB_URL=" + escaped,
 					"PG_META_GENERATE_TYPES=typescript",
 					"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, []string{"public"}), ","),
-					// Can't detect the PostgREST version when using --db-url, so just default to `true`.
-					"PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=true",
+					fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
 				},
 				Cmd: []string{"node", "dist/server/server.js"},
 			},
@@ -94,9 +93,8 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return err
 		}
 
-		detectOneToOneRelationships := "true"
 		if strings.Contains(utils.Config.Api.Image, "v9") {
-			detectOneToOneRelationships = "false"
+			postgrestV9Compat = true
 		}
 
 		return utils.DockerRunOnceWithStream(
@@ -106,7 +104,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 				"PG_META_DB_HOST=" + utils.DbId,
 				"PG_META_GENERATE_TYPES=typescript",
 				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
-				"PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=" + detectOneToOneRelationships,
+				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
 			},
 			[]string{"node", "dist/server/server.js"},
 			os.Stdout,

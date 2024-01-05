@@ -33,13 +33,13 @@ func TestGenLocalCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		assert.NoError(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
+		assert.NoError(t, Run(context.Background(), true, false, "", "", []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, true, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error when db is not started", func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -73,7 +73,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), true, false, "", "", []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -97,13 +97,13 @@ func TestGenLinkedCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
 		// Run test
-		assert.NoError(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+		assert.NoError(t, Run(context.Background(), false, true, "", "", []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config file", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, true, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on missing project id", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestGenLinkedCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, true, fsys))
 	})
 
 	t.Run("throws error on missing access token", func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestGenLinkedCommand(t *testing.T) {
 		projectId := apitest.RandomProjectRef()
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectId), 0644))
 		// Run test
-		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), false, true, "", "", []string{}, true, fsys))
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
@@ -141,7 +141,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errors.New("network failure"))
 		// Run test
-		err := Run(context.Background(), false, true, "", "", []string{}, fsys)
+		err := Run(context.Background(), false, true, "", "", []string{}, true, fsys)
 		// Validate api
 		assert.ErrorContains(t, err, "network failure")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -164,7 +164,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
 		// Run test
-		assert.NoError(t, Run(context.Background(), false, false, projectId, "", []string{}, fsys))
+		assert.NoError(t, Run(context.Background(), false, false, projectId, "", []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -175,7 +175,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 		// Setup valid projectId id
 		projectId := apitest.RandomProjectRef()
 		// Run test
-		assert.Error(t, Run(context.Background(), false, false, projectId, "", []string{}, fsys))
+		assert.Error(t, Run(context.Background(), false, false, projectId, "", []string{}, true, fsys))
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
@@ -192,7 +192,7 @@ func TestGenProjectIdCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errors.New("network failure"))
 		// Run test
-		err := Run(context.Background(), false, false, projectId, "", []string{}, fsys)
+		err := Run(context.Background(), false, false, projectId, "", []string{}, true, fsys)
 		// Validate api
 		assert.ErrorContains(t, err, "network failure")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -211,14 +211,14 @@ func TestGenRemoteCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
 		// Run test
-		assert.NoError(t, Run(context.Background(), false, false, "", dbUrl, []string{}, afero.NewMemMapFs()))
+		assert.NoError(t, Run(context.Background(), false, false, "", dbUrl, []string{}, true, afero.NewMemMapFs()))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on malformed db url", func(t *testing.T) {
 		// Run test
-		assert.Error(t, Run(context.Background(), false, false, "", "foo", []string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), false, false, "", "foo", []string{}, true, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error when docker is not started", func(t *testing.T) {
@@ -229,7 +229,7 @@ func TestGenRemoteCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), false, false, "", dbUrl, []string{}, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), false, false, "", dbUrl, []string{}, true, afero.NewMemMapFs()))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
