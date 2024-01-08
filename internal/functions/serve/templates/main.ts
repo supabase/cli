@@ -128,8 +128,8 @@ serve(async (req: Request) => {
     );
   const forceCreate = true;
   const customModuleRoot = ""; // empty string to allow any local path
-  const cpuTimeSoftLimitMs = 10000;
-  const cpuTimeHardLimitMs = 20000;
+  const cpuTimeSoftLimitMs = 1000;
+  const cpuTimeHardLimitMs = 2000;
   try {
     const worker = await EdgeRuntime.userWorkers.create({
       servicePath,
