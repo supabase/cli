@@ -49,7 +49,7 @@ func MockDockerStart(docker *client.Client, image, containerID string) {
 }
 
 // Ref: internal/utils/docker.go::DockerRunOnce
-func MockDockerLogs(docker *client.Client, containerID, stdout string) error {
+func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode int) error {
 	var body bytes.Buffer
 	writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
 	_, err := writer.Write([]byte(stdout))
@@ -61,31 +61,21 @@ func MockDockerLogs(docker *client.Client, containerID, stdout string) error {
 	gock.New(docker.DaemonHost()).
 		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
 		Reply(http.StatusOK).
-		JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: 0}})
+		JSON(types.ContainerJSONBase{State: &types.ContainerState{
+			ExitCode: exitCode,
+		}})
 	gock.New(docker.DaemonHost()).
 		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
 		Reply(http.StatusOK)
 	return err
 }
 
-// Ref: internal/utils/docker.go::DockerRunOnce
+func MockDockerLogs(docker *client.Client, containerID, stdout string) error {
+	return setupDockerLogs(docker, containerID, stdout, 0)
+}
+
 func MockDockerLogsExitCode(docker *client.Client, containerID string, exitCode int) error {
-	var body bytes.Buffer
-	writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
-	_, err := writer.Write([]byte(""))
-	gock.New(docker.DaemonHost()).
-		Get("/v"+docker.ClientVersion()+"/containers/"+containerID+"/logs").
-		Reply(http.StatusOK).
-		SetHeader("Content-Type", "application/vnd.docker.raw-stream").
-		Body(&body)
-	gock.New(docker.DaemonHost()).
-		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
-		Reply(http.StatusOK).
-		JSON(types.ContainerJSONBase{State: &types.ContainerState{ExitCode: exitCode}})
-	gock.New(docker.DaemonHost()).
-		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
-		Reply(http.StatusOK)
-	return err
+	return setupDockerLogs(docker, containerID, "", exitCode)
 }
 
 func ListUnmatchedRequests() []string {
