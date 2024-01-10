@@ -56,23 +56,30 @@ var (
 		Short: "Generate types from Postgres schema",
 	}
 
-	local     bool
-	linked    bool
-	projectId string
-	dbUrl     string
-	schemas   []string
+	local             bool
+	linked            bool
+	projectId         string
+	dbUrl             string
+	schemas           []string
+	postgrestV9Compat bool
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
 		Short: "Generate types for TypeScript",
 		Long:  "Generate types for TypeScript. Must specify one of --local, --linked, --project-id, or --db-url",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if postgrestV9Compat && dbUrl == "" {
+				return errors.New("--postgrest-v9-compat can only be used together with --db-url.")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !local && !linked && projectId == "" && dbUrl == "" {
 				return errors.New("Must specify one of --local, --linked, --project-id, or --db-url")
 			}
 
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return typescript.Run(ctx, local, linked, projectId, dbUrl, schemas, afero.NewOsFs())
+			return typescript.Run(ctx, local, linked, projectId, dbUrl, schemas, postgrestV9Compat, afero.NewOsFs())
 		},
 		Example: `  supabase gen types typescript --local
   supabase gen types typescript --linked
@@ -88,6 +95,7 @@ func init() {
 	genFlags.StringVar(&projectId, "project-id", "", "Generate types from a project ID.")
 	genFlags.StringVar(&dbUrl, "db-url", "", "Generate types from a database url.")
 	genFlags.StringArrayVar(&schemas, "schema", []string{}, "Schemas to generate types for.")
+	genFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
 	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
 	genCmd.AddCommand(genTypesCmd)
