@@ -26,6 +26,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -60,7 +61,7 @@ func AssertDockerIsRunning(ctx context.Context) error {
 }
 
 const (
-	cliProjectLabel     = "com.supabase.cli.project"
+	CliProjectLabel     = "com.supabase.cli.project"
 	composeProjectLabel = "com.docker.compose.projecta"
 )
 
@@ -71,7 +72,7 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 		types.NetworkCreate{
 			CheckDuplicate: true,
 			Labels: map[string]string{
-				cliProjectLabel:     Config.ProjectId,
+				CliProjectLabel:     Config.ProjectId,
 				composeProjectLabel: Config.ProjectId,
 			},
 		},
@@ -86,21 +87,12 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error
 	return err
 }
 
-// Used by unit tests
-// NOTE: There's a risk of data race with reads & writes from `DockerRun` and
-// reads from `DockerRemoveAll`, but since they're expected to be run on the
-// same thread, this is fine.
-var (
-	Containers []string
-	Volumes    []string
-)
-
-func WaitAll(containers []string, exec func(container string) error) []error {
+func WaitAll[T any](containers []T, exec func(container T) error) []error {
 	var wg sync.WaitGroup
 	result := make([]error, len(containers))
 	for i, container := range containers {
 		wg.Add(1)
-		go func(i int, container string) {
+		go func(i int, container T) {
 			defer wg.Done()
 			result[i] = exec(container)
 		}(i, container)
@@ -109,22 +101,54 @@ func WaitAll(containers []string, exec func(container string) error) []error {
 	return result
 }
 
-func DockerRemoveAll(ctx context.Context) {
-	_ = WaitAll(Containers, func(container string) error {
-		return Docker.ContainerRemove(ctx, container, types.ContainerRemoveOptions{
-			RemoveVolumes: true,
-			Force:         true,
-		})
+// NoBackupVolume TODO: encapsulate this state in a class
+var NoBackupVolume = false
+
+func DockerRemoveAll(ctx context.Context, w io.Writer) error {
+	args := CliProjectFilter()
+	containers, err := Docker.ContainerList(ctx, types.ContainerListOptions{
+		All:     true,
+		Filters: args,
 	})
-	_ = WaitAll(Volumes, func(name string) error {
-		return Docker.VolumeRemove(ctx, name, true)
+	if err != nil {
+		return errors.Errorf("failed to list containers: %w", err)
+	}
+	// Gracefully shutdown containers
+	var ids []string
+	for _, c := range containers {
+		if c.State == "running" {
+			ids = append(ids, c.ID)
+		}
+	}
+	fmt.Fprintln(w, "Stopping containers...")
+	result := WaitAll(ids, func(id string) error {
+		if err := Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+			return errors.Errorf("failed to stop container: %w", err)
+		}
+		return nil
 	})
-	_, _ = Docker.NetworksPrune(ctx, CliProjectFilter())
+	if err := errors.Join(result...); err != nil {
+		return err
+	}
+	if _, err := Docker.ContainersPrune(ctx, args); err != nil {
+		return errors.Errorf("failed to prune containers: %w", err)
+	}
+	// Remove named volumes
+	if NoBackupVolume {
+		if _, err := Docker.VolumesPrune(ctx, args); err != nil {
+			return errors.Errorf("failed to prune volumes: %w", err)
+		}
+	}
+	// Remove networks.
+	if _, err = Docker.NetworksPrune(ctx, args); err != nil {
+		return errors.Errorf("failed to prune networks: %w", err)
+	}
+	return nil
 }
 
 func CliProjectFilter() filters.Args {
 	return filters.NewArgs(
-		filters.Arg("label", cliProjectLabel+"="+Config.ProjectId),
+		filters.Arg("label", CliProjectLabel+"="+Config.ProjectId),
 	)
 }
 
@@ -264,7 +288,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	if config.Labels == nil {
 		config.Labels = map[string]string{}
 	}
-	config.Labels[cliProjectLabel] = Config.ProjectId
+	config.Labels[CliProjectLabel] = Config.ProjectId
 	config.Labels[composeProjectLabel] = Config.ProjectId
 	if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
@@ -275,37 +299,36 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 			return "", err
 		}
 	}
-	// Skip named volume for BitBucket pipeline
-	bitbucket := os.Getenv("BITBUCKET_CLONE_DIR")
-	if len(bitbucket) > 0 {
-		var binds []string
-		for _, bind := range hostConfig.Binds {
-			spec, err := loader.ParseVolume(bind)
-			if err != nil {
-				return "", errors.Errorf("failed to parse docker volume: %w", err)
-			}
-			if spec.Type != string(mount.TypeVolume) {
-				binds = append(binds, bind)
-			}
-		}
-		hostConfig.Binds = binds
-	}
-	// Create container from image
-	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, &networkingConfig, nil, containerName)
-	if err != nil {
-		return "", errors.Errorf("failed to create docker container: %w", err)
-	}
-	// Track container id for cleanup
-	Containers = append(Containers, resp.ID)
+	var binds, sources []string
 	for _, bind := range hostConfig.Binds {
 		spec, err := loader.ParseVolume(bind)
 		if err != nil {
 			return "", errors.Errorf("failed to parse docker volume: %w", err)
 		}
-		// Track named volumes for cleanup
-		if len(spec.Source) > 0 && spec.Type == string(mount.TypeVolume) {
-			Volumes = append(Volumes, spec.Source)
+		if spec.Type != string(mount.TypeVolume) {
+			binds = append(binds, bind)
+		} else if len(spec.Source) > 0 {
+			sources = append(sources, spec.Source)
 		}
+	}
+	// Skip named volume for BitBucket pipeline
+	if os.Getenv("BITBUCKET_CLONE_DIR") != "" {
+		hostConfig.Binds = binds
+	} else {
+		// Create named volumes with labels
+		for _, name := range sources {
+			if _, err := Docker.VolumeCreate(ctx, volume.CreateOptions{
+				Name:   name,
+				Labels: config.Labels,
+			}); err != nil {
+				return "", errors.Errorf("failed to create volume: %w", err)
+			}
+		}
+	}
+	// Create container from image
+	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, &networkingConfig, nil, containerName)
+	if err != nil {
+		return "", errors.Errorf("failed to create docker container: %w", err)
 	}
 	// Run container in background
 	err = Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
@@ -451,7 +474,7 @@ func suggestDockerStop(ctx context.Context, hostPort string) string {
 		for _, c := range containers {
 			for _, p := range c.Ports {
 				if fmt.Sprintf("%s:%d", p.IP, p.PublicPort) == hostPort {
-					if project, ok := c.Labels[cliProjectLabel]; ok {
+					if project, ok := c.Labels[CliProjectLabel]; ok {
 						return "\nTry stopping the running project with " + Aqua("supabase stop --project-id "+project)
 					} else {
 						name := c.ID

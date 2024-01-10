@@ -50,13 +50,7 @@ func TestInitBranch(t *testing.T) {
 }
 
 func TestStartDatabase(t *testing.T) {
-	teardown := func() {
-		utils.Containers = []string{}
-		utils.Volumes = []string{}
-	}
-
 	t.Run("initialize main branch", func(t *testing.T) {
-		defer teardown()
 		utils.Config.Db.MajorVersion = 15
 		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
@@ -108,7 +102,6 @@ func TestStartDatabase(t *testing.T) {
 	})
 
 	t.Run("recover from backup volume", func(t *testing.T) {
-		defer teardown()
 		utils.Config.Db.MajorVersion = 14
 		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
@@ -145,7 +138,6 @@ func TestStartDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on start failure", func(t *testing.T) {
-		defer teardown()
 		utils.Config.Db.MajorVersion = 15
 		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
@@ -241,9 +233,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Cleanup resources
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
-			Reply(http.StatusOK)
+		apitest.MockDockerStop(utils.Docker)
 		// Run test
 		err := Run(context.Background(), fsys)
 		// Check error

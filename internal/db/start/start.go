@@ -45,7 +45,9 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
-		utils.DockerRemoveAll(context.Background())
+		if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
 	return err
 }
@@ -126,8 +128,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	noBackupVolume := client.IsErrNotFound(err)
-	if noBackupVolume {
+	utils.NoBackupVolume = client.IsErrNotFound(err)
+	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
 	} else {
 		fmt.Fprintln(w, "Starting database from backup...")
@@ -139,7 +141,7 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		return errors.New(ErrDatabase)
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
-	if noBackupVolume {
+	if utils.NoBackupVolume {
 		if err := setupDatabase(ctx, fsys, w, options...); err != nil {
 			return err
 		}

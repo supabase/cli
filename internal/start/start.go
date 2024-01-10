@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -71,7 +72,9 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			utils.DockerRemoveAll(context.Background())
+			if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
 			return err
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"gopkg.in/h2non/gock.v1"
@@ -40,12 +41,37 @@ func MockDockerStart(docker *client.Client, image, containerID string) {
 		Reply(http.StatusCreated).
 		JSON(types.NetworkCreateResponse{})
 	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/volumes/create").
+		Persist().
+		Reply(http.StatusCreated).
+		JSON(volume.Volume{})
+	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/create").
 		Reply(http.StatusOK).
 		JSON(container.CreateResponse{ID: containerID})
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/" + containerID + "/start").
 		Reply(http.StatusAccepted)
+}
+
+// Ref: internal/utils/docker.go::DockerRemoveAll
+func MockDockerStop(docker *client.Client) {
+	gock.New(docker.DaemonHost()).
+		Get("/v" + docker.ClientVersion() + "/containers/json").
+		Reply(http.StatusOK).
+		JSON([]types.Container{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/containers/prune").
+		Reply(http.StatusOK).
+		JSON(types.ContainersPruneReport{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/volumes/prune").
+		Reply(http.StatusOK).
+		JSON(types.VolumesPruneReport{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/networks/prune").
+		Reply(http.StatusOK).
+		JSON(types.NetworksPruneReport{})
 }
 
 // Ref: internal/utils/docker.go::DockerRunOnce

@@ -5,12 +5,8 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
-	"os"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
-	"github.com/go-errors/errors"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -33,67 +29,16 @@ func Run(ctx context.Context, backup bool, projectId string, fsys afero.Fs) erro
 	}
 
 	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
+	if resp, err := utils.Docker.VolumeList(ctx, volume.ListOptions{
+		Filters: utils.CliProjectFilter(),
+	}); err == nil && len(resp.Volumes) > 0 {
+		listVolume := fmt.Sprintf("docker volume ls --filter label=%s=%s", utils.CliProjectLabel, utils.Config.ProjectId)
+		utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
+	}
 	return nil
 }
 
 func stop(ctx context.Context, backup bool, w io.Writer) error {
-	args := utils.CliProjectFilter()
-	containers, err := utils.Docker.ContainerList(ctx, types.ContainerListOptions{
-		All:     true,
-		Filters: args,
-	})
-	if err != nil {
-		return errors.Errorf("failed to list containers: %w", err)
-	}
-	// Gracefully shutdown containers
-	var ids []string
-	for _, c := range containers {
-		if c.State == "running" {
-			ids = append(ids, c.ID)
-		}
-	}
-	fmt.Fprintln(w, "Stopping containers...")
-	result := utils.WaitAll(ids, func(id string) error {
-		if err := utils.Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
-			return errors.Errorf("failed to stop container: %w", err)
-		}
-		return nil
-	})
-	if err := errors.Join(result...); err != nil {
-		return err
-	}
-	if _, err := utils.Docker.ContainersPrune(ctx, args); err != nil {
-		return errors.Errorf("failed to prune containers: %w", err)
-	}
-	// Remove named volumes
-	if backup {
-		fmt.Fprintln(os.Stderr, "Postgres database saved to volume:", utils.DbId)
-		fmt.Fprintln(os.Stderr, "Postgres config saved to volume:", utils.ConfigId)
-		fmt.Fprintln(os.Stderr, "Storage directory saved to volume:", utils.StorageId)
-		fmt.Fprintln(os.Stderr, "Functions cache saved to volume:", utils.EdgeRuntimeId)
-		fmt.Fprintln(os.Stderr, "Inbucket emails saved to volume:", utils.InbucketId)
-	} else {
-		// TODO: label named volumes to use VolumesPrune for branch support
-		volumes := []string{
-			utils.ConfigId,
-			utils.DbId,
-			utils.StorageId,
-			utils.EdgeRuntimeId,
-			utils.InbucketId,
-		}
-		result = utils.WaitAll(volumes, func(name string) error {
-			if err := utils.Docker.VolumeRemove(ctx, name, true); err != nil && !errdefs.IsNotFound(err) {
-				return errors.Errorf("Failed to remove volume %s: %w", name, err)
-			}
-			return nil
-		})
-		if err := errors.Join(result...); err != nil {
-			return err
-		}
-	}
-	// Remove networks.
-	if _, err = utils.Docker.NetworksPrune(ctx, args); err != nil {
-		return errors.Errorf("failed to prune networks: %w", err)
-	}
-	return nil
+	utils.NoBackupVolume = !backup
+	return utils.DockerRemoveAll(ctx, w)
 }

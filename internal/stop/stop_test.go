@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,12 @@ func TestStopCommand(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 			Reply(http.StatusOK).
 			JSON(types.NetworksPruneReport{})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
+			Reply(http.StatusOK).
+			JSON(volume.ListResponse{Volumes: []*volume.Volume{{
+				Name: utils.DbId,
+			}}})
 		// Run test
 		err := Run(context.Background(), true, "", fsys)
 		// Check error
@@ -108,33 +115,7 @@ func TestStopServices(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
-			Reply(http.StatusOK).
-			JSON([]types.Container{})
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
-			Reply(http.StatusOK).
-			JSON(types.ContainersPruneReport{})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.ConfigId).
-			Reply(http.StatusOK)
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
-			Reply(http.StatusOK)
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.StorageId).
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.EdgeRuntimeId).
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.InbucketId).
-			Reply(http.StatusNotFound)
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
-			Reply(http.StatusOK).
-			JSON(types.NetworksPruneReport{})
+		apitest.MockDockerStop(utils.Docker)
 		// Run test
 		err := stop(context.Background(), false, io.Discard)
 		// Check error
