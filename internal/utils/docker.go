@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -150,38 +149,6 @@ func CliProjectFilter() filters.Args {
 	return filters.NewArgs(
 		filters.Arg("label", CliProjectLabel+"="+Config.ProjectId),
 	)
-}
-
-func DockerAddFile(ctx context.Context, container string, fileName string, content []byte) error {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	err := tw.WriteHeader(&tar.Header{
-		Name: fileName,
-		Mode: 0777,
-		Size: int64(len(content)),
-	})
-
-	if err != nil {
-		return errors.Errorf("failed to copy file: %w", err)
-	}
-
-	_, err = tw.Write(content)
-
-	if err != nil {
-		return errors.Errorf("failed to copy file: %w", err)
-	}
-
-	err = tw.Close()
-
-	if err != nil {
-		return errors.Errorf("failed to copy file: %w", err)
-	}
-
-	err = Docker.CopyToContainer(ctx, container, "/tmp", &buf, types.CopyToContainerOptions{})
-	if err != nil {
-		return errors.Errorf("failed to copy file: %w", err)
-	}
-	return nil
 }
 
 var (
