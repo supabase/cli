@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -148,17 +148,10 @@ func TestMigrateShadow(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
 			Query(sql).
-			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("CREATE SCHEMA")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 0 1")
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
@@ -320,17 +313,10 @@ At statement 0: create schema public`)
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
 			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
 			Query(sql).
-			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Reply("CREATE SCHEMA")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 0 1")
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)

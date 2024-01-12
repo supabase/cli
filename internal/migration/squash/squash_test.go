@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
@@ -57,20 +58,14 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(sql).
-			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
-			Reply("INSERT 1").
-			Query(repair.INSERT_MIGRATION_VERSION, "1", "target", "{}").
-			Reply("INSERT 1")
+		conn.Query(sql).
+			Reply("CREATE SCHEMA")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
+			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{Host: "127.0.0.1"}, fsys, conn.Intercept)
 		// Check error
@@ -94,16 +89,8 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
-			Reply("INSERT 1")
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
+			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -236,18 +223,11 @@ func TestSquashMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(sql).
-			Reply("CREATE SCHEMA").
-			Query(repair.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
-			Reply("INSERT 1")
+		conn.Query(sql).
+			Reply("CREATE SCHEMA")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Reply("INSERT 0 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
 		// Check error
@@ -270,16 +250,8 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
-			Reply("INSERT 1")
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
+			Reply("INSERT 0 1")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept)
 		// Check error
@@ -295,18 +267,16 @@ func TestBaselineMigration(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on create failure", func(t *testing.T) {
+	t.Run("throws error on query failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Query(repair.ADD_NAME_COLUMN)
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '%[1]s';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('%[1]s', 'init', null)", "0")).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error
@@ -319,14 +289,6 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error

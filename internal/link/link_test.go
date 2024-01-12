@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
@@ -123,14 +123,7 @@ func TestLinkCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE")
+		pgtest.MockMigrationHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -390,14 +383,7 @@ func TestLinkDatabase(t *testing.T) {
 			"standard_conforming_strings": "on",
 		})
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE")
+		pgtest.MockMigrationHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -414,14 +400,7 @@ func TestLinkDatabase(t *testing.T) {
 			"server_version":              "15.0",
 		})
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(repair.ADD_NAME_COLUMN).
-			Reply("ALTER TABLE")
+		pgtest.MockMigrationHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -438,12 +417,12 @@ func TestLinkDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(repair.CREATE_VERSION_SCHEMA).
+		conn.Query(history.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
-			Query(repair.CREATE_VERSION_TABLE).
+			Query(history.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(repair.ADD_STATEMENTS_COLUMN).
-			Query(repair.ADD_NAME_COLUMN)
+			Query(history.ADD_STATEMENTS_COLUMN).
+			Query(history.ADD_NAME_COLUMN)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
