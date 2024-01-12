@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -21,15 +22,6 @@ import (
 const (
 	Applied  = "applied"
 	Reverted = "reverted"
-)
-
-const (
-	CREATE_VERSION_SCHEMA    = "CREATE SCHEMA IF NOT EXISTS supabase_migrations"
-	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
-	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
-	ADD_NAME_COLUMN          = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text"
-	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3)"
-	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = $1"
 )
 
 var ErrInvalidVersion = errors.New("invalid version number")
@@ -53,7 +45,6 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status string, fsys afero.Fs) error {
 	batch := pgconn.Batch{}
-	addCreateTableStatements(&batch)
 	switch status {
 	case Applied:
 		f, err := NewMigrationFromVersion(version, fsys)
@@ -70,17 +61,9 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status s
 	return nil
 }
 
-func addCreateTableStatements(batch *pgconn.Batch) {
-	// Create history table if not exists
-	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
-	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
-	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
-	batch.ExecParams(ADD_NAME_COLUMN, nil, nil, nil, nil)
-}
-
 func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 	batch := pgconn.Batch{}
-	addCreateTableStatements(&batch)
+	history.AddCreateTableStatements(&batch)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		return errors.Errorf("failed to create migration table: %w", err)
 	}
@@ -89,7 +72,7 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 
 func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
 	// Create history table if not exists
-	addCreateTableStatements(batch)
+	history.AddCreateTableStatements(batch)
 	encoded := []byte{'{'}
 	for i, line := range stats {
 		if i > 0 {
@@ -99,7 +82,7 @@ func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string)
 	}
 	encoded = append(encoded, '}')
 	batch.ExecParams(
-		INSERT_MIGRATION_VERSION,
+		history.INSERT_MIGRATION_VERSION,
 		[][]byte{[]byte(version), []byte(name), encoded},
 		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
 		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
@@ -109,7 +92,7 @@ func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string)
 
 func DeleteVersionSQL(batch *pgconn.Batch, version string) {
 	batch.ExecParams(
-		DELETE_MIGRATION_VERSION,
+		history.DELETE_MIGRATION_VERSION,
 		[][]byte{[]byte(version)},
 		[]uint32{pgtype.TextOID},
 		[]int16{pgtype.TextFormatCode},
@@ -191,7 +174,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	// ExecBatch is implicitly transactional
 	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
 		// Defaults to printing the last statement on error
-		stat := INSERT_MIGRATION_VERSION
+		stat := history.INSERT_MIGRATION_VERSION
 		i := len(result)
 		if i < len(m.Lines) {
 			stat = m.Lines[i]

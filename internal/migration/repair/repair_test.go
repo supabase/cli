@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
@@ -36,15 +37,8 @@ func TestRepairCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(INSERT_MIGRATION_VERSION, "0", "test", "{}").
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
@@ -58,15 +52,7 @@ func TestRepairCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(DELETE_MIGRATION_VERSION, "0").
+		conn.Query(history.DELETE_MIGRATION_VERSION, "0").
 			Reply("DELETE 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, "0", Reverted, fsys, conn.Intercept)
@@ -91,15 +77,8 @@ func TestRepairCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(CREATE_VERSION_TABLE).
-			Reply("CREATE TABLE").
-			Query(ADD_STATEMENTS_COLUMN).
-			Reply("ALTER TABLE").
-			Query(ADD_NAME_COLUMN).
-			Reply("ALTER TABLE").
-			Query(INSERT_MIGRATION_VERSION, "0", "test", "{}").
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
 		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
@@ -146,8 +125,10 @@ func TestMigrationFile(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.Lines[0]).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query(INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0]))
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0])).
+			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
@@ -98,8 +99,6 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	return dump.DumpSchema(ctx, config, nil, false, false, f)
 }
 
-const DELETE_MIGRATION_BEFORE = "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1"
-
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) == 0 {
 		// Expecting no errors here because the caller should have handled them
@@ -121,8 +120,8 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := pgx.Batch{}
-	batch.Queue(DELETE_MIGRATION_BEFORE, m.Version)
-	batch.Queue(repair.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Lines)
+	batch.Queue(history.DELETE_MIGRATION_BEFORE, m.Version)
+	batch.Queue(history.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Lines)
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return errors.Errorf("failed to update migration history: %w", err)
 	}
