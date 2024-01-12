@@ -52,7 +52,8 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 }
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status string, fsys afero.Fs) error {
-	batch := batchCreateTable()
+	batch := pgconn.Batch{}
+	addCreateTableStatements(&batch)
 	switch status {
 	case Applied:
 		f, err := NewMigrationFromVersion(version, fsys)
@@ -69,18 +70,17 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status s
 	return nil
 }
 
-func batchCreateTable() pgconn.Batch {
+func addCreateTableStatements(batch *pgconn.Batch) {
 	// Create history table if not exists
-	batch := pgconn.Batch{}
 	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
 	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
 	batch.ExecParams(ADD_NAME_COLUMN, nil, nil, nil, nil)
-	return batch
 }
 
 func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
-	batch := batchCreateTable()
+	batch := pgconn.Batch{}
+	addCreateTableStatements(&batch)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		return errors.Errorf("failed to create migration table: %w", err)
 	}
@@ -88,6 +88,8 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 }
 
 func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
+	// Create history table if not exists
+	addCreateTableStatements(batch)
 	encoded := []byte{'{'}
 	for i, line := range stats {
 		if i > 0 {
