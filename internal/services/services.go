@@ -19,35 +19,9 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	_ = utils.LoadConfigFS(fsys)
 	serviceImages := GetServiceImages()
 
-	linked := make(map[string]string)
+	var linked map[string]string
 	if projectRef, err := flags.LoadProjectRef(fsys); err == nil {
-		var wg sync.WaitGroup
-		wg.Add(4)
-		go func() {
-			defer wg.Done()
-			if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
-				linked[utils.Config.Db.Image] = version
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			if version, err := tenant.GetGotrueVersion(ctx, projectRef); err == nil {
-				linked[utils.Config.Auth.Image] = version
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			if version, err := tenant.GetPostgrestVersion(ctx, projectRef); err == nil {
-				linked[utils.Config.Api.Image] = version
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			if version, err := tenant.GetStorageVersion(ctx, projectRef); err == nil {
-				linked[utils.Config.Storage.Image] = version
-			}
-		}()
-		wg.Wait()
+		linked = GetRemoteImages(ctx, projectRef)
 	}
 
 	table := `|SERVICE IMAGE|LOCAL|LINKED|
@@ -81,4 +55,37 @@ func GetServiceImages() []string {
 		utils.PgbouncerImage,
 		utils.ImageProxyImage,
 	}
+}
+
+func GetRemoteImages(ctx context.Context, projectRef string) map[string]string {
+	const cap = 4
+	linked := make(map[string]string, cap)
+	var wg sync.WaitGroup
+	wg.Add(cap)
+	go func() {
+		defer wg.Done()
+		if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
+			linked[utils.Config.Db.Image] = version
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if version, err := tenant.GetGotrueVersion(ctx, projectRef); err == nil {
+			linked[utils.Config.Auth.Image] = version
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if version, err := tenant.GetPostgrestVersion(ctx, projectRef); err == nil {
+			linked[utils.Config.Api.Image] = version
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if version, err := tenant.GetStorageVersion(ctx, projectRef); err == nil {
+			linked[utils.Config.Storage.Image] = version
+		}
+	}()
+	wg.Wait()
+	return linked
 }

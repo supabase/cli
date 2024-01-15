@@ -24,9 +24,20 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
+
+func suggestUpdateCmd(serviceImages map[string]string) string {
+	cmd := "You are running outdated service versions locally:\n"
+	for k, v := range serviceImages {
+		cmd += fmt.Sprintf("%s => %s\n", k, v)
+	}
+	cmd += fmt.Sprintf("Run %s to update them.", utils.Aqua("supabase link"))
+	return cmd
+}
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
@@ -40,6 +51,19 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 			return nil
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
+		}
+		if ref, err := flags.LoadProjectRef(fsys); err == nil {
+			local := services.GetServiceImages()
+			remote := services.GetRemoteImages(ctx, ref)
+			for _, image := range local {
+				parts := strings.Split(image, ":")
+				if version, ok := remote[image]; ok && version == parts[1] {
+					delete(remote, image)
+				}
+			}
+			if len(remote) > 0 {
+				fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
+			}
 		}
 	}
 
