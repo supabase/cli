@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/start"
-	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -20,13 +19,7 @@ var (
 		Use:     "start",
 		Short:   "Start containers for Supabase local development",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if preview {
-				if _, err := flags.LoadProjectRef(fsys); err != nil {
-					return err
-				}
-			}
-			return start.Run(cmd.Context(), fsys, excludedContainers, ignoreHealthCheck, flags.ProjectRef)
+			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck)
 		},
 	}
 )

@@ -24,12 +24,11 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef string) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -45,27 +44,12 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		var dbConfig pgconn.Config
-		if len(projectRef) > 0 {
-			branch := keys.GetGitBranch(fsys)
-			if err := keys.GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
-				return err
-			}
-			dbConfig = pgconn.Config{
-				Host:     fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
-				Port:     5432,
-				User:     "postgres",
-				Password: utils.Config.Db.Password,
-				Database: "postgres",
-			}
-		} else {
-			dbConfig = pgconn.Config{
-				Host:     utils.DbId,
-				Port:     5432,
-				User:     "postgres",
-				Password: utils.Config.Db.Password,
-				Database: "postgres",
-			}
+		dbConfig := pgconn.Config{
+			Host:     utils.DbId,
+			Port:     5432,
+			User:     "postgres",
+			Password: utils.Config.Db.Password,
+			Database: "postgres",
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
