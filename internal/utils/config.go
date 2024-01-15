@@ -507,7 +507,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if Config.Experimental.S3SecretKey, err = maybeLoadEnv(Config.Experimental.S3SecretKey); err != nil {
 					return err
 				}
-			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && len(version) > 0 {
+			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && strings.HasPrefix(string(version), "15.") {
 				index := strings.IndexByte(Pg15Image, ':')
 				Config.Db.Image = Pg15Image[:index+1] + string(version)
 			}
