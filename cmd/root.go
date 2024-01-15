@@ -223,7 +223,7 @@ func changeWorkDir(fsys afero.Fs) error {
 func addSentryScope(scope *sentry.Scope) {
 	serviceImages := services.GetServiceImages()
 	imageToVersion := make(map[string]interface{}, len(serviceImages))
-	for _, image := range services.GetServiceImages() {
+	for _, image := range serviceImages {
 		parts := strings.Split(image, ":")
 		// Bypasses sentry's IP sanitization rule, ie. 15.1.0.147
 		if net.ParseIP(parts[1]) != nil {
