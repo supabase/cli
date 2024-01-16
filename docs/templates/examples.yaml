@@ -62,12 +62,11 @@ supabase-stop:
     code: supabase stop
     response: |
       Stopped supabase local development setup.
-  - id: with-backup
-    name: Backup local database before stopping
-    code: supabase stop --backup
+      Local data are backed up to docker volume.
+  - id: clean-up
+    name: Clean up local data after stopping
+    code: supabase stop --no-backup
     response: |
-      Postgres database saved to volume: supabase_db_cli
-      Storage directory saved to volume: supabase_storage_cli
       Stopped supabase local development setup.
 supabase-status:
   - id: basic-usage

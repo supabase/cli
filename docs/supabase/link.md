@@ -8,4 +8,4 @@ Optionally, database settings can be validated if you provide a password. Your d
 
 > If you do not want to be prompted for the database password, such as in a CI environment, you may specify it explicitly via the `SUPABASE_DB_PASSWORD` environment variable.
 
-Some commands like `db dump`, `db push`, and `db remote commit` require your project to be linked first.
+Some commands like `db dump`, `db push`, and `db pull` require your project to be linked first.
