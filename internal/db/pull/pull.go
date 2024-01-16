@@ -4,11 +4,12 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
@@ -20,17 +21,9 @@ import (
 )
 
 var (
-	errConflict = errors.Errorf(`The remote database's migration history is not in sync with the contents of %s. Resolve this by:
-- Updating the project from version control to get the latest %s,
-- Pushing unapplied migrations with %s,
-- Or failing that, manually editing supabase_migrations.schema_migrations table with %s.`,
-		utils.Bold(utils.MigrationsDir),
-		utils.Bold(utils.MigrationsDir),
-		utils.Aqua("supabase db push"),
-		utils.Aqua("supabase migration repair"),
-	)
-	errMissing = errors.New("no migrations found")
-	errInSync  = errors.New("no schema changes found")
+	errMissing  = errors.New("no migrations found")
+	errInSync   = errors.New("no schema changes found")
+	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -112,29 +105,59 @@ func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, pat
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UndefinedTable {
-			return err
-		}
+		return err
 	}
-	localMigrations, err := list.LoadLocalMigrations(fsys)
+	localMigrations, err := list.LoadLocalVersions(fsys)
 	if err != nil {
 		return err
 	}
-
-	if len(remoteMigrations) != len(localMigrations) {
-		return errors.New(errConflict)
-	}
-	for i, remoteTimestamp := range remoteMigrations {
-		// LoadLocalMigrations guarantees we always have a match
-		localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1]
-		if localTimestamp != remoteTimestamp {
-			return errors.New(errConflict)
+	// Find any mismatch between local and remote migrations
+	var extraRemote, extraLocal []string
+	for i, j := 0, 0; i < len(remoteMigrations) || j < len(localMigrations); {
+		remoteTimestamp := math.MaxInt
+		if i < len(remoteMigrations) {
+			if remoteTimestamp, err = strconv.Atoi(remoteMigrations[i]); err != nil {
+				i++
+				continue
+			}
+		}
+		localTimestamp := math.MaxInt
+		if j < len(localMigrations) {
+			if localTimestamp, err = strconv.Atoi(localMigrations[j]); err != nil {
+				j++
+				continue
+			}
+		}
+		// Top to bottom chronological order
+		if localTimestamp < remoteTimestamp {
+			extraLocal = append(extraLocal, localMigrations[j])
+			j++
+		} else if remoteTimestamp < localTimestamp {
+			extraRemote = append(extraRemote, remoteMigrations[i])
+			i++
+		} else {
+			i++
+			j++
 		}
 	}
-
+	// Suggest delete local migrations / reset migration history
+	if len(extraRemote)+len(extraLocal) > 0 {
+		utils.CmdSuggestion = suggestMigrationRepair(extraRemote, extraLocal)
+		return errors.New(errConflict)
+	}
 	if len(localMigrations) == 0 {
 		return errors.New(errMissing)
 	}
 	return nil
+}
+
+func suggestMigrationRepair(extraRemote, extraLocal []string) string {
+	result := fmt.Sprintln("\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:")
+	for _, version := range extraRemote {
+		result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + version))
+	}
+	for _, version := range extraLocal {
+		result += fmt.Sprintln(utils.Bold("supabase migration repair --status applied " + version))
+	}
+	return result
 }
