@@ -309,6 +309,7 @@ type (
 		JwtExpiry                  uint `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool `toml:"enable_manual_linking"`
 
 		EnableSignup bool  `toml:"enable_signup"`
 		Email        email `toml:"email"`
