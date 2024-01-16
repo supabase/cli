@@ -735,7 +735,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create config file: %w", err)
 	}
