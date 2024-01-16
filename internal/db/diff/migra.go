@@ -195,7 +195,13 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
-	source := fmt.Sprintf("postgresql://postgres:postgres@127.0.0.1:%d/postgres", utils.Config.Db.ShadowPort)
+	source := utils.ToPostgresURL(pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     uint16(utils.Config.Db.ShadowPort),
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	})
 	target := utils.ToPostgresURL(config)
 	return DiffSchemaMigra(ctx, source, target, schema)
 }

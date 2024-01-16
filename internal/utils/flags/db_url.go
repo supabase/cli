@@ -56,7 +56,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		DbConfig.Host = "127.0.0.1"
+		DbConfig.Host = utils.Config.Hostname
 		DbConfig.Port = uint16(utils.Config.Db.Port)
 		DbConfig.User = "postgres"
 		DbConfig.Password = utils.Config.Db.Password

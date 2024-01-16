@@ -91,10 +91,11 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	}
 	defer f.Close()
 	config := pgconn.Config{
-		Host:     "127.0.0.1",
+		Host:     utils.Config.Hostname,
 		Port:     uint16(utils.Config.Db.ShadowPort),
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
+		Database: "postgres",
 	}
 	return dump.DumpSchema(ctx, config, nil, false, false, f)
 }
