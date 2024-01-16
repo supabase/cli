@@ -309,12 +309,12 @@ type (
 		JwtExpiry                  uint `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool `toml:"enable_manual_linking"`
 
-		EnableSignup        bool  `toml:"enable_signup"`
-		EnableManualLinking bool  `toml:"enable_manual_linking"`
-		Email               email `toml:"email"`
-		Sms                 sms   `toml:"sms"`
-		External            map[string]provider
+		EnableSignup bool  `toml:"enable_signup"`
+		Email        email `toml:"email"`
+		Sms          sms   `toml:"sms"`
+		External     map[string]provider
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -735,7 +735,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return errors.Errorf("failed to create config file: %w", err)
 	}

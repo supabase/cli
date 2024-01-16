@@ -380,7 +380,6 @@ EOF
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
 			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
-			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
 
 			"GOTRUE_JWT_ADMIN_ROLES=service_role",
 			"GOTRUE_JWT_AUD=authenticated",
@@ -416,6 +415,7 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Template {
