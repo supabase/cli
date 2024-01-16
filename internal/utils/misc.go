@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -299,4 +300,14 @@ func ValidateFunctionSlug(slug string) error {
 
 func Ptr[T any](v T) *T {
 	return &v
+}
+
+func GetHostname() string {
+	host := Docker.DaemonHost()
+	if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
+		if host, _, err := net.SplitHostPort(parsed.Host); err == nil {
+			return host
+		}
+	}
+	return "127.0.0.1"
 }

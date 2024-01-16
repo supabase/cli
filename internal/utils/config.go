@@ -233,6 +233,7 @@ var Config = config{
 type (
 	config struct {
 		ProjectId    string              `toml:"project_id"`
+		Hostname     string              `toml:"-"`
 		Api          api                 `toml:"api"`
 		Db           db                  `toml:"db" mapstructure:"db"`
 		Realtime     realtime            `toml:"realtime"`
@@ -463,6 +464,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
 		}
+		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
 		if Config.Api.Port == 0 {

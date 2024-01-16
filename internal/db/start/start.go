@@ -173,7 +173,7 @@ func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
 	if utils.Config.Analytics.Enabled {
 		hostConfig.LogConfig.Type = "syslog"
 		hostConfig.LogConfig.Config = map[string]string{
-			"syslog-address": fmt.Sprintf("tcp://127.0.0.1:%d", utils.Config.Analytics.VectorPort),
+			"syslog-address": fmt.Sprintf("tcp://%s:%d", utils.Config.Hostname, utils.Config.Analytics.VectorPort),
 			"tag":            "{{.Name}}",
 		}
 	}
@@ -222,7 +222,7 @@ func initSchema15(ctx context.Context, host string) error {
 		return err
 	}
 	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
-		fmt.Sprintf("API_EXTERNAL_URL=http://127.0.0.1:%v", utils.Config.Api.Port),
+		fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", host, utils.Config.Api.Port),
 		"GOTRUE_LOG_LEVEL=error",
 		"GOTRUE_DB_DRIVER=postgres",
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
