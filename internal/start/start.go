@@ -24,12 +24,22 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
-	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, projectRef string) error {
+func suggestUpdateCmd(serviceImages map[string]string) string {
+	cmd := "You are running outdated service versions locally:\n"
+	for k, v := range serviceImages {
+		cmd += fmt.Sprintf("%s => %s\n", k, v)
+	}
+	cmd += fmt.Sprintf("Run %s to update them.", utils.Aqua("supabase link"))
+	return cmd
+}
+
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
@@ -42,30 +52,28 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
+		if ref, err := flags.LoadProjectRef(fsys); err == nil {
+			local := services.GetServiceImages()
+			remote := services.GetRemoteImages(ctx, ref)
+			for _, image := range local {
+				parts := strings.Split(image, ":")
+				if version, ok := remote[image]; ok && version == parts[1] {
+					delete(remote, image)
+				}
+			}
+			if len(remote) > 0 {
+				fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
+			}
+		}
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		var dbConfig pgconn.Config
-		if len(projectRef) > 0 {
-			branch := keys.GetGitBranch(fsys)
-			if err := keys.GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
-				return err
-			}
-			dbConfig = pgconn.Config{
-				Host:     fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
-				Port:     5432,
-				User:     "postgres",
-				Password: utils.Config.Db.Password,
-				Database: "postgres",
-			}
-		} else {
-			dbConfig = pgconn.Config{
-				Host:     utils.DbId,
-				Port:     5432,
-				User:     "postgres",
-				Password: utils.Config.Db.Password,
-				Database: "postgres",
-			}
+		dbConfig := pgconn.Config{
+			Host:     utils.DbId,
+			Port:     5432,
+			User:     "postgres",
+			Password: utils.Config.Db.Password,
+			Database: "postgres",
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
