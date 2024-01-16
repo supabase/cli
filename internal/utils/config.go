@@ -310,10 +310,11 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 
-		EnableSignup bool  `toml:"enable_signup"`
-		Email        email `toml:"email"`
-		Sms          sms   `toml:"sms"`
-		External     map[string]provider
+		EnableSignup 				bool  `toml:"enable_signup"`
+		EnableManualLinking bool  `toml:"enable_manual_linking"`
+		Email        				email `toml:"email"`
+		Sms         			  sms   `toml:"sms"`
+		External     				map[string]provider
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
