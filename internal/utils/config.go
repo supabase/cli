@@ -347,6 +347,17 @@ type (
 		TestOTP             map[string]string `toml:"test_otp"`
 	}
 
+	hook struct {
+		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt" mapstructure:"mfa_verification_attempt"`
+		PasswordVerificationAttempt hookConfig`toml:"password_verification_attempt" mapstructure:"password_verification_attempt"`
+		CustomAccessToken           hookConfig `toml:"custom_access_token" mapstructure:"custom_access_token"`
+	}
+
+	hookConfig {
+		Enabled  bool   `toml:"enabled"`
+		HookName string `toml:"hook_name"`
+	}
+
 	twilioConfig struct {
 		Enabled           bool   `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`

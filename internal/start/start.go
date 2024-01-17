@@ -488,6 +488,29 @@ EOF
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
+		if utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED="+utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_NAME="+utils.Config.Auth.Hook.MFAVerificationAttempt.Name,
+			)
+		}
+
+		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_NAME="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Name,
+			)
+		}
+
+		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_NAME="=+utils.Config.Auth.Hook.CustomAccessToken.Name,
+			)
+		}
 
 		for name, config := range utils.Config.Auth.External {
 			env = append(
