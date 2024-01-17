@@ -311,6 +311,7 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		Hook                       hook `toml:"hook"`
 
 		EnableSignup bool  `toml:"enable_signup"`
 		Email        email `toml:"email"`
@@ -348,14 +349,14 @@ type (
 	}
 
 	hook struct {
-		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt" mapstructure:"mfa_verification_attempt"`
-		PasswordVerificationAttempt hookConfig`toml:"password_verification_attempt" mapstructure:"password_verification_attempt"`
-		CustomAccessToken           hookConfig `toml:"custom_access_token" mapstructure:"custom_access_token"`
+		MFAVerificationAttempt      extensibilityPointConfig `toml:"mfa_verification_attempt" mapstructure:"mfa_verification_attempt"`
+		PasswordVerificationAttempt extensibilityPointConfig `toml:"password_verification_attempt" mapstructure:"password_verification_attempt"`
+		CustomAccessToken           extensibilityPointConfig `toml:"custom_access_token" mapstructure:"custom_access_token"`
 	}
 
-	hookConfig {
-		Enabled  bool   `toml:"enabled"`
-		HookName string `toml:"hook_name"`
+	extensibilityPointConfig struct {
+		Enabled bool   `toml:"enabled"`
+		Name    string `toml:"hook_name"`
 	}
 
 	twilioConfig struct {
