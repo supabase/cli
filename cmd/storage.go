@@ -74,9 +74,9 @@ func init() {
 	storageCmd.AddCommand(lsCmd)
 	cpCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively copy a directory.")
 	storageCmd.AddCommand(cpCmd)
-	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively move a directory.")
+	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
 	storageCmd.AddCommand(rmCmd)
-	mvCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
+	mvCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively move a directory.")
 	storageCmd.AddCommand(mvCmd)
 	rootCmd.AddCommand(storageCmd)
 }
