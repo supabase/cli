@@ -25,7 +25,7 @@ var (
 	errInSync        = errors.New("no schema changes found")
 	errConflict      = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
 	suggestExtraPull = fmt.Sprintf(
-		"The %s and %s schemas are excluded by default. Run %s to diff them.",
+		"The %s and %s schemas are excluded. Run %s again to diff them.",
 		utils.Bold("auth"),
 		utils.Bold("storage"),
 		utils.Aqua("supabase db pull --schema auth,storage"),
@@ -64,14 +64,18 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 
 func run(p utils.Program, ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys afero.Fs) error {
 	config := conn.Config().Config
+	defaultSchema := len(schema) == 0
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
+		if !defaultSchema {
+			utils.CmdSuggestion = suggestExtraPull
+		}
+		// Not passing down schemas to avoid pulling in managed schemas
 		return dumpRemoteSchema(p, ctx, path, config, fsys)
 	} else if err != nil {
 		return err
 	}
 	// 2. Fetch remote schema changes
-	defaultSchema := len(schema) == 0
 	if defaultSchema {
 		var err error
 		schema, err = diff.LoadUserSchemas(ctx, conn)
