@@ -190,7 +190,7 @@ var Config = config{
 			"gitlab":    {},
 			"google":    {},
 			"keycloak":  {},
-			"linkedin":  {},
+			"linkedin_oidc":  {},
 			"notion":    {},
 			"twitch":    {},
 			"twitter":   {},
