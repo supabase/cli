@@ -199,6 +199,7 @@ var Config = config{
 			"workos":    {},
 			"zoom":      {},
 		},
+		Hook:      hook{},
 		JwtExpiry: 3600,
 		JwtSecret: defaultJwtSecret,
 	},
@@ -311,7 +312,7 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
-		Hook                       hook `toml:"hook"`
+		Hook                       hook `toml:"hook" mapstructure:"hook"`
 
 		EnableSignup bool  `toml:"enable_signup"`
 		Email        email `toml:"email"`
@@ -356,7 +357,7 @@ type (
 
 	extensibilityPointConfig struct {
 		Enabled bool   `toml:"enabled"`
-		Name    string `toml:"hook_name"`
+		URI     string `toml:"uri"`
 	}
 
 	twilioConfig struct {
@@ -651,6 +652,25 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			}
+
+			if Config.Auth.Hook.MFAVerificationAttempt.Enabled {
+				if Config.Auth.Hook.MFAVerificationAttempt.URI == "" {
+					return errors.New("Missing required field in config: auth.hook.mfa_verification_atempt.uri")
+				}
+			}
+
+			if Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+				if Config.Auth.Hook.PasswordVerificationAttempt.URI == "" {
+					return errors.New("Missing required field in config: auth.hook.password_verification_attempt.uri")
+				}
+			}
+
+			if Config.Auth.Hook.CustomAccessToken.Enabled {
+				if Config.Auth.Hook.CustomAccessToken.URI == "" {
+					return errors.New("Missing required field in config: auth.hook.custom_access_token.uri")
+				}
+			}
+
 			// Validate oauth config
 			for ext, provider := range Config.Auth.External {
 				if !provider.Enabled {

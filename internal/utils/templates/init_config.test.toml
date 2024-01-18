@@ -112,7 +112,7 @@ template = "Your code is {{ `{{ .Code }}` }} ."
 
 [auth.hook.custom_access_token]
 enabled = true
-hook_name = "custom_access_token_hook"
+uri = "pg-functions://postgres/auth/custom-access-token-hook"
 
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.

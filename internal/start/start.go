@@ -492,7 +492,7 @@ EOF
 			env = append(
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_NAME="+utils.Config.Auth.Hook.MFAVerificationAttempt.Name,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
 			)
 		}
 
@@ -500,15 +500,15 @@ EOF
 			env = append(
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_NAME="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Name,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
 			)
 		}
 
-		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+		if utils.Config.Auth.Hook.CustomAccessToken.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_NAME="+utils.Config.Auth.Hook.CustomAccessToken.Name,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
 			)
 		}
 
