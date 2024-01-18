@@ -21,13 +21,17 @@ func ToPostgresURL(config pgconn.Config) string {
 	if timeoutSecond == 0 {
 		timeoutSecond = 10
 	}
+	queryParams := fmt.Sprintf("connect_timeout=%d", timeoutSecond)
+	for k, v := range config.RuntimeParams {
+		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+	}
 	return fmt.Sprintf(
-		"postgresql://%s@%s:%d/%s?connect_timeout=%d",
+		"postgresql://%s@%s:%d/%s?%s",
 		url.UserPassword(config.User, config.Password),
 		config.Host,
 		config.Port,
 		url.PathEscape(config.Database),
-		timeoutSecond,
+		queryParams,
 	)
 }
 
