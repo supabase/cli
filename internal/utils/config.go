@@ -350,12 +350,12 @@ type (
 	}
 
 	hook struct {
-		MFAVerificationAttempt      extensibilityPointConfig `toml:"mfa_verification_attempt"`
-		PasswordVerificationAttempt extensibilityPointConfig `toml:"password_verification_attempt"`
-		CustomAccessToken           extensibilityPointConfig `toml:"custom_access_token"`
+		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
+		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
+		CustomAccessToken           hookConfig `toml:"custom_access_token"`
 	}
 
-	extensibilityPointConfig struct {
+	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
 	}
