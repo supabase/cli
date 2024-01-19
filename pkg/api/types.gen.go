@@ -13,6 +13,14 @@ const (
 	BearerScopes = "bearer.Scopes"
 )
 
+// Defines values for BillingPlanId.
+const (
+	BillingPlanIdEnterprise BillingPlanId = "enterprise"
+	BillingPlanIdFree       BillingPlanId = "free"
+	BillingPlanIdPro        BillingPlanId = "pro"
+	BillingPlanIdTeam       BillingPlanId = "team"
+)
+
 // Defines values for BranchDetailResponseStatus.
 const (
 	BranchDetailResponseStatusACTIVEHEALTHY   BranchDetailResponseStatus = "ACTIVE_HEALTHY"
@@ -30,12 +38,13 @@ const (
 
 // Defines values for CreateProjectBodyPlan.
 const (
-	Free CreateProjectBodyPlan = "free"
-	Pro  CreateProjectBodyPlan = "pro"
+	CreateProjectBodyPlanFree CreateProjectBodyPlan = "free"
+	CreateProjectBodyPlanPro  CreateProjectBodyPlan = "pro"
 )
 
 // Defines values for CreateProjectBodyRegion.
 const (
+	CreateProjectBodyRegionApEast1      CreateProjectBodyRegion = "ap-east-1"
 	CreateProjectBodyRegionApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
 	CreateProjectBodyRegionApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
 	CreateProjectBodyRegionApSouth1     CreateProjectBodyRegion = "ap-south-1"
@@ -71,6 +80,7 @@ const (
 
 // Defines values for DatabaseUpgradeStatusProgress.
 const (
+	N0Requested                          DatabaseUpgradeStatusProgress = "0_requested"
 	N1Started                            DatabaseUpgradeStatusProgress = "1_started"
 	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
 	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
@@ -98,9 +108,9 @@ const (
 
 // Defines values for FunctionSlugResponseStatus.
 const (
-	ACTIVE    FunctionSlugResponseStatus = "ACTIVE"
-	REMOVED   FunctionSlugResponseStatus = "REMOVED"
-	THROTTLED FunctionSlugResponseStatus = "THROTTLED"
+	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
+	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
+	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
 )
 
 // Defines values for NetworkRestrictionsResponseEntitlement.
@@ -152,6 +162,7 @@ const (
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
 const (
+	SetUpReadReplicaBodyReadReplicaRegionApEast1      SetUpReadReplicaBodyReadReplicaRegion = "ap-east-1"
 	SetUpReadReplicaBodyReadReplicaRegionApNortheast1 SetUpReadReplicaBodyReadReplicaRegion = "ap-northeast-1"
 	SetUpReadReplicaBodyReadReplicaRegionApNortheast2 SetUpReadReplicaBodyReadReplicaRegion = "ap-northeast-2"
 	SetUpReadReplicaBodyReadReplicaRegionApSouth1     SetUpReadReplicaBodyReadReplicaRegion = "ap-south-1"
@@ -208,6 +219,21 @@ const (
 	UpdatePostgresConfigBodySessionReplicationRoleLocal   UpdatePostgresConfigBodySessionReplicationRole = "local"
 	UpdatePostgresConfigBodySessionReplicationRoleOrigin  UpdatePostgresConfigBodySessionReplicationRole = "origin"
 	UpdatePostgresConfigBodySessionReplicationRoleReplica UpdatePostgresConfigBodySessionReplicationRole = "replica"
+)
+
+// Defines values for V1BackupStatus.
+const (
+	V1BackupStatusARCHIVED  V1BackupStatus = "ARCHIVED"
+	V1BackupStatusCOMPLETED V1BackupStatus = "COMPLETED"
+	V1BackupStatusFAILED    V1BackupStatus = "FAILED"
+	V1BackupStatusPENDING   V1BackupStatus = "PENDING"
+	V1BackupStatusREMOVED   V1BackupStatus = "REMOVED"
+)
+
+// Defines values for V1OrganizationSlugResponseOptInTags.
+const (
+	AISQLGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
+	PREVIEWBRANCHESOPTIN V1OrganizationSlugResponseOptInTags = "PREVIEW_BRANCHES_OPT_IN"
 )
 
 // Defines values for V1PgbouncerConfigResponsePoolMode.
@@ -306,6 +332,9 @@ type AuthHealthResponse struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 }
+
+// BillingPlanId defines model for BillingPlanId.
+type BillingPlanId string
 
 // BranchDetailResponse defines model for BranchDetailResponse.
 type BranchDetailResponse struct {
@@ -519,7 +548,8 @@ type NetworkBanResponse struct {
 
 // NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
 type NetworkRestrictionsRequest struct {
-	DbAllowedCidrs []string `json:"dbAllowedCidrs"`
+	DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+	DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
 }
 
 // NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
@@ -572,11 +602,18 @@ type PgsodiumConfigResponse struct {
 	RootKey string `json:"root_key"`
 }
 
+// PhysicalBackup defines model for PhysicalBackup.
+type PhysicalBackup struct {
+	EarliestPhysicalBackupDateUnix *float32 `json:"earliest_physical_backup_date_unix,omitempty"`
+	LatestPhysicalBackupDateUnix   *float32 `json:"latest_physical_backup_date_unix,omitempty"`
+}
+
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
+	MaxLocksPerTransaction        *int                                          `json:"max_locks_per_transaction,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
@@ -633,15 +670,14 @@ type ProjectResponse struct {
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
 type ProjectUpgradeEligibilityResponse struct {
-	CurrentAppVersion          string           `json:"current_app_version"`
-	DurationEstimateHours      float32          `json:"duration_estimate_hours"`
-	Eligible                   bool             `json:"eligible"`
-	ExtensionDependentObjects  []string         `json:"extension_dependent_objects"`
-	LatestAppVersion           string           `json:"latest_app_version"`
-	LegacyAuthCustomRoles      []string         `json:"legacy_auth_custom_roles"`
-	PotentialBreakingChanges   []string         `json:"potential_breaking_changes"`
-	RequiresManualIntervention *string          `json:"requires_manual_intervention"`
-	TargetUpgradeVersions      []ProjectVersion `json:"target_upgrade_versions"`
+	CurrentAppVersion         string           `json:"current_app_version"`
+	DurationEstimateHours     float32          `json:"duration_estimate_hours"`
+	Eligible                  bool             `json:"eligible"`
+	ExtensionDependentObjects []string         `json:"extension_dependent_objects"`
+	LatestAppVersion          string           `json:"latest_app_version"`
+	LegacyAuthCustomRoles     []string         `json:"legacy_auth_custom_roles"`
+	PotentialBreakingChanges  []string         `json:"potential_breaking_changes"`
+	TargetUpgradeVersions     []ProjectVersion `json:"target_upgrade_versions"`
 }
 
 // ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
@@ -879,6 +915,7 @@ type UpdatePostgresConfigBody struct {
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
+	MaxLocksPerTransaction        *int                                            `json:"max_locks_per_transaction,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                            `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                            `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                            `json:"max_parallel_workers_per_gather,omitempty"`
@@ -921,6 +958,25 @@ type UpgradeDatabaseBody struct {
 	TargetVersion float32 `json:"target_version"`
 }
 
+// V1Backup defines model for V1Backup.
+type V1Backup struct {
+	InsertedAt       string         `json:"inserted_at"`
+	IsPhysicalBackup bool           `json:"is_physical_backup"`
+	Status           V1BackupStatus `json:"status"`
+}
+
+// V1BackupStatus defines model for V1Backup.Status.
+type V1BackupStatus string
+
+// V1BackupsResponse defines model for V1BackupsResponse.
+type V1BackupsResponse struct {
+	Backups            []V1Backup     `json:"backups"`
+	PhysicalBackupData PhysicalBackup `json:"physical_backup_data"`
+	PitrEnabled        bool           `json:"pitr_enabled"`
+	Region             string         `json:"region"`
+	WalgEnabled        bool           `json:"walg_enabled"`
+}
+
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
 type V1OrganizationMemberResponse struct {
 	Email      *string `json:"email,omitempty"`
@@ -929,6 +985,17 @@ type V1OrganizationMemberResponse struct {
 	UserId     string  `json:"user_id"`
 	UserName   string  `json:"user_name"`
 }
+
+// V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
+type V1OrganizationSlugResponse struct {
+	Id        string                                `json:"id"`
+	Name      string                                `json:"name"`
+	OptInTags []V1OrganizationSlugResponseOptInTags `json:"opt_in_tags"`
+	Plan      *BillingPlanId                        `json:"plan,omitempty"`
+}
+
+// V1OrganizationSlugResponseOptInTags defines model for V1OrganizationSlugResponse.OptInTags.
+type V1OrganizationSlugResponseOptInTags string
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
@@ -945,6 +1012,16 @@ type V1PgbouncerConfigResponsePoolMode string
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
 	RecoveryTimeTargetUnix float32 `json:"recovery_time_target_unix"`
+}
+
+// V1StorageBucketResponse defines model for V1StorageBucketResponse.
+type V1StorageBucketResponse struct {
+	CreatedAt string `json:"created_at"`
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	Owner     string `json:"owner"`
+	Public    bool   `json:"public"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
