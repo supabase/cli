@@ -190,6 +190,7 @@ var Config = config{
 			"gitlab":        {},
 			"google":        {},
 			"keycloak":      {},
+			"linkedin":      {}, // TODO: remove this field in v2
 			"linkedin_oidc": {},
 			"notion":        {},
 			"twitch":        {},
