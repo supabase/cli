@@ -35,7 +35,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 // removeLinkedCredentials removes the database password associated with the projectRef
 func removeLinkedCredentials(projectRef string) error {
 	fmt.Printf("Removing credentials for project %s...\n", projectRef)
-	if err := credentials.Delete(projectRef); err != nil {
+	if err := credentials.Set(projectRef, ""); err != nil {
 		return fmt.Errorf("failed to remove credentials for project '%s': %w", projectRef, err)
 	}
 	fmt.Println("Credentials for project", projectRef, "have been successfully removed.")
