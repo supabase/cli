@@ -116,6 +116,9 @@ type ClientInterface interface {
 
 	CreateOrganization(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetOrganization request
+	GetOrganization(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -198,6 +201,9 @@ type ClientInterface interface {
 
 	// Reverify request
 	Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBackups request
+	GetBackups(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RestorePitrWithBody request with any body
 	V1RestorePitrWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -305,6 +311,9 @@ type ClientInterface interface {
 	UpdateSslEnforcementConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateSslEnforcementConfig(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBuckets request
+	GetBuckets(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTypescriptTypes request
 	GetTypescriptTypes(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -453,6 +462,18 @@ func (c *Client) CreateOrganizationWithBody(ctx context.Context, contentType str
 
 func (c *Client) CreateOrganization(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateOrganizationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetOrganization(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOrganizationRequest(c.Server, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -813,6 +834,18 @@ func (c *Client) CreateCustomHostnameConfig(ctx context.Context, ref string, bod
 
 func (c *Client) Reverify(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReverifyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBackups(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBackupsRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1293,6 +1326,18 @@ func (c *Client) UpdateSslEnforcementConfigWithBody(ctx context.Context, ref str
 
 func (c *Client) UpdateSslEnforcementConfig(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSslEnforcementConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBuckets(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBucketsRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1826,6 +1871,40 @@ func NewCreateOrganizationRequestWithBody(server string, contentType string, bod
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetOrganizationRequest generates requests for GetOrganization
+func NewGetOrganizationRequest(server string, slug string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -2703,6 +2782,40 @@ func NewReverifyRequest(server string, ref string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBackupsRequest generates requests for GetBackups
+func NewGetBackupsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4063,6 +4176,40 @@ func NewUpdateSslEnforcementConfigRequestWithBody(server string, ref string, con
 	return req, nil
 }
 
+// NewGetBucketsRequest generates requests for GetBuckets
+func NewGetBucketsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/storage/buckets", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetTypescriptTypesRequest generates requests for GetTypescriptTypes
 func NewGetTypescriptTypesRequest(server string, ref string, params *GetTypescriptTypesParams) (*http.Request, error) {
 	var err error
@@ -4549,6 +4696,9 @@ type ClientWithResponsesInterface interface {
 
 	CreateOrganizationWithResponse(ctx context.Context, body CreateOrganizationJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOrganizationResponse, error)
 
+	// GetOrganizationWithResponse request
+	GetOrganizationWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*GetOrganizationResponse, error)
+
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
@@ -4631,6 +4781,9 @@ type ClientWithResponsesInterface interface {
 
 	// ReverifyWithResponse request
 	ReverifyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ReverifyResponse, error)
+
+	// GetBackupsWithResponse request
+	GetBackupsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBackupsResponse, error)
 
 	// V1RestorePitrWithBodyWithResponse request with any body
 	V1RestorePitrWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePitrResponse, error)
@@ -4738,6 +4891,9 @@ type ClientWithResponsesInterface interface {
 	UpdateSslEnforcementConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error)
 
 	UpdateSslEnforcementConfigWithResponse(ctx context.Context, ref string, body UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSslEnforcementConfigResponse, error)
+
+	// GetBucketsWithResponse request
+	GetBucketsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBucketsResponse, error)
 
 	// GetTypescriptTypesWithResponse request
 	GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error)
@@ -4922,6 +5078,28 @@ func (r CreateOrganizationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateOrganizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetOrganizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1OrganizationSlugResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOrganizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOrganizationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5427,6 +5605,28 @@ func (r ReverifyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ReverifyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBackupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1BackupsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBackupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBackupsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6018,6 +6218,28 @@ func (r UpdateSslEnforcementConfigResponse) StatusCode() int {
 	return 0
 }
 
+type GetBucketsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]V1StorageBucketResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBucketsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBucketsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetTypescriptTypesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6324,6 +6546,15 @@ func (c *ClientWithResponses) CreateOrganizationWithResponse(ctx context.Context
 	return ParseCreateOrganizationResponse(rsp)
 }
 
+// GetOrganizationWithResponse request returning *GetOrganizationResponse
+func (c *ClientWithResponses) GetOrganizationWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*GetOrganizationResponse, error) {
+	rsp, err := c.GetOrganization(ctx, slug, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOrganizationResponse(rsp)
+}
+
 // V1ListOrganizationMembersWithResponse request returning *V1ListOrganizationMembersResponse
 func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error) {
 	rsp, err := c.V1ListOrganizationMembers(ctx, slug, reqEditors...)
@@ -6585,6 +6816,15 @@ func (c *ClientWithResponses) ReverifyWithResponse(ctx context.Context, ref stri
 		return nil, err
 	}
 	return ParseReverifyResponse(rsp)
+}
+
+// GetBackupsWithResponse request returning *GetBackupsResponse
+func (c *ClientWithResponses) GetBackupsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBackupsResponse, error) {
+	rsp, err := c.GetBackups(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBackupsResponse(rsp)
 }
 
 // V1RestorePitrWithBodyWithResponse request with arbitrary body returning *V1RestorePitrResponse
@@ -6934,6 +7174,15 @@ func (c *ClientWithResponses) UpdateSslEnforcementConfigWithResponse(ctx context
 	return ParseUpdateSslEnforcementConfigResponse(rsp)
 }
 
+// GetBucketsWithResponse request returning *GetBucketsResponse
+func (c *ClientWithResponses) GetBucketsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetBucketsResponse, error) {
+	rsp, err := c.GetBuckets(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBucketsResponse(rsp)
+}
+
 // GetTypescriptTypesWithResponse request returning *GetTypescriptTypesResponse
 func (c *ClientWithResponses) GetTypescriptTypesWithResponse(ctx context.Context, ref string, params *GetTypescriptTypesParams, reqEditors ...RequestEditorFn) (*GetTypescriptTypesResponse, error) {
 	rsp, err := c.GetTypescriptTypes(ctx, ref, params, reqEditors...)
@@ -7204,6 +7453,32 @@ func ParseCreateOrganizationResponse(rsp *http.Response) (*CreateOrganizationRes
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOrganizationResponse parses an HTTP response from a GetOrganizationWithResponse call
+func ParseGetOrganizationResponse(rsp *http.Response) (*GetOrganizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOrganizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1OrganizationSlugResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -7789,6 +8064,32 @@ func ParseReverifyResponse(rsp *http.Response) (*ReverifyResponse, error) {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBackupsResponse parses an HTTP response from a GetBackupsWithResponse call
+func ParseGetBackupsResponse(rsp *http.Response) (*GetBackupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBackupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1BackupsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -8397,6 +8698,32 @@ func ParseUpdateSslEnforcementConfigResponse(rsp *http.Response) (*UpdateSslEnfo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest SslEnforcementResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBucketsResponse parses an HTTP response from a GetBucketsWithResponse call
+func ParseGetBucketsResponse(rsp *http.Response) (*GetBucketsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBucketsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []V1StorageBucketResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

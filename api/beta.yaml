@@ -292,6 +292,7 @@ paths:
   /v1/projects/{ref}/api-keys:
     get:
       operationId: getProjectApiKeys
+      summary: Get project api keys
       parameters:
         - name: ref
           required: true
@@ -1842,6 +1843,36 @@ paths:
         - functions
       security:
         - bearer: []
+  /v1/projects/{ref}/storage/buckets:
+    get:
+      operationId: getBuckets
+      summary: Lists all buckets
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/V1StorageBucketResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to get list of buckets
+      tags:
+        - storage
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers:
     post:
       operationId: createProviderForProject
@@ -2012,6 +2043,32 @@ paths:
         - sso
       security:
         - bearer: []
+  /v1/projects/{ref}/database/backups:
+    get:
+      operationId: getBackups
+      summary: Lists all backups
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1BackupsResponse'
+        '500':
+          description: Failed to get backups
+      tags:
+        - backups
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/backups/restore-pitr:
     post:
       operationId: v1RestorePitr
@@ -2035,7 +2092,7 @@ paths:
         '201':
           description: ''
       tags:
-        - backups (beta)
+        - backups
       security:
         - bearer: []
   /v1/organizations/{slug}/members:
@@ -2057,6 +2114,27 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/V1OrganizationMemberResponse'
+      tags:
+        - organizations
+      security:
+        - bearer: []
+  /v1/organizations/{slug}:
+    get:
+      operationId: getOrganization
+      summary: Gets information about the organization
+      parameters:
+        - name: slug
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1OrganizationSlugResponse'
       tags:
         - organizations
       security:
@@ -2225,6 +2303,7 @@ components:
             - us-east-1
             - us-west-1
             - us-west-2
+            - ap-east-1
             - ap-southeast-1
             - ap-northeast-1
             - ap-northeast-2
@@ -2507,8 +2586,10 @@ components:
           type: array
           items:
             type: string
-      required:
-        - dbAllowedCidrs
+        dbAllowedCidrsV6:
+          type: array
+          items:
+            type: string
     NetworkRestrictionsResponse:
       type: object
       properties:
@@ -2723,9 +2804,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProjectVersion'
-        requires_manual_intervention:
-          type: string
-          nullable: true
         potential_breaking_changes:
           type: array
           items:
@@ -2745,7 +2823,6 @@ components:
         - current_app_version
         - latest_app_version
         - target_upgrade_versions
-        - requires_manual_intervention
         - potential_breaking_changes
         - duration_estimate_hours
         - legacy_auth_custom_roles
@@ -2771,6 +2848,7 @@ components:
         progress:
           type: string
           enum:
+            - 0_requested
             - 1_started
             - 2_launched_upgraded_instance
             - 3_detached_volume_from_upgraded_instance
@@ -2821,6 +2899,7 @@ components:
             - us-east-1
             - us-west-1
             - us-west-2
+            - ap-east-1
             - ap-southeast-1
             - ap-northeast-1
             - ap-northeast-2
@@ -2912,6 +2991,10 @@ components:
           type: integer
           minimum: 1
           maximum: 262143
+        max_locks_per_transaction:
+          type: integer
+          minimum: 10
+          maximum: 2147483640
         max_parallel_maintenance_workers:
           type: integer
           minimum: 0
@@ -2951,6 +3034,10 @@ components:
           type: integer
           minimum: 1
           maximum: 262143
+        max_locks_per_transaction:
+          type: integer
+          minimum: 10
+          maximum: 2147483640
         max_parallel_maintenance_workers:
           type: integer
           minimum: 0
@@ -3142,6 +3229,28 @@ components:
           type: string
         verify_jwt:
           type: boolean
+    V1StorageBucketResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        owner:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        public:
+          type: boolean
+      required:
+        - id
+        - name
+        - owner
+        - created_at
+        - updated_at
+        - public
     AttributeValue:
       type: object
       properties:
@@ -3322,6 +3431,53 @@ components:
           type: string
       required:
         - id
+    V1Backup:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - COMPLETED
+            - FAILED
+            - PENDING
+            - REMOVED
+            - ARCHIVED
+        is_physical_backup:
+          type: boolean
+        inserted_at:
+          type: string
+      required:
+        - status
+        - is_physical_backup
+        - inserted_at
+    PhysicalBackup:
+      type: object
+      properties:
+        earliest_physical_backup_date_unix:
+          type: number
+        latest_physical_backup_date_unix:
+          type: number
+    V1BackupsResponse:
+      type: object
+      properties:
+        region:
+          type: string
+        walg_enabled:
+          type: boolean
+        pitr_enabled:
+          type: boolean
+        backups:
+          type: array
+          items:
+            $ref: '#/components/schemas/V1Backup'
+        physical_backup_data:
+          $ref: '#/components/schemas/PhysicalBackup'
+      required:
+        - region
+        - walg_enabled
+        - pitr_enabled
+        - backups
+        - physical_backup_data
     V1RestorePitrBody:
       type: object
       properties:
@@ -3347,3 +3503,30 @@ components:
         - user_name
         - role_name
         - mfa_enabled
+    BillingPlanId:
+      type: string
+      enum:
+        - free
+        - pro
+        - team
+        - enterprise
+    V1OrganizationSlugResponse:
+      type: object
+      properties:
+        plan:
+          $ref: '#/components/schemas/BillingPlanId'
+        opt_in_tags:
+          type: array
+          items:
+            type: string
+            enum:
+              - AI_SQL_GENERATOR_OPT_IN
+              - PREVIEW_BRANCHES_OPT_IN
+        id:
+          type: string
+        name:
+          type: string
+      required:
+        - opt_in_tags
+        - id
+        - name

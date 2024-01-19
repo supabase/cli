@@ -19,7 +19,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		OrganizationId: "combined-fuchsia-lion",
 		DbPass:         "redacted",
 		Region:         api.CreateProjectBodyRegionUsWest1,
-		Plan:           api.Free,
+		Plan:           api.CreateProjectBodyPlanFree,
 	}
 
 	t.Run("creates a new project", func(t *testing.T) {
