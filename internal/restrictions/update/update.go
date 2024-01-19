@@ -6,49 +6,42 @@ import (
 	"net"
 
 	"github.com/go-errors/errors"
-	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
-func validateCidrs(cidrs []string, bypassChecks bool) error {
-	for _, cidr := range cidrs {
+func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypassCidrChecks bool) error {
+	// 1. separate CIDR to v4 and v6
+	body := api.ApplyNetworkRestrictionsJSONRequestBody{
+		DbAllowedCidrs:   &[]string{},
+		DbAllowedCidrsV6: &[]string{},
+	}
+	for _, cidr := range dbCidrsToAllow {
 		ip, _, err := net.ParseCIDR(cidr)
 		if err != nil {
 			return errors.Errorf("failed to parse IP: %s", cidr)
 		}
-		if ip.IsPrivate() && !bypassChecks {
+		if ip.IsPrivate() && !bypassCidrChecks {
 			return errors.Errorf("private IP provided: %s", cidr)
 		}
-		if ip.To4() == nil {
-			return errors.Errorf("only IPv4 supported at the moment: %s", cidr)
-		}
-	}
-	return nil
-}
-
-func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypassCidrChecks bool, fsys afero.Fs) error {
-	// 1. sanity checks
-	{
-		err := validateCidrs(dbCidrsToAllow, bypassCidrChecks)
-		if err != nil {
-			return err
+		if ip.To4() != nil {
+			*body.DbAllowedCidrs = append(*body.DbAllowedCidrs, cidr)
+		} else {
+			*body.DbAllowedCidrsV6 = append(*body.DbAllowedCidrsV6, cidr)
 		}
 	}
 
 	// 2. update restrictions
-	{
-		resp, err := utils.GetSupabase().ApplyNetworkRestrictionsWithResponse(ctx, projectRef, api.ApplyNetworkRestrictionsJSONRequestBody{
-			DbAllowedCidrs: dbCidrsToAllow,
-		})
-		if err != nil {
-			return errors.Errorf("failed to apply network restrictions: %w", err)
-		}
-		if resp.JSON201 == nil {
-			return errors.New("failed to update network restrictions: " + string(resp.Body))
-		}
-		fmt.Printf("DB Allowed CIDRs: %+v\n", resp.JSON201.Config.DbAllowedCidrs)
-		fmt.Printf("Restrictions applied successfully: %+v\n", resp.JSON201.Status == "applied")
-		return nil
+	resp, err := utils.GetSupabase().ApplyNetworkRestrictionsWithResponse(ctx, projectRef, body)
+	if err != nil {
+		return errors.Errorf("failed to apply network restrictions: %w", err)
 	}
+	if resp.JSON201 == nil {
+		return errors.New("failed to apply network restrictions: " + string(resp.Body))
+	}
+
+	fmt.Printf("DB Allowed IPv4 CIDRs: %+v\n", resp.JSON201.Config.DbAllowedCidrs)
+	fmt.Printf("DB Allowed IPv6 CIDRs: %+v\n", resp.JSON201.Config.DbAllowedCidrsV6)
+	fmt.Printf("Restrictions applied successfully: %+v\n", resp.JSON201.Status == "applied")
+	return nil
 }

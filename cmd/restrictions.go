@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/restrictions/get"
 	"github.com/supabase/cli/internal/restrictions/update"
@@ -22,7 +21,7 @@ var (
 		Use:   "update",
 		Short: "Update network restrictions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return update.Run(cmd.Context(), flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks, afero.NewOsFs())
+			return update.Run(cmd.Context(), flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks)
 		},
 	}
 
@@ -30,7 +29,7 @@ var (
 		Use:   "get",
 		Short: "Get the current network restrictions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+			return get.Run(cmd.Context(), flags.ProjectRef)
 		},
 	}
 )
@@ -41,6 +40,5 @@ func init() {
 	restrictionsUpdateCmd.Flags().BoolVar(&bypassCidrChecks, "bypass-cidr-checks", false, "Bypass some of the CIDR validation checks.")
 	restrictionsCmd.AddCommand(restrictionsGetCmd)
 	restrictionsCmd.AddCommand(restrictionsUpdateCmd)
-
 	rootCmd.AddCommand(restrictionsCmd)
 }
