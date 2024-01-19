@@ -110,6 +110,7 @@ template = "Your code is {{ `{{ .Code }}` }} ."
 [auth.sms.test_otp]
 # 4152127777 = "123456"
 
+# This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
 [auth.hook.custom_access_token]
 # enabled = true
 # uri = "pg-functions://<database>/<schema>/<hook_name>"
