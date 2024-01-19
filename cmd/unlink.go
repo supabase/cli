@@ -15,12 +15,20 @@ var (
 		Use:     "unlink",
 		Short:   "Unlink to a Supabase project",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return unlink.PreRun("", afero.NewOsFs())
+			return cmd.MarkFlagRequired("project-ref")
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			fsys := afero.NewOsFs()
-			return unlink.Run(ctx, dbPassword, fsys)
+			if err := unlink.PreRun(projectRef, fsys); err != nil {
+				return err
+			}
+			if len(projectRef) == 0 {
+				if err := PromptProjectRef(ctx); err != nil {
+					return err
+				}
+			}
+			return unlink.Run(ctx, projectRef, fsys)
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
 			return unlink.PostRun("", os.Stdout, afero.NewOsFs())
@@ -29,5 +37,7 @@ var (
 )
 
 func init() {
+	flags := unlinkCmd.Flags()
+	flags.StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
 	rootCmd.AddCommand(unlinkCmd)
 }
