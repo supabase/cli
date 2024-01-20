@@ -170,7 +170,7 @@ async function main() {
 
   // Link the binaries in postinstall to support yarn
   // const absPath = path.join(process.env.INIT_CWD, "node_modules", "supabase", binPath)
-  // console.error(absPath)
+  console.error(binPath, process.platform)
   await binLinks({
     path: path.resolve("."),
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
