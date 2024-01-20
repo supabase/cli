@@ -80,7 +80,7 @@ jobs:
       - run: yarn set version berry
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
-      - run: ls node_modules
+      - run: ls .
       - run: yarn supabase --version
 
   pnpm:
