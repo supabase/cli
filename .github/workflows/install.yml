@@ -80,7 +80,8 @@ jobs:
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
       - run: ls node_modules
-      - run: ls node_modules\.bin
+      - run: dir node_modules\.bin\supabase
+      - run: node_modules\.bin\supabase --version
       - run: yarn supabase --version
 
   pnpm:
