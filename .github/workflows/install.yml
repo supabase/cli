@@ -78,7 +78,7 @@ jobs:
 
       # Berry fails to find executable on windows
       - run: yarn set version berry
-      - run: yarn config set node-linker node-modules
+      - run: yarn config set nodeLinker node-modules
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
       - run: ls .
