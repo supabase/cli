@@ -58,8 +58,6 @@ jobs:
         with:
           name: installer
 
-      # Berry fails to find executable on windows
-      # - run: yarn set version berry
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
       - run: yarn supabase --version
@@ -77,12 +75,12 @@ jobs:
           name: installer
 
       # Berry fails to find executable on windows
-      - run: |
-          echo "nodeLinker: node-modules" > .yarnrc.yml
       - run: yarn set version berry
+      - run: yarn config set nodeLinker node-modules
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
-      - run: ls .
+      - run: ls node_modules
+      - run: ls node_modules\.bin
       - run: yarn supabase --version
 
   pnpm:
