@@ -28,41 +28,21 @@ const PLATFORM_MAPPING = {
 };
 
 const arch = ARCH_MAPPING[process.arch];
-
 const platform = PLATFORM_MAPPING[process.platform];
 
 // TODO: import pkg from "../package.json" assert { type: "json" };
 const readPackageJson = async () => {
-  const packageJsonPath = path.join(".", "package.json");
-  const contents = await fs.promises.readFile(packageJsonPath);
+  const contents = await fs.promises.readFile("package.json");
   return JSON.parse(contents);
 };
 
-const parsePackageJson = (packageJson) => {
-  if (!arch) {
-    throw Error(
-      "Installation is not supported for this architecture: " + process.arch
-    );
-  }
-
-  if (!platform) {
-    throw Error(
-      "Installation is not supported for this platform: " + process.platform
-    );
-  }
-
-  // Build the download url from package.json
+// Build the download url from package.json
+const getDownloadUrl = (packageJson) => {
   const pkgName = packageJson.name;
   const version = packageJson.version;
   const repo = packageJson.repository;
   const url = `https://github.com/${repo}/releases/download/v${version}/${pkgName}_${platform}_${arch}.tar.gz`;
-
-  let binPath = path.join("bin", "supabase");
-  if (platform == "windows") {
-    binPath += ".exe";
-  }
-
-  return { binPath, url };
+  return url;
 };
 
 const fetchAndParseCheckSumFile = async (packageJson, agent) => {
@@ -98,6 +78,7 @@ const errGlobal = `Installing Supabase CLI as a global module is not supported.
 Please use one of the supported package managers: https://github.com/supabase/cli#install-the-cli
 `;
 const errChecksum = "Checksum mismatch. Downloaded data might be corrupted.";
+const errUnsupported = `Installation is not supported for ${process.platform} ${process.arch}`;
 
 /**
  * Reads the configuration from application's package.json,
@@ -113,9 +94,18 @@ async function main() {
   if (process.env.npm_config_global || yarnGlobal) {
     throw errGlobal;
   }
+  if (!arch || !platform) {
+    throw errUnsupported;
+  }
 
   const pkg = await readPackageJson();
-  const { binPath, url } = parsePackageJson(pkg);
+  if (platform == "windows") {
+    // Update bin path in package.json
+    pkg.bin[pkg.name] += ".exe";
+    await fs.promises.writeFile("package.json", JSON.stringify(pkg));
+  }
+
+  const binPath = pkg.bin[pkg.name];
   const binDir = path.dirname(binPath);
   await fs.promises.mkdir(binDir, { recursive: true });
 
@@ -124,6 +114,7 @@ async function main() {
   const binName = path.basename(binPath);
   const untar = tar.x({ cwd: binDir }, [binName]);
 
+  const url = getDownloadUrl(pkg);
   console.info("Downloading", url);
   const proxyUrl =
     process.env.npm_config_https_proxy ||
@@ -173,16 +164,6 @@ async function main() {
     path: path.resolve("."),
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
   });
-  if (platform == "windows") {
-    const src = path.join(
-      process.env.INIT_CWD,
-      "node_modules",
-      ".bin",
-      "supabase"
-    );
-    const dst = pkg.bin[pkg.name];
-    await fs.promises.cp(src, dst);
-  }
 
   console.info("Installed Supabase CLI successfully");
 }
