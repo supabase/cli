@@ -171,8 +171,8 @@ async function main() {
   // Link the binaries in postinstall to support yarn
   console.error(process.env.INIT_CWD)
   await binLinks({
-    path: path.join(process.env.INIT_CWD, "node_modules", "supabase"),
-    pkg: { ...pkg, bin: { [pkg.name]: binPath } },
+    path: path.resolve("."),
+    pkg: { ...pkg, bin: { [pkg.name]: path.resolve(binPath) } },
   });
 
   console.info("Installed Supabase CLI successfully");
