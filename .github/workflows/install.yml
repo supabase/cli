@@ -79,8 +79,7 @@ jobs:
       - run: yarn config set nodeLinker node-modules
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
-      - run: cat node_modules\supabase\package.json
-      - run: yarn supabase --version
+      - run: yarn exec supabase --version
 
   pnpm:
     needs: pack
