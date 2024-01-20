@@ -102,7 +102,6 @@ async function main() {
   if (platform == "windows") {
     // Update bin path in package.json
     pkg.bin[pkg.name] += ".exe";
-    await fs.promises.writeFile("package.json", JSON.stringify(pkg));
   }
 
   const binPath = pkg.bin[pkg.name];
