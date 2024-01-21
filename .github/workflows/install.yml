@@ -80,7 +80,7 @@ jobs:
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
       - run: |
-          & "$(yarn link supabase).exe" --version
+          & "$(yarn bin supabase).exe" --version
       # - run: yarn run -T supabase --version
       # - run: ./node_modules/.bin/supabase --version
 
