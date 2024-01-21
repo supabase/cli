@@ -99,7 +99,7 @@ async function main() {
   }
 
   const pkg = await readPackageJson();
-  if (platform == "windows") {
+  if (platform === "windows") {
     // Update bin path in package.json
     pkg.bin[pkg.name] += ".exe";
   }
@@ -159,6 +159,7 @@ async function main() {
   });
 
   // Link the binaries in postinstall to support yarn
+  console.error(path.resolve("."));
   await binLinks({
     path: path.resolve("."),
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
