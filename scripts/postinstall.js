@@ -170,7 +170,7 @@ async function main() {
       ".bin",
       "supabase"
     );
-    const dstPath = path.join("node_modules", "supabase", "bin");
+    const dstPath = "bin";
     await fs.promises.cp(srcPath, dstPath);
   }
 
