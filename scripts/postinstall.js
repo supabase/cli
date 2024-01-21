@@ -159,11 +159,20 @@ async function main() {
   });
 
   // Link the binaries in postinstall to support yarn
-  console.error(path.resolve("."));
   await binLinks({
     path: path.resolve("."),
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
   });
+  if (platform === "windows") {
+    const srcPath = path.join(
+      process.env.INIT_CWD,
+      "node_modules",
+      ".bin",
+      "supabase"
+    );
+    const dstPath = path.join("node_modules", "supabase", "bin");
+    await fs.promises.cp(srcPath, dstPath);
+  }
 
   console.info("Installed Supabase CLI successfully");
 }
