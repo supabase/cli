@@ -3,7 +3,9 @@
 package login
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"os/exec"
 )
 
@@ -12,6 +14,4 @@ func RunOpenCmd(ctx context.Context, input string) error {
 		return exec.CommandContext(ctx, "wslview", input).Run()
 	}
 	return exec.CommandContext(ctx, "xdg-open", input).Run()
-	}
-	return nil
 }
