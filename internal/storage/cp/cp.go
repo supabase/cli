@@ -21,7 +21,7 @@ import (
 
 var errUnsupportedOperation = errors.New("Unsupported operation")
 
-func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
+func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsys afero.Fs) error {
 	srcParsed, err := url.Parse(src)
 	if err != nil {
 		return errors.Errorf("failed to parse src url: %w", err)
@@ -36,12 +36,12 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	}
 	if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && dstParsed.Scheme == "" {
 		if recursive {
-			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, dst, fsys)
+			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, dst, maxJobs, fsys)
 		}
 		return client.DownloadStorageObject(ctx, projectRef, srcParsed.Path, dst, fsys)
 	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
 		if recursive {
-			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, src, fsys)
+			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, src, maxJobs, fsys)
 		}
 		return client.UploadStorageObject(ctx, projectRef, dstParsed.Path, src, fsys)
 	} else if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
@@ -51,34 +51,37 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	return errors.New(errUnsupportedOperation)
 }
 
-func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
+func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, maxJobs uint, fsys afero.Fs) error {
 	// Prepare local directory for download
 	if fi, err := fsys.Stat(localPath); err == nil && fi.IsDir() {
 		localPath = filepath.Join(localPath, path.Base(remotePath))
 	}
+	// No need to be atomic because it's incremented only on main thread
 	count := 0
-	if err := ls.IterateStoragePathsAll(ctx, projectRef, remotePath, func(objectPath string) error {
+	jq := utils.NewJobQueue(maxJobs)
+	err := ls.IterateStoragePathsAll(ctx, projectRef, remotePath, func(objectPath string) error {
 		relPath := strings.TrimPrefix(objectPath, remotePath)
 		dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
 		fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
 		count++
-		if strings.HasSuffix(objectPath, "/") {
-			return utils.MkdirIfNotExistFS(fsys, dstPath)
+		job := func() error {
+			if strings.HasSuffix(objectPath, "/") {
+				return utils.MkdirIfNotExistFS(fsys, dstPath)
+			}
+			if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dstPath)); err != nil {
+				return err
+			}
+			return client.DownloadStorageObject(ctx, projectRef, objectPath, dstPath, fsys)
 		}
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dstPath)); err != nil {
-			return err
-		}
-		return client.DownloadStorageObject(ctx, projectRef, objectPath, dstPath, fsys)
-	}); err != nil {
-		return err
-	}
+		return jq.Put(job)
+	})
 	if count == 0 {
 		return errors.New("Object not found: " + remotePath)
 	}
-	return nil
+	return errors.Join(err, jq.Collect())
 }
 
-func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
+func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, maxJobs uint, fsys afero.Fs) error {
 	noSlash := strings.TrimSuffix(remotePath, "/")
 	// Check if directory exists on remote
 	dirExists := false
@@ -95,7 +98,8 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 		return err
 	}
 	baseName := filepath.Base(localPath)
-	return afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
+	jq := utils.NewJobQueue(maxJobs)
+	err := afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return errors.New(err)
 		}
@@ -120,18 +124,22 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 			dstPath = path.Join(dstPath, relPath)
 		}
 		fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
-		err = client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys)
-		if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
-			// Retry after creating bucket
-			if bucket, prefix := storage.SplitBucketPrefix(dstPath); len(prefix) > 0 {
-				if _, err := client.CreateStorageBucket(ctx, projectRef, bucket); err != nil {
-					return err
+		job := func() error {
+			err := client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys)
+			if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
+				// Retry after creating bucket
+				if bucket, prefix := storage.SplitBucketPrefix(dstPath); len(prefix) > 0 {
+					if _, err := client.CreateStorageBucket(ctx, projectRef, bucket); err != nil {
+						return err
+					}
+					err = client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys)
 				}
-				err = client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys)
 			}
+			return err
 		}
-		return err
+		return jq.Put(job)
 	})
+	return errors.Join(err, jq.Collect())
 }
 
 func IsDir(objectPrefix string) bool {
