@@ -8,12 +8,10 @@ import (
 )
 
 func RunOpenCmd(ctx context.Context, input string) error {
-	if err := exec.CommandContext(ctx, "xdg-open", input).Run(); err != nil {
-		if err := exec.CommandContext(ctx, "x-www-browser", input).Run(); err != nil {
-			if err := exec.CommandContext(ctx, "wslview", input).Run(); err != nil {
-				return exec.CommandContext(ctx, "sensible-browser", input).Run()
-			}
-		}
+	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil && bytes.Contains(f, []byte("WSL")) {
+		return exec.CommandContext(ctx, "wslview", input).Run()
+	}
+	return exec.CommandContext(ctx, "xdg-open", input).Run()
 	}
 	return nil
 }
