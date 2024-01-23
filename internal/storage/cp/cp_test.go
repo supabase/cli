@@ -55,7 +55,7 @@ func TestStorageCP(t *testing.T) {
 			Post("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), utils.ProjectRefPath, "ss:///private/file", false, fsys)
+		err := Run(context.Background(), utils.ProjectRefPath, "ss:///private/file", false, 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -80,7 +80,7 @@ func TestStorageCP(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.BucketResponse{})
 		// Run test
-		err := Run(context.Background(), "abstract.pdf", "ss:///private", true, fsys)
+		err := Run(context.Background(), "abstract.pdf", "ss:///private", true, 1, fsys)
 		// Check error
 		assert.ErrorIs(t, err, fs.ErrNotExist)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -107,7 +107,7 @@ func TestStorageCP(t *testing.T) {
 			Get("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), "ss:///private/file", "abstract.pdf", false, fsys)
+		err := Run(context.Background(), "ss:///private/file", "abstract.pdf", false, 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -135,7 +135,7 @@ func TestStorageCP(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.BucketResponse{})
 		// Run test
-		err := Run(context.Background(), "ss:///private", ".", true, fsys)
+		err := Run(context.Background(), "ss:///private", ".", true, 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Object not found: /private")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -145,7 +145,7 @@ func TestStorageCP(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), ":", ".", false, fsys)
+		err := Run(context.Background(), ":", ".", false, 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "missing protocol scheme")
 	})
@@ -154,7 +154,7 @@ func TestStorageCP(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), ".", ":", false, fsys)
+		err := Run(context.Background(), ".", ":", false, 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "missing protocol scheme")
 	})
@@ -163,7 +163,7 @@ func TestStorageCP(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), ".", ".", false, fsys)
+		err := Run(context.Background(), ".", ".", false, 1, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotLinked)
 	})
@@ -174,7 +174,7 @@ func TestStorageCP(t *testing.T) {
 		projectRef := apitest.RandomProjectRef()
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
 		// Run test
-		err := Run(context.Background(), ".", ".", false, fsys)
+		err := Run(context.Background(), ".", ".", false, 1, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errUnsupportedOperation)
 	})
@@ -216,7 +216,7 @@ func TestUploadAll(t *testing.T) {
 			Post("/storage/v1/object/tmp/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -247,7 +247,7 @@ func TestUploadAll(t *testing.T) {
 			Post("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -280,7 +280,7 @@ func TestUploadAll(t *testing.T) {
 			Post("/storage/v1/object/private/dir/tmp/docs/api.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "/private/dir/", "/tmp", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "/private/dir/", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -312,7 +312,7 @@ func TestUploadAll(t *testing.T) {
 			Post("/storage/v1/object/private/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "private", "/tmp/readme.md", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "private", "/tmp/readme.md", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -341,7 +341,7 @@ func TestUploadAll(t *testing.T) {
 			Post("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "private/file", "/tmp/readme.md", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "private/file", "/tmp/readme.md", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -363,7 +363,7 @@ func TestUploadAll(t *testing.T) {
 			Get("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", ".", fsys)
+		err := UploadStorageObjectAll(context.Background(), projectRef, "", ".", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -413,7 +413,7 @@ func TestDownloadAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "", "/", fsys)
+		err := DownloadStorageObjectAll(context.Background(), projectRef, "", "/", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -455,7 +455,7 @@ func TestDownloadAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private", "/tmp", fsys)
+		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -484,7 +484,7 @@ func TestDownloadAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]client.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/dir/", "/", fsys)
+		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/dir/", "/", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Object not found: private/dir/")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -538,7 +538,7 @@ func TestDownloadAll(t *testing.T) {
 			Get("/storage/v1/object/private/tmp/docs/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/tmp/", "/", fsys)
+		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/tmp/", "/", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -570,7 +570,7 @@ func TestDownloadAll(t *testing.T) {
 			Get("/storage/v1/object/private/abstract.pdf").
 			Reply(http.StatusOK)
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private/abstract.pdf", "/tmp/file", fsys)
+		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private/abstract.pdf", "/tmp/file", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
