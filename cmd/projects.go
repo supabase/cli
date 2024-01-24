@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -21,13 +20,6 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-type config struct {
-	DbPassword string `toml:"db_password"`
-	OrgId      string `toml:"org_id"`
-	Plan       string `toml:"plan"`
-	Region     string `toml:"region"`
-}
-
 var (
 	projectsCmd = &cobra.Command{
 		GroupID: groupManagementAPI,
@@ -36,7 +28,6 @@ var (
 	}
 
 	interactive bool
-	configFile  string
 	orgId       string
 	dbPassword  string
 
@@ -56,7 +47,7 @@ var (
 		Args:    cobra.ExactArgs(1),
 		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
 		PreRun: func(cmd *cobra.Command, args []string) {
-			if !interactive && configFile == "" {
+			if !interactive {
 				cobra.CheckErr(cmd.MarkFlagRequired("org-id"))
 				cobra.CheckErr(cmd.MarkFlagRequired("db-password"))
 				cobra.CheckErr(cmd.MarkFlagRequired("region"))
@@ -64,24 +55,9 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			fsys := afero.NewOsFs()
 			if interactive {
 				fmt.Fprintln(os.Stderr, printKeyValue("Creating project", name))
 				cobra.CheckErr(PromptCreateFlags(cmd))
-			} else if configFile != "" {
-				var cfg config
-				if metadata, err := toml.DecodeFS(afero.NewIOFS(fsys), configFile, &cfg); err != nil {
-					return fmt.Errorf("cannot read config in " + configFile)
-				} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-					fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
-				}
-				orgId, dbPassword = cfg.OrgId, cfg.DbPassword
-				if err := region.Set(cfg.Region); err != nil {
-					return fmt.Errorf("invalid region in config: %w", err)
-				}
-				if err := plan.Set(cfg.Plan); err != nil {
-					return fmt.Errorf("invalid plan in config: %w", err)
-				}
 			}
 			return create.Run(cmd.Context(), api.CreateProjectBody{
 				Name:           name,
@@ -89,7 +65,7 @@ var (
 				DbPass:         dbPassword,
 				Region:         api.CreateProjectBodyRegion(region.Value),
 				Plan:           api.CreateProjectBodyPlan(plan.Value),
-			}, fsys)
+			}, afero.NewOsFs())
 		},
 	}
 
@@ -140,7 +116,6 @@ func init() {
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
 	createFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
-	createFlags.StringVar(&configFile, "config", "", "Config file to use.")
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
