@@ -27,7 +27,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/golangci/golangci-lint v1.55.2
 	github.com/google/go-github/v53 v53.2.0
-	github.com/google/uuid v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgconn v1.14.1
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgmock v0.0.0-20210724152146-4ad1a8207f65
