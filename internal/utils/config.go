@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -524,9 +525,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if Config.Experimental.S3SecretKey, err = maybeLoadEnv(Config.Experimental.S3SecretKey); err != nil {
 					return err
 				}
-			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil && strings.HasPrefix(string(version), "15.") {
-				index := strings.IndexByte(Pg15Image, ':')
-				Config.Db.Image = Pg15Image[:index+1] + string(version)
+			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil {
+				parts := strings.Split(string(version), ".")
+				if patch, err := strconv.Atoi(parts[len(parts)-1]); err == nil && patch >= 55 && parts[0] == "15" {
+					index := strings.IndexByte(Pg15Image, ':')
+					Config.Db.Image = Pg15Image[:index+1] + string(version)
+				}
 			}
 		default:
 			return errors.Errorf("Failed reading config: Invalid %s: %v.", Aqua("db.major_version"), Config.Db.MajorVersion)
