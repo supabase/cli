@@ -163,16 +163,6 @@ async function main() {
     path: path.resolve("."),
     pkg: { ...pkg, bin: { [pkg.name]: binPath } },
   });
-  if (platform === "windows") {
-    const srcPath = path.join(
-      process.env.INIT_CWD,
-      "node_modules",
-      ".bin",
-      "supabase"
-    );
-    const dstPath = path.join("bin", "supabase");
-    await fs.promises.cp(srcPath, dstPath);
-  }
 
   console.info("Installed Supabase CLI successfully");
 }
