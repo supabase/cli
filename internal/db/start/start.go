@@ -208,6 +208,7 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
+		"DB_INSTALL_ROLES=false",
 		"ANON_KEY=" + utils.Config.Auth.AnonKey,
 		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
