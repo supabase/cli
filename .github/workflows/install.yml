@@ -74,15 +74,16 @@ jobs:
         with:
           name: installer
 
-      # Berry fails to find executable on windows
       - run: yarn set version berry
-      - run: yarn config set nodeLinker node-modules
+      # - run: yarn config set nodeLinker node-modules
       - run: yarn init -y
       - run: yarn add -D ./supabase-1.28.0.tgz
-      - run: |
+      - if: ${{ matrix.os != 'windows-latest' }}
+        run: yarn supabase --version
+      # Workaround for running extensionless executable on windows
+      - if: ${{ matrix.os == 'windows-latest' }}
+        run: |
           & "$(yarn bin supabase).exe" --version
-      # - run: yarn run -T supabase --version
-      # - run: ./node_modules/.bin/supabase --version
 
   pnpm:
     needs: pack
