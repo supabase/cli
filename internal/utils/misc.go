@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,7 +34,7 @@ const (
 	PgmetaImage      = "supabase/postgres-meta:v0.75.0"
 	StudioImage      = "supabase/studio:20240101-8e4a094"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.29.1"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.32.0"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
@@ -299,4 +300,14 @@ func ValidateFunctionSlug(slug string) error {
 
 func Ptr[T any](v T) *T {
 	return &v
+}
+
+func GetHostname() string {
+	host := Docker.DaemonHost()
+	if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
+		if host, _, err := net.SplitHostPort(parsed.Host); err == nil {
+			return host
+		}
+	}
+	return "127.0.0.1"
 }

@@ -81,6 +81,8 @@ enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
 enable_signup = true
+# Allow/disallow testing manual linking of accounts
+enable_manual_linking = true
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
@@ -108,6 +110,11 @@ template = "Your code is {{ `{{ .Code }}` }} ."
 [auth.sms.test_otp]
 4152127777 = "123456"
 
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/auth/custom-access-token-hook"
+
+
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
 enabled = true
@@ -117,7 +124,7 @@ message_service_sid = "message_service_sid"
 auth_token = "env(TWILIO_AUTH_TOKEN)"
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
-# `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin`, `notion`, `twitch`,
+# `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.azure]
 enabled = true

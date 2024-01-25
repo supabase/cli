@@ -33,6 +33,8 @@ var (
 		},
 	}
 
+	maxJobs uint
+
 	cpCmd = &cobra.Command{
 		Use: "cp <src> <dst>",
 		Example: `cp readme.md ss:///bucket/readme.md
@@ -42,7 +44,7 @@ cp -r ss:///bucket/docs .
 		Short: "Copy objects from src to dst path",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cp.Run(cmd.Context(), args[0], args[1], recursive, afero.NewOsFs())
+			return cp.Run(cmd.Context(), args[0], args[1], recursive, maxJobs, afero.NewOsFs())
 		},
 	}
 
@@ -72,11 +74,13 @@ rm ss:///bucket/docs/example.md ss:///bucket/readme.md
 func init() {
 	lsCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively list a directory.")
 	storageCmd.AddCommand(lsCmd)
-	cpCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively copy a directory.")
+	cpFlags := cpCmd.Flags()
+	cpFlags.BoolVarP(&recursive, "recursive", "r", false, "Recursively copy a directory.")
+	cpFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	storageCmd.AddCommand(cpCmd)
-	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively move a directory.")
+	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
 	storageCmd.AddCommand(rmCmd)
-	mvCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
+	mvCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively move a directory.")
 	storageCmd.AddCommand(mvCmd)
 	rootCmd.AddCommand(storageCmd)
 }

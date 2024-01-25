@@ -129,18 +129,24 @@ func DockerRemoveAll(ctx context.Context, w io.Writer) error {
 	if err := errors.Join(result...); err != nil {
 		return err
 	}
-	if _, err := Docker.ContainersPrune(ctx, args); err != nil {
+	if report, err := Docker.ContainersPrune(ctx, args); err != nil {
 		return errors.Errorf("failed to prune containers: %w", err)
+	} else if viper.GetBool("DEBUG") {
+		fmt.Fprintln(os.Stderr, "Pruned containers:", report.ContainersDeleted)
 	}
 	// Remove named volumes
 	if NoBackupVolume {
-		if _, err := Docker.VolumesPrune(ctx, args); err != nil {
+		if report, err := Docker.VolumesPrune(ctx, args); err != nil {
 			return errors.Errorf("failed to prune volumes: %w", err)
+		} else if viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, "Pruned volumes:", report.VolumesDeleted)
 		}
 	}
 	// Remove networks.
-	if _, err = Docker.NetworksPrune(ctx, args); err != nil {
+	if report, err := Docker.NetworksPrune(ctx, args); err != nil {
 		return errors.Errorf("failed to prune networks: %w", err)
+	} else if viper.GetBool("DEBUG") {
+		fmt.Fprintln(os.Stderr, "Pruned network:", report.NetworksDeleted)
 	}
 	return nil
 }

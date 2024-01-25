@@ -35,8 +35,8 @@ var (
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
 	plan = utils.EnumFlag{
-		Allowed: []string{string(api.Free), string(api.Pro)},
-		Value:   string(api.Free),
+		Allowed: []string{string(api.CreateProjectBodyPlanFree), string(api.CreateProjectBodyPlanPro)},
+		Value:   string(api.CreateProjectBodyPlanFree),
 	}
 
 	projectsCreateCmd = &cobra.Command{
@@ -165,8 +165,8 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 	if !cmd.Flags().Changed("plan") {
 		title := "Do you want a free or pro plan?"
 		choice, err := utils.PromptChoice(ctx, title, []utils.PromptItem{
-			{Summary: string(api.Free)},
-			{Summary: string(api.Pro)},
+			{Summary: string(api.CreateProjectBodyPlanFree)},
+			{Summary: string(api.CreateProjectBodyPlanPro)},
 		})
 		if err != nil {
 			return err

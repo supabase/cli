@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,13 +21,17 @@ func ToPostgresURL(config pgconn.Config) string {
 	if timeoutSecond == 0 {
 		timeoutSecond = 10
 	}
+	queryParams := fmt.Sprintf("connect_timeout=%d", timeoutSecond)
+	for k, v := range config.RuntimeParams {
+		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+	}
 	return fmt.Sprintf(
-		"postgresql://%s@%s:%d/%s?connect_timeout=%d",
+		"postgresql://%s@%s:%d/%s?%s",
 		url.UserPassword(config.User, config.Password),
 		config.Host,
 		config.Port,
 		url.PathEscape(config.Database),
-		timeoutSecond,
+		queryParams,
 	)
 }
 
@@ -61,37 +64,32 @@ func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		return nil
 	}
-	matches := ProjectHostPattern.FindStringSubmatch(dbConfig.Host)
-	if len(matches) != 4 {
-		return nil
-	}
-	ref := matches[2]
-	parts := strings.Split(Config.Db.Pooler.ConnectionString, "@")
-	stripped := parts[len(parts)-1]
-	if len(parts) > 1 {
-		stripped = "postgres://" + stripped
-	}
-	parsed, err := url.Parse(stripped)
+	// Remove password from pooler connection string because the placeholder text
+	// [YOUR-PASSWORD] messes up pgconn.ParseConfig. The password must be percent
+	// escaped so we cannot simply call strings.Replace with actual password.
+	poolerUrl := strings.ReplaceAll(Config.Db.Pooler.ConnectionString, "[YOUR-PASSWORD]", "")
+	poolerConfig, err := pgconn.ParseConfig(poolerUrl)
 	if err != nil {
 		return nil
 	}
-	host, port, err := net.SplitHostPort(parsed.Host)
-	if err != nil {
+	// Verify that the pooler username matches the database host being connected to
+	parts := strings.Split(poolerConfig.User, ".")
+	projectRef := parts[len(parts)-1]
+	if GetSupabaseDbHost(projectRef) != dbConfig.Host {
 		return nil
 	}
-	poolerConfig := dbConfig.Copy()
-	poolerConfig.Host = host
-	if poolerPort, err := strconv.ParseUint(port, 10, 16); err == nil {
-		poolerConfig.Port = uint16(poolerPort)
+	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
+	if !strings.HasSuffix(poolerConfig.Host, ".supabase.com") {
+		return nil
 	}
-	poolerConfig.User = fmt.Sprintf("%s.%s", poolerConfig.User, ref)
+	poolerConfig.Password = dbConfig.Password
 	return poolerConfig
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
 func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	if len(config.Host) == 0 {
-		config.Host = "127.0.0.1"
+		config.Host = Config.Hostname
 	}
 	if config.Port == 0 {
 		config.Port = uint16(Config.Db.Port)

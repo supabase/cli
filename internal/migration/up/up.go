@@ -77,7 +77,7 @@ func suggestRevertHistory(versions []string) string {
 		result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + ver))
 	}
 	result += fmt.Sprintln("\nAnd update local migrations to match remote database:")
-	result += fmt.Sprintln(utils.Bold("supabase db remote commit"))
+	result += fmt.Sprintln(utils.Bold("supabase db pull"))
 	return result
 }
 

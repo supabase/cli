@@ -28,7 +28,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	localVersions, err := loadLocalVersions(fsys)
+	localVersions, err := LoadLocalVersions(fsys)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func RenderTable(markdown string) error {
 	return nil
 }
 
-func loadLocalVersions(fsys afero.Fs) ([]string, error) {
+func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 	names, err := LoadLocalMigrations(fsys)
 	if err != nil {
 		return nil, err

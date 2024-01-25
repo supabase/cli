@@ -100,6 +100,7 @@ type kongConfig struct {
 	PgmetaId      string
 	EdgeRuntimeId string
 	LogflareId    string
+	ApiHost       string
 	ApiPort       uint
 }
 
@@ -305,6 +306,7 @@ EOF
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			LogflareId:    utils.LogflareId,
+			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
@@ -377,7 +379,7 @@ EOF
 		}
 
 		env := []string{
-			fmt.Sprintf("API_EXTERNAL_URL=http://127.0.0.1:%v", utils.Config.Api.Port),
+			fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port),
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -394,7 +396,7 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-			fmt.Sprintf("GOTRUE_JWT_ISSUER=http://127.0.0.1:%v/auth/v1", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_JWT_ISSUER=http://%s:%d/auth/v1", utils.Config.Hostname, utils.Config.Api.Port),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -407,10 +409,10 @@ EOF
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100
 			// is fixed on upstream GoTrue.
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://127.0.0.1:%v/auth/v1/verify", utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -423,6 +425,7 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Template {
@@ -485,6 +488,29 @@ EOF
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
+		if utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
+			)
+		}
+
+		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
+			)
+		}
+
+		if utils.Config.Auth.Hook.CustomAccessToken.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
+			)
+		}
 
 		for name, config := range utils.Config.Auth.External {
 			env = append(
@@ -500,7 +526,7 @@ EOF
 				)
 			} else {
 				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://127.0.0.1:%v/auth/v1/callback", strings.ToUpper(name), utils.Config.Api.Port),
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://%s:%d/auth/v1/callback", strings.ToUpper(name), utils.Config.Hostname, utils.Config.Api.Port),
 				)
 			}
 
