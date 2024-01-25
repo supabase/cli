@@ -8,9 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/zalando/go-keyring"
 )
 
 func TestUnlinkCommand(t *testing.T) {
+	keyring.MockInit()
 	project := "test-project"
 	password := "test-password"
 
