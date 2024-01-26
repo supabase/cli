@@ -52,17 +52,19 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
-		if ref, err := flags.LoadProjectRef(fsys); err == nil {
-			local := services.GetServiceImages()
-			remote := services.GetRemoteImages(ctx, ref)
-			for _, image := range local {
-				parts := strings.Split(image, ":")
-				if version, ok := remote[image]; ok && version == parts[1] {
-					delete(remote, image)
+		if _, err := utils.LoadAccessTokenFS(fsys); err == nil {
+			if ref, err := flags.LoadProjectRef(fsys); err == nil {
+				local := services.GetServiceImages()
+				remote := services.GetRemoteImages(ctx, ref)
+				for _, image := range local {
+					parts := strings.Split(image, ":")
+					if version, ok := remote[image]; ok && version == parts[1] {
+						delete(remote, image)
+					}
 				}
-			}
-			if len(remote) > 0 {
-				fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
+				if len(remote) > 0 {
+					fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
+				}
 			}
 		}
 	}
