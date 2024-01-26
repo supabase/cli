@@ -269,7 +269,12 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	}
 	defer conn.Close(context.Background())
 	// List user defined schemas
-	excludes := append([]string{"public"}, utils.InternalSchemas...)
+	excludes := []string{"public"}
+	for _, schema := range utils.InternalSchemas {
+		if schema != "supabase_migrations" {
+			excludes = append(excludes, schema)
+		}
+	}
 	userSchemas, err := ListSchemas(ctx, conn, excludes...)
 	if err != nil {
 		return err
