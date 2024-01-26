@@ -54,9 +54,14 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema, exclude
 }
 
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
-	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|")}
+	var env []string
 	if len(schema) > 0 {
-		env[0] = "EXTRA_FLAGS=--schema " + strings.Join(schema, "|")
+		env = append(env, "EXTRA_FLAGS=--schema "+strings.Join(schema, "|"))
+	} else {
+		env = append(env,
+			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
+			"EXTRA_FLAGS=--extension '*'",
+		)
 	}
 	if !keepComments {
 		env = append(env, "EXTRA_SED=/^--/d")

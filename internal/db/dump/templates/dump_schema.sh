@@ -23,7 +23,6 @@ pg_dump \
     --schema-only \
     --quote-all-identifier \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
-    --extension '*' \
     --no-comments \
     ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
