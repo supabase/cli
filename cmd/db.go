@@ -109,6 +109,11 @@ var (
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
 		Short: "Dumps data or schemas from the remote database",
+		PreRun: func(cmd *cobra.Command, args []string) {
+			if useCopy || len(excludeTable) > 0 {
+				cobra.CheckErr(cmd.MarkFlagRequired("data-only"))
+			}
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return dump.Run(cmd.Context(), file, flags.DbConfig, schema, excludeTable, dataOnly, roleOnly, keepComments, useCopy, dryRun, afero.NewOsFs())
 		},
@@ -235,10 +240,11 @@ func init() {
 	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Prints the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
-	dumpFlags.StringSliceVarP(&excludeTable, "exclude", "x", []string{}, "Excludes schema.tables from data-only dump.")
+	dumpFlags.StringSliceVarP(&excludeTable, "exclude", "x", []string{}, "List of schema.tables to exclude from data-only dump.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
+	dbDumpCmd.MarkFlagsMutuallyExclusive("role-only", "data-only")
 	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
-	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
+	dbDumpCmd.MarkFlagsMutuallyExclusive("keep-comments", "data-only")
 	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
 	dumpFlags.String("db-url", "", "Dumps from the database specified by the connection string (must be percent-encoded).")
 	dumpFlags.Bool("linked", true, "Dumps from the linked project.")
@@ -247,6 +253,7 @@ func init() {
 	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
 	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	dbDumpCmd.MarkFlagsMutuallyExclusive("schema", "role-only")
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
