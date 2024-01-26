@@ -104,12 +104,13 @@ var (
 	useCopy      bool
 	roleOnly     bool
 	keepComments bool
+	excludeTable []string
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
 		Short: "Dumps data or schemas from the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dump.Run(cmd.Context(), file, flags.DbConfig, schema, dataOnly, roleOnly, keepComments, useCopy, dryRun, afero.NewOsFs())
+			return dump.Run(cmd.Context(), file, flags.DbConfig, schema, excludeTable, dataOnly, roleOnly, keepComments, useCopy, dryRun, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
@@ -234,6 +235,7 @@ func init() {
 	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Prints the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
 	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
+	dumpFlags.StringSliceVarP(&excludeTable, "exclude", "x", []string{}, "Excludes schema.tables from data-only dump.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
 	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("data-only", "role-only")
