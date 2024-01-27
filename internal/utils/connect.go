@@ -82,7 +82,9 @@ func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	if !strings.HasSuffix(poolerConfig.Host, ".supabase.com") {
 		return nil
 	}
-	poolerConfig.Password = dbConfig.Password
+	if len(poolerConfig.Password) == 0 {
+		poolerConfig.Password = dbConfig.Password
+	}
 	return poolerConfig
 }
 
