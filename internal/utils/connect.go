@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -61,7 +62,9 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 }
 
 func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
+	logger := getDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
+		fmt.Fprintln(logger, "Pooler URL is not configured")
 		return nil
 	}
 	// Remove password from pooler connection string because the placeholder text
@@ -70,20 +73,40 @@ func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	poolerUrl := strings.ReplaceAll(Config.Db.Pooler.ConnectionString, "[YOUR-PASSWORD]", "")
 	poolerConfig, err := pgconn.ParseConfig(poolerUrl)
 	if err != nil {
+		fmt.Fprintln(logger, "Failed to parse pooler URL:", poolerUrl)
 		return nil
 	}
 	// Verify that the pooler username matches the database host being connected to
 	parts := strings.Split(poolerConfig.User, ".")
 	projectRef := parts[len(parts)-1]
 	if GetSupabaseDbHost(projectRef) != dbConfig.Host {
+		fmt.Fprintln(logger, "Connecting to self-hosted database:", dbConfig.Host)
 		return nil
 	}
 	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
-	if !strings.HasSuffix(poolerConfig.Host, ".supabase.com") {
+	if isSupabaseDomain(poolerConfig.Host) {
+		fmt.Fprintln(logger, "Pooler or API host does not belong to Supabase domain:", poolerConfig.Host)
 		return nil
 	}
+	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
 	poolerConfig.Password = dbConfig.Password
 	return poolerConfig
+}
+
+func getDebugLogger() io.Writer {
+	if viper.GetBool("DEBUG") {
+		return os.Stderr
+	}
+	return io.Discard
+}
+
+func isSupabaseDomain(host string) bool {
+	switch GetSupabaseAPIHost() {
+	case "https://api.supabase.green":
+		return strings.HasSuffix(host, ".supabase.green")
+	default:
+		return strings.HasSuffix(host, ".supabase.com")
+	}
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
