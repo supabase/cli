@@ -56,11 +56,11 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema, exclude
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
 	var env []string
 	if len(schema) > 0 {
-		env = append(env, "EXTRA_FLAGS=--schema "+strings.Join(schema, "|"))
+		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, "|"))
 	} else {
 		env = append(env,
 			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
-			"EXTRA_FLAGS=--extension '*'",
+			"INCLUDED_SCHEMAS=*",
 		)
 	}
 	if !keepComments {
@@ -140,8 +140,11 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 	if dryRun {
 		envMap := make(map[string]string, len(allEnvs))
 		for _, e := range allEnvs {
-			parts := strings.Split(e, "=")
-			envMap[parts[0]] = parts[1]
+			index := strings.IndexByte(e, '=')
+			if index < 0 {
+				continue
+			}
+			envMap[e[:index]] = e[index+1:]
 		}
 		expanded := os.Expand(script, func(key string) string {
 			// Bash variable expansion is unsupported:
