@@ -26,7 +26,9 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		PreRun: func(cmd *cobra.Command, args []string) {
-			cmd.MarkFlagsRequiredTogether("use-orioledb", "experimental")
+			if useOrioleDB {
+				cobra.CheckErr(cmd.MarkFlagRequired("experimental"))
+			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fsys := afero.NewOsFs()

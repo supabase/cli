@@ -25,7 +25,7 @@ var (
 	dumpRoleScript string
 )
 
-func Run(ctx context.Context, path string, config pgconn.Config, schema []string, dataOnly, roleOnly, keepComments, useCopy, dryRun bool, fsys afero.Fs) error {
+func Run(ctx context.Context, path string, config pgconn.Config, schema, excludeTable []string, dataOnly, roleOnly, keepComments, useCopy, dryRun bool, fsys afero.Fs) error {
 	// Initialize output stream
 	var outStream afero.File
 	if len(path) > 0 {
@@ -44,7 +44,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 	}
 	if dataOnly {
 		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
-		return dumpData(ctx, config, schema, useCopy, dryRun, outStream)
+		return dumpData(ctx, config, schema, excludeTable, useCopy, dryRun, outStream)
 	} else if roleOnly {
 		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
 		return dumpRole(ctx, config, keepComments, dryRun, outStream)
@@ -54,9 +54,14 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema []string
 }
 
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
-	env := []string{"EXCLUDED_SCHEMAS=" + strings.Join(utils.InternalSchemas, "|")}
+	var env []string
 	if len(schema) > 0 {
-		env[0] = "EXTRA_FLAGS=--schema " + strings.Join(schema, "|")
+		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, "|"))
+	} else {
+		env = append(env,
+			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
+			"INCLUDED_SCHEMAS=*",
+		)
 	}
 	if !keepComments {
 		env = append(env, "EXTRA_SED=/^--/d")
@@ -64,7 +69,7 @@ func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keep
 	return dump(ctx, config, dumpSchemaScript, env, dryRun, stdout)
 }
 
-func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCopy, dryRun bool, stdout io.Writer) error {
+func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []string, useCopy, dryRun bool, stdout io.Writer) error {
 	// We want to dump user data in auth, storage, etc. for migrating to new project
 	excludedSchemas := []string{
 		"information_schema",
@@ -101,8 +106,15 @@ func dumpData(ctx context.Context, config pgconn.Config, schema []string, useCop
 	} else {
 		env = append(env, "INCLUDED_SCHEMAS=*", "EXCLUDED_SCHEMAS="+strings.Join(excludedSchemas, "|"))
 	}
+	var extraFlags []string
 	if !useCopy {
-		env = append(env, "EXTRA_FLAGS=--column-inserts --rows-per-insert 100000")
+		extraFlags = append(extraFlags, "--column-inserts", "--rows-per-insert 100000")
+	}
+	for _, table := range excludeTable {
+		extraFlags = append(extraFlags, "--exclude-table "+table)
+	}
+	if len(extraFlags) > 0 {
+		env = append(env, "EXTRA_FLAGS="+strings.Join(extraFlags, " "))
 	}
 	return dump(ctx, config, dumpDataScript, env, dryRun, stdout)
 }
@@ -128,8 +140,11 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 	if dryRun {
 		envMap := make(map[string]string, len(allEnvs))
 		for _, e := range allEnvs {
-			parts := strings.Split(e, "=")
-			envMap[parts[0]] = parts[1]
+			index := strings.IndexByte(e, '=')
+			if index < 0 {
+				continue
+			}
+			envMap[e[:index]] = e[index+1:]
 		}
 		expanded := os.Expand(script, func(key string) string {
 			// Bash variable expansion is unsupported:

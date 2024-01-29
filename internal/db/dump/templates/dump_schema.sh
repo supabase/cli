@@ -12,7 +12,6 @@ export PGDATABASE="$PGDATABASE"
 #   --schema-only     omit data like migration history, pgsodium key, etc.
 #   --exclude-schema  omit internal schemas as they are maintained by platform
 #   --no-comments     only object owner can set comment, omit to allow restore by non-superuser
-#   --extension '*'   prevents event triggers from being dumped, bash escaped with single quote
 #
 # Explanation of sed substitutions:
 #
@@ -23,9 +22,8 @@ pg_dump \
     --schema-only \
     --quote-all-identifier \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
-    --extension '*' \
+    --schema "${INCLUDED_SCHEMAS:-}" \
     --no-comments \
-    ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed -E 's/^CREATE TABLE "/CREATE TABLE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \
