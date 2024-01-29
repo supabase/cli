@@ -31,8 +31,6 @@ var (
 	orgId       string
 	dbPassword  string
 
-	projectRefId string
-
 	region = utils.EnumFlag{
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
@@ -89,18 +87,17 @@ var (
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
+		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if interactive {
+			if len(args) == 0 {
 				cobra.CheckErr(PromptDeleteFlags(cmd))
-			} else if len(args) == 0 {
-				return cmd.Help()
 			} else {
-				projectRefId = args[0]
+				flags.ProjectRef = args[0]
 			}
-			return delete.PreRun(projectRefId)
+			return delete.PreRun(flags.ProjectRef)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(cmd.Context(), projectRefId, afero.NewOsFs())
+			return delete.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
@@ -124,9 +121,6 @@ func init() {
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
 	apiKeysFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-
-	deleteFlags := projectsDeleteCmd.Flags()
-	deleteFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
 
 	// Add commands to root
 	projectsCmd.AddCommand(projectsCreateCmd)
@@ -203,14 +197,17 @@ func PromptDeleteFlags(cmd *cobra.Command) error {
 	}
 	items := make([]utils.PromptItem, len(*resp.JSON200))
 	for i, project := range *resp.JSON200 {
-		items[i] = utils.PromptItem{Summary: project.Name, Details: fmt.Sprintf("id: %s, orgId: %s, region: %s", project.Id, project.OrganizationId, project.Region), Metadata: project.Id}
+		items[i] = utils.PromptItem{
+			Summary: project.Id,
+			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
+		}
 	}
 	choice, err := utils.PromptChoice(ctx, title, items)
 	if err != nil {
 		return err
 	}
-	projectRefId = choice.Metadata.(string)
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected project", projectRefId))
+	fmt.Fprintln(os.Stderr, printKeyValue("Selected project:", choice.Summary))
+	flags.ProjectRef = choice.Summary
 	return nil
 }
 
