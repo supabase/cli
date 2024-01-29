@@ -90,7 +90,7 @@ var (
 		Short: "Delete a Supabase project",
 		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if term.IsTerminal(int(os.Stdin.Fd())) {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return cobra.ExactArgs(1)(cmd, args)
 			}
 			return nil
