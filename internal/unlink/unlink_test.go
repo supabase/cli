@@ -2,10 +2,13 @@ package unlink
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
@@ -13,34 +16,53 @@ import (
 
 func TestUnlinkCommand(t *testing.T) {
 	keyring.MockInit()
-	project := "test-project"
-	password := "test-password"
+	project := apitest.RandomProjectRef()
 
-	t.Run("unlink valid project", func(t *testing.T) {
+	t.Run("unlinks project", func(t *testing.T) {
 		// Setup in-memory fs
-		// Set up a mock filesystem or a temp directory
-		fs := afero.NewMemMapFs() // or setup a real temp directory
-		err := afero.WriteFile(fs, "supabase/.temp/project-ref", []byte(project), 0644)
-		// Run test
-		// Check error
-		assert.NoError(t, err)
-
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Save database password
-		err = credentials.Set(project, password)
-		// Check error
-		assert.NoError(t, err)
-		// Run unlink test
-		err = Run(context.Background(), project, fs)
+		require.NoError(t, credentials.Set(project, "test"))
+		// Run test
+		err := Run(context.Background(), fsys)
 		// Check error
 		assert.NoError(t, err)
 		// Validate file does not exist
-		_, err = afero.ReadFile(fs, utils.ProjectRefPath)
-		assert.Error(t, err)
-		// check credentials
-		// FIXME: only works this way because of the global state
-		// of credentials
-		content, err := credentials.Get(project)
-		assert.Equal(t, "", content)
+		exists, err := afero.Exists(fsys, utils.ProjectRefPath)
 		assert.NoError(t, err)
+		assert.False(t, exists)
+		// Check credentials does not exist
+		_, err = credentials.Get(project)
+		assert.ErrorIs(t, err, keyring.ErrNotFound)
+	})
+
+	t.Run("unlinks project without credentials", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		// Run test
+		err := Run(context.Background(), fsys)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error if not linked", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), fsys)
+		// Check error
+		assert.ErrorIs(t, err, utils.ErrNotLinked)
+	})
+
+	t.Run("throws error on permission denied", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		// Run test
+		err := Run(context.Background(), afero.NewReadOnlyFs(fsys))
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
