@@ -90,14 +90,15 @@ var (
 		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				cobra.CheckErr(PromptDeleteFlags(cmd))
+				title := "Which project do you want to delete?"
+				cobra.CheckErr(PromptProjectRef(cmd.Context(), title))
 			} else {
-				flags.ProjectRef = args[0]
+				projectRef = args[0]
 			}
-			return delete.PreRun(flags.ProjectRef)
+			return delete.PreRun(projectRef)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+			return delete.Run(cmd.Context(), projectRef, afero.NewOsFs())
 		},
 	}
 )
@@ -182,32 +183,6 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 	if dbPassword == "" {
 		dbPassword = link.PromptPassword(os.Stdin)
 	}
-	return nil
-}
-
-func PromptDeleteFlags(cmd *cobra.Command) error {
-	ctx := cmd.Context()
-	title := "Which project do you want to delete?"
-	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
-	if err != nil {
-		return err
-	}
-	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
-	}
-	items := make([]utils.PromptItem, len(*resp.JSON200))
-	for i, project := range *resp.JSON200 {
-		items[i] = utils.PromptItem{
-			Summary: project.Id,
-			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
-		}
-	}
-	choice, err := utils.PromptChoice(ctx, title, items)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected project:", choice.Summary))
-	flags.ProjectRef = choice.Summary
 	return nil
 }
 

@@ -31,9 +31,8 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if len(projectRef) == 0 {
-				if err := PromptProjectRef(ctx); err != nil {
-					return err
-				}
+				title := "Which project do you want to link?"
+				cobra.CheckErr(PromptProjectRef(ctx, title))
 			}
 			fsys := afero.NewOsFs()
 			if err := link.PreRun(projectRef, fsys); err != nil {
@@ -59,8 +58,7 @@ func init() {
 	rootCmd.AddCommand(linkCmd)
 }
 
-func PromptProjectRef(ctx context.Context) error {
-	title := "Which project do you want to link?"
+func PromptProjectRef(ctx context.Context, title string) error {
 	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
 	if err != nil {
 		return err
@@ -70,13 +68,16 @@ func PromptProjectRef(ctx context.Context) error {
 	}
 	items := make([]utils.PromptItem, len(*resp.JSON200))
 	for i, project := range *resp.JSON200 {
-		items[i] = utils.PromptItem{Summary: project.Name, Details: project.Id}
+		items[i] = utils.PromptItem{
+			Summary: project.Id,
+			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
+		}
 	}
 	choice, err := utils.PromptChoice(ctx, title, items)
 	if err != nil {
 		return err
 	}
-	projectRef = choice.Details
-	fmt.Fprintln(os.Stderr, "Selected project ref:", projectRef)
+	projectRef = choice.Summary
+	fmt.Fprintln(os.Stderr, "Selected project:", projectRef)
 	return nil
 }
