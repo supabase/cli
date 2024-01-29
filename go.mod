@@ -27,7 +27,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/golangci/golangci-lint v1.55.2
 	github.com/google/go-github/v53 v53.2.0
-	github.com/google/uuid v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgconn v1.14.1
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgmock v0.0.0-20210724152146-4ad1a8207f65
@@ -50,7 +50,7 @@ require (
 	github.com/zalando/go-keyring v0.2.3
 	golang.org/x/oauth2 v0.16.0
 	golang.org/x/term v0.16.0
-	google.golang.org/grpc v1.60.1
+	google.golang.org/grpc v1.61.0
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
