@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
+	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 )
 

@@ -709,7 +709,6 @@ EOF
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
-					"DB_INSTALL_ROLES=false",
 					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
