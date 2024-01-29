@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"golang.org/x/term"
 )
 
 var (
@@ -87,12 +88,24 @@ var (
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return delete.PreRun(args[0])
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return cobra.ExactArgs(1)(cmd, args)
+			}
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delete.Run(cmd.Context(), args[0], afero.NewOsFs())
+			if len(args) == 0 {
+				title := "Which project do you want to delete?"
+				cobra.CheckErr(PromptProjectRef(cmd.Context(), title))
+			} else {
+				projectRef = args[0]
+			}
+			if err := delete.PreRun(projectRef); err != nil {
+				return err
+			}
+			return delete.Run(cmd.Context(), projectRef, afero.NewOsFs())
 		},
 	}
 )
