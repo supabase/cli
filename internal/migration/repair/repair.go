@@ -26,9 +26,11 @@ const (
 
 var ErrInvalidVersion = errors.New("invalid version number")
 
-func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if _, err := strconv.Atoi(version); err != nil {
-		return errors.New(ErrInvalidVersion)
+func Run(ctx context.Context, config pgconn.Config, version []string, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	for _, v := range version {
+		if _, err := strconv.Atoi(v); err != nil {
+			return errors.New(ErrInvalidVersion)
+		}
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -39,21 +41,25 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 	if err := UpdateMigrationTable(ctx, conn, version, status, fsys); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Repaired migration history:", version, "=>", status)
+	for _, v := range version {
+		fmt.Fprintln(os.Stderr, "Repaired migration history:", v, "=>", status)
+	}
 	return nil
 }
 
-func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status string, fsys afero.Fs) error {
+func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, fsys afero.Fs) error {
 	batch := pgconn.Batch{}
-	switch status {
-	case Applied:
-		f, err := NewMigrationFromVersion(version, fsys)
-		if err != nil {
-			return err
+	for _, v := range version {
+		switch status {
+		case Applied:
+			f, err := NewMigrationFromVersion(v, fsys)
+			if err != nil {
+				return err
+			}
+			InsertVersionSQL(&batch, f.Version, f.Name, f.Lines)
+		case Reverted:
+			DeleteVersionSQL(&batch, v)
 		}
-		InsertVersionSQL(&batch, f.Version, f.Name, f.Lines)
-	case Reverted:
-		DeleteVersionSQL(&batch, version)
 	}
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		return errors.Errorf("failed to update migration table: %w", err)

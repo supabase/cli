@@ -41,7 +41,7 @@ func TestRepairCommand(t *testing.T) {
 		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -55,7 +55,7 @@ func TestRepairCommand(t *testing.T) {
 		conn.Query(history.DELETE_MIGRATION_VERSION, "0").
 			Reply("DELETE 1")
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Reverted, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Reverted, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -64,7 +64,7 @@ func TestRepairCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), pgconn.Config{}, "0", Applied, fsys)
+		err := Run(context.Background(), pgconn.Config{}, []string{"0"}, Applied, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -81,7 +81,7 @@ func TestRepairCommand(t *testing.T) {
 		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42710)`)
 	})
