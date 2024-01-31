@@ -8,8 +8,9 @@ const (
 	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
 	ADD_NAME_COLUMN          = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text"
 	INSERT_MIGRATION_VERSION = "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3)"
-	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = $1"
+	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY($1)"
 	DELETE_MIGRATION_BEFORE  = "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1"
+	TRUNCATE_VERSION_TABLE   = "TRUNCATE supabase_migrations.schema_migrations"
 )
 
 func AddCreateTableStatements(batch *pgconn.Batch) {

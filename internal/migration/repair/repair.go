@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/history"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -48,20 +49,26 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 }
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, fsys afero.Fs) error {
-	batch := pgconn.Batch{}
-	for _, v := range version {
-		switch status {
-		case Applied:
+	schema := &pgconn.Batch{}
+	history.AddCreateTableStatements(schema)
+	if _, err := conn.PgConn().ExecBatch(ctx, schema).ReadAll(); err != nil {
+		return errors.Errorf("failed to create migration table: %w", err)
+	}
+	// Data statements don't mutate schemas, safe to use statement cache
+	batch := &pgx.Batch{}
+	switch status {
+	case Applied:
+		for _, v := range version {
 			f, err := NewMigrationFromVersion(v, fsys)
 			if err != nil {
 				return err
 			}
-			InsertVersionSQL(&batch, f.Version, f.Name, f.Lines)
-		case Reverted:
-			DeleteVersionSQL(&batch, v)
+			batch.Queue(history.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Lines)
 		}
+	case Reverted:
+		batch.Queue(history.DELETE_MIGRATION_VERSION, version)
 	}
-	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+	if err := conn.SendBatch(ctx, batch).Close(); err != nil {
 		return errors.Errorf("failed to update migration table: %w", err)
 	}
 	return nil
@@ -92,16 +99,6 @@ func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string)
 		[][]byte{[]byte(version), []byte(name), encoded},
 		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
 		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
-		nil,
-	)
-}
-
-func DeleteVersionSQL(batch *pgconn.Batch, version string) {
-	batch.ExecParams(
-		history.DELETE_MIGRATION_VERSION,
-		[][]byte{[]byte(version)},
-		[]uint32{pgtype.TextOID},
-		[]int16{pgtype.TextFormatCode},
 		nil,
 	)
 }
