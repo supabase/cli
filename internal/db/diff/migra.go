@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -120,18 +121,13 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 }
 
 func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
-	now := time.Now()
-	expiry := now.Add(timeout)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	// Retry until connected, cancelled, or timeout
-	for t := now; t.Before(expiry); t = <-ticker.C {
-		conn, err = utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}, options...)
-		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
-			break
-		}
+	policy := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second), uint64(timeout.Seconds()))
+	config := pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}
+	connect := func() (*pgx.Conn, error) {
+		return utils.ConnectLocalPostgres(ctx, config, options...)
 	}
-	return conn, err
+	return backoff.RetryWithData(connect, backoff.WithContext(policy, ctx))
 }
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
