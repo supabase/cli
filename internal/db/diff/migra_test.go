@@ -169,7 +169,7 @@ func TestMigrateShadow(t *testing.T) {
 		// Run test
 		err := MigrateShadowDatabase(ctx, "", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "operation was canceled")
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
