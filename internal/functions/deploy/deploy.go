@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/andybalholm/brotli"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-units"
@@ -241,20 +242,15 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	)
 }
 
-// TODO: api has a race condition that prevents deploying in parallel
-const maxConcurrency = 1
-
 func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
-	errCh := make(chan error, maxConcurrency)
-	errCh <- nil
+	// TODO: api has a race condition that prevents deploying in parallel
 	for _, slug := range slugs {
-		// Log all errors and proceed
-		if err := <-errCh; err != nil {
+		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
+		if err := backoff.Retry(func() error {
+			return deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys)
+		}, policy); err != nil {
 			return err
 		}
-		go func(slug string) {
-			errCh <- deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys)
-		}(slug)
 	}
-	return <-errCh
+	return nil
 }

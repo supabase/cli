@@ -9,6 +9,7 @@ require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/Netflix/go-env v0.0.0-20220526054621-78278af1949d
 	github.com/andybalholm/brotli v1.1.0
+	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/charmbracelet/bubbles v0.17.1
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.6.0
