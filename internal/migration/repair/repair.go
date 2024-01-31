@@ -28,6 +28,13 @@ const (
 var ErrInvalidVersion = errors.New("invalid version number")
 
 func Run(ctx context.Context, config pgconn.Config, version []string, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	if len(version) == 0 {
+		if utils.PromptYesNo("Do you want to repair the entire migration history table to match local migration files?", false, os.Stdin) {
+			return repairAll(ctx, config, status, fsys, options...)
+		}
+		fmt.Println("Nothing to repair.")
+		return nil
+	}
 	for _, v := range version {
 		if _, err := strconv.Atoi(v); err != nil {
 			return errors.New(ErrInvalidVersion)
@@ -197,5 +204,34 @@ func (m *MigrationFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn) 
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return errors.Errorf("failed to send batch: %w", err)
 	}
+	return nil
+}
+
+func repairAll(ctx context.Context, config pgconn.Config, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	versions, err := list.LoadLocalVersions(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	batch := &pgx.Batch{}
+	batch.Queue(history.TRUNCATE_VERSION_TABLE)
+	if status == Applied {
+		for _, v := range versions {
+			f, err := NewMigrationFromVersion(v, fsys)
+			if err != nil {
+				return err
+			}
+			batch.Queue(history.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Lines)
+		}
+	}
+	if err := conn.SendBatch(ctx, batch).Close(); err != nil {
+		return errors.Errorf("failed to update migration table: %w", err)
+	}
+	fmt.Println("Finished " + utils.Aqua("supabase migration repair") + ".")
+	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
 }

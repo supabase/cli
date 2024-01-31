@@ -57,7 +57,6 @@ var (
 	migrationRepairCmd = &cobra.Command{
 		Use:   "repair [version] ...",
 		Short: "Repair the migration history table",
-		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return repair.Run(cmd.Context(), flags.DbConfig, args, targetStatus.Value, afero.NewOsFs())
 		},
