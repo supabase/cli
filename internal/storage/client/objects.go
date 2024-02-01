@@ -63,22 +63,38 @@ func ListStorageObjects(ctx context.Context, projectRef, bucket, prefix string, 
 	return *data, nil
 }
 
-func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
+type FileOptions struct {
+	CacheControl string
+	ContentType  string
+}
+
+func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
 	f, err := fsys.Open(localPath)
 	if err != nil {
 		return errors.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	// Decode mimetype
-	header := io.LimitReader(f, 512)
-	buf, err := io.ReadAll(header)
-	if err != nil {
-		return errors.Errorf("failed to read file: %w", err)
+	// Customise file options
+	fo := &FileOptions{}
+	for _, apply := range opts {
+		apply(fo)
 	}
-	mimetype := http.DetectContentType(buf)
-	_, err = f.Seek(0, io.SeekStart)
-	if err != nil {
-		return errors.Errorf("failed to seek file: %w", err)
+	// Use default value of storage-js: https://github.com/supabase/storage-js/blob/main/src/packages/StorageFileApi.ts#L22
+	if len(fo.CacheControl) == 0 {
+		fo.CacheControl = "max-age=3600"
+	}
+	// Decode mimetype
+	if len(fo.ContentType) == 0 {
+		header := io.LimitReader(f, 512)
+		buf, err := io.ReadAll(header)
+		if err != nil {
+			return errors.Errorf("failed to read file: %w", err)
+		}
+		fo.ContentType = http.DetectContentType(buf)
+		_, err = f.Seek(0, io.SeekStart)
+		if err != nil {
+			return errors.Errorf("failed to seek file: %w", err)
+		}
 	}
 	// Prepare request
 	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
@@ -92,9 +108,8 @@ func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath 
 		return errors.Errorf("failed to initialise http request: %w", err)
 	}
 	req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
-	req.Header.Add("Content-Type", mimetype)
-	// Use default value of storage-js: https://github.com/supabase/storage-js/blob/main/src/packages/StorageFileApi.ts#L22
-	req.Header.Add("Cache-Control", "max-age=3600")
+	req.Header.Add("Content-Type", fo.ContentType)
+	req.Header.Add("Cache-Control", fo.CacheControl)
 	// Sends request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
