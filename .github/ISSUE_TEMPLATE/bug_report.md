@@ -24,8 +24,8 @@ A clear and concise description of what you expected to happen.
 If applicable, add screenshots to help explain your problem.
 
 **System information**
-Rerun the failing command with `--create-ticket` flag
- - Ticket ID: [or provide the information below]
+Rerun the failing command with `--create-ticket` flag (preferred).
+ - Ticket ID: [or provide the information manually below]
  - OS: [e.g. Ubuntu]
  - Version of CLI: [e.g. v1.60.0]
  - Versions of services: [from `supabase services` command]
