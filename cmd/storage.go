@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/storage"
+	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/storage/mv"
@@ -33,6 +34,7 @@ var (
 		},
 	}
 
+	options client.FileOptions
 	maxJobs uint
 
 	cpCmd = &cobra.Command{
@@ -44,7 +46,11 @@ cp -r ss:///bucket/docs .
 		Short: "Copy objects from src to dst path",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cp.Run(cmd.Context(), args[0], args[1], recursive, maxJobs, afero.NewOsFs())
+			opts := func(fo *client.FileOptions) {
+				fo.CacheControl = options.CacheControl
+				fo.ContentType = options.ContentType
+			}
+			return cp.Run(cmd.Context(), args[0], args[1], recursive, maxJobs, afero.NewOsFs(), opts)
 		},
 	}
 
@@ -76,6 +82,9 @@ func init() {
 	storageCmd.AddCommand(lsCmd)
 	cpFlags := cpCmd.Flags()
 	cpFlags.BoolVarP(&recursive, "recursive", "r", false, "Recursively copy a directory.")
+	cpFlags.StringVar(&options.CacheControl, "cache-control", "max-age=3600", "Custom Cache-Control header for HTTP upload.")
+	cpFlags.StringVar(&options.ContentType, "content-type", "", "Custom Content-Type header for HTTP upload.")
+	cpFlags.Lookup("content-type").DefValue = "auto-detect"
 	cpFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	storageCmd.AddCommand(cpCmd)
 	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
