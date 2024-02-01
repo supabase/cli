@@ -23,12 +23,15 @@ A clear and concise description of what you expected to happen.
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser (if applicable) [e.g. chrome, safari]
- - Version of CLI [e.g. v1.60.0]
- - Version of supabase-js (if applicable) [e.g. v2.22.0]
- - Version of Node.js (if applicable) [e.g. v16.20.0]
+**System information**
+Rerun the failing command with `--create-ticket` flag
+ - Ticket ID: [or provide the information below]
+ - OS: [e.g. Ubuntu]
+ - Version of CLI: [e.g. v1.60.0]
+ - Versions of services: [from `supabase services` command]
 
 **Additional context**
-Add any other context about the problem here.
+If applicable, add any other context about the problem here.
+ - Browser [e.g. chrome, safari]
+ - Version of supabase-js [e.g. v2.22.0]
+ - Version of Node.js [e.g. v16.20.0]
