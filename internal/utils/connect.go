@@ -51,17 +51,10 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 			cc.LookupFunc = FallbackLookupIP
 		}
 	})
-	// Try connection pooler when available
-	if poolerConfig := getPoolerConfig(config); poolerConfig != nil {
-		if conn, err := ConnectByUrl(ctx, ToPostgresURL(*poolerConfig), opts...); err == nil {
-			return conn, nil
-		}
-		fmt.Fprintln(os.Stderr, "Retrying...", config.Host, config.Port)
-	}
 	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
 }
 
-func getPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
+func GetPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	logger := getDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
