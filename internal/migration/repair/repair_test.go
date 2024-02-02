@@ -21,7 +21,7 @@ import (
 )
 
 var dbConfig = pgconn.Config{
-	Host:     "127.0.0.1",
+	Host:     "db.supabase.com",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",
@@ -38,10 +38,10 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
+		conn.Query("INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'test', null)").
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -52,10 +52,11 @@ func TestRepairCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(history.DELETE_MIGRATION_VERSION, "0").
+		pgtest.MockMigrationHistory(conn)
+		conn.Query("DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY('{0}')").
 			Reply("DELETE 1")
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Reverted, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Reverted, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -64,7 +65,7 @@ func TestRepairCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), pgconn.Config{}, "0", Applied, fsys)
+		err := Run(context.Background(), pgconn.Config{}, []string{"0"}, Applied, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -78,10 +79,10 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", "{}").
+		conn.Query("INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'test', null)").
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
-		err := Run(context.Background(), dbConfig, "0", Applied, fsys, conn.Intercept)
+		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42710)`)
 	})

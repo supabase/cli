@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/history"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -26,9 +27,24 @@ const (
 
 var ErrInvalidVersion = errors.New("invalid version number")
 
-func Run(ctx context.Context, config pgconn.Config, version, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if _, err := strconv.Atoi(version); err != nil {
-		return errors.New(ErrInvalidVersion)
+func Run(ctx context.Context, config pgconn.Config, version []string, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	for _, v := range version {
+		if _, err := strconv.Atoi(v); err != nil {
+			return errors.Errorf("failed to parse %s: %w", v, ErrInvalidVersion)
+		}
+	}
+	repairAll := len(version) == 0
+	if repairAll {
+		msg := "Do you want to repair the entire migration history table to match local migration files?"
+		if shouldRepair := utils.PromptYesNo(msg, false, os.Stdin); !shouldRepair {
+			fmt.Fprintln(os.Stderr, "Nothing to repair.")
+			return nil
+		}
+		local, err := list.LoadLocalVersions(fsys)
+		if err != nil {
+			return err
+		}
+		version = append(version, local...)
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -36,28 +52,41 @@ func Run(ctx context.Context, config pgconn.Config, version, status string, fsys
 	}
 	defer conn.Close(context.Background())
 	// Update migration history
-	if err := UpdateMigrationTable(ctx, conn, version, status, fsys); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Repaired migration history:", version, "=>", status)
-	return nil
+	return UpdateMigrationTable(ctx, conn, version, status, repairAll, fsys)
 }
 
-func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version, status string, fsys afero.Fs) error {
-	batch := pgconn.Batch{}
+func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, repairAll bool, fsys afero.Fs) error {
+	schema := &pgconn.Batch{}
+	history.AddCreateTableStatements(schema)
+	if _, err := conn.PgConn().ExecBatch(ctx, schema).ReadAll(); err != nil {
+		return errors.Errorf("failed to create migration table: %w", err)
+	}
+	// Data statements don't mutate schemas, safe to use statement cache
+	batch := &pgx.Batch{}
+	if repairAll {
+		batch.Queue(history.TRUNCATE_VERSION_TABLE)
+	}
 	switch status {
 	case Applied:
-		f, err := NewMigrationFromVersion(version, fsys)
-		if err != nil {
-			return err
+		for _, v := range version {
+			f, err := NewMigrationFromVersion(v, fsys)
+			if err != nil {
+				return err
+			}
+			batch.Queue(history.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Lines)
 		}
-		InsertVersionSQL(&batch, f.Version, f.Name, f.Lines)
 	case Reverted:
-		DeleteVersionSQL(&batch, version)
+		if !repairAll {
+			batch.Queue(history.DELETE_MIGRATION_VERSION, version)
+		}
 	}
-	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+	if err := conn.SendBatch(ctx, batch).Close(); err != nil {
 		return errors.Errorf("failed to update migration table: %w", err)
 	}
+	if !repairAll {
+		fmt.Fprintf(os.Stderr, "Repaired migration history: %v => %s\n", version, status)
+	}
+	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
 }
 
@@ -86,16 +115,6 @@ func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string)
 		[][]byte{[]byte(version), []byte(name), encoded},
 		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
 		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
-		nil,
-	)
-}
-
-func DeleteVersionSQL(batch *pgconn.Batch, version string) {
-	batch.ExecParams(
-		history.DELETE_MIGRATION_VERSION,
-		[][]byte{[]byte(version)},
-		[]uint32{pgtype.TextOID},
-		[]int16{pgtype.TextFormatCode},
 		nil,
 	)
 }
