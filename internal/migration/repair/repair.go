@@ -28,17 +28,23 @@ const (
 var ErrInvalidVersion = errors.New("invalid version number")
 
 func Run(ctx context.Context, config pgconn.Config, version []string, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if len(version) == 0 {
-		if utils.PromptYesNo("Do you want to repair the entire migration history table to match local migration files?", false, os.Stdin) {
-			return repairAll(ctx, config, status, fsys, options...)
-		}
-		fmt.Println("Nothing to repair.")
-		return nil
-	}
 	for _, v := range version {
 		if _, err := strconv.Atoi(v); err != nil {
-			return errors.New(ErrInvalidVersion)
+			return errors.Errorf("failed to parse %s: %w", v, ErrInvalidVersion)
 		}
+	}
+	repairAll := len(version) == 0
+	if repairAll {
+		msg := "Do you want to repair the entire migration history table to match local migration files?"
+		if shouldRepair := utils.PromptYesNo(msg, false, os.Stdin); !shouldRepair {
+			fmt.Fprintln(os.Stderr, "Nothing to repair.")
+			return nil
+		}
+		local, err := list.LoadLocalVersions(fsys)
+		if err != nil {
+			return err
+		}
+		version = append(version, local...)
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -46,16 +52,10 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 	}
 	defer conn.Close(context.Background())
 	// Update migration history
-	if err := UpdateMigrationTable(ctx, conn, version, status, fsys); err != nil {
-		return err
-	}
-	for _, v := range version {
-		fmt.Fprintln(os.Stderr, "Repaired migration history:", v, "=>", status)
-	}
-	return nil
+	return UpdateMigrationTable(ctx, conn, version, status, repairAll, fsys)
 }
 
-func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, fsys afero.Fs) error {
+func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, repairAll bool, fsys afero.Fs) error {
 	schema := &pgconn.Batch{}
 	history.AddCreateTableStatements(schema)
 	if _, err := conn.PgConn().ExecBatch(ctx, schema).ReadAll(); err != nil {
@@ -63,6 +63,9 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := &pgx.Batch{}
+	if repairAll {
+		batch.Queue(history.TRUNCATE_VERSION_TABLE)
+	}
 	switch status {
 	case Applied:
 		for _, v := range version {
@@ -73,11 +76,17 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 			batch.Queue(history.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Lines)
 		}
 	case Reverted:
-		batch.Queue(history.DELETE_MIGRATION_VERSION, version)
+		if !repairAll {
+			batch.Queue(history.DELETE_MIGRATION_VERSION, version)
+		}
 	}
 	if err := conn.SendBatch(ctx, batch).Close(); err != nil {
 		return errors.Errorf("failed to update migration table: %w", err)
 	}
+	if !repairAll {
+		fmt.Fprintf(os.Stderr, "Repaired migration history: %v => %s\n", version, status)
+	}
+	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
 }
 
@@ -204,34 +213,5 @@ func (m *MigrationFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn) 
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return errors.Errorf("failed to send batch: %w", err)
 	}
-	return nil
-}
-
-func repairAll(ctx context.Context, config pgconn.Config, status string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	versions, err := list.LoadLocalVersions(fsys)
-	if err != nil {
-		return err
-	}
-	conn, err := utils.ConnectByConfig(ctx, config, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	batch := &pgx.Batch{}
-	batch.Queue(history.TRUNCATE_VERSION_TABLE)
-	if status == Applied {
-		for _, v := range versions {
-			f, err := NewMigrationFromVersion(v, fsys)
-			if err != nil {
-				return err
-			}
-			batch.Queue(history.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Lines)
-		}
-	}
-	if err := conn.SendBatch(ctx, batch).Close(); err != nil {
-		return errors.Errorf("failed to update migration table: %w", err)
-	}
-	fmt.Println("Finished " + utils.Aqua("supabase migration repair") + ".")
-	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
 }

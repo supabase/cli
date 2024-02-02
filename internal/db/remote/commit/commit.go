@@ -64,7 +64,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	}
 
 	// 3. Insert a row to `schema_migrations`
-	return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, fsys)
+	return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
 }
 
 func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp string, config pgconn.Config, fsys afero.Fs) error {

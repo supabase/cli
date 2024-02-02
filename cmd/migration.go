@@ -60,6 +60,9 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return repair.Run(cmd.Context(), flags.DbConfig, args, targetStatus.Value, afero.NewOsFs())
 		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Finished " + utils.Aqua("supabase migration repair") + ".")
+		},
 	}
 
 	migrationVersion string
