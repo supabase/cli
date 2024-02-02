@@ -69,14 +69,8 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		DbConfig.Host = utils.GetSupabaseDbHost(projectRef)
-		DbConfig.Port = 5432
-		DbConfig.User = "postgres"
+		DbConfig = link.GetDbConfigNoPassword(projectRef)
 		DbConfig.Password = getPassword(projectRef)
-		DbConfig.Database = "postgres"
-		if poolerConfig := utils.GetPoolerConfig(DbConfig); poolerConfig != nil {
-			DbConfig = *poolerConfig
-		}
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {

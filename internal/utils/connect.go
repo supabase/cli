@@ -54,7 +54,7 @@ func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ..
 	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
 }
 
-func GetPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
+func GetPoolerConfig(projectRef string) *pgconn.Config {
 	logger := getDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
@@ -71,9 +71,8 @@ func GetPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 	}
 	// Verify that the pooler username matches the database host being connected to
 	parts := strings.Split(poolerConfig.User, ".")
-	projectRef := parts[len(parts)-1]
-	if GetSupabaseDbHost(projectRef) != dbConfig.Host {
-		fmt.Fprintln(logger, "Connecting to self-hosted database:", dbConfig.Host)
+	if projectRef != parts[len(parts)-1] {
+		fmt.Fprintln(logger, "Pooler username does not match project ref:", projectRef)
 		return nil
 	}
 	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
@@ -82,7 +81,6 @@ func GetPoolerConfig(dbConfig pgconn.Config) *pgconn.Config {
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
-	poolerConfig.Password = dbConfig.Password
 	return poolerConfig
 }
 

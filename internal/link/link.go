@@ -51,13 +51,9 @@ func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, option
 
 	// 2. Check database connection
 	if len(password) > 0 {
-		if err := linkDatabase(ctx, pgconn.Config{
-			Host:     utils.GetSupabaseDbHost(projectRef),
-			Port:     5432,
-			User:     "postgres",
-			Password: password,
-			Database: "postgres",
-		}, options...); err != nil {
+		dbConfig := GetDbConfigNoPassword(projectRef)
+		dbConfig.Password = password
+		if err := linkDatabase(ctx, dbConfig, options...); err != nil {
 			return err
 		}
 		// Save database password
@@ -266,4 +262,16 @@ func PromptPassword(stdin *os.File) string {
 func PromptPasswordAllowBlank(stdin *os.File) string {
 	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
 	return credentials.PromptMasked(stdin)
+}
+
+func GetDbConfigNoPassword(projectRef string) pgconn.Config {
+	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
+		return *poolerConfig
+	}
+	return pgconn.Config{
+		Host:     utils.GetSupabaseDbHost(projectRef),
+		Port:     5432,
+		User:     "postgres",
+		Database: "postgres",
+	}
 }
