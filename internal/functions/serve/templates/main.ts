@@ -182,7 +182,7 @@ serve(async (req: Request) => {
 }, {
   onListen: () => {
     console.log(
-      `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>`,
+      `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>\nUsing ${Deno.version.deno}`,
     );
   },
 });
