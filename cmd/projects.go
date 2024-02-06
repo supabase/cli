@@ -29,6 +29,7 @@ var (
 	}
 
 	interactive bool
+	projectName string
 	orgId       string
 	dbPassword  string
 
@@ -41,25 +42,28 @@ var (
 	}
 
 	projectsCreateCmd = &cobra.Command{
-		Use:     "create <project name>",
+		Use:     "create [project name]",
 		Short:   "Create a project on Supabase",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MaximumNArgs(1),
 		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			if !interactive {
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if !term.IsTerminal(int(os.Stdin.Fd())) || !interactive {
 				cobra.CheckErr(cmd.MarkFlagRequired("org-id"))
 				cobra.CheckErr(cmd.MarkFlagRequired("db-password"))
 				cobra.CheckErr(cmd.MarkFlagRequired("region"))
+				return cobra.ExactArgs(1)(cmd, args)
 			}
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
+			if len(args) > 0 {
+				projectName = args[0]
+			}
 			if interactive {
-				fmt.Fprintln(os.Stderr, printKeyValue("Creating project", name))
 				cobra.CheckErr(PromptCreateFlags(cmd))
 			}
 			return create.Run(cmd.Context(), api.CreateProjectBody{
-				Name:           name,
+				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
 				Region:         api.CreateProjectBodyRegion(region.Value),
@@ -119,7 +123,8 @@ func init() {
 	sort.Strings(region.Allowed)
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
-	createFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
+	createFlags.BoolVarP(&interactive, "interactive", "i", true, "Enables interactive mode.")
+	cobra.CheckErr(createFlags.MarkHidden("interactive"))
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
@@ -140,6 +145,18 @@ func init() {
 
 func PromptCreateFlags(cmd *cobra.Command) error {
 	ctx := cmd.Context()
+	if len(projectName) > 0 {
+		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", projectName))
+	} else {
+		name, err := utils.PromptText("Enter your project name: ", os.Stdin)
+		if err != nil {
+			return err
+		}
+		if len(name) == 0 {
+			return errors.New("project name cannot be empty")
+		}
+		projectName = name
+	}
 	if !cmd.Flags().Changed("org-id") {
 		title := "Which organisation do you want to create the project for?"
 		resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
