@@ -63,7 +63,6 @@ var (
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
 				Region:         api.CreateProjectBodyRegion(region.Value),
-				Plan:           api.CreateProjectBodyPlan(plan.Value),
 			}, afero.NewOsFs())
 		},
 	}
@@ -125,6 +124,7 @@ func init() {
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
 	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
+	cobra.CheckErr(createFlags.MarkHidden("plan"))
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
@@ -175,18 +175,6 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 		region.Value = choice.Summary
 	}
 	fmt.Fprintln(os.Stderr, printKeyValue("Selected region", region.Value))
-	if !cmd.Flags().Changed("plan") {
-		title := "Do you want a free or pro plan?"
-		choice, err := utils.PromptChoice(ctx, title, []utils.PromptItem{
-			{Summary: string(api.CreateProjectBodyPlanFree)},
-			{Summary: string(api.CreateProjectBodyPlanPro)},
-		})
-		if err != nil {
-			return err
-		}
-		plan.Value = choice.Summary
-	}
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected plan", plan.Value))
 	if dbPassword == "" {
 		dbPassword = link.PromptPassword(os.Stdin)
 	}
