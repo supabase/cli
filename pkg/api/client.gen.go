@@ -5153,7 +5153,6 @@ func (r GetProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectResponse
 	JSON201      *ProjectResponse
 }
 
@@ -7551,13 +7550,6 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
