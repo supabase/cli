@@ -26,7 +26,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return errors.New("Unexpected error listing preview branches: " + string(resp.Body))
 	}
 
-	table := `|ID|NAME|DEFAULT|GIT BRANCH|RESET ON PUSH|CREATED AT (UTC)|UPDATED AT (UTC)|
+	table := `|ID|NAME|DEFAULT|GIT BRANCH|RESET ON PUSH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|-|
 `
 	for _, branch := range *resp.JSON200 {
@@ -35,12 +35,13 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			gitBranch = *branch.GitBranch
 		}
 		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|\n",
+			"|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
 			branch.Id,
 			strings.ReplaceAll(branch.Name, "|", "\\|"),
 			branch.IsDefault,
 			strings.ReplaceAll(gitBranch, "|", "\\|"),
 			branch.ResetOnPush,
+			branch.Status,
 			utils.FormatTimestamp(branch.CreatedAt),
 			utils.FormatTimestamp(branch.UpdatedAt),
 		)
