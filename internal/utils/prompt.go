@@ -175,3 +175,14 @@ func PromptYesNo(label string, def bool, stdin *os.File) bool {
 		}
 	}
 }
+
+func PromptText(label string, stdin io.Reader) (string, error) {
+	fmt.Fprint(os.Stderr, label)
+	scanner := bufio.NewScanner(stdin)
+	// Scan a single line for input
+	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		return "", errors.Errorf("failed to read stdin: %w", err)
+	}
+	return strings.TrimSpace(scanner.Text()), nil
+}
