@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"golang.org/x/mod/semver"
 )
 
 var (
@@ -526,8 +526,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil {
-				parts := strings.Split(string(version), ".")
-				if patch, err := strconv.Atoi(parts[len(parts)-1]); err == nil && patch >= 55 && parts[0] == "15" {
+				if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
 					index := strings.IndexByte(Pg15Image, ':')
 					Config.Db.Image = Pg15Image[:index+1] + string(version)
 				}
