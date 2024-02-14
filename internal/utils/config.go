@@ -492,8 +492,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 			}
 		}
 		// Append required schemas if they are missing
-		Config.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
-		Config.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
+		Config.Api.Schemas = RemoveDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
+		Config.Api.ExtraSearchPath = RemoveDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
 		// Validate db config
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
@@ -789,7 +789,7 @@ func WriteConfig(fsys afero.Fs, _test bool) error {
 	return InitConfig(InitParams{}, fsys)
 }
 
-func removeDuplicates(slice []string) (result []string) {
+func RemoveDuplicates(slice []string) (result []string) {
 	set := make(map[string]struct{})
 	for _, item := range slice {
 		if _, exists := set[item]; !exists {
