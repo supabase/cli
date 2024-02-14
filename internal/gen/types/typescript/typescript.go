@@ -50,7 +50,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 	if dbUrl != "" {
 		config, err := pgconn.ParseConfig(dbUrl)
 		if err != nil {
-			return errors.New("URL is not a valid Supabase connection string: " + err.Error())
+			return errors.Errorf("URL is not a valid Supabase connection string: %w", err)
 		}
 		escaped := fmt.Sprintf(
 			"postgresql://%s@%s:%d/%s",
@@ -61,12 +61,22 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 		)
 		fmt.Fprintln(os.Stderr, "Connecting to", config.Host)
 
+		parsed, err := url.Parse(dbUrl)
+		if err != nil {
+			return errors.Errorf("URL is not valid: %w", err)
+		}
+		sslmode := parsed.Query().Get("sslmode")
+		if len(sslmode) == 0 {
+			sslmode = "disable"
+		}
+
 		return utils.DockerRunOnceWithConfig(
 			ctx,
 			container.Config{
 				Image: utils.PgmetaImage,
 				Env: []string{
 					"PG_META_DB_URL=" + escaped,
+					"PG_META_DB_SSL_MODE=" + sslmode,
 					"PG_META_GENERATE_TYPES=typescript",
 					"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 					fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
