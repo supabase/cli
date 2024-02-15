@@ -14,8 +14,6 @@ import (
 )
 
 var (
-	projectRef string
-
 	linkCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "link",
@@ -51,7 +49,7 @@ var (
 func init() {
 	linkFlags := linkCmd.Flags()
 	linkFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	linkFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	linkFlags.StringP("password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", linkFlags.Lookup("password")))
 	rootCmd.AddCommand(linkCmd)
 }

@@ -64,6 +64,10 @@ func TestProjectRef(t *testing.T) {
 }
 
 func TestProjectPrompt(t *testing.T) {
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("validates prompt input", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()

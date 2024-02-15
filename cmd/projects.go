@@ -87,6 +87,8 @@ var (
 		},
 	}
 
+	projectRef string
+
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
