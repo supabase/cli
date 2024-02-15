@@ -2,8 +2,8 @@ package flags
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/go-errors/errors"
@@ -15,7 +15,7 @@ import (
 
 var ProjectRef string
 
-func ParseProjectRef(fsys afero.Fs) error {
+func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 	// Flag takes highest precedence
 	if len(ProjectRef) == 0 {
 		ProjectRef = viper.GetString("PROJECT_ID")
@@ -29,18 +29,33 @@ func ParseProjectRef(fsys afero.Fs) error {
 	}
 	// Prompt as the last resort
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		return promptProjectRef(os.Stdin)
+		return PromptProjectRef(ctx, "Select a project:")
 	}
 	return errors.New(utils.ErrNotLinked)
 }
 
-func promptProjectRef(stdin io.Reader) (err error) {
-	title := fmt.Sprintf(`You can find your project ref from the project's dashboard home page, e.g. %s/project/<project-ref>.
-Enter your project ref: `, utils.GetSupabaseDashboardURL())
-	if ProjectRef, err = utils.PromptText(title, stdin); err != nil {
+func PromptProjectRef(ctx context.Context, title string) error {
+	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
+	if err != nil {
+		return errors.Errorf("failed to retrieve projects: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
+	}
+	items := make([]utils.PromptItem, len(*resp.JSON200))
+	for i, project := range *resp.JSON200 {
+		items[i] = utils.PromptItem{
+			Summary: project.Id,
+			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
+		}
+	}
+	choice, err := utils.PromptChoice(ctx, title, items)
+	if err != nil {
 		return err
 	}
-	return utils.AssertProjectRefIsValid(ProjectRef)
+	ProjectRef = choice.Summary
+	fmt.Fprintln(os.Stderr, "Selected project:", ProjectRef)
+	return nil
 }
 
 func LoadProjectRef(fsys afero.Fs) (string, error) {

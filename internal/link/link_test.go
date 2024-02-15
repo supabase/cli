@@ -3,7 +3,6 @@ package link
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
@@ -29,47 +27,6 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
-}
-
-func TestPreRun(t *testing.T) {
-	// Reset global variable
-	copy := utils.Config
-	teardown := func() {
-		utils.Config = copy
-	}
-
-	t.Run("passes sanity check", func(t *testing.T) {
-		defer teardown()
-		project := apitest.RandomProjectRef()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Run test
-		err := PreRun(project, fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on invalid project ref", func(t *testing.T) {
-		defer teardown()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := PreRun("malformed", fsys)
-		// Check error
-		assert.ErrorIs(t, err, utils.ErrInvalidRef)
-	})
-
-	t.Run("throws error on missing config", func(t *testing.T) {
-		defer teardown()
-		project := apitest.RandomProjectRef()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := PreRun(project, fsys)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
 }
 
 // Reset global variable
@@ -172,7 +129,7 @@ func TestLinkCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		err := Run(context.Background(), project, dbConfig.Password, fsys, conn.Intercept)
+		err := Run(context.Background(), project, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -201,7 +158,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, dbConfig.Password, fsys)
+		err := Run(context.Background(), project, dbConfig, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -237,7 +194,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, dbConfig.Password, fsys, func(cc *pgx.ConnConfig) {
+		err := Run(context.Background(), project, dbConfig, fsys, func(cc *pgx.ConnConfig) {
 			cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
 				return nil, errors.New("hostname resolving error")
 			}
@@ -278,7 +235,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, "", fsys)
+		err := Run(context.Background(), project, pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

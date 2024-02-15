@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/delete"
@@ -88,6 +87,8 @@ var (
 		},
 	}
 
+	projectRef string
+
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
@@ -101,7 +102,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				title := "Which project do you want to delete?"
-				cobra.CheckErr(PromptProjectRef(cmd.Context(), title))
+				cobra.CheckErr(flags.PromptProjectRef(cmd.Context(), title))
 			} else {
 				projectRef = args[0]
 			}
@@ -193,7 +194,7 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 	}
 	fmt.Fprintln(os.Stderr, printKeyValue("Selected region", region.Value))
 	if dbPassword == "" {
-		dbPassword = link.PromptPassword(os.Stdin)
+		dbPassword = flags.PromptPassword(os.Stdin)
 	}
 	return nil
 }

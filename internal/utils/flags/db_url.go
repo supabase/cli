@@ -1,6 +1,7 @@
 package flags
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/go-errors/errors"
@@ -8,7 +9,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 )
@@ -56,6 +56,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
+		// Ignore other PG settings
 		DbConfig.Host = utils.Config.Hostname
 		DbConfig.Port = uint16(utils.Config.Db.Port)
 		DbConfig.User = "postgres"
@@ -69,8 +70,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		DbConfig = link.GetDbConfigNoPassword(projectRef)
-		DbConfig.Password = getPassword(projectRef)
+		DbConfig = newDbConfigWithPassword(projectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -89,6 +89,12 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	return nil
 }
 
+func newDbConfigWithPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
+	config.Password = getPassword(projectRef)
+	return config
+}
+
 func getPassword(projectRef string) string {
 	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
 		return password
@@ -96,5 +102,32 @@ func getPassword(projectRef string) string {
 	if password, err := credentials.Get(projectRef); err == nil {
 		return password
 	}
-	return link.PromptPassword(os.Stdin)
+	return PromptPassword(os.Stdin)
+}
+
+func PromptPassword(stdin *os.File) string {
+	fmt.Fprint(os.Stderr, "Enter your database password: ")
+	return credentials.PromptMasked(stdin)
+}
+
+func getDbConfig(projectRef string) pgconn.Config {
+	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
+		return *poolerConfig
+	}
+	return pgconn.Config{
+		Host:     utils.GetSupabaseDbHost(projectRef),
+		Port:     5432,
+		User:     "postgres",
+		Database: "postgres",
+	}
+}
+
+func GetDbConfigOptionalPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
+	config.Password = viper.GetString("DB_PASSWORD")
+	if config.Password == "" {
+		fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
+		config.Password = credentials.PromptMasked(os.Stdin)
+	}
+	return config
 }
