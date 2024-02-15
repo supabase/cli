@@ -70,8 +70,16 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	// Verify that the pooler username matches the database host being connected to
-	parts := strings.Split(poolerConfig.User, ".")
-	if projectRef != parts[len(parts)-1] {
+	_, ref, found := strings.Cut(poolerConfig.User, ".")
+	if !found {
+		for _, option := range strings.Split(poolerConfig.RuntimeParams["options"], ",") {
+			key, value, found := strings.Cut(option, "=")
+			if found && key == "reference" && value != projectRef {
+				fmt.Fprintln(logger, "Pooler options does not match project ref:", projectRef)
+				return nil
+			}
+		}
+	} else if projectRef != ref {
 		fmt.Fprintln(logger, "Pooler username does not match project ref:", projectRef)
 		return nil
 	}
