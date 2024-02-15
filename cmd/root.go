@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -40,7 +39,7 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 	return false
 }
 
-func PromptLogin(ctx context.Context, fsys afero.Fs) error {
+func promptLogin(fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
 		utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
 		return errors.New("You need to be logged-in in order to use Management API commands.")
@@ -99,15 +98,15 @@ var (
 			// Add common flags
 			ctx := cmd.Context()
 			if IsManagementAPI(cmd) {
-				if err := PromptLogin(ctx, fsys); err != nil {
+				if err := promptLogin(fsys); err != nil {
 					return err
 				}
+				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
-					if err := flags.ParseProjectRef(fsys); err != nil {
+					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
 						return err
 					}
 				}
-				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 			}
 			if err := flags.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
 				return err

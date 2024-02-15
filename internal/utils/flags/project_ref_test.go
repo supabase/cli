@@ -1,19 +1,20 @@
 package flags
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
+	"context"
+	"net/http"
 	"os"
 	"testing"
-	"testing/iotest"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
+	"gopkg.in/h2non/gock.v1"
 )
 
 func TestProjectRef(t *testing.T) {
@@ -22,7 +23,7 @@ func TestProjectRef(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := ParseProjectRef(fsys)
+		err := ParseProjectRef(context.Background(), fsys)
 		// Check error
 		assert.Error(t, err, utils.ErrInvalidRef)
 	})
@@ -36,7 +37,7 @@ func TestProjectRef(t *testing.T) {
 		err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 		// Run test
-		err = ParseProjectRef(fsys)
+		err = ParseProjectRef(context.Background(), fsys)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -46,7 +47,7 @@ func TestProjectRef(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.ProjectRefPath}
 		// Run test
-		err := ParseProjectRef(fsys)
+		err := ParseProjectRef(context.Background(), fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -56,7 +57,7 @@ func TestProjectRef(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := ParseProjectRef(fsys)
+		err := ParseProjectRef(context.Background(), fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotLinked)
 	})
@@ -64,24 +65,45 @@ func TestProjectRef(t *testing.T) {
 
 func TestProjectPrompt(t *testing.T) {
 	t.Run("validates prompt input", func(t *testing.T) {
-		var stdin bytes.Buffer
-		_, err := stdin.WriteString(apitest.RandomProjectRef())
-		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
+			Reply(http.StatusOK).
+			JSON([]api.ProjectResponse{{
+				Id:             "test-project",
+				Name:           "My Project",
+				OrganizationId: "test-org",
+			}})
 		// Run test
-		err = promptProjectRef(&stdin)
+		err := PromptProjectRef(context.Background(), "")
 		// Check error
-		assert.NoError(t, err)
+		assert.ErrorContains(t, err, "failed to prompt choice:")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on read failure", func(t *testing.T) {
-		// Setup long token
-		stdin := iotest.ErrReader(bufio.ErrTooLong)
+	t.Run("throws error on network failure", func(t *testing.T) {
+		errNetwork := errors.New("network error")
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
+			ReplyError(errNetwork)
 		// Run test
-		err := promptProjectRef(stdin)
+		err := PromptProjectRef(context.Background(), "")
 		// Check error
-		assert.ErrorIs(t, err, bufio.ErrTooLong)
-		// Workaround for gotestsum mis-reporting test output as failure:
-		// https://github.com/gotestyourself/gotestsum/issues/141
-		fmt.Println()
+		assert.ErrorIs(t, err, errNetwork)
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := PromptProjectRef(context.Background(), "")
+		// Check error
+		assert.ErrorContains(t, err, "Unexpected error retrieving projects:")
 	})
 }
