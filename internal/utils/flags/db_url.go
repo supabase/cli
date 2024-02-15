@@ -70,11 +70,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		config, err := newDbConfigWithPassword(projectRef)
-		if err != nil {
-			return err
-		}
-		DbConfig = *config
+		DbConfig = newDbConfigWithPassword(projectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -93,13 +89,10 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	return nil
 }
 
-func newDbConfigWithPassword(projectRef string) (*pgconn.Config, error) {
-	config, err := getDbConfig(projectRef)
-	if err != nil {
-		return nil, err
-	}
+func newDbConfigWithPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
 	config.Password = getPassword(projectRef)
-	return config, nil
+	return config
 }
 
 func getPassword(projectRef string) string {
@@ -117,27 +110,24 @@ func PromptPassword(stdin *os.File) string {
 	return credentials.PromptMasked(stdin)
 }
 
-func getDbConfig(projectRef string) (*pgconn.Config, error) {
+func getDbConfig(projectRef string) pgconn.Config {
 	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
-		return poolerConfig, nil
+		return *poolerConfig
 	}
-	url := fmt.Sprintf("postgres://postgres@%s:5432/postgres", utils.GetSupabaseDbHost(projectRef))
-	config, err := pgconn.ParseConfig(url)
-	if err != nil {
-		return nil, errors.Errorf("failed to parse connection string: %w", err)
+	return pgconn.Config{
+		Host:     utils.GetSupabaseDbHost(projectRef),
+		Port:     5432,
+		User:     "postgres",
+		Database: "postgres",
 	}
-	return config, nil
 }
 
-func GetDbConfigOptionalPassword(projectRef string) (*pgconn.Config, error) {
-	config, err := getDbConfig(projectRef)
-	if err != nil {
-		return nil, err
-	}
+func GetDbConfigOptionalPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
 	config.Password = viper.GetString("DB_PASSWORD")
 	if config.Password == "" {
 		fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
 		config.Password = credentials.PromptMasked(os.Stdin)
 	}
-	return config, nil
+	return config
 }
