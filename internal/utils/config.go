@@ -487,8 +487,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Api.Enabled {
 			if version, err := afero.ReadFile(fsys, RestVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(PostgrestImage, ':')
-				Config.Api.Image = PostgrestImage[:index+1] + string(version)
+				Config.Api.Image = replaceImageTag(PostgrestImage, string(version))
 			}
 		}
 		// Append required schemas if they are missing
@@ -527,8 +526,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil {
 				if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-					index := strings.IndexByte(Pg15Image, ':')
-					Config.Db.Image = Pg15Image[:index+1] + string(version)
+					Config.Db.Image = replaceImageTag(Pg15Image, string(version))
 				}
 			}
 		default:
@@ -554,8 +552,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		// Validate storage config
 		if Config.Storage.Enabled {
 			if version, err := afero.ReadFile(fsys, StorageVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(StorageImage, ':')
-				Config.Storage.Image = StorageImage[:index+1] + string(version)
+				Config.Storage.Image = replaceImageTag(StorageImage, string(version))
 			}
 		}
 		// Validate studio config
@@ -576,8 +573,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.site_url")
 			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(GotrueImage, ':')
-				Config.Auth.Image = GotrueImage[:index+1] + string(version)
+				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
 			}
 			// Validate email template
 			for _, tmpl := range Config.Auth.Email.Template {
