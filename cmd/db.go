@@ -84,19 +84,24 @@ var (
 		},
 	}
 
-	useMigra   bool
-	usePgAdmin bool
-	schema     []string
-	file       string
+	useMigra    bool
+	usePgAdmin  bool
+	usePgSchema bool
+	schema      []string
+	file        string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if usePgAdmin {
-				return diff.Run(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
+				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
-			return diff.RunMigra(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
+			differ := diff.DiffSchemaMigra
+			if usePgSchema {
+				differ = diff.DiffPgSchema
+			}
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
 		},
 	}
 
@@ -227,6 +232,7 @@ func init() {
 	diffFlags := dbDiffCmd.Flags()
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
+	diffFlags.BoolVar(&usePgSchema, "use-pg-schema", false, "Use pg-schema-diff to generate schema diff.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
 	diffFlags.String("db-url", "", "Diffs against the database specified by the connection string (must be percent-encoded).")
 	diffFlags.Bool("linked", false, "Diffs local migration files against the linked project.")
