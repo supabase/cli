@@ -29,5 +29,9 @@ func GetGotrueVersion(ctx context.Context, projectRef string) (string, error) {
 	if len(data.Version) == 0 {
 		return "", errors.New(errGotrueVersion)
 	}
+	// Some versions of gotrue may not include v prefix, but we need it for docker tag.
+	if data.Version[0] != 'v' {
+		return "v" + data.Version, nil
+	}
 	return data.Version, nil
 }
