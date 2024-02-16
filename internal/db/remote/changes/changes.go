@@ -50,6 +50,6 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 
 	w := utils.StatusWriter{Program: p}
 	// 2. Diff remote db (source) & shadow db (target) and print it.
-	output, err = diff.DiffDatabase(ctx, schema, config, w, fsys)
+	output, err = diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
 	return err
 }
