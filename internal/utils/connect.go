@@ -26,10 +26,15 @@ func ToPostgresURL(config pgconn.Config) string {
 	for k, v := range config.RuntimeParams {
 		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
 	}
+	// IPv6 address must be wrapped in square brackets
+	host := config.Host
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		host = fmt.Sprintf("[%s]", host)
+	}
 	return fmt.Sprintf(
 		"postgresql://%s@%s:%d/%s?%s",
 		url.UserPassword(config.User, config.Password),
-		config.Host,
+		host,
 		config.Port,
 		url.PathEscape(config.Database),
 		queryParams,
