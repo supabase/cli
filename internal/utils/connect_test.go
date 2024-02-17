@@ -162,3 +162,16 @@ func TestPoolerConfig(t *testing.T) {
 		assert.Nil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
 	})
 }
+
+func TestPostgresURL(t *testing.T) {
+	url := ToPostgresURL(pgconn.Config{
+		Host:     "2406:da18:4fd:9b0d:80ec:9812:3e65:450b",
+		Port:     5432,
+		User:     "postgres",
+		Password: "!@#$%^&*()",
+		RuntimeParams: map[string]string{
+			"options": "test",
+		},
+	})
+	assert.Equal(t, `postgresql://postgres:%21%40%23$%25%5E&%2A%28%29@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
+}
