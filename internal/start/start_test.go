@@ -152,6 +152,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StudioImage), utils.StudioId)
 		utils.LogflareId = "test-logflare"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.LogflareImage), utils.LogflareId)
+		utils.LogflareId = "test-vector"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.VectorImage), utils.VectorId)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
