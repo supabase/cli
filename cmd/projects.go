@@ -35,10 +35,6 @@ var (
 	region = utils.EnumFlag{
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
-	plan = utils.EnumFlag{
-		Allowed: []string{string(api.CreateProjectBodyPlanFree), string(api.CreateProjectBodyPlanPro)},
-		Value:   string(api.CreateProjectBodyPlanFree),
-	}
 
 	projectsCreateCmd = &cobra.Command{
 		Use:     "create [project name]",
@@ -129,8 +125,6 @@ func init() {
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
-	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
-	cobra.CheckErr(createFlags.MarkHidden("plan"))
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
