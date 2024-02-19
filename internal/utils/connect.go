@@ -158,7 +158,7 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 }
 
 func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	if IsLoopback(config.Host) {
+	if IsLocalDatabase(config) {
 		fmt.Fprintln(os.Stderr, "Connecting to local database...")
 		return ConnectLocalPostgres(ctx, config, options...)
 	}
@@ -166,12 +166,6 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 	return ConnectRemotePostgres(ctx, config, options...)
 }
 
-func IsLoopback(host string) bool {
-	if strings.ToLower(host) == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+func IsLocalDatabase(config pgconn.Config) bool {
+	return config.Host == Config.Hostname && config.Port == uint16(Config.Db.Port)
 }

@@ -35,7 +35,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		return err
 	}
 	if len(pending) == 0 {
-		fmt.Println("Linked project is up to date.")
+		fmt.Println("Remote database is up to date.")
 		return nil
 	}
 	// Push pending migrations

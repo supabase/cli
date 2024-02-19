@@ -50,21 +50,16 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 			return err
 		}
 	}
-	if !utils.IsLoopback(config.Host) {
+	if !utils.IsLocalDatabase(config) {
 		if shouldReset := utils.PromptYesNo("Confirm resetting the remote database?", true, os.Stdin); !shouldReset {
 			return errors.New(context.Canceled)
 		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
 
-	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
+	// Config file is loaded before parsing --linked or --local flags
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
 	}
 
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
