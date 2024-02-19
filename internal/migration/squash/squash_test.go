@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -125,9 +126,9 @@ func TestSquashCommand(t *testing.T) {
 func TestSquashVersion(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		err := squashToVersion(context.Background(), "0", afero.NewReadOnlyFs(fsys))
+		err := squashToVersion(context.Background(), "0", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})

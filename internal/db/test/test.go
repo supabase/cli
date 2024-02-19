@@ -23,16 +23,7 @@ const (
 	DISABLE_PGTAP = "drop extension if exists pgtap"
 )
 
-func Run(ctx context.Context, testFiles []string, dbConfig pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
-
-	return pgProve(ctx, testFiles, dbConfig, options...)
-}
-
-func pgProve(ctx context.Context, testFiles []string, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	for _, fp := range testFiles {

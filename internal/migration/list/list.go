@@ -140,11 +140,8 @@ func LoadLocalMigrations(fsys afero.Fs) ([]string, error) {
 }
 
 func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return nil, err
-	}
 	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Errorf("failed to read directory: %w", err)
 	}
 	var names []string

@@ -20,9 +20,6 @@ var (
 )
 
 func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err

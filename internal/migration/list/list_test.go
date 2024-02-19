@@ -2,7 +2,7 @@ package list
 
 import (
 	"context"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -48,18 +49,18 @@ func TestMigrationList(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on local failure", func(t *testing.T) {
+	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), dbConfig, afero.NewReadOnlyFs(fsys), conn.Intercept)
+		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
@@ -110,18 +111,6 @@ func TestRemoteMigrations(t *testing.T) {
 	})
 }
 
-type MockFs struct {
-	afero.MemMapFs
-	DenyPath string
-}
-
-func (m *MockFs) Open(name string) (afero.File, error) {
-	if strings.HasPrefix(name, m.DenyPath) {
-		return nil, fs.ErrPermission
-	}
-	return m.MemMapFs.Open(name)
-}
-
 func TestLocalMigrations(t *testing.T) {
 	t.Run("loads migration versions", func(t *testing.T) {
 		// Setup in-memory fs
@@ -151,22 +140,13 @@ func TestLocalMigrations(t *testing.T) {
 		assert.Empty(t, versions)
 	})
 
-	t.Run("throws error on permission denied", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		_, err := LoadLocalVersions(afero.NewReadOnlyFs(fsys))
-		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
-	})
-
 	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := MockFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		_, err := LoadLocalVersions(&fsys)
+		_, err := LoadLocalVersions(fsys)
 		// Check error
-		assert.ErrorContains(t, err, "permission denied")
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }
 
