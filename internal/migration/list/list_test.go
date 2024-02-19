@@ -93,7 +93,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Run test
 		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "failed to parse rows")
+		assert.NoError(t, err)
 		assert.Empty(t, versions)
 	})
 

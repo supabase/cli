@@ -67,7 +67,10 @@ func TestSquashCommand(t *testing.T) {
 		conn.Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "127.0.0.1"}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{
+			Host: "127.0.0.1",
+			Port: 54322,
+		}, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

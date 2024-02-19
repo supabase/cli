@@ -76,7 +76,7 @@ func pgProve(ctx context.Context, testFiles []string, config pgconn.Config, opti
 	}
 	// Use custom network when connecting to local database
 	networkID := "host"
-	if utils.IsLoopback(config.Host) && config.Port == uint16(utils.Config.Db.Port) {
+	if utils.IsLocalDatabase(config) {
 		config.Host = utils.DbAliases[0]
 		config.Port = 5432
 		networkID = utils.NetId

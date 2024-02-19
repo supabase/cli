@@ -28,9 +28,10 @@ var dbConfig = pgconn.Config{
 }
 
 func TestLintCommand(t *testing.T) {
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Db.Port = 5432
 	// Setup in-memory fs
 	fsys := afero.NewMemMapFs()
-	require.NoError(t, utils.WriteConfig(fsys, false))
 	// Setup mock docker
 	require.NoError(t, apitest.MockDocker(utils.Docker))
 	defer gock.OffAll()
@@ -64,8 +65,9 @@ func TestLintCommand(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
-	assert.NoError(t, Run(context.Background(), []string{"public"}, "warning", dbConfig, fsys, conn.Intercept))
-	// Validate api
+	err = Run(context.Background(), []string{"public"}, "warning", dbConfig, fsys, conn.Intercept)
+	// Check error
+	assert.NoError(t, err)
 	assert.Empty(t, apitest.ListUnmatchedRequests())
 }
 
