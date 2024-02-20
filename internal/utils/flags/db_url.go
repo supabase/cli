@@ -16,7 +16,8 @@ import (
 type connection int
 
 const (
-	direct connection = iota
+	unknown connection = iota
+	direct
 	local
 	linked
 	proxy
