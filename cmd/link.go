@@ -34,8 +34,7 @@ var (
 			if err := utils.LoadConfigFS(fsys); err != nil {
 				return err
 			}
-			config := flags.GetDbConfigOptionalPassword(flags.ProjectRef)
-			return link.Run(ctx, flags.ProjectRef, config, fsys)
+			return link.Run(ctx, flags.ProjectRef, fsys)
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
 			return link.PostRun(flags.ProjectRef, os.Stdout, afero.NewOsFs())

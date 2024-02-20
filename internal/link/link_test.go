@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
@@ -75,6 +77,19 @@ func TestLinkCommand(t *testing.T) {
 
 	t.Run("link valid project", func(t *testing.T) {
 		defer teardown()
+		// Change stdin to read from a file
+		stdin, err := os.CreateTemp("", "")
+		require.NoError(t, err)
+		defer os.Remove(stdin.Name())
+
+		_, err = stdin.Write([]byte{'\n'})
+		require.NoError(t, err)
+		_, err = stdin.Seek(0, 0)
+		require.NoError(t, err)
+
+		oldStdin := os.Stdin
+		defer func() { os.Stdin = oldStdin }()
+		os.Stdin = stdin
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -129,7 +144,7 @@ func TestLinkCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		err := Run(context.Background(), project, dbConfig, fsys, conn.Intercept)
+		err = Run(context.Background(), project, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -148,23 +163,20 @@ func TestLinkCommand(t *testing.T) {
 		assert.Equal(t, []byte(postgres.Version), postgresVersion)
 	})
 
-	t.Run("throws error on network failure", func(t *testing.T) {
-		t.Skip()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/api-keys").
-			ReplyError(errors.New("network error"))
-		// Run test
-		err := Run(context.Background(), project, dbConfig, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("ignores error linking services", func(t *testing.T) {
+		// Change stdin to read from a file
+		stdin, err := os.CreateTemp("", "")
+		require.NoError(t, err)
+		defer os.Remove(stdin.Name())
+
+		_, err = stdin.Write([]byte{'\n'})
+		require.NoError(t, err)
+		_, err = stdin.Seek(0, 0)
+		require.NoError(t, err)
+
+		oldStdin := os.Stdin
+		defer func() { os.Stdin = oldStdin }()
+		os.Stdin = stdin
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
@@ -194,7 +206,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, dbConfig, fsys, func(cc *pgx.ConnConfig) {
+		err = Run(context.Background(), project, fsys, func(cc *pgx.ConnConfig) {
 			cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
 				return nil, errors.New("hostname resolving error")
 			}
@@ -235,7 +247,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, pgconn.Config{}, fsys)
+		err := Run(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
