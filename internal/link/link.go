@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -34,7 +35,7 @@ func (c ConfigCopy) IsEmpty() bool {
 	return c.Api == nil && c.Db == nil && c.Pooler == nil
 }
 
-func Run(ctx context.Context, projectRef string, dbConfig pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
 	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
 		return err
@@ -42,12 +43,13 @@ func Run(ctx context.Context, projectRef string, dbConfig pgconn.Config, fsys af
 	linkServices(ctx, projectRef, fsys)
 
 	// 2. Check database connection
-	if len(dbConfig.Password) > 0 {
-		if err := linkDatabase(ctx, dbConfig, options...); err != nil {
+	config := flags.GetDbConfigOptionalPassword(projectRef)
+	if len(config.Password) > 0 {
+		if err := linkDatabase(ctx, config, options...); err != nil {
 			return err
 		}
 		// Save database password
-		if err := credentials.Set(projectRef, dbConfig.Password); err != nil {
+		if err := credentials.Set(projectRef, config.Password); err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 		}
 	}
