@@ -53,7 +53,7 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			return errors.Errorf("URL is not a valid Supabase connection string: %w", err)
 		}
 		escaped := fmt.Sprintf(
-			"postgresql://%s@%s:%d/%s",
+			"postgresql://%s@%s:%d/%s?sslmode=prefer",
 			url.UserPassword(config.User, config.Password),
 			config.Host,
 			config.Port,
@@ -67,7 +67,6 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 				Image: utils.PgmetaImage,
 				Env: []string{
 					"PG_META_DB_URL=" + escaped,
-					"PG_META_DB_SSL_MODE=prefer",
 					"PG_META_GENERATE_TYPES=typescript",
 					"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 					fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
