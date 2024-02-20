@@ -61,6 +61,7 @@ func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keep
 		env = append(env,
 			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
 			"INCLUDED_SCHEMAS=*",
+			"EXTRA_FLAGS=--extension=*",
 		)
 	}
 	if !keepComments {

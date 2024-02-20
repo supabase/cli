@@ -24,6 +24,7 @@ pg_dump \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     --schema "${INCLUDED_SCHEMAS:-}" \
     --no-comments \
+    ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed -E 's/^CREATE TABLE "/CREATE TABLE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \
