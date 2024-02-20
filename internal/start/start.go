@@ -805,7 +805,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
