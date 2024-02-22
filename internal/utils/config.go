@@ -286,9 +286,9 @@ type (
 	}
 
 	studio struct {
-		Enabled 	 bool   `toml:"enabled"`
-		Port    	 uint   `toml:"port"`
-		ApiUrl  	 string `toml:"api_url"`
+		Enabled      bool   `toml:"enabled"`
+		Port         uint   `toml:"port"`
+		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
 	}
 
