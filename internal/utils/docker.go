@@ -105,7 +105,7 @@ var NoBackupVolume = false
 
 func DockerRemoveAll(ctx context.Context, w io.Writer) error {
 	args := CliProjectFilter()
-	containers, err := Docker.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := Docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
 		Filters: args,
 	})
@@ -304,7 +304,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		return "", errors.Errorf("failed to create docker container: %w", err)
 	}
 	// Run container in background
-	err = Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
+	err = Docker.ContainerStart(ctx, resp.ID, container.StartOptions{})
 	if err != nil {
 		if hostPort := parsePortBindError(err); len(hostPort) > 0 {
 			CmdSuggestion = suggestDockerStop(ctx, hostPort)
@@ -324,7 +324,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 }
 
 func DockerRemove(containerId string) {
-	if err := Docker.ContainerRemove(context.Background(), containerId, types.ContainerRemoveOptions{
+	if err := Docker.ContainerRemove(context.Background(), containerId, container.RemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	}); err != nil {
@@ -363,9 +363,9 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 	return DockerStreamLogs(ctx, container, stdout, stderr)
 }
 
-func DockerStreamLogs(ctx context.Context, container string, stdout, stderr io.Writer) error {
+func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
 	// Stream logs
-	logs, err := Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
@@ -378,7 +378,7 @@ func DockerStreamLogs(ctx context.Context, container string, stdout, stderr io.W
 		return errors.Errorf("failed to copy docker logs: %w", err)
 	}
 	// Check exit code
-	resp, err := Docker.ContainerInspect(ctx, container)
+	resp, err := Docker.ContainerInspect(ctx, containerId)
 	if err != nil {
 		return errors.Errorf("failed to inspect docker container: %w", err)
 	}
@@ -443,7 +443,7 @@ func parsePortBindError(err error) string {
 }
 
 func suggestDockerStop(ctx context.Context, hostPort string) string {
-	if containers, err := Docker.ContainerList(ctx, types.ContainerListOptions{}); err == nil {
+	if containers, err := Docker.ContainerList(ctx, container.ListOptions{}); err == nil {
 		for _, c := range containers {
 			for _, p := range c.Ports {
 				if fmt.Sprintf("%s:%d", p.IP, p.PublicPort) == hostPort {
