@@ -561,6 +561,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
 		// Validate email config
 		if Config.Inbucket.Enabled {
