@@ -136,7 +136,11 @@ func DockerRemoveAll(ctx context.Context, w io.Writer) error {
 	}
 	// Remove named volumes
 	if NoBackupVolume {
-		if report, err := Docker.VolumesPrune(ctx, args); err != nil {
+		// Since docker engine 25.0.3, all flag is required to include named volumes.
+		// https://github.com/docker/cli/blob/master/cli/command/volume/prune.go#L76
+		vargs := args.Clone()
+		vargs.Add("all", "true")
+		if report, err := Docker.VolumesPrune(ctx, vargs); err != nil {
 			return errors.Errorf("failed to prune volumes: %w", err)
 		} else if viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, "Pruned volumes:", report.VolumesDeleted)
