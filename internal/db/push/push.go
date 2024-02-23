@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -44,14 +45,18 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
 		}
 	} else {
+		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n • %s\n\n", strings.Join(pending, "\n • "))
+		if shouldPush := utils.PromptYesNo(msg, true, os.Stdin); !shouldPush {
+			utils.CmdSuggestion = ""
+			return errors.New(context.Canceled)
+		}
 		if err := apply.MigrateUp(ctx, conn, pending, fsys); err != nil {
 			return err
 		}
-	}
-	// Seed database
-	if !dryRun && includeSeed {
-		if err := apply.SeedDatabase(ctx, conn, fsys); err != nil {
-			return err
+		if includeSeed {
+			if err := apply.SeedDatabase(ctx, conn, fsys); err != nil {
+				return err
+			}
 		}
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
