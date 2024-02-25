@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
@@ -46,12 +47,6 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		if strings.Contains(utils.Config.Api.Image, "v9") {
 			postgrestV9Compat = true
 		}
-	} else {
-		// Additional configs for pg-meta with enforce ssl
-		if dbConfig.RuntimeParams == nil {
-			dbConfig.RuntimeParams = make(map[string]string, 1)
-		}
-		dbConfig.RuntimeParams["sslmode"] = "prefer"
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
@@ -59,6 +54,13 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		dbConfig.Database = "postgres"
 	}
 	escaped := utils.ToPostgresURL(dbConfig)
+	if require, err := isRequireSSL(ctx, escaped); err != nil {
+		return err
+	} else if require {
+		// node-postgres does not support sslmode=prefer
+		escaped += "&sslmode=require"
+	}
+
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
@@ -79,4 +81,16 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		os.Stdout,
 		os.Stderr,
 	)
+}
+
+func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
+	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require")
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
+			return false, nil
+		}
+		return false, err
+	}
+	defer conn.Close(context.Background())
+	return true, nil
 }
