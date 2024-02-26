@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"os/signal"
 
 	env "github.com/Netflix/go-env"
 	"github.com/spf13/afero"
@@ -14,7 +16,7 @@ import (
 
 var (
 	genCmd = &cobra.Command{
-		GroupID: groupManagementAPI,
+		GroupID: groupLocalDev,
 		Use:     "gen",
 		Short:   "Run code generation tools",
 	}
@@ -41,6 +43,7 @@ var (
 			if err := env.Unmarshal(es, &keyNames); err != nil {
 				return err
 			}
+			cmd.GroupID = groupManagementAPI
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -65,7 +68,7 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if flags.DbConfig.Host == "" {
 				// If no flag is specified, prompt for project id.
 				if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); errors.Is(err, utils.ErrNotLinked) {
