@@ -6,6 +6,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -36,32 +37,45 @@ var (
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	beta := flag.Bool("beta", false, "Updates the beta release channel.")
+	flag.Parse()
+
+	semver := flag.Arg(0)
+	if len(semver) == 0 {
 		log.Fatalln("Missing required arg: version")
 	}
-	semver := os.Args[1]
 
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
-	if err := publishPackages(ctx, semver); err != nil {
+	if err := publishPackages(ctx, semver, *beta); err != nil {
 		log.Fatalln(err)
 	}
 }
 
-func publishPackages(ctx context.Context, version string) error {
+func publishPackages(ctx context.Context, version string, beta bool) error {
 	config, err := fetchConfig(ctx, version)
 	if err != nil {
 		return err
 	}
+	config.FormulaName = "Supabase"
+	config.Description = "Supabase CLI"
+	filename := "supabase"
+	if beta {
+		config.FormulaName += "Beta"
+		config.Description += " (Beta)"
+		filename += "-beta"
+	}
 	client := shared.NewGtihubClient(ctx)
-	if err := updatePackage(ctx, client, HOMEBREW_REPO, "supabase.rb", brewFormulaTemplate, config); err != nil {
+	if err := updatePackage(ctx, client, HOMEBREW_REPO, filename+".rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}
-	return updatePackage(ctx, client, SCOOP_REPO, "supabase.json", scoopBucketTemplate, config)
+	return updatePackage(ctx, client, SCOOP_REPO, filename+".json", scoopBucketTemplate, config)
 }
 
 type PackageConfig struct {
-	Version  string
-	Checksum map[string]string
+	Version     string
+	Checksum    map[string]string
+	Description string
+	FormulaName string
 }
 
 func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
@@ -112,8 +126,14 @@ func updatePackage(ctx context.Context, client *github.Client, repo, path string
 	if err := tmpl.Execute(&buf, config); err != nil {
 		return err
 	}
+	branch := "release/cli"
+	master := "main"
+	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, repo, branch, master); err != nil {
+		return err
+	}
 	// Get file SHA
-	file, _, _, err := client.Repositories.GetContents(ctx, SUPABASE_OWNER, repo, path, nil)
+	opts := github.RepositoryContentGetOptions{Ref: "heads/" + branch}
+	file, _, _, err := client.Repositories.GetContents(ctx, SUPABASE_OWNER, repo, path, &opts)
 	if err != nil {
 		return err
 	}
@@ -126,16 +146,23 @@ func updatePackage(ctx context.Context, client *github.Client, repo, path string
 		return nil
 	}
 	// Update file content
-	message := "Update supabase stable release channel"
+	message := "Release " + config.Description
 	commit := github.RepositoryContentFileOptions{
 		Message: &message,
 		Content: buf.Bytes(),
 		SHA:     file.SHA,
+		Branch:  &branch,
 	}
 	resp, _, err := client.Repositories.UpdateFile(ctx, SUPABASE_OWNER, repo, path, &commit)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
-	return nil
+	// Create pull request
+	pr := github.NewPullRequest{
+		Title: &message,
+		Head:  &branch,
+		Base:  &master,
+	}
+	return shared.CreatePullRequest(ctx, client, SUPABASE_OWNER, repo, pr)
 }
