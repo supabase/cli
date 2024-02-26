@@ -8,7 +8,7 @@ on:
       - 'scripts/**'
   push:
     branches:
-      - main
+      - develop
     paths:
       - '.github/workflows/install.yml'
       - 'package.json'
