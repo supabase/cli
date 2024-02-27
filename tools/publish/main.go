@@ -43,6 +43,8 @@ func main() {
 	semver := flag.Arg(0)
 	if len(semver) == 0 {
 		log.Fatalln("Missing required arg: version")
+	} else if semver[0] == 'v' {
+		semver = semver[1:]
 	}
 
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)

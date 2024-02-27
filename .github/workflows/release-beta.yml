@@ -48,8 +48,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
-          SCOOP_TOKEN: ${{ secrets.GH_PAT }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
       - run: gh release edit v${{ needs.release.outputs.new-release-version }} --draft=false --prerelease

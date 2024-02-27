@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -27,9 +28,11 @@ var (
 )
 
 func main() {
-	semver := "latest"
-	if len(os.Args) > 1 {
-		semver = os.Args[1]
+	semver := flag.Arg(0)
+	if len(semver) == 0 {
+		semver = "latest"
+	} else if semver[0] == 'v' {
+		semver = semver[1:]
 	}
 
 	if err := generate(semver); err != nil {
