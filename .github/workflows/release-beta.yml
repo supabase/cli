@@ -3,7 +3,7 @@ name: Release (Beta)
 on:
   push:
     branches:
-      - main
+      - develop
   workflow_dispatch:
 
 jobs:
@@ -48,13 +48,28 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BREWTAP_TOKEN: ${{ secrets.GH_PAT }}
-          SCOOP_TOKEN: ${{ secrets.GH_PAT }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
       - run: gh release edit v${{ needs.release.outputs.new-release-version }} --draft=false --prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  commit:
+    name: Publish Brew and Scoop
+    needs:
+      - release
+      - goreleaser
+    if: needs.release.outputs.new-release-published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run tools/publish/main.go --beta "${{ needs.release.outputs.new-release-version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   publish:
     name: Publish NPM
