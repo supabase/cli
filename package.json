@@ -33,7 +33,7 @@
         "channel": "hotfix"
       },
       {
-        "name": "main",
+        "name": "develop",
         "channel": "beta"
       }
     ],
