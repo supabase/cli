@@ -25,7 +25,7 @@ require (
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.11.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
-	github.com/golang-jwt/jwt/v5 v5.2.0
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golangci/golangci-lint v1.56.2
 	github.com/google/go-github/v53 v53.2.0
 	github.com/google/uuid v1.6.0
