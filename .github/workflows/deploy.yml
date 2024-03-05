@@ -6,10 +6,14 @@ on:
     - cron: "0 2 * * 2"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - run: gh pr create -B main -H develop --title 'Prod deploy' --fill
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
