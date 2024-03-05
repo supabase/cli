@@ -19,7 +19,7 @@ jobs:
         run: |
           gh release list --limit 1 --json tagName --jq \
           '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
-      - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest
+      - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
 
   commit:
     name: Publish Brew and Scoop
