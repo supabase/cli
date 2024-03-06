@@ -24,9 +24,8 @@ func MockDocker(docker *client.Client) error {
 	if err := client.WithVersion(api.DefaultVersion)(docker); err != nil {
 		return err
 	}
-	if err := client.WithHost(mockHost)(docker); err != nil {
-		return err
-	}
+	// Safe to ignore errors as transport will be replaced by gock
+	_ = client.WithHost(mockHost)(docker)
 	return client.WithHTTPClient(http.DefaultClient)(docker)
 }
 

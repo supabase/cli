@@ -75,7 +75,7 @@ func TestBranchCreation(t *testing.T) {
 		// Run test
 		err := createBranch(context.Background(), "test-branch")
 		// Validate api
-		assert.ErrorContains(t, err, "cannot connect to the Docker daemon.")
+		assert.ErrorContains(t, err, "unable to upgrade to tcp, received 404")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
