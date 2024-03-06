@@ -123,7 +123,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -169,7 +169,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -189,7 +189,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -209,7 +209,7 @@ func TestLintDatabase(t *testing.T) {
 			Query("rollback").Reply("ROLLBACK")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

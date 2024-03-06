@@ -177,7 +177,7 @@ func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) e
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}

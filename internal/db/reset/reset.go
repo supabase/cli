@@ -259,7 +259,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfigStream(ctx, config, io.Discard, options...)
 	if err != nil {
 		return err
 	}
