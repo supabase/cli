@@ -126,9 +126,8 @@ func TestMigrationFile(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.Lines[0]).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0])).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0])).
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
