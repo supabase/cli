@@ -115,6 +115,9 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 		return err
 	}
 	defer conn.Close(context.Background())
+	if err := repair.CreateMigrationTable(ctx, conn); err != nil {
+		return err
+	}
 	m, err := repair.NewMigrationFromVersion(version, fsys)
 	if err != nil {
 		return err
