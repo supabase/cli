@@ -3,6 +3,7 @@ package history
 import "github.com/jackc/pgconn"
 
 const (
+	SET_LOCK_TIMEOUT         = "SET LOCAL lock_timeout = '4s'"
 	CREATE_VERSION_SCHEMA    = "CREATE SCHEMA IF NOT EXISTS supabase_migrations"
 	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
 	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
@@ -15,6 +16,7 @@ const (
 
 func AddCreateTableStatements(batch *pgconn.Batch) {
 	// Create history table if not exists
+	batch.ExecParams(SET_LOCK_TIMEOUT, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
 	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
