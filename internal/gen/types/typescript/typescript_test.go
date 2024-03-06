@@ -156,7 +156,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
