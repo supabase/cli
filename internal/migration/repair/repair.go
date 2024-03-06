@@ -100,8 +100,6 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 }
 
 func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
-	// Create history table if not exists
-	history.AddCreateTableStatements(batch)
 	encoded := []byte{'{'}
 	for i, line := range stats {
 		if i > 0 {

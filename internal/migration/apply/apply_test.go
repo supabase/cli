@@ -28,10 +28,10 @@ func TestMigrateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(sql).
-			Reply("CREATE SCHEMA")
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+		conn.Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
@@ -122,6 +122,7 @@ func TestMigrateUp(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		pgtest.MockMigrationHistory(conn)
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
