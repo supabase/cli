@@ -125,9 +125,9 @@ func (r *MockConn) lastQuery() *extendedQueryStep {
 	return r.script.Steps[len(r.script.Steps)-1].(*extendedQueryStep)
 }
 
-// Adds a server reply using text protocol format.
+// Adds a server reply using binary or text protocol format.
 //
-// TODO: support binary protocol
+// TODO: support prepared statements when using binary protocol
 func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	q := r.lastQuery()
 	// Add field description

@@ -63,9 +63,9 @@ func TestSquashCommand(t *testing.T) {
 		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1").
-			Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
+			Query(history.INSERT_MIGRATION_VERSION, "1", "target", nil).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{
@@ -233,7 +233,7 @@ func TestSquashMigrations(t *testing.T) {
 		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
