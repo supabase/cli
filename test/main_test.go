@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 
 	// redirect clients to mock servers
 	if err := client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker); err != nil {
-		Logger.Fatal(err)
+		Logger.Print(err)
 	}
 	if err := client.WithVersion(docker.APIVersion)(utils.Docker); err != nil {
 		Logger.Fatal(err)
