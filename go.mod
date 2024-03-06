@@ -52,7 +52,6 @@ require (
 	golang.org/x/term v0.18.0
 	google.golang.org/grpc v1.62.1
 	gopkg.in/h2non/gock.v1 v1.1.2
-	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.11.0
 )

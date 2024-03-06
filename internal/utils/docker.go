@@ -61,7 +61,7 @@ func AssertDockerIsRunning(ctx context.Context) error {
 
 const (
 	CliProjectLabel     = "com.supabase.cli.project"
-	composeProjectLabel = "com.docker.compose.projecta"
+	composeProjectLabel = "com.docker.compose.project"
 )
 
 func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
