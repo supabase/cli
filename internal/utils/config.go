@@ -213,7 +213,7 @@ var Config = config{
 }
 
 // We follow these rules when adding new config:
-//  1. Update init_config.toml with the new key, default value, and comments to explain usage.
+//  1. Update init_config.toml (and init_config.test.toml) with the new key, default value, and comments to explain usage.
 //  2. Update config struct with new field and toml tag (spelled in snake_case).
 //  3. Add custom field validations to LoadConfigFS function for eg. integer range checks.
 //
@@ -286,9 +286,10 @@ type (
 	}
 
 	studio struct {
-		Enabled bool   `toml:"enabled"`
-		Port    uint   `toml:"port"`
-		ApiUrl  string `toml:"api_url"`
+		Enabled      bool   `toml:"enabled"`
+		Port         uint   `toml:"port"`
+		ApiUrl       string `toml:"api_url"`
+		OpenaiApiKey string `toml:"openai_api_key"`
 	}
 
 	inbucket struct {
@@ -560,6 +561,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
 		// Validate email config
 		if Config.Inbucket.Enabled {

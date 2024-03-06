@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
@@ -43,8 +44,11 @@ func TestGenLocalCommand(t *testing.T) {
 			JSON(types.ContainerJSON{})
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{}, true, fsys))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{}, true, fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -152,9 +156,12 @@ func TestGenRemoteCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{"public"}, true, afero.NewMemMapFs()))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{"public"}, true, afero.NewMemMapFs(), conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

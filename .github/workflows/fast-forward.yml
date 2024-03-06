@@ -1,0 +1,32 @@
+name: Fast-forward
+
+on:
+  pull_request_review:
+    types:
+      - submitted
+
+permissions:
+  contents: write
+
+jobs:
+  approved:
+    if: |
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git checkout main
+          git merge --ff-only "${{ github.event.pull_request.head.sha }}"
+          git push origin main
+
+  publish:
+    needs:
+      - approved
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/release.yml
+    secrets: inherit

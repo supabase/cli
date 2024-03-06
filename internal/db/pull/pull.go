@@ -111,7 +111,7 @@ func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, pat
 	if len(output) == 0 {
 		return errors.New(errInSync)
 	}
-	if err := afero.WriteFile(fsys, path, []byte(output), 0644); err != nil {
+	if err := utils.WriteFile(path, []byte(output), fsys); err != nil {
 		return errors.Errorf("failed to write dump file: %w", err)
 	}
 	return nil
