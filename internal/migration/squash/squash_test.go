@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,9 +63,9 @@ func TestSquashCommand(t *testing.T) {
 		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1").
-			Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
+			Query(history.INSERT_MIGRATION_VERSION, "1", "target", nil).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{
@@ -96,7 +97,9 @@ func TestSquashCommand(t *testing.T) {
 		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= ('0');INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES(('0'), ('init'), ('{%s}'))", sql)).
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.NoError(t, err)
 		match, err := afero.FileContainsBytes(fsys, path, []byte(sql))
@@ -230,7 +233,7 @@ func TestSquashMigrations(t *testing.T) {
 		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
@@ -258,7 +261,9 @@ func TestBaselineMigration(t *testing.T) {
 		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= ('0');INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES(('0'), ('init'), ('{%s}'))", sql)).
 			Reply("INSERT 0 1")
 		// Run test
-		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept)
+		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -284,7 +289,9 @@ func TestBaselineMigration(t *testing.T) {
 		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= ('%[1]s');INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES(('%[1]s'), ('init'), (null))", "0")).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
-		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
+		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)`)
 	})

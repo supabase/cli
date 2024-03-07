@@ -88,24 +88,6 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 	return nil
 }
 
-func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
-	encoded := []byte{'{'}
-	for i, line := range stats {
-		if i > 0 {
-			encoded = append(encoded, ',')
-		}
-		encoded = append(encoded, pgtype.QuoteArrayElementIfNeeded(line)...)
-	}
-	encoded = append(encoded, '}')
-	batch.ExecParams(
-		history.INSERT_MIGRATION_VERSION,
-		[][]byte{[]byte(version), []byte(name), encoded},
-		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
-		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
-		nil,
-	)
-}
-
 func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
 	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
 	matches, err := afero.Glob(fsys, path)
@@ -175,7 +157,9 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	}
 	// Insert into migration history
 	if len(m.Version) > 0 {
-		InsertVersionSQL(batch, m.Version, m.Name, m.Lines)
+		if err := m.insertVersionSQL(conn, batch); err != nil {
+			return err
+		}
 	}
 	// ExecBatch is implicitly transactional
 	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
@@ -187,6 +171,35 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		}
 		return errors.Errorf("%w\nAt statement %d: %s", err, i, stat)
 	}
+	return nil
+}
+
+func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
+	value := pgtype.TextArray{}
+	if err := value.Set(m.Lines); err != nil {
+		return errors.Errorf("failed to set text array: %w", err)
+	}
+	ci := conn.ConnInfo()
+	var err error
+	var encoded []byte
+	var valueFormat int16
+	if conn.Config().PreferSimpleProtocol {
+		encoded, err = value.EncodeText(ci, encoded)
+		valueFormat = pgtype.TextFormatCode
+	} else {
+		encoded, err = value.EncodeBinary(ci, encoded)
+		valueFormat = pgtype.BinaryFormatCode
+	}
+	if err != nil {
+		return errors.Errorf("failed to encode binary: %w", err)
+	}
+	batch.ExecParams(
+		history.INSERT_MIGRATION_VERSION,
+		[][]byte{[]byte(m.Version), []byte(m.Name), encoded},
+		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
+		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, valueFormat},
+		nil,
+	)
 	return nil
 }
 

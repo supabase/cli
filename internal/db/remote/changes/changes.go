@@ -2,6 +2,7 @@ package changes
 
 import (
 	"context"
+	"io"
 
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -33,23 +34,24 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.
 
 func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) (err error) {
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	{
-		p.Send(utils.StatusMsg("Connecting to remote database..."))
-		conn, err := utils.ConnectRemotePostgres(ctx, config)
+	w := utils.StatusWriter{Program: p}
+	if len(schema) == 0 {
+		schema, err = loadSchema(ctx, config, w)
 		if err != nil {
 			return err
 		}
-		defer conn.Close(context.Background())
-		if len(schema) == 0 {
-			schema, err = diff.LoadUserSchemas(ctx, conn)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
-	w := utils.StatusWriter{Program: p}
 	// 2. Diff remote db (source) & shadow db (target) and print it.
 	output, err = diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
 	return err
+}
+
+func loadSchema(ctx context.Context, config pgconn.Config, w io.Writer) ([]string, error) {
+	conn, err := utils.ConnectByConfigStream(ctx, config, w)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(context.Background())
+	return diff.LoadUserSchemas(ctx, conn)
 }

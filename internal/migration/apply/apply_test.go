@@ -2,7 +2,6 @@ package apply
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +30,7 @@ func TestMigrateDatabase(t *testing.T) {
 		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()

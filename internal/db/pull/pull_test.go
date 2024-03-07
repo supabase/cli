@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
@@ -29,6 +28,33 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
+}
+
+var escapedSchemas = []string{
+	"auth",
+	"pgbouncer",
+	"realtime",
+	`\_realtime`,
+	"storage",
+	`\_analytics`,
+	`supabase\_functions`,
+	`supabase\_migrations`,
+	`information\_schema`,
+	`pg\_%`,
+	"cron",
+	"graphql",
+	`graphql\_public`,
+	"net",
+	"pgsodium",
+	`pgsodium\_masks`,
+	"pgtle",
+	"repack",
+	"tiger",
+	`tiger\_data`,
+	`timescaledb\_%`,
+	`\_timescaledb\_%`,
+	"topology",
+	"vault",
 }
 
 func TestPullCommand(t *testing.T) {
@@ -144,7 +170,7 @@ func TestPullSchema(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -169,11 +195,11 @@ func TestPullSchema(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `('{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}')`)).
+			Query(reset.LIST_SCHEMAS, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -202,7 +228,7 @@ func TestPullSchema(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"0"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -226,7 +252,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -248,7 +274,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -270,7 +296,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -290,7 +316,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
