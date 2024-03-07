@@ -81,7 +81,7 @@ func NewContainerConfig() container.Config {
 			Timeout:  2 * time.Second,
 			Retries:  3,
 		},
-		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && docker-entrypoint.sh postgres -D /etc/postgresql
+		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && cat <<'EOF' > /etc/postgresql-custom/pgsodium/pgsodium_root.key && docker-entrypoint.sh postgres -D /etc/postgresql
 ` + initialSchema + `
 EOF
 ` + utils.Config.Db.RootKey + `
