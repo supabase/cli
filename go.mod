@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.6.0
-	github.com/charmbracelet/lipgloss v0.9.1
+	github.com/charmbracelet/lipgloss v0.10.0
 	github.com/containers/common v0.58.0
 	github.com/deepmap/oapi-codegen v1.16.2
 	github.com/docker/cli v25.0.3+incompatible
