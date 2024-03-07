@@ -386,7 +386,8 @@ func TestLinkDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(history.CREATE_VERSION_SCHEMA).
+		conn.Query(history.SET_LOCK_TIMEOUT).
+			Query(history.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
 			Query(history.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").

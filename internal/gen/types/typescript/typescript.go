@@ -50,6 +50,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
+	// pg-meta does not set username as the default database, ie. postgres
 	if len(dbConfig.Database) == 0 {
 		dbConfig.Database = "postgres"
 	}
