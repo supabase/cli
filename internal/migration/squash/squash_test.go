@@ -1,12 +1,15 @@
 package squash
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
@@ -55,6 +58,10 @@ func TestSquashCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		// Setup mock postgres
@@ -227,6 +234,10 @@ func TestSquashMigrations(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -307,5 +318,58 @@ func TestBaselineMigration(t *testing.T) {
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+//go:embed testdata/*.sql
+var testdata embed.FS
+
+func TestLineByLine(t *testing.T) {
+	t.Run("diffs output from pg_dump", func(t *testing.T) {
+		before, err := testdata.Open("testdata/before.sql")
+		require.NoError(t, err)
+		after, err := testdata.Open("testdata/after.sql")
+		require.NoError(t, err)
+		expected, err := testdata.ReadFile("testdata/diff.sql")
+		require.NoError(t, err)
+		// Run test
+		var out bytes.Buffer
+		err = lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, expected, out.Bytes())
+	})
+
+	t.Run("diffs shorter before", func(t *testing.T) {
+		before := strings.NewReader("select 1;")
+		after := strings.NewReader("select 0;\nselect 1;\nselect 2;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "select 0;\nselect 2;\n", out.String())
+	})
+
+	t.Run("diffs shorter after", func(t *testing.T) {
+		before := strings.NewReader("select 1;\nselect 2;")
+		after := strings.NewReader("select 1;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "", out.String())
+	})
+
+	t.Run("diffs no match", func(t *testing.T) {
+		before := strings.NewReader("select 0;\nselect 1;")
+		after := strings.NewReader("select 1;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "select 1;\n", out.String())
 	})
 }

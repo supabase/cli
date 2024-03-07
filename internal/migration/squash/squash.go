@@ -1,11 +1,15 @@
 package squash
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -13,6 +17,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -79,8 +85,32 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	defer utils.DockerRemove(shadow)
+	conn, err := diff.ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := start.SetupDatabase(ctx, conn, shadow[:12], os.Stderr, fsys); err != nil {
+		return err
+	}
+	// Assuming entities in managed schemas are not altered, we can simply diff the dumps before and after migrations.
+	schemas := []string{"auth", "storage"}
+	config := pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     uint16(utils.Config.Db.ShadowPort),
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	}
+	var before, after bytes.Buffer
+	if err := dump.DumpSchema(ctx, config, schemas, false, false, &before); err != nil {
+		return err
+	}
 	// 2. Migrate to target version
-	if err := diff.MigrateShadowDatabaseVersions(ctx, shadow, migrations, fsys, options...); err != nil {
+	if err := apply.MigrateUp(ctx, conn, migrations, fsys); err != nil {
+		return err
+	}
+	if err := dump.DumpSchema(ctx, config, schemas, false, false, &after); err != nil {
 		return err
 	}
 	// 3. Dump migrated schema
@@ -90,14 +120,37 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return errors.Errorf("failed to open migration file: %w", err)
 	}
 	defer f.Close()
-	config := pgconn.Config{
-		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.ShadowPort),
-		User:     "postgres",
-		Password: utils.Config.Db.Password,
-		Database: "postgres",
+	if err := dump.DumpSchema(ctx, config, nil, false, false, f); err != nil {
+		return err
 	}
-	return dump.DumpSchema(ctx, config, nil, false, false, f)
+	// 4. Append managed schema diffs
+	fmt.Fprint(f, separatorComment)
+	return lineByLineDiff(&before, &after, f)
+}
+
+const separatorComment = `
+--
+-- Dumped schema changes for auth and storage
+--
+
+`
+
+func lineByLineDiff(before, after io.Reader, f io.Writer) error {
+	anchor := bufio.NewScanner(before)
+	anchor.Scan()
+	// Assuming before is always a subset of after
+	scanner := bufio.NewScanner(after)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == anchor.Text() {
+			anchor.Scan()
+			continue
+		}
+		if _, err := fmt.Fprintln(f, line); err != nil {
+			return errors.Errorf("failed to write line: %w", err)
+		}
+	}
+	return nil
 }
 
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
