@@ -56,10 +56,8 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 }
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, repairAll bool, fsys afero.Fs) error {
-	schema := &pgconn.Batch{}
-	history.AddCreateTableStatements(schema)
-	if _, err := conn.PgConn().ExecBatch(ctx, schema).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
+	if err := history.CreateMigrationTable(ctx, conn); err != nil {
+		return err
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := &pgx.Batch{}
@@ -87,15 +85,6 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 		fmt.Fprintf(os.Stderr, "Repaired migration history: %v => %s\n", version, status)
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
-	return nil
-}
-
-func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
-	batch := pgconn.Batch{}
-	history.AddCreateTableStatements(&batch)
-	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
-	}
 	return nil
 }
 
