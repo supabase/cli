@@ -56,9 +56,11 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		fmt.Fprintln(logger, "Failed to parse pooler URL:", poolerUrl)
 		return nil
 	}
+	if poolerConfig.RuntimeParams == nil {
+		poolerConfig.RuntimeParams = make(map[string]string)
+	}
 	// Verify that the pooler username matches the database host being connected to
-	_, ref, found := strings.Cut(poolerConfig.User, ".")
-	if !found {
+	if _, ref, found := strings.Cut(poolerConfig.User, "."); !found {
 		for _, option := range strings.Split(poolerConfig.RuntimeParams["options"], ",") {
 			key, value, found := strings.Cut(option, "=")
 			if found && key == "reference" && value != projectRef {
@@ -76,6 +78,12 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
+	// Supavisor transaction mode does not support prepared statement
+	if poolerConfig.Port == 6543 {
+		if _, ok := poolerConfig.RuntimeParams["statement_cache_mode"]; !ok {
+			poolerConfig.RuntimeParams["statement_cache_mode"] = "describe"
+		}
+	}
 	return poolerConfig
 }
 
