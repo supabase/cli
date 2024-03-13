@@ -21,7 +21,8 @@
 
 # IDE
 /.vscode
-.idea/
+/.idea
+
 # NPM
 node_modules
 package-lock.json
