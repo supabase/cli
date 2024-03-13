@@ -192,9 +192,8 @@ func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 
 	if params.OpenBrowser {
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
-
 		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
-			return errors.Errorf("cannot open default browser: %w", err)
+			fmt.Fprintln(os.Stderr, err)
 		}
 	} else {
 		fmt.Fprintf(stdout, "Here is your login link, open it in the browser %s\n\n", utils.Bold(createLoginSessionUrl))
