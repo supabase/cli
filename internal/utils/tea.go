@@ -11,13 +11,13 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-isatty"
 	"github.com/muesli/reflow/wrap"
+	"golang.org/x/term"
 )
 
 func NewProgram(model tea.Model, opts ...tea.ProgramOption) Program {
 	var p Program
-	if isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd()) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
 		p = tea.NewProgram(model, opts...)
 	} else {
 		p = newFakeProgram(model)
