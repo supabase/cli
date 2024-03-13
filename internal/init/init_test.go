@@ -127,7 +127,6 @@ func TestInitCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})
-
 }
 
 func TestUpdateGitIgnore(t *testing.T) {

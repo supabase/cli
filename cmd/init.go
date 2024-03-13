@@ -14,8 +14,7 @@ var (
 	createVscodeSettings   = new(bool)
 	useOrioleDB            bool
 	createIntellijSettings = new(bool)
-
-	initCmd = &cobra.Command{
+	initCmd                = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "init",
 		Short:   "Initialize a local project",

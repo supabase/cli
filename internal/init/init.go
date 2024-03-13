@@ -17,9 +17,8 @@ var (
 	vscodeDir      = ".vscode"
 	extensionsPath = filepath.Join(vscodeDir, "extensions.json")
 	settingsPath   = filepath.Join(vscodeDir, "settings.json")
-
-	intellijDir = ".idea"
-	denoPath    = filepath.Join(intellijDir, "deno.xml")
+	intellijDir    = ".idea"
+	denoPath       = filepath.Join(intellijDir, "deno.xml")
 
 	//go:embed templates/.gitignore
 	initGitignore []byte
@@ -73,12 +72,10 @@ func Run(fsys afero.Fs, createVscodeSettings *bool, createIntellijSettings *bool
 		if isVscode := utils.PromptYesNo("Generate VS Code settings for Deno?", false, os.Stdin); isVscode {
 			return writeVscodeConfig(fsys)
 		}
-
 		if isIntelliJ := utils.PromptYesNo("Generate IntelliJ Settings for Deno?", false, os.Stdin); isIntelliJ {
 			return writeIntelliJConfig(fsys)
 		}
 	}
-
 	return nil
 }
 
