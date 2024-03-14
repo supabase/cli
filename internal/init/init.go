@@ -171,14 +171,10 @@ func writeIntelliJConfig(fsys afero.Fs) error {
 	if err := utils.MkdirIfNotExistFS(fsys, intellijDir); err != nil {
 		return err
 	}
-	if err := createDenoConfig(denoPath, intelliJDeno, fsys); err != nil {
+	if err := afero.WriteFile(fsys, denoPath, []byte(intelliJDeno), 0644); err != nil {
 		return err
 	}
 
 	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ". Please install the Deno plugin!")
 	return nil
-}
-
-func createDenoConfig(path string, template string, fsys afero.Fs) error {
-	return afero.WriteFile(fsys, path, []byte(template), 0644)
 }
