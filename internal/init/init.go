@@ -180,8 +180,5 @@ func writeIntelliJConfig(fsys afero.Fs) error {
 }
 
 func createDenoConfig(path string, template string, fsys afero.Fs) error {
-	if err := afero.WriteFile(fsys, path, []byte(template), 0644); err != nil {
-		return err
-	}
-	return nil
+	return afero.WriteFile(fsys, path, []byte(template), 0644)
 }
