@@ -15,7 +15,6 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -181,10 +180,10 @@ func extractOne(ctx context.Context, hostEszipPath string) error {
 			Image: utils.EdgeRuntimeImage,
 			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", utils.DockerDenoDir},
 		},
-		start.WithSyslogConfig(container.HostConfig{
+		container.HostConfig{
 			Binds:      binds,
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},
-		}),
+		},
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,

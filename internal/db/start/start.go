@@ -100,7 +100,7 @@ EOF
 
 func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
-	hostConfig := WithSyslogConfig(container.HostConfig{
+	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds: []string{
@@ -108,7 +108,7 @@ func NewHostConfig() container.HostConfig {
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
-	})
+	}
 	return hostConfig
 }
 

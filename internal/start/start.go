@@ -16,6 +16,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -120,6 +121,7 @@ var (
 
 type vectorConfig struct {
 	ApiKey        string
+	VectorId      string
 	LogflareId    string
 	KongId        string
 	GotrueId      string
@@ -147,6 +149,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
+			VectorId:      utils.VectorId,
 			LogflareId:    utils.LogflareId,
 			KongId:        utils.KongId,
 			GotrueId:      utils.GotrueId,
@@ -158,14 +161,26 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
-		p.Send(utils.StatusMsg("Starting syslog driver..."))
+		p.Send(utils.StatusMsg("Starting vector..."))
+		var binds []string
+		env := []string{
+			"VECTOR_CONFIG=/etc/vector/vector.yaml",
+		}
+		// Special case for GitLab pipeline
+		host := utils.Docker.DaemonHost()
+		if parsed, err := client.ParseHostURL(host); err == nil {
+			if parsed.Scheme == "tcp" {
+				env = append(env, "DOCKER_HOST="+host)
+			} else {
+				// TODO: mount windows named pipe as unix domain socket?
+				binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+			}
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Image: utils.VectorImage,
-				Env: []string{
-					"VECTOR_CONFIG=/etc/vector/vector.yaml",
-				},
+				Env:   env,
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
 ` + vectorConfigBuf.String() + `
 EOF
@@ -184,6 +199,7 @@ EOF
 				ExposedPorts: nat.PortSet{"9000/tcp": {}},
 			},
 			container.HostConfig{
+				Binds:         binds,
 				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
@@ -354,11 +370,11 @@ EOF
 EOF
 `},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				Binds:         binds,
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -552,9 +568,9 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -645,9 +661,9 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -679,9 +695,9 @@ EOF
 				},
 				// PostgREST does not expose a shell for health check
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -727,10 +743,10 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
