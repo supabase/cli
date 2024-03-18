@@ -1,13 +1,30 @@
 name: Release
 
 on:
-  release:
-    types:
-      - released
+  push:
+    branches:
+      - main
+  workflow_call:
 
 jobs:
+  settings:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      release_tag: ${{ steps.prerelease.outputs.tagName }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: prerelease
+        run: |
+          gh release list --limit 1 --json tagName --jq \
+          '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
+      - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
+
   commit:
     name: Publish Brew and Scoop
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,12 +32,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go run tools/publish/main.go "${GITHUB_REF_NAME#v}"
+      - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   publish:
     name: Publish NPM
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,12 +47,13 @@ jobs:
         with:
           node-version: "16.x"
           registry-url: "https://registry.npmjs.org"
-      - run: npm dist-tag add "supabase@${GITHUB_REF_NAME#v}" latest
+      - run: npm dist-tag add "supabase@${RELEASE_TAG#v}" latest
         env:
+          RELEASE_TAG: ${{ needs.settings.outputs.release_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   compose:
-    name: Publish self-hosted
+    name: Bump self-hosted versions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +61,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go run tools/selfhost/main.go "cli/$GITHUB_REF_NAME"
+      - run: go run tools/selfhost/main.go
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
   changelog:
     name: Publish changelog
+    needs:
+      - commit
+      - publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +84,8 @@ jobs:
 
   docs:
     name: Publish reference docs
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +93,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go run docs/main.go "${GITHUB_REF_NAME#v}" | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
+      - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

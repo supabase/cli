@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -25,9 +24,12 @@ import (
 )
 
 func TestResetCommand(t *testing.T) {
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Db.Port = 5432
+
 	var dbConfig = pgconn.Config{
-		Host:     "127.0.0.1",
-		Port:     5432,
+		Host:     utils.Config.Hostname,
+		Port:     uint16(utils.Config.Db.Port),
 		User:     "admin",
 		Password: "password",
 		Database: "postgres",
@@ -42,15 +44,9 @@ func TestResetCommand(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), "", dbConfig, afero.NewMemMapFs())
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-
 	t.Run("throws error on db is not started", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -65,18 +61,19 @@ func TestResetCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to recreate", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		utils.Config.Db.MajorVersion = 15
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers").
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), "", dbConfig, fsys)
@@ -264,7 +261,7 @@ func TestRestartDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on db restart failure", func(t *testing.T) {
-		utils.DbId = "test-db"
+		utils.DbId = "test-reset"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

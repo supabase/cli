@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"os"
 	"os/signal"
 
@@ -12,72 +9,43 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/term"
 )
 
 var (
-	projectRef string
-
 	linkCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "link",
 		Short:   "Link to a Supabase project",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if !term.IsTerminal(int(os.Stdin.Fd())) {
+			if !term.IsTerminal(int(os.Stdin.Fd())) && !viper.IsSet("PROJECT_ID") {
 				return cmd.MarkFlagRequired("project-ref")
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			if len(projectRef) == 0 {
-				title := "Which project do you want to link?"
-				cobra.CheckErr(PromptProjectRef(ctx, title))
-			}
-			fsys := afero.NewOsFs()
-			if err := link.PreRun(projectRef, fsys); err != nil {
+			// Use an empty fs to skip loading from file
+			if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); err != nil {
 				return err
 			}
-			dbPassword = viper.GetString("DB_PASSWORD")
-			if dbPassword == "" {
-				dbPassword = link.PromptPasswordAllowBlank(os.Stdin)
+			fsys := afero.NewOsFs()
+			if err := utils.LoadConfigFS(fsys); err != nil {
+				return err
 			}
-			return link.Run(ctx, projectRef, dbPassword, fsys)
+			return link.Run(ctx, flags.ProjectRef, fsys)
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
-			return link.PostRun(projectRef, os.Stdout, afero.NewOsFs())
+			return link.PostRun(flags.ProjectRef, os.Stdout, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	flags := linkCmd.Flags()
-	flags.StringVar(&projectRef, "project-ref", "", "Project ref of the Supabase project.")
-	flags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
-	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", flags.Lookup("password")))
+	linkFlags := linkCmd.Flags()
+	linkFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	linkFlags.StringP("password", "p", "", "Password to your remote Postgres database.")
+	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", linkFlags.Lookup("password")))
 	rootCmd.AddCommand(linkCmd)
-}
-
-func PromptProjectRef(ctx context.Context, title string) error {
-	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
-	if err != nil {
-		return err
-	}
-	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
-	}
-	items := make([]utils.PromptItem, len(*resp.JSON200))
-	for i, project := range *resp.JSON200 {
-		items[i] = utils.PromptItem{
-			Summary: project.Id,
-			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
-		}
-	}
-	choice, err := utils.PromptChoice(ctx, title, items)
-	if err != nil {
-		return err
-	}
-	projectRef = choice.Summary
-	fmt.Fprintln(os.Stderr, "Selected project:", projectRef)
-	return nil
 }

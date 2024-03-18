@@ -26,10 +26,15 @@ func ToPostgresURL(config pgconn.Config) string {
 	for k, v := range config.RuntimeParams {
 		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
 	}
+	// IPv6 address must be wrapped in square brackets
+	host := config.Host
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		host = fmt.Sprintf("[%s]", host)
+	}
 	return fmt.Sprintf(
 		"postgresql://%s@%s:%d/%s?%s",
 		url.UserPassword(config.User, config.Password),
-		config.Host,
+		host,
 		config.Port,
 		url.PathEscape(config.Database),
 		queryParams,
@@ -70,8 +75,16 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	// Verify that the pooler username matches the database host being connected to
-	parts := strings.Split(poolerConfig.User, ".")
-	if projectRef != parts[len(parts)-1] {
+	_, ref, found := strings.Cut(poolerConfig.User, ".")
+	if !found {
+		for _, option := range strings.Split(poolerConfig.RuntimeParams["options"], ",") {
+			key, value, found := strings.Cut(option, "=")
+			if found && key == "reference" && value != projectRef {
+				fmt.Fprintln(logger, "Pooler options does not match project ref:", projectRef)
+				return nil
+			}
+		}
+	} else if projectRef != ref {
 		fmt.Fprintln(logger, "Pooler username does not match project ref:", projectRef)
 		return nil
 	}
@@ -145,7 +158,7 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 }
 
 func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	if IsLoopback(config.Host) {
+	if IsLocalDatabase(config) {
 		fmt.Fprintln(os.Stderr, "Connecting to local database...")
 		return ConnectLocalPostgres(ctx, config, options...)
 	}
@@ -153,12 +166,6 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 	return ConnectRemotePostgres(ctx, config, options...)
 }
 
-func IsLoopback(host string) bool {
-	if strings.ToLower(host) == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+func IsLocalDatabase(config pgconn.Config) bool {
+	return config.Host == Config.Hostname && config.Port == uint16(Config.Db.Port)
 }

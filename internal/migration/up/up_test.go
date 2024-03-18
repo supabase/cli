@@ -2,6 +2,7 @@ package up
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -47,7 +49,7 @@ func TestPendingMigrations(t *testing.T) {
 
 	t.Run("throws error on local load failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -61,7 +63,7 @@ func TestPendingMigrations(t *testing.T) {
 		// Run test
 		_, err = GetPendingMigrations(ctx, false, mock, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
 	t.Run("throws error on missing local migration", func(t *testing.T) {

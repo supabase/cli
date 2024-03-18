@@ -1,0 +1,22 @@
+name: Prod Deploy
+
+on:
+  # Run this action every Tuesday at 02:00 UTC (Singapore 10AM)
+  schedule:
+    - cron: "0 2 * * 2"
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: gh pr create -B main -H develop --title 'Prod deploy' --fill
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

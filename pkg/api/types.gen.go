@@ -36,6 +36,14 @@ const (
 	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
 )
 
+// Defines values for BranchResponseStatus.
+const (
+	CREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
+	MIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
+	MIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
+	RUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
+)
+
 // Defines values for CreateProjectBodyPlan.
 const (
 	CreateProjectBodyPlanFree CreateProjectBodyPlan = "free"
@@ -205,6 +213,14 @@ const (
 	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
 )
 
+// Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
+const (
+	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~"
+	Empty                                                           UpdateAuthConfigBodyPasswordRequiredCharacters = ""
+)
+
 // Defines values for UpdateCustomHostnameResponseStatus.
 const (
 	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
@@ -316,14 +332,145 @@ type AttributeValue_Default struct {
 
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
-	RateLimitEmailSent *float32 `json:"rate_limit_email_sent,omitempty"`
-	SmtpAdminEmail     *string  `json:"smtp_admin_email,omitempty"`
-	SmtpHost           *string  `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency   *float32 `json:"smtp_max_frequency,omitempty"`
-	SmtpPass           *string  `json:"smtp_pass,omitempty"`
-	SmtpPort           *string  `json:"smtp_port,omitempty"`
-	SmtpSenderName     *string  `json:"smtp_sender_name,omitempty"`
-	SmtpUser           *string  `json:"smtp_user,omitempty"`
+	DisableSignup                                 *bool    `json:"disable_signup"`
+	ExternalAppleAdditionalClientIds              *string  `json:"external_apple_additional_client_ids"`
+	ExternalAppleClientId                         *string  `json:"external_apple_client_id"`
+	ExternalAppleEnabled                          *bool    `json:"external_apple_enabled"`
+	ExternalAppleSecret                           *string  `json:"external_apple_secret"`
+	ExternalAzureClientId                         *string  `json:"external_azure_client_id"`
+	ExternalAzureEnabled                          *bool    `json:"external_azure_enabled"`
+	ExternalAzureSecret                           *string  `json:"external_azure_secret"`
+	ExternalAzureUrl                              *string  `json:"external_azure_url"`
+	ExternalBitbucketClientId                     *string  `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEnabled                      *bool    `json:"external_bitbucket_enabled"`
+	ExternalBitbucketSecret                       *string  `json:"external_bitbucket_secret"`
+	ExternalDiscordClientId                       *string  `json:"external_discord_client_id"`
+	ExternalDiscordEnabled                        *bool    `json:"external_discord_enabled"`
+	ExternalDiscordSecret                         *string  `json:"external_discord_secret"`
+	ExternalEmailEnabled                          *bool    `json:"external_email_enabled"`
+	ExternalFacebookClientId                      *string  `json:"external_facebook_client_id"`
+	ExternalFacebookEnabled                       *bool    `json:"external_facebook_enabled"`
+	ExternalFacebookSecret                        *string  `json:"external_facebook_secret"`
+	ExternalFigmaClientId                         *string  `json:"external_figma_client_id"`
+	ExternalFigmaEnabled                          *bool    `json:"external_figma_enabled"`
+	ExternalFigmaSecret                           *string  `json:"external_figma_secret"`
+	ExternalGithubClientId                        *string  `json:"external_github_client_id"`
+	ExternalGithubEnabled                         *bool    `json:"external_github_enabled"`
+	ExternalGithubSecret                          *string  `json:"external_github_secret"`
+	ExternalGitlabClientId                        *string  `json:"external_gitlab_client_id"`
+	ExternalGitlabEnabled                         *bool    `json:"external_gitlab_enabled"`
+	ExternalGitlabSecret                          *string  `json:"external_gitlab_secret"`
+	ExternalGitlabUrl                             *string  `json:"external_gitlab_url"`
+	ExternalGoogleAdditionalClientIds             *string  `json:"external_google_additional_client_ids"`
+	ExternalGoogleClientId                        *string  `json:"external_google_client_id"`
+	ExternalGoogleEnabled                         *bool    `json:"external_google_enabled"`
+	ExternalGoogleSecret                          *string  `json:"external_google_secret"`
+	ExternalGoogleSkipNonceCheck                  *bool    `json:"external_google_skip_nonce_check"`
+	ExternalKakaoClientId                         *string  `json:"external_kakao_client_id"`
+	ExternalKakaoEnabled                          *bool    `json:"external_kakao_enabled"`
+	ExternalKakaoSecret                           *string  `json:"external_kakao_secret"`
+	ExternalKeycloakClientId                      *string  `json:"external_keycloak_client_id"`
+	ExternalKeycloakEnabled                       *bool    `json:"external_keycloak_enabled"`
+	ExternalKeycloakSecret                        *string  `json:"external_keycloak_secret"`
+	ExternalKeycloakUrl                           *string  `json:"external_keycloak_url"`
+	ExternalLinkedinOidcClientId                  *string  `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEnabled                   *bool    `json:"external_linkedin_oidc_enabled"`
+	ExternalLinkedinOidcSecret                    *string  `json:"external_linkedin_oidc_secret"`
+	ExternalNotionClientId                        *string  `json:"external_notion_client_id"`
+	ExternalNotionEnabled                         *bool    `json:"external_notion_enabled"`
+	ExternalNotionSecret                          *string  `json:"external_notion_secret"`
+	ExternalPhoneEnabled                          *bool    `json:"external_phone_enabled"`
+	ExternalSlackClientId                         *string  `json:"external_slack_client_id"`
+	ExternalSlackEnabled                          *bool    `json:"external_slack_enabled"`
+	ExternalSlackSecret                           *string  `json:"external_slack_secret"`
+	ExternalSpotifyClientId                       *string  `json:"external_spotify_client_id"`
+	ExternalSpotifyEnabled                        *bool    `json:"external_spotify_enabled"`
+	ExternalSpotifySecret                         *string  `json:"external_spotify_secret"`
+	ExternalTwitchClientId                        *string  `json:"external_twitch_client_id"`
+	ExternalTwitchEnabled                         *bool    `json:"external_twitch_enabled"`
+	ExternalTwitchSecret                          *string  `json:"external_twitch_secret"`
+	ExternalTwitterClientId                       *string  `json:"external_twitter_client_id"`
+	ExternalTwitterEnabled                        *bool    `json:"external_twitter_enabled"`
+	ExternalTwitterSecret                         *string  `json:"external_twitter_secret"`
+	ExternalWorkosClientId                        *string  `json:"external_workos_client_id"`
+	ExternalWorkosEnabled                         *bool    `json:"external_workos_enabled"`
+	ExternalWorkosSecret                          *string  `json:"external_workos_secret"`
+	ExternalWorkosUrl                             *string  `json:"external_workos_url"`
+	ExternalZoomClientId                          *string  `json:"external_zoom_client_id"`
+	ExternalZoomEnabled                           *bool    `json:"external_zoom_enabled"`
+	ExternalZoomSecret                            *string  `json:"external_zoom_secret"`
+	HookCustomAccessTokenEnabled                  *bool    `json:"hook_custom_access_token_enabled"`
+	HookCustomAccessTokenUri                      *string  `json:"hook_custom_access_token_uri"`
+	HookMfaVerificationAttemptEnabled             *bool    `json:"hook_mfa_verification_attempt_enabled"`
+	HookMfaVerificationAttemptUri                 *string  `json:"hook_mfa_verification_attempt_uri"`
+	HookPasswordVerificationAttemptEnabled        *bool    `json:"hook_password_verification_attempt_enabled"`
+	HookPasswordVerificationAttemptUri            *string  `json:"hook_password_verification_attempt_uri"`
+	JwtExp                                        *float32 `json:"jwt_exp"`
+	MailerAllowUnverifiedEmailSignIns             *bool    `json:"mailer_allow_unverified_email_sign_ins"`
+	MailerAutoconfirm                             *bool    `json:"mailer_autoconfirm"`
+	MailerOtpExp                                  *float32 `json:"mailer_otp_exp"`
+	MailerSecureEmailChangeEnabled                *bool    `json:"mailer_secure_email_change_enabled"`
+	MailerSubjectsConfirmation                    *string  `json:"mailer_subjects_confirmation"`
+	MailerSubjectsEmailChange                     *string  `json:"mailer_subjects_email_change"`
+	MailerSubjectsInvite                          *string  `json:"mailer_subjects_invite"`
+	MailerSubjectsMagicLink                       *string  `json:"mailer_subjects_magic_link"`
+	MailerSubjectsRecovery                        *string  `json:"mailer_subjects_recovery"`
+	MailerTemplatesConfirmationContent            *string  `json:"mailer_templates_confirmation_content"`
+	MailerTemplatesEmailChangeContent             *string  `json:"mailer_templates_email_change_content"`
+	MailerTemplatesInviteContent                  *string  `json:"mailer_templates_invite_content"`
+	MailerTemplatesMagicLinkContent               *string  `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesRecoveryContent                *string  `json:"mailer_templates_recovery_content"`
+	MfaMaxEnrolledFactors                         *float32 `json:"mfa_max_enrolled_factors"`
+	PasswordHibpEnabled                           *bool    `json:"password_hibp_enabled"`
+	PasswordMinLength                             *float32 `json:"password_min_length"`
+	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
+	RateLimitEmailSent                            *float32 `json:"rate_limit_email_sent"`
+	RateLimitSmsSent                              *float32 `json:"rate_limit_sms_sent"`
+	RateLimitTokenRefresh                         *float32 `json:"rate_limit_token_refresh"`
+	RateLimitVerify                               *float32 `json:"rate_limit_verify"`
+	RefreshTokenRotationEnabled                   *bool    `json:"refresh_token_rotation_enabled"`
+	SamlEnabled                                   *bool    `json:"saml_enabled"`
+	SecurityCaptchaEnabled                        *bool    `json:"security_captcha_enabled"`
+	SecurityCaptchaProvider                       *string  `json:"security_captcha_provider"`
+	SecurityCaptchaSecret                         *string  `json:"security_captcha_secret"`
+	SecurityManualLinkingEnabled                  *bool    `json:"security_manual_linking_enabled"`
+	SecurityRefreshTokenReuseInterval             *float32 `json:"security_refresh_token_reuse_interval"`
+	SecurityUpdatePasswordRequireReauthentication *bool    `json:"security_update_password_require_reauthentication"`
+	SessionsInactivityTimeout                     *float32 `json:"sessions_inactivity_timeout"`
+	SessionsSinglePerUser                         *bool    `json:"sessions_single_per_user"`
+	SessionsTags                                  *string  `json:"sessions_tags"`
+	SessionsTimebox                               *float32 `json:"sessions_timebox"`
+	SiteUrl                                       *string  `json:"site_url"`
+	SmsAutoconfirm                                *bool    `json:"sms_autoconfirm"`
+	SmsMaxFrequency                               *float32 `json:"sms_max_frequency"`
+	SmsMessagebirdAccessKey                       *string  `json:"sms_messagebird_access_key"`
+	SmsMessagebirdOriginator                      *string  `json:"sms_messagebird_originator"`
+	SmsOtpExp                                     *float32 `json:"sms_otp_exp"`
+	SmsOtpLength                                  *float32 `json:"sms_otp_length"`
+	SmsProvider                                   *string  `json:"sms_provider"`
+	SmsTemplate                                   *string  `json:"sms_template"`
+	SmsTestOtp                                    *string  `json:"sms_test_otp"`
+	SmsTestOtpValidUntil                          *string  `json:"sms_test_otp_valid_until"`
+	SmsTextlocalApiKey                            *string  `json:"sms_textlocal_api_key"`
+	SmsTextlocalSender                            *string  `json:"sms_textlocal_sender"`
+	SmsTwilioAccountSid                           *string  `json:"sms_twilio_account_sid"`
+	SmsTwilioAuthToken                            *string  `json:"sms_twilio_auth_token"`
+	SmsTwilioContentSid                           *string  `json:"sms_twilio_content_sid"`
+	SmsTwilioMessageServiceSid                    *string  `json:"sms_twilio_message_service_sid"`
+	SmsTwilioVerifyAccountSid                     *string  `json:"sms_twilio_verify_account_sid"`
+	SmsTwilioVerifyAuthToken                      *string  `json:"sms_twilio_verify_auth_token"`
+	SmsTwilioVerifyMessageServiceSid              *string  `json:"sms_twilio_verify_message_service_sid"`
+	SmsVonageApiKey                               *string  `json:"sms_vonage_api_key"`
+	SmsVonageApiSecret                            *string  `json:"sms_vonage_api_secret"`
+	SmsVonageFrom                                 *string  `json:"sms_vonage_from"`
+	SmtpAdminEmail                                *string  `json:"smtp_admin_email"`
+	SmtpHost                                      *string  `json:"smtp_host"`
+	SmtpMaxFrequency                              *float32 `json:"smtp_max_frequency"`
+	SmtpPass                                      *string  `json:"smtp_pass"`
+	SmtpPort                                      *string  `json:"smtp_port"`
+	SmtpSenderName                                *string  `json:"smtp_sender_name"`
+	SmtpUser                                      *string  `json:"smtp_user"`
+	UriAllowList                                  *string  `json:"uri_allow_list"`
 }
 
 // AuthHealthResponse defines model for AuthHealthResponse.
@@ -353,17 +500,21 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt        string   `json:"created_at"`
-	GitBranch        *string  `json:"git_branch,omitempty"`
-	Id               string   `json:"id"`
-	IsDefault        bool     `json:"is_default"`
-	Name             string   `json:"name"`
-	ParentProjectRef string   `json:"parent_project_ref"`
-	PrNumber         *float32 `json:"pr_number,omitempty"`
-	ProjectRef       string   `json:"project_ref"`
-	ResetOnPush      bool     `json:"reset_on_push"`
-	UpdatedAt        string   `json:"updated_at"`
+	CreatedAt        string               `json:"created_at"`
+	GitBranch        *string              `json:"git_branch,omitempty"`
+	Id               string               `json:"id"`
+	IsDefault        bool                 `json:"is_default"`
+	Name             string               `json:"name"`
+	ParentProjectRef string               `json:"parent_project_ref"`
+	PrNumber         *float32             `json:"pr_number,omitempty"`
+	ProjectRef       string               `json:"project_ref"`
+	ResetOnPush      bool                 `json:"reset_on_push"`
+	Status           BranchResponseStatus `json:"status"`
+	UpdatedAt        string               `json:"updated_at"`
 }
+
+// BranchResponseStatus defines model for BranchResponse.Status.
+type BranchResponseStatus string
 
 // CreateBranchBody defines model for CreateBranchBody.
 type CreateBranchBody struct {
@@ -400,7 +551,7 @@ type CreateProjectBody struct {
 
 	// Plan Subscription plan is now set on organization level and is ignored in this request
 	// Deprecated:
-	Plan CreateProjectBodyPlan `json:"plan"`
+	Plan *CreateProjectBodyPlan `json:"plan,omitempty"`
 
 	// Region Region you want your server to reside in
 	Region CreateProjectBodyRegion `json:"region"`
@@ -866,15 +1017,149 @@ type TypescriptResponse struct {
 
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
-	RateLimitEmailSent *float32 `json:"rate_limit_email_sent,omitempty"`
-	SmtpAdminEmail     *string  `json:"smtp_admin_email,omitempty"`
-	SmtpHost           *string  `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency   *float32 `json:"smtp_max_frequency,omitempty"`
-	SmtpPass           *string  `json:"smtp_pass,omitempty"`
-	SmtpPort           *string  `json:"smtp_port,omitempty"`
-	SmtpSenderName     *string  `json:"smtp_sender_name,omitempty"`
-	SmtpUser           *string  `json:"smtp_user,omitempty"`
+	DisableSignup                                 *bool                                           `json:"disable_signup,omitempty"`
+	ExternalAppleAdditionalClientIds              *string                                         `json:"external_apple_additional_client_ids,omitempty"`
+	ExternalAppleClientId                         *string                                         `json:"external_apple_client_id,omitempty"`
+	ExternalAppleEnabled                          *bool                                           `json:"external_apple_enabled,omitempty"`
+	ExternalAppleSecret                           *string                                         `json:"external_apple_secret,omitempty"`
+	ExternalAzureClientId                         *string                                         `json:"external_azure_client_id,omitempty"`
+	ExternalAzureEnabled                          *bool                                           `json:"external_azure_enabled,omitempty"`
+	ExternalAzureSecret                           *string                                         `json:"external_azure_secret,omitempty"`
+	ExternalAzureUrl                              *string                                         `json:"external_azure_url,omitempty"`
+	ExternalBitbucketClientId                     *string                                         `json:"external_bitbucket_client_id,omitempty"`
+	ExternalBitbucketEnabled                      *bool                                           `json:"external_bitbucket_enabled,omitempty"`
+	ExternalBitbucketSecret                       *string                                         `json:"external_bitbucket_secret,omitempty"`
+	ExternalDiscordClientId                       *string                                         `json:"external_discord_client_id,omitempty"`
+	ExternalDiscordEnabled                        *bool                                           `json:"external_discord_enabled,omitempty"`
+	ExternalDiscordSecret                         *string                                         `json:"external_discord_secret,omitempty"`
+	ExternalEmailEnabled                          *bool                                           `json:"external_email_enabled,omitempty"`
+	ExternalFacebookClientId                      *string                                         `json:"external_facebook_client_id,omitempty"`
+	ExternalFacebookEnabled                       *bool                                           `json:"external_facebook_enabled,omitempty"`
+	ExternalFacebookSecret                        *string                                         `json:"external_facebook_secret,omitempty"`
+	ExternalFigmaClientId                         *string                                         `json:"external_figma_client_id,omitempty"`
+	ExternalFigmaEnabled                          *bool                                           `json:"external_figma_enabled,omitempty"`
+	ExternalFigmaSecret                           *string                                         `json:"external_figma_secret,omitempty"`
+	ExternalGithubClientId                        *string                                         `json:"external_github_client_id,omitempty"`
+	ExternalGithubEnabled                         *bool                                           `json:"external_github_enabled,omitempty"`
+	ExternalGithubSecret                          *string                                         `json:"external_github_secret,omitempty"`
+	ExternalGitlabClientId                        *string                                         `json:"external_gitlab_client_id,omitempty"`
+	ExternalGitlabEnabled                         *bool                                           `json:"external_gitlab_enabled,omitempty"`
+	ExternalGitlabSecret                          *string                                         `json:"external_gitlab_secret,omitempty"`
+	ExternalGitlabUrl                             *string                                         `json:"external_gitlab_url,omitempty"`
+	ExternalGoogleAdditionalClientIds             *string                                         `json:"external_google_additional_client_ids,omitempty"`
+	ExternalGoogleClientId                        *string                                         `json:"external_google_client_id,omitempty"`
+	ExternalGoogleEnabled                         *bool                                           `json:"external_google_enabled,omitempty"`
+	ExternalGoogleSecret                          *string                                         `json:"external_google_secret,omitempty"`
+	ExternalGoogleSkipNonceCheck                  *bool                                           `json:"external_google_skip_nonce_check,omitempty"`
+	ExternalKakaoClientId                         *string                                         `json:"external_kakao_client_id,omitempty"`
+	ExternalKakaoEnabled                          *bool                                           `json:"external_kakao_enabled,omitempty"`
+	ExternalKakaoSecret                           *string                                         `json:"external_kakao_secret,omitempty"`
+	ExternalKeycloakClientId                      *string                                         `json:"external_keycloak_client_id,omitempty"`
+	ExternalKeycloakEnabled                       *bool                                           `json:"external_keycloak_enabled,omitempty"`
+	ExternalKeycloakSecret                        *string                                         `json:"external_keycloak_secret,omitempty"`
+	ExternalKeycloakUrl                           *string                                         `json:"external_keycloak_url,omitempty"`
+	ExternalLinkedinOidcClientId                  *string                                         `json:"external_linkedin_oidc_client_id,omitempty"`
+	ExternalLinkedinOidcEnabled                   *bool                                           `json:"external_linkedin_oidc_enabled,omitempty"`
+	ExternalLinkedinOidcSecret                    *string                                         `json:"external_linkedin_oidc_secret,omitempty"`
+	ExternalNotionClientId                        *string                                         `json:"external_notion_client_id,omitempty"`
+	ExternalNotionEnabled                         *bool                                           `json:"external_notion_enabled,omitempty"`
+	ExternalNotionSecret                          *string                                         `json:"external_notion_secret,omitempty"`
+	ExternalPhoneEnabled                          *bool                                           `json:"external_phone_enabled,omitempty"`
+	ExternalSlackClientId                         *string                                         `json:"external_slack_client_id,omitempty"`
+	ExternalSlackEnabled                          *bool                                           `json:"external_slack_enabled,omitempty"`
+	ExternalSlackSecret                           *string                                         `json:"external_slack_secret,omitempty"`
+	ExternalSpotifyClientId                       *string                                         `json:"external_spotify_client_id,omitempty"`
+	ExternalSpotifyEnabled                        *bool                                           `json:"external_spotify_enabled,omitempty"`
+	ExternalSpotifySecret                         *string                                         `json:"external_spotify_secret,omitempty"`
+	ExternalTwitchClientId                        *string                                         `json:"external_twitch_client_id,omitempty"`
+	ExternalTwitchEnabled                         *bool                                           `json:"external_twitch_enabled,omitempty"`
+	ExternalTwitchSecret                          *string                                         `json:"external_twitch_secret,omitempty"`
+	ExternalTwitterClientId                       *string                                         `json:"external_twitter_client_id,omitempty"`
+	ExternalTwitterEnabled                        *bool                                           `json:"external_twitter_enabled,omitempty"`
+	ExternalTwitterSecret                         *string                                         `json:"external_twitter_secret,omitempty"`
+	ExternalWorkosClientId                        *string                                         `json:"external_workos_client_id,omitempty"`
+	ExternalWorkosEnabled                         *bool                                           `json:"external_workos_enabled,omitempty"`
+	ExternalWorkosSecret                          *string                                         `json:"external_workos_secret,omitempty"`
+	ExternalWorkosUrl                             *string                                         `json:"external_workos_url,omitempty"`
+	ExternalZoomClientId                          *string                                         `json:"external_zoom_client_id,omitempty"`
+	ExternalZoomEnabled                           *bool                                           `json:"external_zoom_enabled,omitempty"`
+	ExternalZoomSecret                            *string                                         `json:"external_zoom_secret,omitempty"`
+	HookCustomAccessTokenEnabled                  *bool                                           `json:"hook_custom_access_token_enabled,omitempty"`
+	HookCustomAccessTokenUri                      *string                                         `json:"hook_custom_access_token_uri,omitempty"`
+	HookMfaVerificationAttemptEnabled             *bool                                           `json:"hook_mfa_verification_attempt_enabled,omitempty"`
+	HookMfaVerificationAttemptUri                 *string                                         `json:"hook_mfa_verification_attempt_uri,omitempty"`
+	HookPasswordVerificationAttemptEnabled        *bool                                           `json:"hook_password_verification_attempt_enabled,omitempty"`
+	HookPasswordVerificationAttemptUri            *string                                         `json:"hook_password_verification_attempt_uri,omitempty"`
+	JwtExp                                        *float32                                        `json:"jwt_exp,omitempty"`
+	MailerAllowUnverifiedEmailSignIns             *bool                                           `json:"mailer_allow_unverified_email_sign_ins,omitempty"`
+	MailerAutoconfirm                             *bool                                           `json:"mailer_autoconfirm,omitempty"`
+	MailerOtpExp                                  *float32                                        `json:"mailer_otp_exp,omitempty"`
+	MailerSecureEmailChangeEnabled                *bool                                           `json:"mailer_secure_email_change_enabled,omitempty"`
+	MailerSubjectsConfirmation                    *string                                         `json:"mailer_subjects_confirmation,omitempty"`
+	MailerSubjectsEmailChange                     *string                                         `json:"mailer_subjects_email_change,omitempty"`
+	MailerSubjectsInvite                          *string                                         `json:"mailer_subjects_invite,omitempty"`
+	MailerSubjectsMagicLink                       *string                                         `json:"mailer_subjects_magic_link,omitempty"`
+	MailerSubjectsRecovery                        *string                                         `json:"mailer_subjects_recovery,omitempty"`
+	MailerTemplatesConfirmationContent            *string                                         `json:"mailer_templates_confirmation_content,omitempty"`
+	MailerTemplatesEmailChangeContent             *string                                         `json:"mailer_templates_email_change_content,omitempty"`
+	MailerTemplatesInviteContent                  *string                                         `json:"mailer_templates_invite_content,omitempty"`
+	MailerTemplatesMagicLinkContent               *string                                         `json:"mailer_templates_magic_link_content,omitempty"`
+	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content,omitempty"`
+	MfaMaxEnrolledFactors                         *float32                                        `json:"mfa_max_enrolled_factors,omitempty"`
+	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
+	PasswordMinLength                             *float32                                        `json:"password_min_length,omitempty"`
+	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
+	RateLimitEmailSent                            *float32                                        `json:"rate_limit_email_sent,omitempty"`
+	RateLimitSmsSent                              *float32                                        `json:"rate_limit_sms_sent,omitempty"`
+	RateLimitTokenRefresh                         *float32                                        `json:"rate_limit_token_refresh,omitempty"`
+	RateLimitVerify                               *float32                                        `json:"rate_limit_verify,omitempty"`
+	RefreshTokenRotationEnabled                   *bool                                           `json:"refresh_token_rotation_enabled,omitempty"`
+	SamlEnabled                                   *bool                                           `json:"saml_enabled,omitempty"`
+	SecurityCaptchaEnabled                        *bool                                           `json:"security_captcha_enabled,omitempty"`
+	SecurityCaptchaProvider                       *string                                         `json:"security_captcha_provider,omitempty"`
+	SecurityCaptchaSecret                         *string                                         `json:"security_captcha_secret,omitempty"`
+	SecurityManualLinkingEnabled                  *bool                                           `json:"security_manual_linking_enabled,omitempty"`
+	SecurityRefreshTokenReuseInterval             *float32                                        `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecurityUpdatePasswordRequireReauthentication *bool                                           `json:"security_update_password_require_reauthentication,omitempty"`
+	SessionsInactivityTimeout                     *float32                                        `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsSinglePerUser                         *bool                                           `json:"sessions_single_per_user,omitempty"`
+	SessionsTags                                  *string                                         `json:"sessions_tags,omitempty"`
+	SessionsTimebox                               *float32                                        `json:"sessions_timebox,omitempty"`
+	SiteUrl                                       *string                                         `json:"site_url,omitempty"`
+	SmsAutoconfirm                                *bool                                           `json:"sms_autoconfirm,omitempty"`
+	SmsMaxFrequency                               *float32                                        `json:"sms_max_frequency,omitempty"`
+	SmsMessagebirdAccessKey                       *string                                         `json:"sms_messagebird_access_key,omitempty"`
+	SmsMessagebirdOriginator                      *string                                         `json:"sms_messagebird_originator,omitempty"`
+	SmsOtpExp                                     *float32                                        `json:"sms_otp_exp,omitempty"`
+	SmsOtpLength                                  *float32                                        `json:"sms_otp_length,omitempty"`
+	SmsProvider                                   *string                                         `json:"sms_provider,omitempty"`
+	SmsTemplate                                   *string                                         `json:"sms_template,omitempty"`
+	SmsTestOtp                                    *string                                         `json:"sms_test_otp,omitempty"`
+	SmsTestOtpValidUntil                          *string                                         `json:"sms_test_otp_valid_until,omitempty"`
+	SmsTextlocalApiKey                            *string                                         `json:"sms_textlocal_api_key,omitempty"`
+	SmsTextlocalSender                            *string                                         `json:"sms_textlocal_sender,omitempty"`
+	SmsTwilioAccountSid                           *string                                         `json:"sms_twilio_account_sid,omitempty"`
+	SmsTwilioAuthToken                            *string                                         `json:"sms_twilio_auth_token,omitempty"`
+	SmsTwilioContentSid                           *string                                         `json:"sms_twilio_content_sid,omitempty"`
+	SmsTwilioMessageServiceSid                    *string                                         `json:"sms_twilio_message_service_sid,omitempty"`
+	SmsTwilioVerifyAccountSid                     *string                                         `json:"sms_twilio_verify_account_sid,omitempty"`
+	SmsTwilioVerifyAuthToken                      *string                                         `json:"sms_twilio_verify_auth_token,omitempty"`
+	SmsTwilioVerifyMessageServiceSid              *string                                         `json:"sms_twilio_verify_message_service_sid,omitempty"`
+	SmsVonageApiKey                               *string                                         `json:"sms_vonage_api_key,omitempty"`
+	SmsVonageApiSecret                            *string                                         `json:"sms_vonage_api_secret,omitempty"`
+	SmsVonageFrom                                 *string                                         `json:"sms_vonage_from,omitempty"`
+	SmtpAdminEmail                                *string                                         `json:"smtp_admin_email,omitempty"`
+	SmtpHost                                      *string                                         `json:"smtp_host,omitempty"`
+	SmtpMaxFrequency                              *float32                                        `json:"smtp_max_frequency,omitempty"`
+	SmtpPass                                      *string                                         `json:"smtp_pass,omitempty"`
+	SmtpPort                                      *string                                         `json:"smtp_port,omitempty"`
+	SmtpSenderName                                *string                                         `json:"smtp_sender_name,omitempty"`
+	SmtpUser                                      *string                                         `json:"smtp_user,omitempty"`
+	UriAllowList                                  *string                                         `json:"uri_allow_list,omitempty"`
 }
+
+// UpdateAuthConfigBodyPasswordRequiredCharacters defines model for UpdateAuthConfigBody.PasswordRequiredCharacters.
+type UpdateAuthConfigBodyPasswordRequiredCharacters string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {

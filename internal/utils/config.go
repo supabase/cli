@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"golang.org/x/mod/semver"
 )
 
 var (
@@ -213,7 +213,7 @@ var Config = config{
 }
 
 // We follow these rules when adding new config:
-//  1. Update init_config.toml with the new key, default value, and comments to explain usage.
+//  1. Update init_config.toml (and init_config.test.toml) with the new key, default value, and comments to explain usage.
 //  2. Update config struct with new field and toml tag (spelled in snake_case).
 //  3. Add custom field validations to LoadConfigFS function for eg. integer range checks.
 //
@@ -286,9 +286,10 @@ type (
 	}
 
 	studio struct {
-		Enabled bool   `toml:"enabled"`
-		Port    uint   `toml:"port"`
-		ApiUrl  string `toml:"api_url"`
+		Enabled      bool   `toml:"enabled"`
+		Port         uint   `toml:"port"`
+		ApiUrl       string `toml:"api_url"`
+		OpenaiApiKey string `toml:"openai_api_key"`
 	}
 
 	inbucket struct {
@@ -487,13 +488,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		if Config.Api.Enabled {
 			if version, err := afero.ReadFile(fsys, RestVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(PostgrestImage, ':')
-				Config.Api.Image = PostgrestImage[:index+1] + string(version)
+				Config.Api.Image = replaceImageTag(PostgrestImage, string(version))
 			}
 		}
 		// Append required schemas if they are missing
-		Config.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
-		Config.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
+		Config.Api.Schemas = RemoveDuplicates(append([]string{"public", "storage"}, Config.Api.Schemas...))
+		Config.Api.ExtraSearchPath = RemoveDuplicates(append([]string{"public"}, Config.Api.ExtraSearchPath...))
 		// Validate db config
 		if Config.Db.Port == 0 {
 			return errors.New("Missing required field in config: db.port")
@@ -526,10 +526,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			} else if version, err := afero.ReadFile(fsys, PostgresVersionPath); err == nil {
-				parts := strings.Split(string(version), ".")
-				if patch, err := strconv.Atoi(parts[len(parts)-1]); err == nil && patch >= 55 && parts[0] == "15" {
-					index := strings.IndexByte(Pg15Image, ':')
-					Config.Db.Image = Pg15Image[:index+1] + string(version)
+				if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
+					Config.Db.Image = replaceImageTag(Pg15Image, string(version))
 				}
 			}
 		default:
@@ -555,8 +553,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 		// Validate storage config
 		if Config.Storage.Enabled {
 			if version, err := afero.ReadFile(fsys, StorageVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(StorageImage, ':')
-				Config.Storage.Image = StorageImage[:index+1] + string(version)
+				Config.Storage.Image = replaceImageTag(StorageImage, string(version))
 			}
 		}
 		// Validate studio config
@@ -564,6 +561,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
 		// Validate email config
 		if Config.Inbucket.Enabled {
@@ -577,8 +575,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: auth.site_url")
 			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
-				index := strings.IndexByte(GotrueImage, ':')
-				Config.Auth.Image = GotrueImage[:index+1] + string(version)
+				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
 			}
 			// Validate email template
 			for _, tmpl := range Config.Auth.Email.Template {
@@ -790,7 +787,7 @@ func WriteConfig(fsys afero.Fs, _test bool) error {
 	return InitConfig(InitParams{}, fsys)
 }
 
-func removeDuplicates(slice []string) (result []string) {
+func RemoveDuplicates(slice []string) (result []string) {
 	set := make(map[string]struct{})
 	for _, item := range slice {
 		if _, exists := set[item]; !exists {

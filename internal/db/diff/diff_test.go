@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -35,7 +36,7 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestRunMigra(t *testing.T) {
+func TestRun(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -69,7 +70,7 @@ func TestRunMigra(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -87,7 +88,7 @@ func TestRunMigra(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "", pgconn.Config{}, fsys)
+		err := Run(context.Background(), []string{"public"}, "", pgconn.Config{}, DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -104,7 +105,7 @@ func TestRunMigra(t *testing.T) {
 		conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `'{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
-		err := RunMigra(context.Background(), []string{}, "", dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), []string{}, "", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
 	})
@@ -122,7 +123,7 @@ func TestRunMigra(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := RunMigra(context.Background(), []string{"public"}, "file", dbConfig, fsys)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -174,7 +175,7 @@ func TestMigrateShadow(t *testing.T) {
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "", fsys)
 		// Check error
@@ -215,7 +216,7 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg14Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, "network error")
@@ -237,7 +238,7 @@ func TestDiffDatabase(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorIs(t, err, start.ErrDatabase)
@@ -269,7 +270,7 @@ func TestDiffDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, conn.Intercept)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
@@ -319,7 +320,7 @@ At statement 0: create schema public`)
 		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
 			Reply("INSERT 0 1")
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, conn.Intercept)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, conn.Intercept)
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, "error diffing schema")

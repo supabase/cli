@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/delete"
@@ -29,6 +28,7 @@ var (
 	}
 
 	interactive bool
+	projectName string
 	orgId       string
 	dbPassword  string
 
@@ -41,29 +41,31 @@ var (
 	}
 
 	projectsCreateCmd = &cobra.Command{
-		Use:     "create <project name>",
+		Use:     "create [project name]",
 		Short:   "Create a project on Supabase",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MaximumNArgs(1),
 		Example: `supabase projects create my-project --org-id cool-green-pqdr0qc --db-password ******** --region us-east-1`,
-		PreRun: func(cmd *cobra.Command, args []string) {
-			if !interactive {
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if !term.IsTerminal(int(os.Stdin.Fd())) || !interactive {
 				cobra.CheckErr(cmd.MarkFlagRequired("org-id"))
 				cobra.CheckErr(cmd.MarkFlagRequired("db-password"))
 				cobra.CheckErr(cmd.MarkFlagRequired("region"))
+				return cobra.ExactArgs(1)(cmd, args)
 			}
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
+			if len(args) > 0 {
+				projectName = args[0]
+			}
 			if interactive {
-				fmt.Fprintln(os.Stderr, printKeyValue("Creating project", name))
 				cobra.CheckErr(PromptCreateFlags(cmd))
 			}
 			return create.Run(cmd.Context(), api.CreateProjectBody{
-				Name:           name,
+				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
 				Region:         api.CreateProjectBodyRegion(region.Value),
-				Plan:           api.CreateProjectBodyPlan(plan.Value),
 			}, afero.NewOsFs())
 		},
 	}
@@ -85,6 +87,8 @@ var (
 		},
 	}
 
+	projectRef string
+
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
@@ -98,7 +102,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				title := "Which project do you want to delete?"
-				cobra.CheckErr(PromptProjectRef(cmd.Context(), title))
+				cobra.CheckErr(flags.PromptProjectRef(cmd.Context(), title))
 			} else {
 				projectRef = args[0]
 			}
@@ -120,11 +124,13 @@ func init() {
 	sort.Strings(region.Allowed)
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
-	createFlags.BoolVarP(&interactive, "interactive", "i", false, "Enables interactive mode.")
+	createFlags.BoolVarP(&interactive, "interactive", "i", true, "Enables interactive mode.")
+	cobra.CheckErr(createFlags.MarkHidden("interactive"))
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
 	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
+	cobra.CheckErr(createFlags.MarkHidden("plan"))
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
@@ -140,6 +146,18 @@ func init() {
 
 func PromptCreateFlags(cmd *cobra.Command) error {
 	ctx := cmd.Context()
+	if len(projectName) > 0 {
+		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", projectName))
+	} else {
+		name, err := utils.PromptText("Enter your project name: ", os.Stdin)
+		if err != nil {
+			return err
+		}
+		if len(name) == 0 {
+			return errors.New("project name cannot be empty")
+		}
+		projectName = name
+	}
 	if !cmd.Flags().Changed("org-id") {
 		title := "Which organisation do you want to create the project for?"
 		resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
@@ -175,20 +193,8 @@ func PromptCreateFlags(cmd *cobra.Command) error {
 		region.Value = choice.Summary
 	}
 	fmt.Fprintln(os.Stderr, printKeyValue("Selected region", region.Value))
-	if !cmd.Flags().Changed("plan") {
-		title := "Do you want a free or pro plan?"
-		choice, err := utils.PromptChoice(ctx, title, []utils.PromptItem{
-			{Summary: string(api.CreateProjectBodyPlanFree)},
-			{Summary: string(api.CreateProjectBodyPlanPro)},
-		})
-		if err != nil {
-			return err
-		}
-		plan.Value = choice.Summary
-	}
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected plan", plan.Value))
 	if dbPassword == "" {
-		dbPassword = link.PromptPassword(os.Stdin)
+		dbPassword = flags.PromptPassword(os.Stdin)
 	}
 	return nil
 }

@@ -48,11 +48,11 @@ func TestMigrateDatabase(t *testing.T) {
 		assert.NoError(t, MigrateAndSeed(context.Background(), "", nil, afero.NewMemMapFs()))
 	})
 
-	t.Run("throws error on write failure", func(t *testing.T) {
+	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		err := MigrateAndSeed(context.Background(), "", nil, afero.NewReadOnlyFs(fsys))
+		err := MigrateAndSeed(context.Background(), "", nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})

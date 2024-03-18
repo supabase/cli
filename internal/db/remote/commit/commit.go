@@ -79,7 +79,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 
 	w := utils.StatusWriter{Program: p}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys)
+	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
 	if err != nil {
 		return err
 	}

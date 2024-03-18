@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -67,7 +68,10 @@ func TestSquashCommand(t *testing.T) {
 		conn.Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "127.0.0.1"}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{
+			Host: "127.0.0.1",
+			Port: 54322,
+		}, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -122,9 +126,9 @@ func TestSquashCommand(t *testing.T) {
 func TestSquashVersion(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		err := squashToVersion(context.Background(), "0", afero.NewReadOnlyFs(fsys))
+		err := squashToVersion(context.Background(), "0", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})

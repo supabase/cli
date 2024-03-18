@@ -11,7 +11,6 @@ export PGDATABASE="$PGDATABASE"
 #
 #   --schema-only     omit data like migration history, pgsodium key, etc.
 #   --exclude-schema  omit internal schemas as they are maintained by platform
-#   --no-comments     only object owner can set comment, omit to allow restore by non-superuser
 #
 # Explanation of sed substitutions:
 #
@@ -23,7 +22,7 @@ pg_dump \
     --quote-all-identifier \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     --schema "${INCLUDED_SCHEMAS:-}" \
-    --no-comments \
+    ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed -E 's/^CREATE TABLE "/CREATE TABLE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \
@@ -33,6 +32,7 @@ pg_dump \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
 | sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
+| sed -E 's/^COMMENT ON EXTENSION (.+)/-- &/' \
 | sed -E 's/^CREATE POLICY "cron_job_/-- &/' \
 | sed -E 's/^ALTER TABLE "cron"/-- &/' \
 | sed -E "${EXTRA_SED:-}" \

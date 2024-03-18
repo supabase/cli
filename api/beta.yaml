@@ -105,12 +105,6 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateProjectBody'
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectResponse'
         '201':
           description: ''
           content:
@@ -2222,6 +2216,13 @@ components:
           type: number
         reset_on_push:
           type: boolean
+        status:
+          enum:
+            - CREATING_PROJECT
+            - RUNNING_MIGRATIONS
+            - MIGRATIONS_PASSED
+            - MIGRATIONS_FAILED
+          type: string
         created_at:
           type: string
         updated_at:
@@ -2233,6 +2234,7 @@ components:
         - parent_project_ref
         - is_default
         - reset_on_push
+        - status
         - created_at
         - updated_at
     DatabaseResponse:
@@ -2324,7 +2326,6 @@ components:
         - db_pass
         - name
         - organization_id
-        - plan
         - region
     OrganizationResponseV1:
       type: object
@@ -3084,27 +3085,575 @@ components:
     AuthConfigResponse:
       type: object
       properties:
-        smtp_admin_email:
+        disable_signup:
+          type: boolean
+          nullable: true
+        external_apple_additional_client_ids:
           type: string
-        smtp_host:
+          nullable: true
+        external_apple_client_id:
           type: string
-        smtp_port:
+          nullable: true
+        external_apple_enabled:
+          type: boolean
+          nullable: true
+        external_apple_secret:
           type: string
-        smtp_user:
+          nullable: true
+        external_azure_client_id:
           type: string
-        smtp_pass:
+          nullable: true
+        external_azure_enabled:
+          type: boolean
+          nullable: true
+        external_azure_secret:
           type: string
-        smtp_max_frequency:
+          nullable: true
+        external_azure_url:
+          type: string
+          nullable: true
+        external_bitbucket_client_id:
+          type: string
+          nullable: true
+        external_bitbucket_enabled:
+          type: boolean
+          nullable: true
+        external_bitbucket_secret:
+          type: string
+          nullable: true
+        external_discord_client_id:
+          type: string
+          nullable: true
+        external_discord_enabled:
+          type: boolean
+          nullable: true
+        external_discord_secret:
+          type: string
+          nullable: true
+        external_email_enabled:
+          type: boolean
+          nullable: true
+        external_facebook_client_id:
+          type: string
+          nullable: true
+        external_facebook_enabled:
+          type: boolean
+          nullable: true
+        external_facebook_secret:
+          type: string
+          nullable: true
+        external_figma_client_id:
+          type: string
+          nullable: true
+        external_figma_enabled:
+          type: boolean
+          nullable: true
+        external_figma_secret:
+          type: string
+          nullable: true
+        external_github_client_id:
+          type: string
+          nullable: true
+        external_github_enabled:
+          type: boolean
+          nullable: true
+        external_github_secret:
+          type: string
+          nullable: true
+        external_gitlab_client_id:
+          type: string
+          nullable: true
+        external_gitlab_enabled:
+          type: boolean
+          nullable: true
+        external_gitlab_secret:
+          type: string
+          nullable: true
+        external_gitlab_url:
+          type: string
+          nullable: true
+        external_google_additional_client_ids:
+          type: string
+          nullable: true
+        external_google_client_id:
+          type: string
+          nullable: true
+        external_google_enabled:
+          type: boolean
+          nullable: true
+        external_google_secret:
+          type: string
+          nullable: true
+        external_google_skip_nonce_check:
+          type: boolean
+          nullable: true
+        external_kakao_client_id:
+          type: string
+          nullable: true
+        external_kakao_enabled:
+          type: boolean
+          nullable: true
+        external_kakao_secret:
+          type: string
+          nullable: true
+        external_keycloak_client_id:
+          type: string
+          nullable: true
+        external_keycloak_enabled:
+          type: boolean
+          nullable: true
+        external_keycloak_secret:
+          type: string
+          nullable: true
+        external_keycloak_url:
+          type: string
+          nullable: true
+        external_linkedin_oidc_client_id:
+          type: string
+          nullable: true
+        external_linkedin_oidc_enabled:
+          type: boolean
+          nullable: true
+        external_linkedin_oidc_secret:
+          type: string
+          nullable: true
+        external_notion_client_id:
+          type: string
+          nullable: true
+        external_notion_enabled:
+          type: boolean
+          nullable: true
+        external_notion_secret:
+          type: string
+          nullable: true
+        external_phone_enabled:
+          type: boolean
+          nullable: true
+        external_slack_client_id:
+          type: string
+          nullable: true
+        external_slack_enabled:
+          type: boolean
+          nullable: true
+        external_slack_secret:
+          type: string
+          nullable: true
+        external_spotify_client_id:
+          type: string
+          nullable: true
+        external_spotify_enabled:
+          type: boolean
+          nullable: true
+        external_spotify_secret:
+          type: string
+          nullable: true
+        external_twitch_client_id:
+          type: string
+          nullable: true
+        external_twitch_enabled:
+          type: boolean
+          nullable: true
+        external_twitch_secret:
+          type: string
+          nullable: true
+        external_twitter_client_id:
+          type: string
+          nullable: true
+        external_twitter_enabled:
+          type: boolean
+          nullable: true
+        external_twitter_secret:
+          type: string
+          nullable: true
+        external_workos_client_id:
+          type: string
+          nullable: true
+        external_workos_enabled:
+          type: boolean
+          nullable: true
+        external_workos_secret:
+          type: string
+          nullable: true
+        external_workos_url:
+          type: string
+          nullable: true
+        external_zoom_client_id:
+          type: string
+          nullable: true
+        external_zoom_enabled:
+          type: boolean
+          nullable: true
+        external_zoom_secret:
+          type: string
+          nullable: true
+        hook_custom_access_token_enabled:
+          type: boolean
+          nullable: true
+        hook_custom_access_token_uri:
+          type: string
+          nullable: true
+        hook_mfa_verification_attempt_enabled:
+          type: boolean
+          nullable: true
+        hook_mfa_verification_attempt_uri:
+          type: string
+          nullable: true
+        hook_password_verification_attempt_enabled:
+          type: boolean
+          nullable: true
+        hook_password_verification_attempt_uri:
+          type: string
+          nullable: true
+        jwt_exp:
           type: number
-        smtp_sender_name:
+          nullable: true
+        mailer_allow_unverified_email_sign_ins:
+          type: boolean
+          nullable: true
+        mailer_autoconfirm:
+          type: boolean
+          nullable: true
+        mailer_otp_exp:
+          type: number
+          nullable: true
+        mailer_secure_email_change_enabled:
+          type: boolean
+          nullable: true
+        mailer_subjects_confirmation:
           type: string
+          nullable: true
+        mailer_subjects_email_change:
+          type: string
+          nullable: true
+        mailer_subjects_invite:
+          type: string
+          nullable: true
+        mailer_subjects_magic_link:
+          type: string
+          nullable: true
+        mailer_subjects_recovery:
+          type: string
+          nullable: true
+        mailer_templates_confirmation_content:
+          type: string
+          nullable: true
+        mailer_templates_email_change_content:
+          type: string
+          nullable: true
+        mailer_templates_invite_content:
+          type: string
+          nullable: true
+        mailer_templates_magic_link_content:
+          type: string
+          nullable: true
+        mailer_templates_recovery_content:
+          type: string
+          nullable: true
+        mfa_max_enrolled_factors:
+          type: number
+          nullable: true
+        password_hibp_enabled:
+          type: boolean
+          nullable: true
+        password_min_length:
+          type: number
+          nullable: true
+        password_required_characters:
+          type: string
+          nullable: true
         rate_limit_email_sent:
           type: number
-          minimum: 0
-          maximum: 2147483647
+          nullable: true
+        rate_limit_sms_sent:
+          type: number
+          nullable: true
+        rate_limit_token_refresh:
+          type: number
+          nullable: true
+        rate_limit_verify:
+          type: number
+          nullable: true
+        refresh_token_rotation_enabled:
+          type: boolean
+          nullable: true
+        saml_enabled:
+          type: boolean
+          nullable: true
+        security_captcha_enabled:
+          type: boolean
+          nullable: true
+        security_captcha_provider:
+          type: string
+          nullable: true
+        security_captcha_secret:
+          type: string
+          nullable: true
+        security_manual_linking_enabled:
+          type: boolean
+          nullable: true
+        security_refresh_token_reuse_interval:
+          type: number
+          nullable: true
+        security_update_password_require_reauthentication:
+          type: boolean
+          nullable: true
+        sessions_inactivity_timeout:
+          type: number
+          nullable: true
+        sessions_single_per_user:
+          type: boolean
+          nullable: true
+        sessions_tags:
+          type: string
+          nullable: true
+        sessions_timebox:
+          type: number
+          nullable: true
+        site_url:
+          type: string
+          nullable: true
+        sms_autoconfirm:
+          type: boolean
+          nullable: true
+        sms_max_frequency:
+          type: number
+          nullable: true
+        sms_messagebird_access_key:
+          type: string
+          nullable: true
+        sms_messagebird_originator:
+          type: string
+          nullable: true
+        sms_otp_exp:
+          type: number
+          nullable: true
+        sms_otp_length:
+          type: number
+          nullable: true
+        sms_provider:
+          type: string
+          nullable: true
+        sms_template:
+          type: string
+          nullable: true
+        sms_test_otp:
+          type: string
+          nullable: true
+        sms_test_otp_valid_until:
+          type: string
+          nullable: true
+        sms_textlocal_api_key:
+          type: string
+          nullable: true
+        sms_textlocal_sender:
+          type: string
+          nullable: true
+        sms_twilio_account_sid:
+          type: string
+          nullable: true
+        sms_twilio_auth_token:
+          type: string
+          nullable: true
+        sms_twilio_content_sid:
+          type: string
+          nullable: true
+        sms_twilio_message_service_sid:
+          type: string
+          nullable: true
+        sms_twilio_verify_account_sid:
+          type: string
+          nullable: true
+        sms_twilio_verify_auth_token:
+          type: string
+          nullable: true
+        sms_twilio_verify_message_service_sid:
+          type: string
+          nullable: true
+        sms_vonage_api_key:
+          type: string
+          nullable: true
+        sms_vonage_api_secret:
+          type: string
+          nullable: true
+        sms_vonage_from:
+          type: string
+          nullable: true
+        smtp_admin_email:
+          type: string
+          nullable: true
+        smtp_host:
+          type: string
+          nullable: true
+        smtp_max_frequency:
+          type: number
+          nullable: true
+        smtp_pass:
+          type: string
+          nullable: true
+        smtp_port:
+          type: string
+          nullable: true
+        smtp_sender_name:
+          type: string
+          nullable: true
+        smtp_user:
+          type: string
+          nullable: true
+        uri_allow_list:
+          type: string
+          nullable: true
+      required:
+        - disable_signup
+        - external_apple_additional_client_ids
+        - external_apple_client_id
+        - external_apple_enabled
+        - external_apple_secret
+        - external_azure_client_id
+        - external_azure_enabled
+        - external_azure_secret
+        - external_azure_url
+        - external_bitbucket_client_id
+        - external_bitbucket_enabled
+        - external_bitbucket_secret
+        - external_discord_client_id
+        - external_discord_enabled
+        - external_discord_secret
+        - external_email_enabled
+        - external_facebook_client_id
+        - external_facebook_enabled
+        - external_facebook_secret
+        - external_figma_client_id
+        - external_figma_enabled
+        - external_figma_secret
+        - external_github_client_id
+        - external_github_enabled
+        - external_github_secret
+        - external_gitlab_client_id
+        - external_gitlab_enabled
+        - external_gitlab_secret
+        - external_gitlab_url
+        - external_google_additional_client_ids
+        - external_google_client_id
+        - external_google_enabled
+        - external_google_secret
+        - external_google_skip_nonce_check
+        - external_kakao_client_id
+        - external_kakao_enabled
+        - external_kakao_secret
+        - external_keycloak_client_id
+        - external_keycloak_enabled
+        - external_keycloak_secret
+        - external_keycloak_url
+        - external_linkedin_oidc_client_id
+        - external_linkedin_oidc_enabled
+        - external_linkedin_oidc_secret
+        - external_notion_client_id
+        - external_notion_enabled
+        - external_notion_secret
+        - external_phone_enabled
+        - external_slack_client_id
+        - external_slack_enabled
+        - external_slack_secret
+        - external_spotify_client_id
+        - external_spotify_enabled
+        - external_spotify_secret
+        - external_twitch_client_id
+        - external_twitch_enabled
+        - external_twitch_secret
+        - external_twitter_client_id
+        - external_twitter_enabled
+        - external_twitter_secret
+        - external_workos_client_id
+        - external_workos_enabled
+        - external_workos_secret
+        - external_workos_url
+        - external_zoom_client_id
+        - external_zoom_enabled
+        - external_zoom_secret
+        - hook_custom_access_token_enabled
+        - hook_custom_access_token_uri
+        - hook_mfa_verification_attempt_enabled
+        - hook_mfa_verification_attempt_uri
+        - hook_password_verification_attempt_enabled
+        - hook_password_verification_attempt_uri
+        - jwt_exp
+        - mailer_allow_unverified_email_sign_ins
+        - mailer_autoconfirm
+        - mailer_otp_exp
+        - mailer_secure_email_change_enabled
+        - mailer_subjects_confirmation
+        - mailer_subjects_email_change
+        - mailer_subjects_invite
+        - mailer_subjects_magic_link
+        - mailer_subjects_recovery
+        - mailer_templates_confirmation_content
+        - mailer_templates_email_change_content
+        - mailer_templates_invite_content
+        - mailer_templates_magic_link_content
+        - mailer_templates_recovery_content
+        - mfa_max_enrolled_factors
+        - password_hibp_enabled
+        - password_min_length
+        - password_required_characters
+        - rate_limit_email_sent
+        - rate_limit_sms_sent
+        - rate_limit_token_refresh
+        - rate_limit_verify
+        - refresh_token_rotation_enabled
+        - saml_enabled
+        - security_captcha_enabled
+        - security_captcha_provider
+        - security_captcha_secret
+        - security_manual_linking_enabled
+        - security_refresh_token_reuse_interval
+        - security_update_password_require_reauthentication
+        - sessions_inactivity_timeout
+        - sessions_single_per_user
+        - sessions_tags
+        - sessions_timebox
+        - site_url
+        - sms_autoconfirm
+        - sms_max_frequency
+        - sms_messagebird_access_key
+        - sms_messagebird_originator
+        - sms_otp_exp
+        - sms_otp_length
+        - sms_provider
+        - sms_template
+        - sms_test_otp
+        - sms_test_otp_valid_until
+        - sms_textlocal_api_key
+        - sms_textlocal_sender
+        - sms_twilio_account_sid
+        - sms_twilio_auth_token
+        - sms_twilio_content_sid
+        - sms_twilio_message_service_sid
+        - sms_twilio_verify_account_sid
+        - sms_twilio_verify_auth_token
+        - sms_twilio_verify_message_service_sid
+        - sms_vonage_api_key
+        - sms_vonage_api_secret
+        - sms_vonage_from
+        - smtp_admin_email
+        - smtp_host
+        - smtp_max_frequency
+        - smtp_pass
+        - smtp_port
+        - smtp_sender_name
+        - smtp_user
+        - uri_allow_list
     UpdateAuthConfigBody:
       type: object
       properties:
+        site_url:
+          type: string
+          pattern: /^[^,]+$/
+        disable_signup:
+          type: boolean
+        jwt_exp:
+          type: number
+          minimum: 0
+          maximum: 604800
         smtp_admin_email:
           type: string
         smtp_host:
@@ -3117,12 +3666,299 @@ components:
           type: string
         smtp_max_frequency:
           type: number
+          minimum: 0
+          maximum: 32767
         smtp_sender_name:
           type: string
-        rate_limit_email_sent:
+        mailer_allow_unverified_email_sign_ins:
+          type: boolean
+        mailer_autoconfirm:
+          type: boolean
+        mailer_subjects_invite:
+          type: string
+        mailer_subjects_confirmation:
+          type: string
+        mailer_subjects_recovery:
+          type: string
+        mailer_subjects_email_change:
+          type: string
+        mailer_subjects_magic_link:
+          type: string
+        mailer_templates_invite_content:
+          type: string
+        mailer_templates_confirmation_content:
+          type: string
+        mailer_templates_recovery_content:
+          type: string
+        mailer_templates_email_change_content:
+          type: string
+        mailer_templates_magic_link_content:
+          type: string
+        mfa_max_enrolled_factors:
           type: number
           minimum: 0
           maximum: 2147483647
+        uri_allow_list:
+          type: string
+        external_email_enabled:
+          type: boolean
+        external_phone_enabled:
+          type: boolean
+        saml_enabled:
+          type: boolean
+        security_captcha_enabled:
+          type: boolean
+        security_captcha_provider:
+          type: string
+        security_captcha_secret:
+          type: string
+        sessions_timebox:
+          type: number
+          minimum: 0
+        sessions_inactivity_timeout:
+          type: number
+          minimum: 0
+        sessions_single_per_user:
+          type: boolean
+        sessions_tags:
+          type: string
+          pattern: /^\s*([a-z0-9_-]+(\s*,+\s*)?)*\s*$/i
+        rate_limit_email_sent:
+          type: number
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_sms_sent:
+          type: number
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_verify:
+          type: number
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_token_refresh:
+          type: number
+          minimum: 1
+          maximum: 2147483647
+        mailer_secure_email_change_enabled:
+          type: boolean
+        refresh_token_rotation_enabled:
+          type: boolean
+        password_hibp_enabled:
+          type: boolean
+        password_min_length:
+          type: number
+          minimum: 6
+          maximum: 32767
+        password_required_characters:
+          type: string
+          enum:
+            - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~
+            - ''
+        security_manual_linking_enabled:
+          type: boolean
+        security_update_password_require_reauthentication:
+          type: boolean
+        security_refresh_token_reuse_interval:
+          type: number
+          minimum: 0
+          maximum: 2147483647
+        mailer_otp_exp:
+          type: number
+          minimum: 0
+          maximum: 2147483647
+        sms_autoconfirm:
+          type: boolean
+        sms_max_frequency:
+          type: number
+          minimum: 0
+          maximum: 32767
+        sms_otp_exp:
+          type: number
+          minimum: 0
+          maximum: 2147483647
+        sms_otp_length:
+          type: number
+          minimum: 0
+          maximum: 32767
+        sms_provider:
+          type: string
+        sms_messagebird_access_key:
+          type: string
+        sms_messagebird_originator:
+          type: string
+        sms_test_otp:
+          type: string
+          pattern: /^([0-9]{1,15}=[0-9]+,?)*$/
+        sms_test_otp_valid_until:
+          type: string
+        sms_textlocal_api_key:
+          type: string
+        sms_textlocal_sender:
+          type: string
+        sms_twilio_account_sid:
+          type: string
+        sms_twilio_auth_token:
+          type: string
+        sms_twilio_content_sid:
+          type: string
+        sms_twilio_message_service_sid:
+          type: string
+        sms_twilio_verify_account_sid:
+          type: string
+        sms_twilio_verify_auth_token:
+          type: string
+        sms_twilio_verify_message_service_sid:
+          type: string
+        sms_vonage_api_key:
+          type: string
+        sms_vonage_api_secret:
+          type: string
+        sms_vonage_from:
+          type: string
+        sms_template:
+          type: string
+        hook_mfa_verification_attempt_enabled:
+          type: boolean
+        hook_mfa_verification_attempt_uri:
+          type: string
+        hook_password_verification_attempt_enabled:
+          type: boolean
+        hook_password_verification_attempt_uri:
+          type: string
+        hook_custom_access_token_enabled:
+          type: boolean
+        hook_custom_access_token_uri:
+          type: string
+        external_apple_enabled:
+          type: boolean
+        external_apple_client_id:
+          type: string
+        external_apple_secret:
+          type: string
+        external_apple_additional_client_ids:
+          type: string
+        external_azure_enabled:
+          type: boolean
+        external_azure_client_id:
+          type: string
+        external_azure_secret:
+          type: string
+        external_azure_url:
+          type: string
+        external_bitbucket_enabled:
+          type: boolean
+        external_bitbucket_client_id:
+          type: string
+        external_bitbucket_secret:
+          type: string
+        external_discord_enabled:
+          type: boolean
+        external_discord_client_id:
+          type: string
+        external_discord_secret:
+          type: string
+        external_facebook_enabled:
+          type: boolean
+        external_facebook_client_id:
+          type: string
+        external_facebook_secret:
+          type: string
+        external_figma_enabled:
+          type: boolean
+        external_figma_client_id:
+          type: string
+        external_figma_secret:
+          type: string
+        external_github_enabled:
+          type: boolean
+        external_github_client_id:
+          type: string
+        external_github_secret:
+          type: string
+        external_gitlab_enabled:
+          type: boolean
+        external_gitlab_client_id:
+          type: string
+        external_gitlab_secret:
+          type: string
+        external_gitlab_url:
+          type: string
+        external_google_enabled:
+          type: boolean
+        external_google_client_id:
+          type: string
+        external_google_secret:
+          type: string
+        external_google_additional_client_ids:
+          type: string
+        external_google_skip_nonce_check:
+          type: boolean
+        external_kakao_enabled:
+          type: boolean
+        external_kakao_client_id:
+          type: string
+        external_kakao_secret:
+          type: string
+        external_keycloak_enabled:
+          type: boolean
+        external_keycloak_client_id:
+          type: string
+        external_keycloak_secret:
+          type: string
+        external_keycloak_url:
+          type: string
+        external_linkedin_oidc_enabled:
+          type: boolean
+        external_linkedin_oidc_client_id:
+          type: string
+        external_linkedin_oidc_secret:
+          type: string
+        external_notion_enabled:
+          type: boolean
+        external_notion_client_id:
+          type: string
+        external_notion_secret:
+          type: string
+        external_slack_enabled:
+          type: boolean
+        external_slack_client_id:
+          type: string
+        external_slack_secret:
+          type: string
+        external_spotify_enabled:
+          type: boolean
+        external_spotify_client_id:
+          type: string
+        external_spotify_secret:
+          type: string
+        external_twitch_enabled:
+          type: boolean
+        external_twitch_client_id:
+          type: string
+        external_twitch_secret:
+          type: string
+        external_twitter_enabled:
+          type: boolean
+        external_twitter_client_id:
+          type: string
+        external_twitter_secret:
+          type: string
+        external_workos_enabled:
+          type: boolean
+        external_workos_client_id:
+          type: string
+        external_workos_secret:
+          type: string
+        external_workos_url:
+          type: string
+        external_zoom_enabled:
+          type: boolean
+        external_zoom_client_id:
+          type: string
+        external_zoom_secret:
+          type: string
     RunQueryBody:
       type: object
       properties:
