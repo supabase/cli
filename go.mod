@@ -45,7 +45,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/stripe/pg-schema-diff v0.6.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
-	github.com/zalando/go-keyring v0.2.3
+	github.com/zalando/go-keyring v0.2.4
 	golang.org/x/mod v0.16.0
 	golang.org/x/oauth2 v0.18.0
 	golang.org/x/term v0.18.0
