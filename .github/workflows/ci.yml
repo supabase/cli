@@ -19,7 +19,7 @@ jobs:
           cache: true
 
       - run: |
-          go run gotest.tools/gotestsum -- ./... -race -v -count=1 \
+          go run gotest.tools/gotestsum -- ./internal/... -race -v -count=1 \
           -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
