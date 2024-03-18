@@ -52,7 +52,7 @@ require (
 	github.com/zalando/go-keyring v0.2.3
 	golang.org/x/mod v0.15.0
 	golang.org/x/oauth2 v0.17.0
-	golang.org/x/term v0.17.0
+	golang.org/x/term v0.18.0
 	google.golang.org/grpc v1.62.0
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/yaml.v2 v2.4.0
@@ -322,7 +322,7 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20231219180239-dc181d75b848 // indirect
 	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/sync v0.6.0 // indirect
-	golang.org/x/sys v0.17.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.18.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
