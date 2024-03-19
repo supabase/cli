@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	APIVersion = "1.41"
+	APIVersion = "1.44"
 	IDAlphabet = "abcdef0123456789"
 	IDLength   = 12
 )

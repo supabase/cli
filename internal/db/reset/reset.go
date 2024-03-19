@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -113,7 +112,7 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 }
 
 func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, types.ContainerRemoveOptions{Force: true}); err != nil {
+	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, container.RemoveOptions{Force: true}); err != nil {
 		return errors.Errorf("failed to remove container: %w", err)
 	}
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
@@ -238,8 +237,8 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 	}
 	if !start.RetryEverySecond(ctx, probe, serviceTimeout) {
 		// Print container logs for easier debugging
-		for _, container := range started {
-			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+		for _, containerId := range started {
+			logs, err := utils.Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
 			})
@@ -247,7 +246,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 				fmt.Fprintln(os.Stderr, err)
 				continue
 			}
-			fmt.Fprintln(os.Stderr, container, "container logs:")
+			fmt.Fprintln(os.Stderr, containerId, "container logs:")
 			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
@@ -260,7 +259,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfigStream(ctx, config, io.Discard, options...)
 	if err != nil {
 		return err
 	}

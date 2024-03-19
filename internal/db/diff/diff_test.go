@@ -3,12 +3,10 @@ package diff
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +32,33 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
+}
+
+var escapedSchemas = []string{
+	"auth",
+	"pgbouncer",
+	"realtime",
+	`\_realtime`,
+	"storage",
+	`\_analytics`,
+	`supabase\_functions`,
+	`supabase\_migrations`,
+	`information\_schema`,
+	`pg\_%`,
+	"cron",
+	"graphql",
+	`graphql\_public`,
+	"net",
+	"pgsodium",
+	`pgsodium\_masks`,
+	"pgtle",
+	"repack",
+	"tiger",
+	`tiger\_data`,
+	`timescaledb\_%`,
+	`\_timescaledb\_%`,
+	"topology",
+	"vault",
 }
 
 func TestRun(t *testing.T) {
@@ -102,7 +127,7 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `'{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+		conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := Run(context.Background(), []string{}, "", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
@@ -148,11 +173,11 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA").
-			Query(sql).
 			Reply("CREATE SCHEMA")
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+		conn.Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
@@ -313,11 +338,11 @@ At statement 0: create schema public`)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaSql).
-			Reply("CREATE SCHEMA").
-			Query(sql).
 			Reply("CREATE SCHEMA")
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+		conn.Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, conn.Intercept)
@@ -332,11 +357,11 @@ func TestUserSchema(t *testing.T) {
 	// Setup mock postgres
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
-	conn.Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `'{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+	conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
 		Reply("SELECT 1", []interface{}{"test"})
 	// Connect to mock
 	ctx := context.Background()
-	mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+	mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 	require.NoError(t, err)
 	defer mock.Close(ctx)
 	// Run test

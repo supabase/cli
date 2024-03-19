@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -293,6 +292,34 @@ func TestRestartDatabase(t *testing.T) {
 	})
 }
 
+var escapedSchemas = []string{
+	"public",
+	"auth",
+	"extensions",
+	"pgbouncer",
+	"realtime",
+	`\_realtime`,
+	"storage",
+	`\_analytics`,
+	`supabase\_functions`,
+	`information\_schema`,
+	`pg\_%`,
+	"cron",
+	"graphql",
+	`graphql\_public`,
+	"net",
+	"pgsodium",
+	`pgsodium\_masks`,
+	"pgtle",
+	"repack",
+	"tiger",
+	`tiger\_data`,
+	`timescaledb\_%`,
+	`\_timescaledb\_%`,
+	"topology",
+	"vault",
+}
+
 func TestResetRemote(t *testing.T) {
 	dbConfig := pgconn.Config{
 		Host:     "db.supabase.co",
@@ -308,7 +335,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+		conn.Query(LIST_SCHEMAS, escapedSchemas).
 			Reply("SELECT 1", []interface{}{"private"}).
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
@@ -335,7 +362,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+		conn.Query(LIST_SCHEMAS, escapedSchemas).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
@@ -349,7 +376,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(strings.ReplaceAll(LIST_SCHEMAS, "$1", `'{public,auth,extensions,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+		conn.Query(LIST_SCHEMAS, escapedSchemas).
 			Reply("SELECT 0").
 			Query(dropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"embed"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -28,10 +27,12 @@ var (
 )
 
 func main() {
-	semver := flag.Arg(0)
-	if len(semver) == 0 {
-		semver = "latest"
-	} else if semver[0] == 'v' {
+	semver := "latest"
+	if len(os.Args) > 1 {
+		semver = os.Args[1]
+	}
+	// Trim version tag
+	if semver[0] == 'v' {
 		semver = semver[1:]
 	}
 

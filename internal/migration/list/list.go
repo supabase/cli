@@ -46,13 +46,20 @@ func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...fu
 }
 
 func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
+	versions, err := listMigrationVersions(ctx, conn)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
 			// If migration history table is undefined, the remote project has no migrations
 			return nil, nil
 		}
+	}
+	return versions, err
+}
+
+func listMigrationVersions(ctx context.Context, conn *pgx.Conn) ([]string, error) {
+	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
+	if err != nil {
 		return nil, errors.Errorf("failed to query rows: %w", err)
 	}
 	return pgxv5.CollectStrings(rows)

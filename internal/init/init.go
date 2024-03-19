@@ -17,6 +17,8 @@ var (
 	vscodeDir      = ".vscode"
 	extensionsPath = filepath.Join(vscodeDir, "extensions.json")
 	settingsPath   = filepath.Join(vscodeDir, "settings.json")
+	intellijDir    = ".idea"
+	denoPath       = filepath.Join(intellijDir, "deno.xml")
 
 	//go:embed templates/.gitignore
 	initGitignore []byte
@@ -24,11 +26,13 @@ var (
 	vscodeExtensions string
 	//go:embed templates/.vscode/settings.json
 	vscodeSettings string
+	//go:embed templates/.idea/deno.xml
+	intelliJDeno string
 
 	errAlreadyInitialized = errors.Errorf("Project already initialized. Remove %s to reinitialize.", utils.Bold(utils.ConfigPath))
 )
 
-func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
+func Run(fsys afero.Fs, createVscodeSettings *bool, createIntellijSettings *bool, useOrioleDB bool) error {
 	// Sanity checks.
 	{
 		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
@@ -60,12 +64,18 @@ func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
 		if *createVscodeSettings {
 			return writeVscodeConfig(fsys)
 		}
+	} else if createIntellijSettings != nil {
+		if *createIntellijSettings {
+			return writeIntelliJConfig(fsys)
+		}
 	} else {
 		if isVscode := utils.PromptYesNo("Generate VS Code settings for Deno?", false, os.Stdin); isVscode {
 			return writeVscodeConfig(fsys)
 		}
+		if isIntelliJ := utils.PromptYesNo("Generate IntelliJ Settings for Deno?", false, os.Stdin); isIntelliJ {
+			return writeIntelliJConfig(fsys)
+		}
 	}
-
 	return nil
 }
 
@@ -154,5 +164,13 @@ func writeVscodeConfig(fsys afero.Fs) error {
 		return err
 	}
 	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ". Please install the recommended extension!")
+	return nil
+}
+
+func writeIntelliJConfig(fsys afero.Fs) error {
+	if err := utils.WriteFile(denoPath, []byte(intelliJDeno), fsys); err != nil {
+		return err
+	}
+	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ". Please install the Deno plugin!")
 	return nil
 }

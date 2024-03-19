@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/login"
@@ -99,7 +98,7 @@ var (
 				params.OpenBrowser = false
 			} else {
 				// Skip the browser if we are inside non-TTY environment, which is the case for any CI.
-				params.OpenBrowser = isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stdout.Fd())
+				params.OpenBrowser = term.IsTerminal(int(os.Stdin.Fd()))
 			}
 
 			return login.Run(cmd.Context(), os.Stdout, params)

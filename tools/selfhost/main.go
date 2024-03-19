@@ -13,7 +13,7 @@ import (
 	"github.com/google/go-github/v53/github"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/tools/shared"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 const (

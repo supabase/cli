@@ -118,7 +118,7 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")
 }
 
-func connectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
+func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
 	// Retry until connected, cancelled, or timeout
 	policy := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second), uint64(timeout.Seconds()))
 	config := pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}
@@ -133,11 +133,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if err != nil {
 		return err
 	}
-	return MigrateShadowDatabaseVersions(ctx, container, migrations, fsys, options...)
-}
-
-func MigrateShadowDatabaseVersions(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := connectShadowDatabase(ctx, 10*time.Second, options...)
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}

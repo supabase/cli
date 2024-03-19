@@ -56,10 +56,8 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 }
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, repairAll bool, fsys afero.Fs) error {
-	schema := &pgconn.Batch{}
-	history.AddCreateTableStatements(schema)
-	if _, err := conn.PgConn().ExecBatch(ctx, schema).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
+	if err := history.CreateMigrationTable(ctx, conn); err != nil {
+		return err
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := &pgx.Batch{}
@@ -88,35 +86,6 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
-}
-
-func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
-	batch := pgconn.Batch{}
-	history.AddCreateTableStatements(&batch)
-	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
-	}
-	return nil
-}
-
-func InsertVersionSQL(batch *pgconn.Batch, version, name string, stats []string) {
-	// Create history table if not exists
-	history.AddCreateTableStatements(batch)
-	encoded := []byte{'{'}
-	for i, line := range stats {
-		if i > 0 {
-			encoded = append(encoded, ',')
-		}
-		encoded = append(encoded, pgtype.QuoteArrayElementIfNeeded(line)...)
-	}
-	encoded = append(encoded, '}')
-	batch.ExecParams(
-		history.INSERT_MIGRATION_VERSION,
-		[][]byte{[]byte(version), []byte(name), encoded},
-		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
-		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, pgtype.TextFormatCode},
-		nil,
-	)
 }
 
 func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
@@ -188,7 +157,9 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 	}
 	// Insert into migration history
 	if len(m.Version) > 0 {
-		InsertVersionSQL(batch, m.Version, m.Name, m.Lines)
+		if err := m.insertVersionSQL(conn, batch); err != nil {
+			return err
+		}
 	}
 	// ExecBatch is implicitly transactional
 	if result, err := conn.PgConn().ExecBatch(ctx, batch).ReadAll(); err != nil {
@@ -200,6 +171,35 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		}
 		return errors.Errorf("%w\nAt statement %d: %s", err, i, stat)
 	}
+	return nil
+}
+
+func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
+	value := pgtype.TextArray{}
+	if err := value.Set(m.Lines); err != nil {
+		return errors.Errorf("failed to set text array: %w", err)
+	}
+	ci := conn.ConnInfo()
+	var err error
+	var encoded []byte
+	var valueFormat int16
+	if conn.Config().PreferSimpleProtocol {
+		encoded, err = value.EncodeText(ci, encoded)
+		valueFormat = pgtype.TextFormatCode
+	} else {
+		encoded, err = value.EncodeBinary(ci, encoded)
+		valueFormat = pgtype.BinaryFormatCode
+	}
+	if err != nil {
+		return errors.Errorf("failed to encode binary: %w", err)
+	}
+	batch.ExecParams(
+		history.INSERT_MIGRATION_VERSION,
+		[][]byte{[]byte(m.Version), []byte(m.Name), encoded},
+		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
+		[]int16{pgtype.TextFormatCode, pgtype.TextFormatCode, valueFormat},
+		nil,
+	)
 	return nil
 }
 

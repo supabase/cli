@@ -29,7 +29,7 @@ const (
 	PG15_POOLER_URL = "postgres://postgres.zupyfdrjfhbeevcogohz:[YOUR-PASSWORD]@fly-0-sin.pooler.supabase.com:6543/postgres"
 )
 
-func TestConnectRemotePostgres(t *testing.T) {
+func TestConnectByConfig(t *testing.T) {
 	t.Run("connects to remote postgres with DoH", func(t *testing.T) {
 		Config.Db.Pooler.ConnectionString = ""
 		DNSResolver.Value = DNS_OVER_HTTPS
@@ -56,7 +56,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.NoError(t, err)
@@ -71,7 +71,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		config := *dbConfig.Copy()
 		config.Host = "localhost"
 		config.Password = "pass word"
-		c, err := ConnectRemotePostgres(context.Background(), config, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), config, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.Equal(t, config.Password, c.Config().Password)
@@ -84,7 +84,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		require.NoError(t, err)
 		defer c.Close(context.Background())
@@ -108,7 +108,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 			MatchHeader("accept", "application/dns-json").
 			ReplyError(&net.OpError{Op: "dial", Err: netErr})
 		// Run test
-		_, err := ConnectRemotePostgres(context.Background(), dbConfig)
+		_, err := ConnectByConfig(context.Background(), dbConfig)
 		// Check error
 		require.ErrorIs(t, err, netErr)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

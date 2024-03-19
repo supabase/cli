@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -42,7 +41,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 		return err
 	}
 	// 2. Remove existing container.
-	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, types.ContainerRemoveOptions{
+	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, container.RemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	})
