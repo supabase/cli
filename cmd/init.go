@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	createVscodeSettings = new(bool)
-	useOrioleDB          bool
-
-	initCmd = &cobra.Command{
+	createVscodeSettings   = new(bool)
+	useOrioleDB            bool
+	createIntellijSettings = new(bool)
+	initCmd                = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "init",
 		Short:   "Initialize a local project",
@@ -35,7 +35,12 @@ var (
 			if !cmd.Flags().Changed("with-vscode-settings") && !cmd.Flags().Changed("with-vscode-workspace") {
 				createVscodeSettings = nil
 			}
-			return _init.Run(fsys, createVscodeSettings, useOrioleDB)
+
+			if !cmd.Flags().Changed("with-intellij-settings") {
+				createIntellijSettings = nil
+			}
+
+			return _init.Run(fsys, createVscodeSettings, createIntellijSettings, useOrioleDB)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
@@ -48,6 +53,7 @@ func init() {
 	flags.BoolVar(createVscodeSettings, "with-vscode-workspace", false, "Generate VS Code workspace.")
 	cobra.CheckErr(flags.MarkHidden("with-vscode-workspace"))
 	flags.BoolVar(createVscodeSettings, "with-vscode-settings", false, "Generate VS Code settings for Deno.")
+	flags.BoolVar(createIntellijSettings, "with-intellij-settings", false, "Generate IntelliJ IDEA settings for Deno.")
 	flags.BoolVar(&useOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres")
 	rootCmd.AddCommand(initCmd)
 }
