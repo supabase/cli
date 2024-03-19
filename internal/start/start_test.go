@@ -85,6 +85,7 @@ func TestStartCommand(t *testing.T) {
 
 func TestDatabaseStart(t *testing.T) {
 	t.Run("starts database locally", func(t *testing.T) {
+		utils.Config.Analytics.Enabled = false
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
