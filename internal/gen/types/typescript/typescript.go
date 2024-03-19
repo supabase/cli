@@ -39,6 +39,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		return nil
 	}
 
+	networkID := "host"
 	if utils.IsLocalDatabase(dbConfig) {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
@@ -47,6 +48,9 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		if strings.Contains(utils.Config.Api.Image, "v9") {
 			postgrestV9Compat = true
 		}
+
+		// Use custom network when connecting to local database
+		networkID = utils.NetId
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
@@ -75,7 +79,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 			Cmd: []string{"node", "dist/server/server.js"},
 		},
 		container.HostConfig{
-			NetworkMode: container.NetworkMode("host"),
+			NetworkMode: container.NetworkMode(networkID),
 		},
 		network.NetworkingConfig{},
 		"",
