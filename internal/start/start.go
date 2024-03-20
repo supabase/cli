@@ -173,7 +173,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 				env = append(env, "DOCKER_HOST="+host)
 			} else {
 				// TODO: mount windows named pipe as unix domain socket?
-				binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+				// TODO: mount domain socket from docker rootless mode
+				binds = append(binds, "/var/run/docker.sock:/var/run/docker.sock:ro")
 			}
 		}
 		if _, err := utils.DockerStart(
@@ -196,11 +197,9 @@ EOF
 					Timeout:  2 * time.Second,
 					Retries:  3,
 				},
-				ExposedPorts: nat.PortSet{"9000/tcp": {}},
 			},
 			container.HostConfig{
 				Binds:         binds,
-				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
