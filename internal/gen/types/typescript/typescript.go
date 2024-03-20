@@ -17,6 +17,7 @@ import (
 )
 
 func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
 		schemas = utils.RemoveDuplicates(append([]string{"public"}, utils.Config.Api.Schemas...))
@@ -54,14 +55,14 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		dbConfig.Port = 5432
 		networkID = utils.NetId
 	}
-
-	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
 	// pg-meta does not set username as the default database, ie. postgres
 	if len(dbConfig.Database) == 0 {
 		dbConfig.Database = "postgres"
 	}
+
+	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
 	escaped := utils.ToPostgresURL(dbConfig)
-	if require, err := isRequireSSL(ctx, escaped, options...); err != nil {
+	if require, err := isRequireSSL(ctx, originalURL, options...); err != nil {
 		return err
 	} else if require {
 		// node-postgres does not support sslmode=prefer
