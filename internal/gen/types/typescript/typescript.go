@@ -50,6 +50,8 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		}
 
 		// Use custom network when connecting to local database
+		dbConfig.Host = utils.DbAliases[0]
+		dbConfig.Port = 5432
 		networkID = utils.NetId
 	}
 
