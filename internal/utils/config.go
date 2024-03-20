@@ -406,11 +406,12 @@ type (
 		Enabled          bool            `toml:"enabled"`
 		Port             uint16          `toml:"port"`
 		Backend          LogflareBackend `toml:"backend"`
-		VectorPort       uint16          `toml:"vector_port"`
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		// Deprecated together with syslog
+		VectorPort uint16 `toml:"vector_port"`
 	}
 
 	experimental struct {
