@@ -14,7 +14,7 @@ require (
 	github.com/containers/common v0.58.0
 	github.com/deepmap/oapi-codegen v1.16.2
 	github.com/docker/cli v25.0.4+incompatible
-	github.com/docker/docker v25.0.4+incompatible
+	github.com/docker/docker v25.0.5+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.27.0
