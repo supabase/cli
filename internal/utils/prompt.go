@@ -27,6 +27,7 @@ var (
 type PromptItem struct {
 	Summary string
 	Details string
+	Index   int
 }
 
 func (i PromptItem) Title() string       { return i.Summary }
@@ -85,8 +86,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyEnter:
-			choice, ok := m.list.SelectedItem().(PromptItem)
-			if ok {
+			if choice, ok := m.list.SelectedItem().(PromptItem); ok {
 				m.choice = choice
 			}
 			return m, tea.Quit
