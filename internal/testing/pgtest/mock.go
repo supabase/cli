@@ -32,11 +32,15 @@ type MockConn struct {
 func (r *MockConn) getStartupMessage(config *pgx.ConnConfig) []pgmock.Step {
 	var steps []pgmock.Step
 	// Add auth message
+	params := map[string]string{"user": config.User}
+	if len(config.Database) > 0 {
+		params["database"] = config.Database
+	}
 	steps = append(
 		steps,
 		pgmock.ExpectMessage(&pgproto3.StartupMessage{
 			ProtocolVersion: pgproto3.ProtocolVersionNumber,
-			Parameters:      map[string]string{"database": config.Database, "user": config.User},
+			Parameters:      params,
 		}),
 		pgmock.SendMessage(&pgproto3.AuthenticationOk{}),
 	)
