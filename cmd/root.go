@@ -21,6 +21,7 @@ import (
 )
 
 const (
+	groupQuickStart    = "quick-start"
 	groupLocalDev      = "local-dev"
 	groupManagementAPI = "management-api"
 )
@@ -198,6 +199,7 @@ func init() {
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	rootCmd.AddGroup(&cobra.Group{ID: groupQuickStart, Title: "Quick Start:"})
 	rootCmd.AddGroup(&cobra.Group{ID: groupLocalDev, Title: "Local Development:"})
 	rootCmd.AddGroup(&cobra.Group{ID: groupManagementAPI, Title: "Management APIs:"})
 }

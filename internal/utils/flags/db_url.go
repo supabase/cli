@@ -71,7 +71,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		DbConfig = newDbConfigWithPassword(projectRef)
+		DbConfig = NewDbConfigWithPassword(projectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -90,7 +90,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	return nil
 }
 
-func newDbConfigWithPassword(projectRef string) pgconn.Config {
+func NewDbConfigWithPassword(projectRef string) pgconn.Config {
 	config := getDbConfig(projectRef)
 	config.Password = getPassword(projectRef)
 	return config

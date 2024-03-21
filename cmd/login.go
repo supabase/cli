@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"strings"
 	"time"
 
@@ -21,20 +20,6 @@ import (
 var (
 	ErrMissingToken = errors.Errorf("Cannot use automatic login flow inside non-TTY environments. Please provide %s flag or set the %s environment variable.", utils.Aqua("--token"), utils.Aqua("SUPABASE_ACCESS_TOKEN"))
 )
-
-func generateTokenName() (string, error) {
-	user, err := user.Current()
-	if err != nil {
-		return "", errors.Errorf("cannot retrieve username: %w", err)
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "", errors.Errorf("cannot retrieve hostname: %w", err)
-	}
-
-	return fmt.Sprintf("cli_%s@%s_%d", user.Username, hostname, time.Now().Unix()), nil
-}
 
 var (
 	loginCmd = &cobra.Command{
@@ -86,7 +71,7 @@ var (
 				}
 				params.TokenName = name
 			} else {
-				name, err := generateTokenName()
+				name, err := login.GenerateTokenName()
 				if err != nil {
 					params.TokenName = fmt.Sprintf("cli_%d", time.Now().Unix())
 				} else {
