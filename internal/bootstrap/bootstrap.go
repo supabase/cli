@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
@@ -169,23 +169,29 @@ func ListSamples(ctx context.Context, client *github.Client) ([]StarterTemplate,
 	repo := "supabase-samples"
 	path := "samples.json"
 	ref := "main"
-	opts := github.RepositoryContentGetOptions{Ref: "heads/" + ref}
+	opts := github.RepositoryContentGetOptions{Ref: ref}
 	file, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, &opts)
 	if err != nil {
 		return nil, errors.Errorf("failed to list samples: %w", err)
 	}
-	content, err := base64.StdEncoding.DecodeString(*file.Content)
+	content, err := file.GetContent()
 	if err != nil {
 		return nil, errors.Errorf("failed to decode samples: %w", err)
 	}
 	var data samplesRepo
-	if err := json.Unmarshal(content, &data); err != nil {
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
 		return nil, errors.Errorf("failed to unmarshal samples: %w", err)
 	}
 	return data.Samples, nil
 }
 
 func downloadSample(ctx context.Context, client *github.Client, templateUrl string, fsys afero.Fs) error {
+	if !viper.IsSet("WORKDIR") {
+		if !utils.PromptYesNo("Do you want to bootstrap in the current directory?", true, os.Stdin) {
+			utils.CmdSuggestion = fmt.Sprintf("Run %s to use a custom directory.", utils.Aqua("supabase bootstrap --workdir <path>"))
+			return context.Canceled
+		}
+	}
 	fmt.Println("Downloading:", templateUrl)
 	// https://github.com/supabase/supabase/tree/master/examples/user-management/nextjs-user-management
 	parsed, err := url.Parse(templateUrl)
