@@ -79,11 +79,7 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
 	// Supavisor transaction mode does not support prepared statement
-	if poolerConfig.Port == 6543 {
-		if _, ok := poolerConfig.RuntimeParams["statement_cache_mode"]; !ok {
-			poolerConfig.RuntimeParams["statement_cache_mode"] = "describe"
-		}
-	}
+	poolerConfig.Port = 5432
 	return poolerConfig
 }
 
