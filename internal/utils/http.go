@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/spf13/afero"
 	openapi "github.com/supabase/cli/pkg/api"
 )
 
@@ -84,4 +85,33 @@ func TextResponse(ctx context.Context, method, url string, body io.Reader, reqEd
 		return "", errors.Errorf("Error status %d: %s", resp.StatusCode, body)
 	}
 	return string(data), nil
+}
+
+func DownloadFile(ctx context.Context, path, url string, fsys afero.Fs, reqEditors ...openapi.RequestEditorFn) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return errors.Errorf("failed to initialise http request: %w", err)
+	}
+	for _, edit := range reqEditors {
+		if err := edit(ctx, req); err != nil {
+			return err
+		}
+	}
+	// Sends request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return errors.Errorf("failed to send http request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+		}
+		return errors.Errorf("Error status %d: %s", resp.StatusCode, data)
+	}
+	if err := afero.WriteReader(fsys, path, resp.Body); err != nil {
+		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }

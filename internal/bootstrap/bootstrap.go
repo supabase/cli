@@ -197,10 +197,10 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 	repo := parts[2]
 	ref := parts[4]
 	root := strings.Join(parts[5:], "/")
-	opts := github.RepositoryContentGetOptions{Ref: "heads/" + ref}
+	opts := github.RepositoryContentGetOptions{Ref: ref}
 	queue := make([]string, 0)
 	queue = append(queue, root)
-	// jq := utils.NewJobQueue(5)
+	jq := utils.NewJobQueue(5)
 	for len(queue) > 0 {
 		contentPath := queue[0]
 		queue = queue[1:]
@@ -213,11 +213,9 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			case "file":
 				path := strings.TrimPrefix(file.GetPath(), root)
 				hostPath := filepath.FromSlash("." + path)
-				content, err := file.GetContent()
-				if err != nil {
-					return errors.Errorf("failed to get content: %w", err)
-				}
-				if err := utils.WriteFile(hostPath, []byte(content), fsys); err != nil {
+				if err := jq.Put(func() error {
+					return utils.DownloadFile(ctx, hostPath, file.GetDownloadURL(), fsys)
+				}); err != nil {
 					return err
 				}
 			case "dir":
@@ -227,5 +225,5 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			}
 		}
 	}
-	return nil
+	return jq.Collect()
 }
