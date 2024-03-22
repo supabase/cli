@@ -121,10 +121,12 @@ func promptLogin(ctx context.Context, fsys afero.Fs) (err error) {
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
 	// Write to .env file
 	mapvalue := map[string]string{
+		"SUPABASE_URL":    utils.GetSupabaseHost(flags.ProjectRef),
 		"SUPABASE_DB_URL": utils.ToPostgresURL(config),
 	}
 	for _, entry := range keys {
-		key := fmt.Sprintf("SUPABASE_%s_KEY", strings.ToUpper(entry.Name))
+		name := strings.ToUpper(entry.Name)
+		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
 		mapvalue[key] = entry.ApiKey
 	}
 	out, err := godotenv.Marshal(mapvalue)
