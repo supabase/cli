@@ -71,6 +71,9 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	link.LinkServices(ctx, flags.ProjectRef, fsys)
+	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
+		return err
+	}
 	// 5. Push migrations
 	config := flags.NewDbConfigWithPassword(flags.ProjectRef)
 	if err := writeDotEnv(keys, config, fsys); err != nil {
