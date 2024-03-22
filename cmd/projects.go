@@ -87,8 +87,6 @@ var (
 		},
 	}
 
-	projectRef string
-
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
@@ -104,12 +102,12 @@ var (
 				title := "Which project do you want to delete?"
 				cobra.CheckErr(flags.PromptProjectRef(cmd.Context(), title))
 			} else {
-				projectRef = args[0]
+				flags.ProjectRef = args[0]
 			}
-			if err := delete.PreRun(projectRef); err != nil {
+			if err := delete.PreRun(flags.ProjectRef); err != nil {
 				return err
 			}
-			return delete.Run(cmd.Context(), projectRef, afero.NewOsFs())
+			return delete.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
