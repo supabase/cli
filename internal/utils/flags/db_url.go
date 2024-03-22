@@ -1,8 +1,11 @@
 package flags
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -11,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/pkg/api"
 )
 
 type connection int
@@ -103,12 +107,31 @@ func getPassword(projectRef string) string {
 	if password, err := credentials.Get(projectRef); err == nil {
 		return password
 	}
-	return PromptPassword(os.Stdin)
+	fmt.Fprint(os.Stderr, "Enter your database password: ")
+	return credentials.PromptMasked(os.Stdin)
 }
 
+const PASSWORD_LENGTH = 16
+
 func PromptPassword(stdin *os.File) string {
-	fmt.Fprint(os.Stderr, "Enter your database password: ")
-	return credentials.PromptMasked(stdin)
+	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to generate one): ")
+	if input := credentials.PromptMasked(stdin); len(input) > 0 {
+		return input
+	}
+	// Generate a password, see ./Settings/Database/DatabaseSettings/ResetDbPassword.tsx#L83
+	var password []byte
+	charset := string(api.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891)
+	charset = strings.ReplaceAll(charset, ":", "")
+	maxRange := big.NewInt(int64(len(charset)))
+	for i := 0; i < PASSWORD_LENGTH; i++ {
+		random, err := rand.Int(rand.Reader, maxRange)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to randomise password:", err)
+			continue
+		}
+		password = append(password, charset[random.Int64()])
+	}
+	return string(password)
 }
 
 func getDbConfig(projectRef string) pgconn.Config {

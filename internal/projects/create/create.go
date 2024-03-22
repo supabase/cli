@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -28,6 +29,7 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 	}
 
 	flags.ProjectRef = resp.JSON201.Id
+	viper.Set("DB_PASSWORD", params.DbPass)
 	if err := credentials.Set(flags.ProjectRef, params.DbPass); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 	}
