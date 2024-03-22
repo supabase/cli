@@ -42,28 +42,28 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema, exclude
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
 	}
+	db := "remote"
+	if utils.IsLocalDatabase(config) {
+		db = "local"
+	}
 	if dataOnly {
-		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
+		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
 		return dumpData(ctx, config, schema, excludeTable, useCopy, dryRun, outStream)
 	} else if roleOnly {
-		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
+		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
 		return dumpRole(ctx, config, keepComments, dryRun, outStream)
 	}
-	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
+	fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
 	return DumpSchema(ctx, config, schema, keepComments, dryRun, outStream)
 }
 
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
 	var env []string
 	if len(schema) > 0 {
-		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, "|"))
+		// Must append flag because empty string results in error
+		env = append(env, "EXTRA_FLAGS=--schema="+strings.Join(schema, "|"))
 	} else {
-		env = append(env,
-			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
-			"INCLUDED_SCHEMAS=*",
-			// Must append flag because empty string results in error
-			"EXTRA_FLAGS=--extension=*",
-		)
+		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"))
 	}
 	if !keepComments {
 		env = append(env, "EXTRA_SED=/^--/d")
