@@ -118,22 +118,89 @@ func promptLogin(ctx context.Context, fsys afero.Fs) (err error) {
 	return login.Run(ctx, os.Stdout, params)
 }
 
+const (
+	SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY"
+	SUPABASE_ANON_KEY         = "SUPABASE_ANON_KEY"
+	SUPABASE_URL              = "SUPABASE_URL"
+	POSTGRES_URL              = "POSTGRES_URL"
+	// Derived keys
+	POSTGRES_PRISMA_URL           = "POSTGRES_PRISMA_URL"
+	POSTGRES_URL_NON_POOLING      = "POSTGRES_URL_NON_POOLING"
+	POSTGRES_USER                 = "POSTGRES_USER"
+	POSTGRES_HOST                 = "POSTGRES_HOST"
+	POSTGRES_PASSWORD             = "POSTGRES_PASSWORD"
+	POSTGRES_DATABASE             = "POSTGRES_DATABASE"
+	NEXT_PUBLIC_SUPABASE_ANON_KEY = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+	NEXT_PUBLIC_SUPABASE_URL      = "NEXT_PUBLIC_SUPABASE_URL"
+)
+
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
-	// Write to .env file
-	mapvalue := map[string]string{
-		"SUPABASE_URL":    utils.GetSupabaseHost(flags.ProjectRef),
-		"SUPABASE_DB_URL": utils.ToPostgresURL(config),
+	// Initialise default envs
+	transactionMode := *config.Copy()
+	transactionMode.Port = 6543
+	initial := map[string]string{
+		SUPABASE_URL: utils.GetSupabaseHost(flags.ProjectRef),
+		POSTGRES_URL: utils.ToPostgresURL(transactionMode),
 	}
 	for _, entry := range keys {
 		name := strings.ToUpper(entry.Name)
 		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
-		mapvalue[key] = entry.ApiKey
+		initial[key] = entry.ApiKey
 	}
-	out, err := godotenv.Marshal(mapvalue)
+	// Populate from .env.example if exists
+	envs, err := parseExampleEnv(fsys)
+	if err != nil {
+		return err
+	}
+	for k, v := range envs {
+		switch k {
+		case SUPABASE_SERVICE_ROLE_KEY:
+		case SUPABASE_ANON_KEY:
+		case SUPABASE_URL:
+		case POSTGRES_URL:
+		// Derived keys
+		case POSTGRES_PRISMA_URL:
+			initial[k] = initial[POSTGRES_URL]
+		case POSTGRES_URL_NON_POOLING:
+			initial[k] = utils.ToPostgresURL(config)
+		case POSTGRES_USER:
+			initial[k] = config.User
+		case POSTGRES_HOST:
+			initial[k] = config.Host
+		case POSTGRES_PASSWORD:
+			initial[k] = config.Password
+		case POSTGRES_DATABASE:
+			initial[k] = config.Database
+		case NEXT_PUBLIC_SUPABASE_ANON_KEY:
+			initial[k] = initial[SUPABASE_ANON_KEY]
+		case NEXT_PUBLIC_SUPABASE_URL:
+			initial[k] = initial[SUPABASE_URL]
+		default:
+			initial[k] = v
+		}
+	}
+	// Write to .env file
+	out, err := godotenv.Marshal(initial)
 	if err != nil {
 		return errors.Errorf("failed to marshal env map: %w", err)
 	}
 	return utils.WriteFile(".env", []byte(out), fsys)
+}
+
+func parseExampleEnv(fsys afero.Fs) (map[string]string, error) {
+	path := ".env.example"
+	f, err := fsys.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.Errorf("failed to open %s: %w", path, err)
+	}
+	defer f.Close()
+	envs, err := godotenv.Parse(f)
+	if err != nil {
+		return nil, errors.Errorf("failed to parse %s: %w", path, err)
+	}
+	return envs, nil
 }
 
 var (
