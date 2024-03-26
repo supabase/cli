@@ -35,13 +35,21 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 		return err
 	}
 	if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && dstParsed.Scheme == "" {
-		if recursive {
-			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, dst, maxJobs, fsys)
+		localPath := dst
+		if !filepath.IsAbs(dst) {
+			localPath = filepath.Join(utils.CurrentDirAbs, dst)
 		}
-		return client.DownloadStorageObject(ctx, projectRef, srcParsed.Path, dst, fsys)
-	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
 		if recursive {
-			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, src, maxJobs, fsys, opts...)
+			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, localPath, maxJobs, fsys)
+		}
+		return client.DownloadStorageObject(ctx, projectRef, srcParsed.Path, localPath, fsys)
+	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
+		localPath := src
+		if !filepath.IsAbs(localPath) {
+			localPath = filepath.Join(utils.CurrentDirAbs, localPath)
+		}
+		if recursive {
+			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, localPath, maxJobs, fsys, opts...)
 		}
 		return client.UploadStorageObject(ctx, projectRef, dstParsed.Path, src, fsys, opts...)
 	} else if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
