@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
@@ -73,6 +74,9 @@ const (
 func formatTimestamp(version string) string {
 	timestamp, err := time.Parse(layoutVersion, version)
 	if err != nil {
+		if viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		return version
 	}
 	return timestamp.Format(layoutHuman)

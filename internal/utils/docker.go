@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
@@ -208,8 +209,8 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
-func DockerImagePull(ctx context.Context, image string, w io.Writer) error {
-	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{
+func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
+	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
 		RegistryAuth: GetRegistryAuth(),
 	})
 	if err != nil {
