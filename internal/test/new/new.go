@@ -3,10 +3,10 @@ package new
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
