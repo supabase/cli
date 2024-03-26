@@ -93,7 +93,7 @@ var (
 			cmd.SilenceUsage = true
 			// Change workdir
 			fsys := afero.NewOsFs()
-			if err := changeWorkDir(fsys); err != nil {
+			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
 			// Add common flags
@@ -208,17 +208,6 @@ func init() {
 // approach for example: https://github.com/portworx/pxc/tree/master/cmd
 func GetRootCmd() *cobra.Command {
 	return rootCmd
-}
-
-func changeWorkDir(fsys afero.Fs) error {
-	workdir := viper.GetString("WORKDIR")
-	if workdir == "" {
-		var err error
-		if workdir, err = utils.GetProjectRoot(fsys); err != nil {
-			return err
-		}
-	}
-	return os.Chdir(workdir)
 }
 
 func addSentryScope(scope *sentry.Scope) {
