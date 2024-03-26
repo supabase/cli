@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/afero"
@@ -22,6 +24,19 @@ var (
 		Short:   "Bootstrap a Supabase project from a starter template",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !viper.IsSet("WORKDIR") {
+				title := fmt.Sprintf("Enter a directory to bootstrap your project (or leave blank to use %s): ", utils.Bold(utils.CurrentDirAbs))
+				workdir, err := utils.PromptText(title, os.Stdin)
+				if err != nil {
+					return err
+				}
+				if len(workdir) == 0 {
+					workdir = utils.CurrentDirAbs
+				} else if !filepath.IsAbs(workdir) {
+					workdir = filepath.Join(utils.CurrentDirAbs, workdir)
+				}
+				viper.Set("WORKDIR", workdir)
+			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			client := bootstrap.GetGtihubClient(ctx)
 			templates, err := bootstrap.ListSamples(ctx, client)
