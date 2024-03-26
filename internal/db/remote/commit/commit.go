@@ -3,10 +3,10 @@ package commit
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
