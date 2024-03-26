@@ -42,7 +42,7 @@ func ToPostgresURL(config pgconn.Config) string {
 }
 
 func GetPoolerConfig(projectRef string) *pgconn.Config {
-	logger := getDebugLogger()
+	logger := GetDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
 		return nil
@@ -81,13 +81,6 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 	// Supavisor transaction mode does not support prepared statement
 	poolerConfig.Port = 5432
 	return poolerConfig
-}
-
-func getDebugLogger() io.Writer {
-	if viper.GetBool("DEBUG") {
-		return os.Stderr
-	}
-	return io.Discard
 }
 
 func isSupabaseDomain(host string) bool {

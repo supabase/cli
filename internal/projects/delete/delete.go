@@ -42,7 +42,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	if err := credentials.Delete(ref); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if match, _ := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
+	if match, err := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
 		tmpFiles := []string{
 			utils.ProjectRefPath,
 			utils.PostgresVersionPath,
@@ -55,6 +55,9 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 				fmt.Fprintln(os.Stderr, err)
 			}
 		}
+	} else if err != nil {
+		logger := utils.GetDebugLogger()
+		fmt.Fprintln(logger, err)
 	}
 
 	fmt.Println("Deleted project: " + utils.Aqua(resp.JSON200.Name))

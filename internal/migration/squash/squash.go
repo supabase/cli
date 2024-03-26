@@ -156,10 +156,13 @@ func lineByLineDiff(before, after io.Reader, f io.Writer) error {
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) == 0 {
 		// Expecting no errors here because the caller should have handled them
-		if migrations, _ := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
+		if migrations, err := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
 			if matches := utils.MigrateFilePattern.FindStringSubmatch(migrations[0]); len(matches) > 1 {
 				version = matches[1]
 			}
+		} else if err != nil {
+			logger := utils.GetDebugLogger()
+			fmt.Fprintln(logger, err)
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)
