@@ -35,6 +35,21 @@ import (
 )
 
 func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	workdir := viper.GetString("WORKDIR")
+	if err := utils.MkdirIfNotExistFS(fsys, workdir); err != nil {
+		return err
+	}
+	if empty, err := afero.IsEmpty(fsys, workdir); err != nil {
+		return errors.Errorf("failed to read workdir: %w", err)
+	} else if !empty {
+		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(workdir))
+		if !utils.PromptYesNo(title, true, os.Stdin) {
+			return context.Canceled
+		}
+	}
+	if err := utils.ChangeWorkDir(fsys); err != nil {
+		return err
+	}
 	// 0. Download starter template
 	client := GetGtihubClient(ctx)
 	if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
@@ -50,7 +65,8 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 2. Create project
-	if err := create.Run(ctx, api.CreateProjectBody{}, fsys); err != nil {
+	params := api.CreateProjectBody{Name: filepath.Base(workdir)}
+	if err := create.Run(ctx, params, fsys); err != nil {
 		return err
 	}
 	// 3. Get api keys
@@ -255,12 +271,6 @@ func ListSamples(ctx context.Context, client *github.Client) ([]StarterTemplate,
 }
 
 func downloadSample(ctx context.Context, client *github.Client, templateUrl string, fsys afero.Fs) error {
-	if !viper.IsSet("WORKDIR") {
-		if !utils.PromptYesNo("Do you want to bootstrap in the current directory?", true, os.Stdin) {
-			utils.CmdSuggestion = fmt.Sprintf("Run %s to use a custom directory.", utils.Aqua("supabase bootstrap --workdir <path>"))
-			return context.Canceled
-		}
-	}
 	fmt.Println("Downloading:", templateUrl)
 	// https://github.com/supabase/supabase/tree/master/examples/user-management/nextjs-user-management
 	parsed, err := url.Parse(templateUrl)
