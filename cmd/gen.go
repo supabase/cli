@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"errors"
 	"os"
 	"os/signal"
 
 	env "github.com/Netflix/go-env"
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/keys"
