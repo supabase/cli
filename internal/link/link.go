@@ -40,7 +40,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
 		return err
 	}
-	linkServices(ctx, projectRef, fsys)
+	LinkServices(ctx, projectRef, fsys)
 
 	// 2. Check database connection
 	config := flags.GetDbConfigOptionalPassword(projectRef)
@@ -72,7 +72,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return nil
 }
 
-func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
 	wg.Add(6)

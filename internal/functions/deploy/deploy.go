@@ -214,7 +214,11 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			return errors.Errorf("failed to resolve absolute path: %w", err)
 		}
 	}
-	exists, _ := afero.Exists(fsys, resolved)
+	exists, err := afero.Exists(fsys, resolved)
+	if err != nil {
+		logger := utils.GetDebugLogger()
+		fmt.Fprintln(logger, err)
+	}
 	if exists {
 		importMapPath = resolved
 	} else {

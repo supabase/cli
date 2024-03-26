@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -87,6 +89,7 @@ DO 'BEGIN WHILE (
 
 var (
 	CmdSuggestion string
+	CurrentDirAbs string
 
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
@@ -225,22 +228,44 @@ func IsGitRepo() bool {
 // If the `os.Getwd()` is within a supabase project, this will return
 // the root of the given project as the current working directory.
 // Otherwise, the `os.Getwd()` is kept as is.
-func GetProjectRoot(fsys afero.Fs) (string, error) {
-	origWd, err := os.Getwd()
-	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
+func getProjectRoot(absPath string, fsys afero.Fs) string {
+	for cwd := absPath; ; cwd = filepath.Dir(cwd) {
 		path := filepath.Join(cwd, ConfigPath)
 		// Treat all errors as file not exists
-		if isSupaProj, _ := afero.Exists(fsys, path); isSupaProj {
-			return cwd, nil
+		if isSupaProj, err := afero.Exists(fsys, path); isSupaProj {
+			return cwd
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger := GetDebugLogger()
+			fmt.Fprintln(logger, err)
 		}
 		if isRootDirectory(cwd) {
 			break
 		}
 	}
-	if err != nil {
-		return "", errors.Errorf("failed to find project root: %w", err)
+	return absPath
+}
+
+func isRootDirectory(cleanPath string) bool {
+	// A cleaned path only ends with separator if it is root
+	return os.IsPathSeparator(cleanPath[len(cleanPath)-1])
+}
+
+func ChangeWorkDir(fsys afero.Fs) error {
+	// Track the original workdir before changing to project root
+	if !filepath.IsAbs(CurrentDirAbs) {
+		var err error
+		if CurrentDirAbs, err = os.Getwd(); err != nil {
+			return errors.Errorf("failed to get current directory: %w", err)
+		}
 	}
-	return origWd, nil
+	workdir := viper.GetString("WORKDIR")
+	if len(workdir) == 0 {
+		workdir = getProjectRoot(CurrentDirAbs, fsys)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		return errors.Errorf("failed to change workdir: %w", err)
+	}
+	return nil
 }
 
 func IsBranchNameReserved(branch string) bool {

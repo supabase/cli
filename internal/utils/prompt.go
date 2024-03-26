@@ -27,6 +27,7 @@ var (
 type PromptItem struct {
 	Summary string
 	Details string
+	Index   int
 }
 
 func (i PromptItem) Title() string       { return i.Summary }
@@ -85,8 +86,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyEnter:
-			choice, ok := m.list.SelectedItem().(PromptItem)
-			if ok {
+			if choice, ok := m.list.SelectedItem().(PromptItem); ok {
 				m.choice = choice
 			}
 			return m, tea.Quit
@@ -161,7 +161,11 @@ func PromptYesNo(label string, def bool, stdin *os.File) bool {
 	for {
 		fmt.Fprintf(os.Stderr, "%s [%s] ", label, choices)
 		// Any error will be handled as empty string
-		s, _ := r.ReadString('\n')
+		s, err := r.ReadString('\n')
+		if err != nil {
+			logger := GetDebugLogger()
+			fmt.Fprintln(logger, err)
+		}
 		s = strings.TrimSpace(s)
 		if s == "" {
 			return def

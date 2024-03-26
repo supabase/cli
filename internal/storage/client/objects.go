@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path"
 	"strings"
 
@@ -133,34 +132,10 @@ func DownloadStorageObject(ctx context.Context, projectRef, remotePath, localPat
 	}
 	remotePath = strings.TrimPrefix(remotePath, "/")
 	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return errors.Errorf("failed to initialise http request: %w", err)
-	}
-	req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
-	// Sends request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.Errorf("failed to send http request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Errorf("failed to read http response: %w", err)
-		}
-		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
-	}
-	// Streams to file
-	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return errors.Errorf("failed to open file: %w", err)
-	}
-	defer f.Close()
-	if _, err = io.Copy(f, resp.Body); err != nil {
-		return errors.Errorf("failed to write file: %w", err)
-	}
-	return nil
+	return utils.DownloadFile(ctx, localPath, url, fsys, func(ctx context.Context, req *http.Request) error {
+		req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
+		return nil
+	})
 }
 
 type MoveObjectRequest struct {

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -231,4 +232,18 @@ func PromptAccessToken(stdin *os.File) string {
 Enter your access token: `, utils.GetSupabaseDashboardURL())
 	input := credentials.PromptMasked(stdin)
 	return strings.TrimSpace(input)
+}
+
+func GenerateTokenName() (string, error) {
+	user, err := user.Current()
+	if err != nil {
+		return "", errors.Errorf("cannot retrieve username: %w", err)
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", errors.Errorf("cannot retrieve hostname: %w", err)
+	}
+
+	return fmt.Sprintf("cli_%s@%s_%d", user.Username, hostname, time.Now().Unix()), nil
 }
