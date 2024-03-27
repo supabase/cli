@@ -35,6 +35,9 @@ import (
 
 func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	workdir := viper.GetString("WORKDIR")
+	if !filepath.IsAbs(workdir) {
+		workdir = filepath.Join(utils.CurrentDirAbs, workdir)
+	}
 	if err := utils.MkdirIfNotExistFS(fsys, workdir); err != nil {
 		return err
 	}
@@ -74,14 +77,14 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	// 3. Get api keys
 	var keys []api.ApiKeyResponse
 	policy := newBackoffPolicy(ctx)
-	if err := backoff.Retry(func() error {
+	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Linking project...")
 		keys, err = apiKeys.RunGetApiKeys(ctx, flags.ProjectRef)
 		if err == nil {
 			tenant.SetApiKeys(tenant.NewApiKey(keys))
 		}
 		return err
-	}, policy); err != nil {
+	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
 	// 4. Link project
@@ -98,9 +101,35 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
 	}
 	policy.Reset()
-	return backoff.Retry(func() error {
+	if err := backoff.RetryNotify(func() error {
 		return push.Run(ctx, false, false, false, false, config, fsys)
-	}, policy)
+	}, policy, newErrorCallback()); err != nil {
+		return err
+	}
+	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs)
+	return nil
+}
+
+func suggestAppStart(cwd string) string {
+	logger := utils.GetDebugLogger()
+	workdir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(logger, err)
+	}
+	workdir, err = filepath.Rel(cwd, workdir)
+	if err != nil {
+		fmt.Fprintln(logger, err)
+	}
+	var cmd []string
+	if len(workdir) > 0 && workdir != "." {
+		cmd = append(cmd, "cd "+workdir)
+	}
+	cmd = append(cmd, "npm ci", "npm run dev")
+	suggestion := "To start your app:"
+	for _, c := range cmd {
+		suggestion += fmt.Sprintf("\n  %s", utils.Aqua(c))
+	}
+	return suggestion
 }
 
 const maxRetries = 8
@@ -117,6 +146,16 @@ func newBackoffPolicy(ctx context.Context) backoff.BackOffContext {
 	}
 	b.Reset()
 	return backoff.WithContext(backoff.WithMaxRetries(&b, maxRetries), ctx)
+}
+
+func newErrorCallback() backoff.Notify {
+	failureCount := 0
+	logger := utils.GetDebugLogger()
+	return func(err error, d time.Duration) {
+		failureCount += 1
+		fmt.Fprintln(logger, err)
+		fmt.Fprintf(os.Stderr, "Retry (%d/%d): ", failureCount, maxRetries)
+	}
 }
 
 const (
