@@ -94,7 +94,8 @@ var (
 func init() {
 	loginFlags := loginCmd.Flags()
 	loginFlags.String("token", "", "Use provided token instead of automatic login flow")
-	loginFlags.String("name", "", "Name that will be used to store token in your settings, defaults to built-in token name generator")
+	loginFlags.String("name", "", "Name that will be used to store token in your settings")
+	loginFlags.Lookup("name").DefValue = "built-in token name generator"
 	loginFlags.Bool("no-browser", false, "Do not open browser automatically")
 	rootCmd.AddCommand(loginCmd)
 }
