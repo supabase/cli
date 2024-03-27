@@ -20,22 +20,27 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 	if err != nil {
 		return errors.Errorf("failed to open migration file: %w", err)
 	}
-	defer f.Close()
-
-	if fi, err := stdin.Stat(); err != nil {
-		return errors.Errorf("failed to initialise stdin: %w", err)
-	} else if (fi.Mode() & os.ModeCharDevice) == 0 {
-		// Ref: https://stackoverflow.com/a/26567513
-		if _, err := io.Copy(f, stdin); err != nil {
-			return errors.Errorf("failed to copy from stdin: %w", err)
-		}
-	}
-
-	fmt.Println("Created new migration at " + utils.Bold(path))
-	return nil
+	defer func() {
+		fmt.Println("Created new migration at " + utils.Bold(path))
+		// File descriptor will always be closed when process quits
+		_ = f.Close()
+	}()
+	return CopyStdinIfExists(stdin, f)
 }
 
 func GetMigrationPath(timestamp, name string) string {
 	fullName := fmt.Sprintf("%s_%s.sql", timestamp, name)
 	return filepath.Join(utils.MigrationsDir, fullName)
+}
+
+func CopyStdinIfExists(stdin afero.File, dst io.Writer) error {
+	if fi, err := stdin.Stat(); err != nil {
+		return errors.Errorf("failed to initialise stdin: %w", err)
+	} else if (fi.Mode() & os.ModeCharDevice) == 0 {
+		// Ref: https://stackoverflow.com/a/26567513
+		if _, err := io.Copy(dst, stdin); err != nil {
+			return errors.Errorf("failed to copy from stdin: %w", err)
+		}
+	}
+	return nil
 }
