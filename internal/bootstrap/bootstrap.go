@@ -15,7 +15,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
 	"github.com/google/go-github/v53/github"
-	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/joho/godotenv"
@@ -58,7 +57,10 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	// 1. Login
 	_, err := utils.LoadAccessTokenFS(fsys)
 	if errors.Is(err, utils.ErrMissingToken) {
-		if err := promptLogin(ctx, fsys); err != nil {
+		if err := login.Run(ctx, os.Stdout, login.RunParams{
+			OpenBrowser: term.IsTerminal(int(os.Stdin.Fd())),
+			Fsys:        fsys,
+		}); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -115,23 +117,6 @@ func newBackoffPolicy(ctx context.Context) backoff.BackOffContext {
 	}
 	b.Reset()
 	return backoff.WithContext(backoff.WithMaxRetries(&b, maxRetries), ctx)
-}
-
-func promptLogin(ctx context.Context, fsys afero.Fs) (err error) {
-	params := login.RunParams{
-		OpenBrowser: term.IsTerminal(int(os.Stdin.Fd())),
-		Fsys:        fsys,
-	}
-	params.TokenName, err = login.GenerateTokenName()
-	if err != nil {
-		return err
-	}
-	params.Encryption, err = login.NewLoginEncryption()
-	if err != nil {
-		return err
-	}
-	params.SessionId = uuid.New().String()
-	return login.Run(ctx, os.Stdout, params)
 }
 
 const (
