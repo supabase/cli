@@ -98,7 +98,7 @@ func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...
 		config.Host = Config.Hostname
 	}
 	if config.Port == 0 {
-		config.Port = uint16(Config.Db.Port)
+		config.Port = Config.Db.Port
 	}
 	if len(config.User) == 0 {
 		config.User = "postgres"
@@ -155,5 +155,5 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 }
 
 func IsLocalDatabase(config pgconn.Config) bool {
-	return config.Host == Config.Hostname && config.Port == uint16(Config.Db.Port)
+	return config.Host == Config.Hostname && config.Port == Config.Db.Port
 }

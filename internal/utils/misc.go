@@ -178,6 +178,7 @@ var (
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")

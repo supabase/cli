@@ -63,7 +63,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		}
 		// Ignore other PG settings
 		DbConfig.Host = utils.Config.Hostname
-		DbConfig.Port = uint16(utils.Config.Db.Port)
+		DbConfig.Port = utils.Config.Db.Port
 		DbConfig.User = "postgres"
 		DbConfig.Password = utils.Config.Db.Password
 		DbConfig.Database = "postgres"

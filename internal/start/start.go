@@ -103,7 +103,7 @@ type kongConfig struct {
 	EdgeRuntimeId string
 	LogflareId    string
 	ApiHost       string
-	ApiPort       uint
+	ApiPort       uint16
 }
 
 var (
