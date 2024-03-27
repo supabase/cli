@@ -99,9 +99,35 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
 	}
 	policy.Reset()
-	return backoff.RetryNotify(func() error {
+	if err := backoff.RetryNotify(func() error {
 		return push.Run(ctx, false, false, false, false, config, fsys)
-	}, policy, newErrorCallback())
+	}, policy, newErrorCallback()); err != nil {
+		return err
+	}
+	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs)
+	return nil
+}
+
+func suggestAppStart(cwd string) string {
+	logger := utils.GetDebugLogger()
+	workdir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(logger, err)
+	}
+	workdir, err = filepath.Rel(cwd, workdir)
+	if err != nil {
+		fmt.Fprintln(logger, err)
+	}
+	var cmd []string
+	if len(workdir) > 0 && workdir != "." {
+		cmd = append(cmd, "cd "+workdir)
+	}
+	cmd = append(cmd, "npm ci", "npm run dev")
+	suggestion := "To start your app:"
+	for _, c := range cmd {
+		suggestion += fmt.Sprintf("\n  %s", utils.Aqua(c))
+	}
+	return suggestion
 }
 
 const maxRetries = 8
