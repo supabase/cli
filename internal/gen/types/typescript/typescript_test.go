@@ -25,7 +25,7 @@ func TestGenLocalCommand(t *testing.T) {
 
 	dbConfig := pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.Port),
+		Port:     utils.Config.Db.Port,
 		User:     "admin",
 		Password: "password",
 	}

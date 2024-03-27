@@ -58,7 +58,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations
-	shadow, err := CreateShadowDatabase(ctx)
+	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return err
 	}

@@ -51,7 +51,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			utils.CmdSuggestion = utils.SuggestDebugFlag
 		}
 		config := indexConfig{
-			Port:  uint16(utils.Config.Api.Port),
+			Port:  utils.Config.Api.Port,
 			Slug:  slug,
 			Token: utils.Config.Auth.AnonKey,
 		}

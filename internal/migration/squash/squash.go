@@ -80,7 +80,7 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 
 func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Start shadow database
-	shadow, err := diff.CreateShadowDatabase(ctx)
+	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	schemas := []string{"auth", "storage"}
 	config := pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.ShadowPort),
+		Port:     utils.Config.Db.ShadowPort,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
