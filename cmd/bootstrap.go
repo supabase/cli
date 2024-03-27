@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/afero"
@@ -29,11 +28,6 @@ var (
 				workdir, err := utils.PromptText(title, os.Stdin)
 				if err != nil {
 					return err
-				}
-				if len(workdir) == 0 {
-					workdir = utils.CurrentDirAbs
-				} else if !filepath.IsAbs(workdir) {
-					workdir = filepath.Join(utils.CurrentDirAbs, workdir)
 				}
 				viper.Set("WORKDIR", workdir)
 			}
