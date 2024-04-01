@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/push"
+	initBlank "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/projects/apiKeys"
@@ -53,8 +54,12 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 0. Download starter template
-	client := GetGtihubClient(ctx)
-	if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+	if len(templateUrl) > 0 {
+		client := GetGtihubClient(ctx)
+		if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+			return err
+		}
+	} else if err := initBlank.Run(fsys, nil, nil, false); err != nil {
 		return err
 	}
 	// 1. Login

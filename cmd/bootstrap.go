@@ -71,11 +71,18 @@ func promptStarterTemplate(ctx context.Context, templates []bootstrap.StarterTem
 			Details: t.Description,
 		}
 	}
+	items = append(items, utils.PromptItem{
+		Index:   len(items),
+		Summary: "scratch",
+		Details: "An empty project from scratch.",
+	})
 	title := "Which starter template do you want to use?"
 	choice, err := utils.PromptChoice(ctx, title, items)
 	if err != nil {
 		return err
 	}
-	templateUrl = templates[choice.Index].Url
+	if choice.Index < len(templates) {
+		templateUrl = templates[choice.Index].Url
+	}
 	return nil
 }
