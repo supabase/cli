@@ -755,6 +755,7 @@ func sanitizeProjectId(src string) string {
 type InitParams struct {
 	ProjectId   string
 	UseOrioleDB bool
+	Overwrite   bool
 }
 
 func InitConfig(params InitParams, fsys afero.Fs) error {
@@ -771,7 +772,13 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	flag := os.O_WRONLY | os.O_CREATE
+	if params.Overwrite {
+		flag |= os.O_TRUNC
+	} else {
+		flag |= os.O_EXCL
+	}
+	f, err := fsys.OpenFile(ConfigPath, flag, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create config file: %w", err)
 	}
