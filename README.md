@@ -148,14 +148,16 @@ For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency
 ### Run the CLI
 
 ```bash
-supabase help
+supabase bootstrap
 ```
 
 Or using npx:
 
 ```bash
-npx supabase help
+npx supabase bootstrap
 ```
+
+The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
 
 ## Docs
 
@@ -173,4 +175,3 @@ To run from source:
 # Go >= 1.20
 go run . help
 ```
-

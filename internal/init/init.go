@@ -28,28 +28,17 @@ var (
 	vscodeSettings string
 	//go:embed templates/.idea/deno.xml
 	intelliJDeno string
-
-	errAlreadyInitialized = errors.Errorf("Project already initialized. Remove %s to reinitialize.", utils.Bold(utils.ConfigPath))
 )
 
-func Run(fsys afero.Fs, createVscodeSettings *bool, createIntellijSettings *bool, useOrioleDB bool) error {
-	// Sanity checks.
-	{
-		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
-			return errors.New(errAlreadyInitialized)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return errors.Errorf("failed to read config file: %w", err)
-		}
-	}
-
+func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
 	// 1. Write `config.toml`.
-	if err := utils.InitConfig(utils.InitParams{UseOrioleDB: useOrioleDB}, fsys); err != nil {
+	if err := utils.InitConfig(params, fsys); err != nil {
 		return err
 	}
 
 	// 2. Create `seed.sql`.
-	if _, err := fsys.Create(utils.SeedDataPath); err != nil {
-		return errors.Errorf("failed to create seed file: %w", err)
+	if err := initSeed(fsys); err != nil {
+		return err
 	}
 
 	// 3. Append to `.gitignore`.
@@ -76,6 +65,15 @@ func Run(fsys afero.Fs, createVscodeSettings *bool, createIntellijSettings *bool
 			return writeIntelliJConfig(fsys)
 		}
 	}
+	return nil
+}
+
+func initSeed(fsys afero.Fs) error {
+	f, err := fsys.OpenFile(utils.SeedDataPath, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return errors.Errorf("failed to create seed file: %w", err)
+	}
+	defer f.Close()
 	return nil
 }
 

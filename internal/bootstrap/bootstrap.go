@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/push"
+	initBlank "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/projects/apiKeys"
@@ -53,8 +54,12 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 0. Download starter template
-	client := GetGtihubClient(ctx)
-	if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+	if len(templateUrl) > 0 {
+		client := GetGtihubClient(ctx)
+		if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+			return err
+		}
+	} else if err := initBlank.Run(fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
 		return err
 	}
 	// 1. Login
@@ -95,7 +100,15 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
-	// 5. Push migrations
+	// 5. Wait for project healthy
+	policy.Reset()
+	if err := backoff.RetryNotify(func() error {
+		fmt.Fprintln(os.Stderr, "Checking project health...")
+		return checkProjectHealth(ctx)
+	}, policy, newErrorCallback()); err != nil {
+		return err
+	}
+	// 6. Push migrations
 	config := flags.NewDbConfigWithPassword(flags.ProjectRef)
 	if err := writeDotEnv(keys, config, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
@@ -130,6 +143,27 @@ func suggestAppStart(cwd string) string {
 		suggestion += fmt.Sprintf("\n  %s", utils.Aqua(c))
 	}
 	return suggestion
+}
+
+func checkProjectHealth(ctx context.Context) error {
+	params := api.CheckServiceHealthParams{
+		Services: []api.CheckServiceHealthParamsServices{
+			api.CheckServiceHealthParamsServicesDb,
+		},
+	}
+	resp, err := utils.GetSupabase().CheckServiceHealthWithResponse(ctx, flags.ProjectRef, &params)
+	if err != nil {
+		return err
+	}
+	if resp.JSON200 == nil {
+		return errors.Errorf("Error status %d: %s", resp.StatusCode(), resp.Body)
+	}
+	for _, service := range *resp.JSON200 {
+		if !service.Healthy {
+			return errors.Errorf("Service not healthy: %s (%s)", service.Name, service.Status)
+		}
+	}
+	return nil
 }
 
 const maxRetries = 8
