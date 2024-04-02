@@ -55,8 +55,10 @@ func Delete(project string) error {
 
 func assertKeyringSupported() error {
 	// Suggested check: https://github.com/microsoft/WSL/issues/423
-	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil && bytes.Contains(f, []byte("WSL")) {
-		return errors.New(ErrNotSupported)
+	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		if bytes.Contains(f, []byte("WSL")) || bytes.Contains(f, []byte("Microsoft")) {
+			return errors.New(ErrNotSupported)
+		}
 	}
 	return nil
 }
