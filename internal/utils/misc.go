@@ -56,14 +56,17 @@ var ServiceImages = []string{
 	KongImage,
 	InbucketImage,
 	PostgrestImage,
-	DifferImage,
-	MigraImage,
 	PgmetaImage,
 	StudioImage,
 	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
 	PgbouncerImage,
+}
+
+var JobImages = []string{
+	DifferImage,
+	MigraImage,
 	PgProveImage,
 }
 

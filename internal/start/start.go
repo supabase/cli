@@ -39,13 +39,18 @@ func suggestUpdateCmd(serviceImages map[string]string) string {
 	return cmd
 }
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+func Run(ctx context.Context, fsys afero.Fs, excluded map[string]bool, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
+		dbExcluded := isContainerExcluded(utils.DbAliases[0], excluded)
+		if err := utils.AssertSupabaseDbIsRunning(); dbExcluded {
+			if err != nil {
+				return err
+			}
+		} else if err == nil {
 			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
 			utils.CmdSuggestion = fmt.Sprintf("Run %s to show status of local Supabase containers.", utils.Aqua("supabase status"))
 			return nil
@@ -77,7 +82,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 			Password: utils.Config.Db.Password,
 			Database: "postgres",
 		}
-		return run(p, ctx, fsys, excludedContainers, dbConfig)
+		return run(p, ctx, fsys, excluded, dbConfig)
 	}); err != nil {
 		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
 			fmt.Fprintln(os.Stderr, err)
@@ -90,6 +95,13 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	}
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
+	// TODO: list all running services
+	var excludedContainers []string
+	for service, ok := range excluded {
+		if ok {
+			excludedContainers = append(excludedContainers, service)
+		}
+	}
 	status.PrettyPrint(os.Stdout, excludedContainers...)
 	return nil
 }
@@ -136,12 +148,7 @@ var (
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
 
-func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
-	excluded := make(map[string]bool)
-	for _, name := range excludedContainers {
-		excluded[name] = true
-	}
-
+func run(p utils.Program, ctx context.Context, fsys afero.Fs, excluded map[string]bool, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	// Start vector
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
@@ -205,7 +212,7 @@ EOF
 
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
-	if dbConfig.Host == utils.DbId {
+	if dbConfig.Host == utils.DbId && !isContainerExcluded(utils.DbAliases[0], excluded) {
 		if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
 			return err
 		}
@@ -957,14 +964,12 @@ EOF
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 	short := utils.ShortContainerImageName(imageName)
-	if val, ok := excluded[short]; ok && val {
-		return true
-	}
-	return false
+	val, ok := excluded[short]
+	return ok && val
 }
 
 func ExcludableContainers() []string {
-	names := []string{}
+	names := []string{utils.DbAliases[0]}
 	for _, image := range utils.ServiceImages {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
