@@ -75,7 +75,7 @@ func TestWriteEnv(t *testing.T) {
 		assert.Equal(t, `POSTGRES_URL="postgresql://admin:password@db.supabase.co:6543/postgres?connect_timeout=10"
 SUPABASE_ANON_KEY="anonkey"
 SUPABASE_SERVICE_ROLE_KEY="servicekey"
-SUPABASE_URL="testing.supabase.co"`, string(env))
+SUPABASE_URL="https://testing.supabase.co"`, string(env))
 	})
 
 	t.Run("merges with .env.example", func(t *testing.T) {
@@ -106,7 +106,7 @@ SUPABASE_URL="testing.supabase.co"`, string(env))
 		env, err := afero.ReadFile(fsys, ".env")
 		assert.NoError(t, err)
 		assert.Equal(t, `NEXT_PUBLIC_SUPABASE_ANON_KEY="anonkey"
-NEXT_PUBLIC_SUPABASE_URL="testing.supabase.co"
+NEXT_PUBLIC_SUPABASE_URL="https://testing.supabase.co"
 POSTGRES_DATABASE="postgres"
 POSTGRES_HOST="db.supabase.co"
 POSTGRES_PASSWORD="password"
@@ -116,7 +116,7 @@ POSTGRES_URL_NON_POOLING="postgresql://admin:password@db.supabase.co:5432/postgr
 POSTGRES_USER="admin"
 SUPABASE_ANON_KEY="anonkey"
 SUPABASE_SERVICE_ROLE_KEY="servicekey"
-SUPABASE_URL="testing.supabase.co"
+SUPABASE_URL="https://testing.supabase.co"
 no_match="example"`, string(env))
 	})
 
