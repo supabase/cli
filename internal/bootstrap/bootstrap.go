@@ -215,7 +215,7 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 	transactionMode := *config.Copy()
 	transactionMode.Port = 6543
 	initial := map[string]string{
-		SUPABASE_URL: utils.GetSupabaseHost(flags.ProjectRef),
+		SUPABASE_URL: "https://" + utils.GetSupabaseHost(flags.ProjectRef),
 		POSTGRES_URL: utils.ToPostgresURL(transactionMode),
 	}
 	for _, entry := range keys {
