@@ -49,7 +49,7 @@ require (
 	golang.org/x/mod v0.16.0
 	golang.org/x/oauth2 v0.18.0
 	golang.org/x/term v0.18.0
-	google.golang.org/grpc v1.62.1
+	google.golang.org/grpc v1.63.0
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.11.0
@@ -156,7 +156,7 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golangci/dupl v0.0.0-20180902072040-3e9179ac440a // indirect
 	github.com/golangci/gofmt v0.0.0-20231018234816-f50ced29576e // indirect
 	github.com/golangci/misspell v0.4.1 // indirect
