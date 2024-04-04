@@ -248,9 +248,11 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 		case POSTGRES_DATABASE:
 			initial[k] = config.Database
 		case NEXT_PUBLIC_SUPABASE_ANON_KEY:
+			fallthrough
 		case EXPO_PUBLIC_SUPABASE_ANON_KEY:
 			initial[k] = initial[SUPABASE_ANON_KEY]
 		case NEXT_PUBLIC_SUPABASE_URL:
+			fallthrough
 		case EXPO_PUBLIC_SUPABASE_URL:
 			initial[k] = initial[SUPABASE_URL]
 		default:
