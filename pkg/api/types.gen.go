@@ -555,6 +555,9 @@ type CreateProjectBody struct {
 
 	// Region Region you want your server to reside in
 	Region CreateProjectBodyRegion `json:"region"`
+
+	// TemplateUrl Template URL used to create the project from the CLI.
+	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
 // CreateProjectBodyPlan Subscription plan is now set on organization level and is ignored in this request
