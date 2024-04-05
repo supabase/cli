@@ -138,32 +138,37 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 
 func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero.Fs) (string, error) {
 	fmt.Println("Downloading " + utils.Bold(slug))
-	resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().GetFunctionBody(ctx, projectRef, slug)
 	if err != nil {
 		return "", errors.Errorf("failed to get function body: %w", err)
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return "", errors.New("Unexpected error downloading Function: " + string(resp.Body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", errors.Errorf("Error status %d: unexpected error downloading Function", resp.StatusCode)
+		}
+		return "", errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
 	}
-
 	// Create temp file to store downloaded eszip
-	eszipFile, err := afero.TempFile(fsys, "", slug)
-	if err != nil {
-		return "", errors.Errorf("failed to create temporary file: %w", err)
+	eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slug))
+	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
+		return "", err
 	}
-	defer eszipFile.Close()
-
-	body := bytes.NewReader(resp.Body)
-	if _, err = io.Copy(eszipFile, body); err != nil {
+	if err := afero.WriteReader(fsys, eszipPath, resp.Body); err != nil {
 		return "", errors.Errorf("failed to download file: %w", err)
 	}
-	return eszipFile.Name(), nil
+	return eszipPath, nil
 }
 
-func extractOne(ctx context.Context, hostEszipPath string) error {
+func extractOne(ctx context.Context, eszipPath string) error {
 	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
 	if err != nil {
 		return errors.Errorf("failed to resolve absolute path: %w", err)
+	}
+	hostEszipPath, err := filepath.Abs(eszipPath)
+	if err != nil {
+		return errors.Errorf("failed to resolve eszip path: %w", err)
 	}
 
 	dockerEszipPath := path.Join(dockerEszipDir, filepath.Base(hostEszipPath))
