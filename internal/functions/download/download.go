@@ -129,14 +129,14 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 		}
 	}()
 	// Extract eszip to functions directory
-	err = extractOne(ctx, eszipPath)
+	err = extractOne(ctx, slug, eszipPath)
 	if err != nil {
 		utils.CmdSuggestion += suggestLegacyBundle(slug)
 	}
 	return err
 }
 
-func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero.Fs) (string, error) {
+func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {
 	fmt.Println("Downloading " + utils.Bold(slug))
 	resp, err := utils.GetSupabase().GetFunctionBody(ctx, projectRef, slug)
 	if err != nil {
@@ -161,23 +161,24 @@ func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero
 	return eszipPath, nil
 }
 
-func extractOne(ctx context.Context, eszipPath string) error {
-	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
+func extractOne(ctx context.Context, slug, eszipPath string) error {
+	hostFuncDirPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug))
 	if err != nil {
 		return errors.Errorf("failed to resolve absolute path: %w", err)
 	}
+
 	hostEszipPath, err := filepath.Abs(eszipPath)
 	if err != nil {
 		return errors.Errorf("failed to resolve eszip path: %w", err)
 	}
-
 	dockerEszipPath := path.Join(dockerEszipDir, filepath.Base(hostEszipPath))
+
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
 		hostEszipPath + ":" + dockerEszipPath + ":ro,z",
-		hostFuncDirPath + ":" + utils.DockerFuncDirPath + ":rw,z",
+		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw,z",
 	}
 
 	return utils.DockerRunOnceWithConfig(
