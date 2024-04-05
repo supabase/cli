@@ -317,10 +317,11 @@ type (
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
 		Hook                       hook `toml:"hook"`
 
-		EnableSignup bool  `toml:"enable_signup"`
-		Email        email `toml:"email"`
-		Sms          sms   `toml:"sms"`
-		External     map[string]provider
+		EnableSignup           bool  `toml:"enable_signup"`
+		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
+		Email                  email `toml:"email"`
+		Sms                    sms   `toml:"sms"`
+		External               map[string]provider
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
