@@ -151,7 +151,7 @@ func suggestAppStart(cwd string) string {
 	}
 	fileBytes, err := ioutil.ReadFile("samples.json")
 	if err != nil {
-		log.Fatalf("failed to read file: %v", err)
+		errors.Errorf("failed to read file: %v", err)
 	}
 
 	var samples SamplesFile
