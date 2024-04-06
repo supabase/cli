@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,17 +33,6 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/term"
 )
-
-type Sample struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
-	Start       string `json:"start"`
-}
-
-type SamplesFile struct {
-	Samples []Sample `json:"samples"`
-}
 
 func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	workdir := viper.GetString("WORKDIR")
@@ -149,15 +137,15 @@ func suggestAppStart(cwd string) string {
 	if len(workdir) > 0 && workdir != "." {
 		cmd = append(cmd, "cd "+workdir)
 	}
-	fileBytes, err := ioutil.ReadFile("samples.json")
+	fileBytes, err := os.ReadFile("samples.json")
 	if err != nil {
-		return errors.Errorf("failed to read file: %v", err)
+		fmt.Fprintln(logger, err)
 	}
 
-	var samples SamplesFile
+	var samples samplesRepo
 	err = json.Unmarshal(fileBytes, &samples)
 	if err != nil {
-		return errors.Errorf("failed to unmarshal JSON: %v", err)
+		fmt.Fprintln(logger, err)
 	}
 
 	for _, sample := range samples.Samples {
@@ -332,6 +320,7 @@ type StarterTemplate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Url         string `json:"url"`
+	Start       string `json:"start"`
 }
 
 func ListSamples(ctx context.Context, client *github.Client) ([]StarterTemplate, error) {
