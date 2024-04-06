@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -151,17 +151,17 @@ func suggestAppStart(cwd string) string {
 	}
 	fileBytes, err := ioutil.ReadFile("samples.json")
 	if err != nil {
-		errors.Errorf("failed to read file: %v", err)
+		return errors.Errorf("failed to read file: %v", err)
 	}
 
 	var samples SamplesFile
 	err = json.Unmarshal(fileBytes, &samples)
 	if err != nil {
-		errors.Errorf("failed to unmarshal JSON: %v", err)
+		return errors.Errorf("failed to unmarshal JSON: %v", err)
 	}
 
 	for _, sample := range samples.Samples {
-		fmt.Printf("To start your app run:", sample.Start)
+		fmt.Printf("To start your app run: %q", sample.Start)
 	}
 	// TODO: refactor this part properly
 	cmd = append(cmd, "npm ci", "npm run dev")
