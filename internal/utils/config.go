@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -387,11 +388,14 @@ type (
 		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
 		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
 		CustomAccessToken           hookConfig `toml:"custom_access_token"`
+		SendSMS                     hookConfig `toml:"send_sms"`
+		SendEmail                   hookConfig `toml:"send_email"`
 	}
 
 	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
+		Secrets string `toml:"secrets"`
 	}
 
 	twilioConfig struct {
@@ -459,6 +463,24 @@ type (
 	// 	AfterMigrations  string `toml:"after_migrations"`
 	// }
 )
+
+func (h *hookConfig) HandleHook(hookType string) error {
+	// If not enabled do nothing
+	if !h.Enabled {
+		return nil
+	}
+	if h.URI == "" {
+		return fmt.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	}
+	if err := validateHookURI(h.URI, hookType); err != nil {
+		return err
+	}
+	var err error
+	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+		return fmt.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	}
+	return nil
+}
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
@@ -687,25 +709,21 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			}
-
-			if Config.Auth.Hook.MFAVerificationAttempt.Enabled {
-				if Config.Auth.Hook.MFAVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.mfa_verification_atempt.uri")
-				}
+			if err := Config.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
-				if Config.Auth.Hook.PasswordVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.password_verification_attempt.uri")
-				}
+			if err := Config.Auth.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.CustomAccessToken.Enabled {
-				if Config.Auth.Hook.CustomAccessToken.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.custom_access_token.uri")
-				}
+			if err := Config.Auth.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
+				return err
 			}
-
+			if err := Config.Auth.Hook.SendSMS.HandleHook("send_sms"); err != nil {
+				return err
+			}
+			if err := Config.Auth.Hook.SendEmail.HandleHook("send_email"); err != nil {
+				return err
+			}
 			// Validate oauth config
 			for ext, provider := range Config.Auth.External {
 				if !provider.Enabled {
@@ -859,6 +877,17 @@ func loadDefaultEnv() error {
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	}
+	return nil
+}
+
+func validateHookURI(uri, hookName string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
 }
