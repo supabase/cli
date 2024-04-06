@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -156,7 +157,7 @@ func suggestAppStart(cwd string) string {
 	var samples SamplesFile
 	err = json.Unmarshal(fileBytes, &samples)
 	if err != nil {
-		log.Fatalf("failed to unmarshal JSON: %v", err)
+		errors.Errorf("failed to unmarshal JSON: %v", err)
 	}
 
 	for _, sample := range samples.Samples {
