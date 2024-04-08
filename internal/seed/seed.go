@@ -36,7 +36,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	fmt.Println("Generating seed data for test users...")
+	fmt.Println("Generating seed data examples for test users...")
 	shadow, err := diff.CreateShadowDatabase(ctx)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	fmt.Println("Seed data written to supabase/seed.example.sql")
+	fmt.Printf("Seed data written to %s\n", utils.SeedExampleDataPath)
 	return nil
 }
 
