@@ -48,7 +48,7 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema, exclude
 	}
 	if dataOnly {
 		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
-		return dumpData(ctx, config, schema, excludeTable, useCopy, dryRun, outStream)
+		return DumpData(ctx, config, schema, excludeTable, useCopy, dryRun, outStream)
 	} else if roleOnly {
 		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
 		return dumpRole(ctx, config, keepComments, dryRun, outStream)
@@ -71,7 +71,7 @@ func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keep
 	return dump(ctx, config, dumpSchemaScript, env, dryRun, stdout)
 }
 
-func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []string, useCopy, dryRun bool, stdout io.Writer) error {
+func DumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []string, useCopy, dryRun bool, stdout io.Writer) error {
 	// We want to dump user data in auth, storage, etc. for migrating to new project
 	excludedSchemas := []string{
 		"information_schema",
