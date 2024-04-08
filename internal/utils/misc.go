@@ -184,6 +184,7 @@ var (
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
+	SeedExampleDataPath   = filepath.Join(SupabaseDirPath, "seed.example.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 
 	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
