@@ -2322,6 +2322,11 @@ components:
         kps_enabled:
           type: boolean
           deprecated: true
+        template_url:
+          template_url:
+          type: string
+          description: Template URL used to create the project from the CLI.
+          example: https://github.com/supabase/supabase/tree/master/examples/slack-clone/nextjs-slack-clone
       required:
         - db_pass
         - name
