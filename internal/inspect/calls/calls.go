@@ -9,22 +9,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-SELECT
-	query,
-	interval '1 millisecond' * total_exec_time AS total_exec_time,
-	to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
-	to_char(calls, 'FM999G999G990') AS ncalls,
-	interval '1 millisecond' * (blk_read_time + blk_write_time) AS sync_io_time
-FROM pg_stat_statements	
-ORDER BY calls DESC
-LIMIT 10
-`
 
 type Result struct {
 	Total_exec_time string
@@ -39,7 +28,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.CALLS_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

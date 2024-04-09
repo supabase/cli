@@ -8,29 +8,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-SELECT relname,
-  CASE
-    WHEN idx_scan IS NULL THEN 'Insufficient data'
-    WHEN idx_scan = 0 THEN 'Insufficient data'
-    ELSE (100 * idx_scan / (seq_scan + idx_scan))::text
-  END percent_of_times_index_used,
-  n_live_tup rows_in_table
-FROM
-  pg_stat_user_tables
-ORDER BY
-  CASE
-    WHEN idx_scan is null then 1
-    WHEN idx_scan = 0 then 1
-    ELSE 0
-  END,
-  n_live_tup DESC;
-`
 
 type Result struct {
 	Relname                     string
@@ -43,7 +25,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.INDEX_USAGE_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

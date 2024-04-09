@@ -8,17 +8,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-SELECT relname AS name,
-       seq_scan as count
-FROM
-  pg_stat_user_tables
-ORDER BY seq_scan DESC;`
 
 type Result struct {
 	Name  string
@@ -30,7 +24,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.SEQ_SCANS_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

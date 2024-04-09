@@ -8,20 +8,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-SELECT c.relname AS table,
-  pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
-FROM pg_class c
-LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='r'
-ORDER BY pg_indexes_size(c.oid) DESC;`
 
 type Result struct {
 	Table      string
@@ -33,7 +24,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.TableIndexSizesQuery())
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

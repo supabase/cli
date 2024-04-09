@@ -8,24 +8,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-SELECT
-  pid,
-  now() - pg_stat_activity.query_start AS duration,
-  query AS query
-FROM
-  pg_stat_activity
-WHERE
-  pg_stat_activity.query <> ''::text
-  AND state <> 'idle'
-  AND now() - pg_stat_activity.query_start > interval '5 minutes'
-ORDER BY
-  now() - pg_stat_activity.query_start DESC;`
 
 type Result struct {
 	Pid      string
@@ -38,7 +25,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.LONG_RUNNING_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

@@ -8,28 +8,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
-
-const QUERY = `
-select
-  rolname,
-  (
-    select
-      count(*)
-    from
-      pg_stat_activity
-    where
-      pg_roles.rolname = pg_stat_activity.usename
-  ) as active_connections,
-  case when rolconnlimit = -1 then current_setting('max_connections') :: int8
-       else rolconnlimit
-  end as connection_limit
-from
-  pg_roles
-order by 2 desc`
 
 type Result struct {
 	Rolname            string
@@ -42,7 +25,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.ROLE_CONNECTIONS_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
