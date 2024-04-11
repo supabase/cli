@@ -27,7 +27,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.BloatQuery())
+	rows, err := conn.Query(ctx, inspect.BLOAT_QUERY, inspect.GetExcludedSchemas())
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

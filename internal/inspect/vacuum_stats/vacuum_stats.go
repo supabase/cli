@@ -31,7 +31,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.VacuumStatsQuery())
+	rows, err := conn.Query(ctx, inspect.VACUUM_STATS_QUERY, inspect.GetExcludedSchemas())
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

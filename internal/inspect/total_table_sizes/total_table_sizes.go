@@ -24,7 +24,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.TotalTableSizesQuery())
+	rows, err := conn.Query(ctx, inspect.TOTAL_TABLE_SIZE_QUERY, inspect.GetExcludedSchemas())
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

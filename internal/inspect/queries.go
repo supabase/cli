@@ -1,31 +1,20 @@
 package inspect
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/supabase/cli/internal/utils"
 )
 
-var excludedString string
-
-func init() {
-	var excluded = make([]string, len(utils.InternalSchemas))
-	for i, schema := range utils.InternalSchemas {
-		excluded[i] = fmt.Sprintf("'%s'", schema)
-	}
-	excluded = append(excluded, "'pg_catalog'")
-	excludedString = strings.Join(excluded, ", ")
+func GetExcludedSchemas() []string {
+	return append(utils.InternalSchemas, "pg_catalog")
 }
 
-func BloatQuery() string {
-	return fmt.Sprintf(`WITH constants AS (
+const BLOAT_QUERY = `WITH constants AS (
   SELECT current_setting('block_size')::numeric AS bs, 23 AS hdr, 4 AS ma
 ), bloat_info AS (
   SELECT
     ma,bs,schemaname,tablename,
-    (datawidth+(hdr+ma-(case when hdr%%ma=0 THEN ma ELSE hdr%%ma END)))::numeric AS datahdr,
-    (maxfracsum*(nullhdr+ma-(case when nullhdr%%ma=0 THEN ma ELSE nullhdr%%ma END))) AS nullhdr2
+    (datawidth+(hdr+ma-(case when hdr%ma=0 THEN ma ELSE hdr%ma END)))::numeric AS datahdr,
+    (maxfracsum*(nullhdr+ma-(case when nullhdr%ma=0 THEN ma ELSE nullhdr%ma END))) AS nullhdr2
   FROM (
     SELECT
       schemaname, tablename, hdr, ma, bs,
@@ -43,7 +32,7 @@ func BloatQuery() string {
   SELECT
     schemaname, tablename, cc.relpages, bs,
     CEIL((cc.reltuples*((datahdr+ma-
-      (CASE WHEN datahdr%%ma=0 THEN ma ELSE datahdr%%ma END))+nullhdr2+4))/(bs-20::float)) AS otta
+      (CASE WHEN datahdr%ma=0 THEN ma ELSE datahdr%ma END))+nullhdr2+4))/(bs-20::float)) AS otta
   FROM bloat_info
   JOIN pg_class cc ON cc.relname = bloat_info.tablename
   JOIN pg_namespace nn ON cc.relnamespace = nn.oid AND nn.nspname = bloat_info.schemaname AND nn.nspname <> 'information_schema'
@@ -79,9 +68,8 @@ SELECT
 FROM
   index_bloat) bloat_summary
 WHERE
- schemaname NOT IN (%s)
-ORDER BY raw_waste DESC, bloat DESC`, excludedString)
-}
+ schemaname NOT IN (SELECT unnest($1::text[]))
+ORDER BY raw_waste DESC, bloat DESC`
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
 const BLOCKING_QUERY = `
@@ -122,17 +110,15 @@ SELECT
 sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
 FROM pg_statio_user_tables`
 
-func IndexSizesQuery() string {
-	return fmt.Sprintf(`SELECT c.relname AS name,
+const INDEX_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%s)
+WHERE n.nspname NOT IN (%1)
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='i'
 GROUP BY c.relname
-ORDER BY sum(c.relpages) DESC`, excludedString)
-}
+ORDER BY sum(c.relpages) DESC`
 
 const INDEX_USAGE_QUERY = `SELECT relname,
 CASE
@@ -222,16 +208,14 @@ FROM
 pg_stat_user_tables
 ORDER BY seq_scan DESC`
 
-func TableIndexSizesQuery() string {
-	return fmt.Sprintf(`SELECT c.relname AS table,
+const TABLE_INDEX_SIZE_QUERY = `SELECT c.relname AS table,
 pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%s)
+WHERE n.nspname NOT IN (SELECT unnest($1::text[]))
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
-ORDER BY pg_indexes_size(c.oid) DESC`, excludedString)
-}
+ORDER BY pg_indexes_size(c.oid) DESC`
 
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
 relname AS name,
@@ -241,52 +225,43 @@ pg_stat_user_tables
 ORDER BY
 n_live_tup DESC`
 
-func TableSizesQuery() string {
-	return fmt.Sprintf(`SELECT c.relname AS name,
+const TABLE_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%s)
+WHERE n.nspname NOT IN (SELECT unnest($1::text[]))
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
-ORDER BY pg_table_size(c.oid) DESC`, excludedString)
-}
+ORDER BY pg_table_size(c.oid) DESC`
 
-func TotalIndexSizesQuery() string {
-	return fmt.Sprintf(`SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
+const TOTAL_INDEX_SIZE_QUERY = `SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%s)
+WHERE n.nspname NOT IN (SELECT unnest($1::text[]))
 AND n.nspname !~ '^pg_toast'
-AND c.relkind='i'`, excludedString)
-}
+AND c.relkind='i'`
 
-func TotalTableSizesQuery() string {
-	return fmt.Sprintf(`SELECT c.relname AS name,
+const TOTAL_TABLE_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%s)
+WHERE n.nspname NOT IN (SELECT unnest($1::text[]))
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
-ORDER BY pg_total_relation_size(c.oid) DESC`, excludedString)
-}
+ORDER BY pg_total_relation_size(c.oid) DESC`
 
-func UnusedIndexesQuery() string {
-	return fmt.Sprintf(`SELECT
+const UNUSED_INDEXES_QUERY = `SELECT
 schemaname || '.' || relname AS table,
 indexrelname AS index,
 pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
 idx_scan as index_scans
 FROM pg_stat_user_indexes ui
 JOIN pg_index i ON ui.indexrelid = i.indexrelid
-WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND schemaname NOT IN (%s)
+WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND schemaname NOT IN (SELECT unnest($1::text[]))
 ORDER BY pg_relation_size(i.indexrelid) / nullif(idx_scan, 0) DESC NULLS FIRST,
-pg_relation_size(i.indexrelid) DESC`, excludedString)
-}
+pg_relation_size(i.indexrelid) DESC`
 
-func VacuumStatsQuery() string {
-	return fmt.Sprintf(`WITH table_opts AS (
+const VACUUM_STATS_QUERY = `WITH table_opts AS (
   SELECT
     pg_class.oid, relname, nspname, array_to_string(reloptions, '') AS relopts
   FROM
@@ -295,12 +270,12 @@ func VacuumStatsQuery() string {
   SELECT
     oid, relname, nspname,
     CASE
-      WHEN relopts LIKE '%%autovacuum_vacuum_threshold%%'
+      WHEN relopts LIKE '%autovacuum_vacuum_threshold%'
         THEN substring(relopts, '.*autovacuum_vacuum_threshold=([0-9.]+).*')::integer
         ELSE current_setting('autovacuum_vacuum_threshold')::integer
       END AS autovacuum_vacuum_threshold,
     CASE
-      WHEN relopts LIKE '%%autovacuum_vacuum_scale_factor%%'
+      WHEN relopts LIKE '%autovacuum_vacuum_scale_factor%'
         THEN substring(relopts, '.*autovacuum_vacuum_scale_factor=([0-9.]+).*')::real
         ELSE current_setting('autovacuum_vacuum_scale_factor')::real
       END AS autovacuum_vacuum_scale_factor
@@ -324,11 +299,10 @@ SELECT
 FROM
   pg_stat_user_tables psut INNER JOIN pg_class ON psut.relid = pg_class.oid
 INNER JOIN vacuum_settings ON pg_class.oid = vacuum_settings.oid
-WHERE schema NOT IN (%s)
+WHERE schema NOT IN (SELECT unnest($1::text[]))
 ORDER BY
   case
     when pg_class.reltuples = -1 then 1
     else 0
   end,
-  1`, excludedString)
-}
+  1`
