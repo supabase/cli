@@ -36,7 +36,7 @@ const (
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
 	StudioImage      = "supabase/studio:20240326-5e5586d"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.41.3"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.41.5"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
