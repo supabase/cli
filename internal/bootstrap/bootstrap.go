@@ -118,7 +118,7 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	}
 	policy.Reset()
 	if err := backoff.RetryNotify(func() error {
-		return push.Run(ctx, false, false, false, false, config, fsys)
+		return push.Run(ctx, false, false, true, true, config, fsys)
 	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
