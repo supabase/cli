@@ -107,7 +107,7 @@ FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'i'
-GROUP BY c.relname
+GROUP BY n.nspname, c.relname
 ORDER BY sum(c.relpages) DESC`
 
 const INDEX_USAGE_QUERY = `SELECT
@@ -210,14 +210,16 @@ AND c.relkind = 'r'
 ORDER BY pg_indexes_size(c.oid) DESC`
 
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
-  schemaname || '.' || relname AS name,
+  schemaname AS schema,
+  relname AS name,
   n_live_tup AS estimated_count
 FROM pg_stat_user_tables
 WHERE NOT schemaname LIKE ANY($1)
 ORDER BY n_live_tup DESC`
 
 const TABLE_SIZES_QUERY = `SELECT
-  n.nspname || '.' || c.relname AS name,
+  n.nspname AS schema,
+  c.relname AS name,
   pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
@@ -233,7 +235,8 @@ WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'i'`
 
 const TOTAL_TABLE_SIZES_QUERY = `SELECT
-  n.nspname || '.' || c.relname AS name,
+  n.nspname AS schema,
+  c.relname AS name,
   pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
