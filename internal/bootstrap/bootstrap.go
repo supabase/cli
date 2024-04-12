@@ -34,7 +34,7 @@ import (
 	"golang.org/x/term"
 )
 
-func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	workdir := viper.GetString("WORKDIR")
 	if !filepath.IsAbs(workdir) {
 		workdir = filepath.Join(utils.CurrentDirAbs, workdir)
@@ -54,9 +54,9 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 0. Download starter template
-	if len(templateUrl) > 0 {
+	if len(starter.Url) > 0 {
 		client := GetGtihubClient(ctx)
-		if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
 	} else if err := initBlank.Run(fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
@@ -77,7 +77,7 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	// 2. Create project
 	params := api.CreateProjectBody{
 		Name:        filepath.Base(workdir),
-		TemplateUrl: &templateUrl,
+		TemplateUrl: &starter.Url,
 	}
 	if err := create.Run(ctx, params, fsys); err != nil {
 		return err
@@ -122,11 +122,11 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
-	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs)
+	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs, starter.Start)
 	return nil
 }
 
-func suggestAppStart(cwd string) string {
+func suggestAppStart(cwd, command string) string {
 	logger := utils.GetDebugLogger()
 	workdir, err := os.Getwd()
 	if err != nil {
@@ -140,7 +140,9 @@ func suggestAppStart(cwd string) string {
 	if len(workdir) > 0 && workdir != "." {
 		cmd = append(cmd, "cd "+workdir)
 	}
-	cmd = append(cmd, "npm ci", "npm run dev")
+	if len(command) > 0 {
+		cmd = append(cmd, command)
+	}
 	suggestion := "To start your app:"
 	for _, c := range cmd {
 		suggestion += fmt.Sprintf("\n  %s", utils.Aqua(c))
@@ -314,6 +316,7 @@ type StarterTemplate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Url         string `json:"url"`
+	Start       string `json:"start"`
 }
 
 func ListSamples(ctx context.Context, client *github.Client) ([]StarterTemplate, error) {
