@@ -212,10 +212,9 @@ ORDER BY pg_indexes_size(c.oid) DESC`
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
   schemaname || '.' || relname AS name,
   n_live_tup AS estimated_count
-FROM
-  pg_stat_user_tables
-ORDER BY
-  n_live_tup DESC`
+FROM pg_stat_user_tables
+WHERE NOT schemaname LIKE ANY($1)
+ORDER BY n_live_tup DESC`
 
 const TABLE_SIZES_QUERY = `SELECT
   n.nspname || '.' || c.relname AS name,

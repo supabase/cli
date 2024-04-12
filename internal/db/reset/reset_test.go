@@ -302,8 +302,6 @@ var escapedSchemas = []string{
 	"storage",
 	`\_analytics`,
 	`supabase\_functions`,
-	`information\_schema`,
-	`pg\_%`,
 	"cron",
 	"graphql",
 	`graphql\_public`,
@@ -318,6 +316,8 @@ var escapedSchemas = []string{
 	`\_timescaledb\_%`,
 	"topology",
 	"vault",
+	`information\_schema`,
+	`pg\_%`,
 }
 
 func TestResetRemote(t *testing.T) {
