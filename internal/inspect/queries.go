@@ -106,8 +106,7 @@ pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE n.nspname NOT IN (%1)
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='i'
+AND c.relkind = 'i'
 GROUP BY c.relname
 ORDER BY sum(c.relpages) DESC`
 
@@ -204,8 +203,7 @@ pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='r'
+AND c.relkind = 'r'
 ORDER BY pg_indexes_size(c.oid) DESC`
 
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
@@ -221,24 +219,21 @@ pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='r'
+AND c.relkind = 'r'
 ORDER BY pg_table_size(c.oid) DESC`
 
 const TOTAL_INDEX_SIZE_QUERY = `SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='i'`
+AND c.relkind = 'i'`
 
 const TOTAL_TABLE_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='r'
+AND c.relkind = 'r'
 ORDER BY pg_total_relation_size(c.oid) DESC`
 
 const UNUSED_INDEXES_QUERY = `SELECT
