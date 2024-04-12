@@ -59,8 +59,7 @@ SELECT
   CASE WHEN ipages < iotta THEN '0' ELSE (bs*(ipages-iotta))::bigint END AS raw_waste
 FROM
   index_bloat) bloat_summary
-WHERE
- schemaname NOT LIKE ANY($1)
+WHERE NOT schemaname LIKE ANY($1)
 ORDER BY raw_waste DESC, bloat DESC`
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
@@ -204,7 +203,7 @@ const TABLE_INDEX_SIZE_QUERY = `SELECT c.relname AS table,
 pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT LIKE ANY($1)
+WHERE NOT n.nspname LIKE ANY($1)
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
 ORDER BY pg_indexes_size(c.oid) DESC`
@@ -221,7 +220,7 @@ const TABLE_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT LIKE ANY($1)
+WHERE NOT n.nspname LIKE ANY($1)
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
 ORDER BY pg_table_size(c.oid) DESC`
@@ -229,7 +228,7 @@ ORDER BY pg_table_size(c.oid) DESC`
 const TOTAL_INDEX_SIZE_QUERY = `SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT LIKE ANY($1)
+WHERE NOT n.nspname LIKE ANY($1)
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='i'`
 
@@ -237,7 +236,7 @@ const TOTAL_TABLE_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT LIKE ANY($1)
+WHERE NOT n.nspname LIKE ANY($1)
 AND n.nspname !~ '^pg_toast'
 AND c.relkind='r'
 ORDER BY pg_total_relation_size(c.oid) DESC`
@@ -249,7 +248,7 @@ pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
 idx_scan as index_scans
 FROM pg_stat_user_indexes ui
 JOIN pg_index i ON ui.indexrelid = i.indexrelid
-WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND schemaname NOT LIKE ANY($1)
+WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND NOT schemaname LIKE ANY($1)
 ORDER BY pg_relation_size(i.indexrelid) / nullif(idx_scan, 0) DESC NULLS FIRST,
 pg_relation_size(i.indexrelid) DESC`
 
@@ -291,7 +290,7 @@ SELECT
 FROM
   pg_stat_user_tables psut INNER JOIN pg_class ON psut.relid = pg_class.oid
 INNER JOIN vacuum_settings ON pg_class.oid = vacuum_settings.oid
-WHERE schema NOT LIKE ANY($1)
+WHERE NOT schema LIKE ANY($1)
 ORDER BY
   case
     when pg_class.reltuples = -1 then 1
