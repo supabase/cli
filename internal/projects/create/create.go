@@ -35,7 +35,7 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), projectUrl)
+	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
 	return nil
 }
 
