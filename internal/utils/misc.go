@@ -107,9 +107,11 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	SystemSchemas = []string{
+	PgSchemas = []string{
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
+	}
+	SystemSchemas = append([]string{
 		// Owned by extensions
 		"cron",
 		"graphql",
@@ -125,7 +127,7 @@ var (
 		"_timescaledb_*",
 		"topology",
 		"vault",
-	}
+	}, PgSchemas...)
 	InternalSchemas = append([]string{
 		"auth",
 		"extensions",

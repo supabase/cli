@@ -9,35 +9,17 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
-const QUERY = `
-SELECT
-	bl.pid AS blocked_pid,
-	ka.query AS blocking_statement,
-	now() - ka.query_start AS blocking_duration,
-	kl.pid AS blocking_pid,
-	a.query AS blocked_statement,
-	now() - a.query_start AS blocked_duration
-FROM pg_catalog.pg_locks bl
-JOIN pg_catalog.pg_stat_activity a
-	ON bl.pid = a.pid
-JOIN pg_catalog.pg_locks kl
-JOIN pg_catalog.pg_stat_activity ka
-	ON kl.pid = ka.pid
-	ON bl.transactionid = kl.transactionid AND bl.pid != kl.pid
-WHERE NOT bl.granted
-`
-
 type Result struct {
-	Blocked_pid        string
+	Blocked_pid        int
 	Blocking_statement string
 	Blocking_duration  string
-	Blocking_pid       string
+	Blocking_pid       int
 	Blocked_statement  string
 	Blocked_duration   string
 }
@@ -47,7 +29,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.BLOCKING_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -67,7 +49,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		re = regexp.MustCompile(`\|`)
 		blocking_statement = re.ReplaceAllString(blocking_statement, `\|`)
 		blocked_statement = re.ReplaceAllString(blocked_statement, `\|`)
-		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%d`|%s|`%s`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
 	return list.RenderTable(table)
 }

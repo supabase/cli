@@ -289,7 +289,7 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 }
 
 func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	exclude = likeEscapeSchema(exclude)
+	exclude = LikeEscapeSchema(exclude)
 	if len(exclude) == 0 {
 		exclude = append(exclude, "")
 	}
@@ -300,7 +300,7 @@ func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]stri
 	return pgxv5.CollectStrings(rows)
 }
 
-func likeEscapeSchema(schemas []string) (result []string) {
+func LikeEscapeSchema(schemas []string) (result []string) {
 	// Treat _ as literal, * as any character
 	replacer := strings.NewReplacer("_", `\_`, "*", "%")
 	for _, sch := range schemas {
