@@ -56,6 +56,14 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	return deployAll(ctx, slugs, projectRef, importMapPath, noVerifyJWT, fsys)
 }
 
+func RunDefault(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	slugs, err := getFunctionSlugs(fsys)
+	if len(slugs) == 0 {
+		return err
+	}
+	return deployAll(ctx, slugs, projectRef, "", nil, fsys)
+}
+
 func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
