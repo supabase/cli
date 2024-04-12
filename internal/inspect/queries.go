@@ -63,14 +63,13 @@ WHERE NOT schemaname LIKE ANY($1)
 ORDER BY raw_waste DESC, bloat DESC`
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
-const BLOCKING_QUERY = `
-SELECT
-	bl.pid AS blocked_pid,
-	ka.query AS blocking_statement,
-	now() - ka.query_start AS blocking_duration,
-	kl.pid AS blocking_pid,
-	a.query AS blocked_statement,
-	now() - a.query_start AS blocked_duration
+const BLOCKING_QUERY = `SELECT
+  bl.pid AS blocked_pid,
+  ka.query AS blocking_statement,
+  age(now(), ka.query_start)::text AS blocking_duration,
+  kl.pid AS blocking_pid,
+  a.query AS blocked_statement,
+  age(now(), a.query_start)::text AS blocked_duration
 FROM pg_catalog.pg_locks bl
 JOIN pg_catalog.pg_stat_activity a
 	ON bl.pid = a.pid
@@ -92,12 +91,12 @@ sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
 FROM pg_statio_user_tables`
 
 const CALLS_QUERY = `SELECT
-	query,
-	interval '1 millisecond' * total_exec_time AS total_exec_time,
-	to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
-	to_char(calls, 'FM999G999G990') AS ncalls,
-	interval '1 millisecond' * (blk_read_time + blk_write_time) AS sync_io_time
-FROM pg_stat_statements	
+  query,
+  (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
+  to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
+  to_char(calls, 'FM999G999G990') AS ncalls,
+  (interval '1 millisecond' * (blk_read_time + blk_write_time))::text AS sync_io_time
+FROM pg_stat_statements
 ORDER BY calls DESC
 LIMIT 10`
 
@@ -105,7 +104,7 @@ const INDEX_SIZE_QUERY = `SELECT c.relname AS name,
 pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN (%1)
+WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'i'
 GROUP BY c.relname
 ORDER BY sum(c.relpages) DESC`
@@ -141,9 +140,9 @@ AND pg_locks.mode = 'ExclusiveLock'
 ORDER BY query_start`
 
 const LONG_RUNNING_QUERY = `SELECT
-pid,
-now() - pg_stat_activity.query_start AS duration,
-query AS query
+  pid,
+  age(now(), pg_stat_activity.query_start)::text AS duration,
+  query AS query
 FROM
 pg_stat_activity
 WHERE
@@ -154,11 +153,11 @@ ORDER BY
 now() - pg_stat_activity.query_start DESC`
 
 const OUTLIERS_QUERY = `SELECT
-interval '1 millisecond' * total_exec_time AS total_exec_time,
-to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
-to_char(calls, 'FM999G999G999G990') AS ncalls,
-interval '1 millisecond' * (blk_read_time + blk_write_time) AS sync_io_time,
-query
+  (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
+  to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
+  to_char(calls, 'FM999G999G999G990') AS ncalls,
+  (interval '1 millisecond' * (blk_read_time + blk_write_time))::text AS sync_io_time,
+  query
 FROM pg_stat_statements WHERE userid = (SELECT usesysid FROM pg_user WHERE usename = current_user LIMIT 1)
 ORDER BY total_exec_time DESC
 LIMIT 10`

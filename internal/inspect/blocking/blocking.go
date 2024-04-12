@@ -16,10 +16,10 @@ import (
 )
 
 type Result struct {
-	Blocked_pid        string
+	Blocked_pid        int
 	Blocking_statement string
 	Blocking_duration  string
-	Blocking_pid       string
+	Blocking_pid       int
 	Blocked_statement  string
 	Blocked_duration   string
 }
@@ -49,7 +49,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		re = regexp.MustCompile(`\|`)
 		blocking_statement = re.ReplaceAllString(blocking_statement, `\|`)
 		blocked_statement = re.ReplaceAllString(blocked_statement, `\|`)
-		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%d`|%s|`%s`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
 	return list.RenderTable(table)
 }

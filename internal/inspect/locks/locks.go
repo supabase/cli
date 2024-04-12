@@ -16,10 +16,10 @@ import (
 )
 
 type Result struct {
-	Pid           string
+	Pid           int
 	Relname       string
 	Transactionid string
-	Granted       string
+	Granted       bool
 	Query         string
 	Age           string
 }
@@ -47,7 +47,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		// escape pipes in query
 		re = regexp.MustCompile(`\|`)
 		query = re.ReplaceAllString(query, `\|`)
-		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%t`|%s|`%s`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
 	}
 	return list.RenderTable(table)
 }

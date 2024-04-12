@@ -15,7 +15,7 @@ import (
 )
 
 type Result struct {
-	Pid      string
+	Pid      int
 	Duration string
 	Query    string
 }
@@ -36,7 +36,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|pid|Duration|Query|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
 	}
 	return list.RenderTable(table)
 }

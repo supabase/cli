@@ -16,7 +16,7 @@ import (
 
 type Result struct {
 	Slot_name                  string
-	Active                     string
+	Active                     bool
 	State                      string
 	Replication_client_address string
 	Replication_lag_gb         string
@@ -38,7 +38,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	// TODO: implement a markdown table marshaller
 	table := "|Name|Active|State|Replication Client Address|Replication Lag GB|\n|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%v`|`%v`|`%v`|`%v`|\n", r.Slot_name, r.Active, r.State, r.Replication_client_address, r.Replication_lag_gb)
+		table += fmt.Sprintf("|`%s`|`%t`|`%s`|`%s`|`%s`|\n", r.Slot_name, r.Active, r.State, r.Replication_client_address, r.Replication_lag_gb)
 	}
 	return list.RenderTable(table)
 }

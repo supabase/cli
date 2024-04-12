@@ -16,7 +16,7 @@ import (
 
 type Result struct {
 	Name  string
-	Count string
+	Count int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -35,7 +35,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|Name|Count|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Count)
+		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Name, r.Count)
 	}
 	return list.RenderTable(table)
 }

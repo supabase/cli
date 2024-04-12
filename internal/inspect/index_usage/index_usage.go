@@ -17,7 +17,7 @@ import (
 type Result struct {
 	Relname                     string
 	Percent_of_times_index_used string
-	Rows_in_table               string
+	Rows_in_table               int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -36,7 +36,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	// TODO: implement a markdown table marshaller
 	table := "|Table name|Percentage of times index used|Rows in table|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%v`|`%v`|\n", r.Relname, r.Percent_of_times_index_used, r.Rows_in_table)
+		table += fmt.Sprintf("|`%s`|`%s`|`%d`|\n", r.Relname, r.Percent_of_times_index_used, r.Rows_in_table)
 	}
 	return list.RenderTable(table)
 }

@@ -19,7 +19,7 @@ type Result struct {
 	Table       string
 	Index       string
 	Index_size  string
-	Index_scans string
+	Index_scans int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -38,7 +38,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|Table|Index|Index Size|Index Scans\n|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|\n", r.Table, r.Index, r.Index_size, r.Index_scans)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|\n", r.Table, r.Index, r.Index_size, r.Index_scans)
 	}
 	return list.RenderTable(table)
 }
