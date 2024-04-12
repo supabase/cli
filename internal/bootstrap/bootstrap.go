@@ -75,7 +75,10 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 2. Create project
-	params := api.CreateProjectBody{Name: filepath.Base(workdir)}
+	params := api.CreateProjectBody{
+		Name:        filepath.Base(workdir),
+		TemplateUrl: &templateUrl,
+	}
 	if err := create.Run(ctx, params, fsys); err != nil {
 		return err
 	}
@@ -115,7 +118,7 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	}
 	policy.Reset()
 	if err := backoff.RetryNotify(func() error {
-		return push.Run(ctx, false, false, false, false, config, fsys)
+		return push.Run(ctx, false, false, true, true, config, fsys)
 	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
@@ -206,6 +209,8 @@ const (
 	POSTGRES_DATABASE             = "POSTGRES_DATABASE"
 	NEXT_PUBLIC_SUPABASE_ANON_KEY = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 	NEXT_PUBLIC_SUPABASE_URL      = "NEXT_PUBLIC_SUPABASE_URL"
+	EXPO_PUBLIC_SUPABASE_ANON_KEY = "EXPO_PUBLIC_SUPABASE_ANON_KEY"
+	EXPO_PUBLIC_SUPABASE_URL      = "EXPO_PUBLIC_SUPABASE_URL"
 )
 
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
@@ -246,8 +251,12 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 		case POSTGRES_DATABASE:
 			initial[k] = config.Database
 		case NEXT_PUBLIC_SUPABASE_ANON_KEY:
+			fallthrough
+		case EXPO_PUBLIC_SUPABASE_ANON_KEY:
 			initial[k] = initial[SUPABASE_ANON_KEY]
 		case NEXT_PUBLIC_SUPABASE_URL:
+			fallthrough
+		case EXPO_PUBLIC_SUPABASE_URL:
 			initial[k] = initial[SUPABASE_URL]
 		default:
 			initial[k] = v
