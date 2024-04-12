@@ -72,23 +72,23 @@ const BLOCKING_QUERY = `SELECT
   age(now(), a.query_start)::text AS blocked_duration
 FROM pg_catalog.pg_locks bl
 JOIN pg_catalog.pg_stat_activity a
-	ON bl.pid = a.pid
+  ON bl.pid = a.pid
 JOIN pg_catalog.pg_locks kl
 JOIN pg_catalog.pg_stat_activity ka
-	ON kl.pid = ka.pid
-	ON bl.transactionid = kl.transactionid AND bl.pid != kl.pid
+  ON kl.pid = ka.pid
+  ON bl.transactionid = kl.transactionid AND bl.pid != kl.pid
 WHERE NOT bl.granted`
 
 // Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
 const CACHE_QUERY = `SELECT
-'index hit rate' AS name,
-(sum(idx_blks_hit)) / nullif(sum(idx_blks_hit + idx_blks_read),0) AS ratio
+  'index hit rate' AS name,
+  (sum(idx_blks_hit)) / nullif(sum(idx_blks_hit + idx_blks_read),0) AS ratio
 FROM pg_statio_user_indexes
 UNION ALL
 SELECT
-'table hit rate' AS name,
-sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
-FROM pg_statio_user_tables`
+  'table hit rate' AS name,
+  sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
+FROM pg_statio_user_tables;`
 
 const CALLS_QUERY = `SELECT
   query,
@@ -100,8 +100,9 @@ FROM pg_stat_statements
 ORDER BY calls DESC
 LIMIT 10`
 
-const INDEX_SIZE_QUERY = `SELECT c.relname AS name,
-pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
+const INDEX_SIZES_QUERY = `SELECT
+  c.relname AS name,
+  pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
@@ -128,15 +129,15 @@ ORDER BY
   n_live_tup DESC`
 
 const LOCKS_QUERY = `SELECT
-pg_stat_activity.pid,
-COALESCE(pg_class.relname, 'null') AS relname,
-COALESCE(pg_locks.transactionid, 'null') AS transactionid,
-pg_locks.granted,
-pg_stat_activity.query,
-age(now(),pg_stat_activity.query_start) AS age
+  pg_stat_activity.pid,
+  COALESCE(pg_class.relname, 'null') AS relname,
+  COALESCE(pg_locks.transactionid, 'null') AS transactionid,
+  pg_locks.granted,
+  pg_stat_activity.query,
+  age(now(), pg_stat_activity.query_start)::text AS age
 FROM pg_stat_activity, pg_locks LEFT OUTER JOIN pg_class ON (pg_locks.relation = pg_class.oid)
 WHERE pg_stat_activity.query <> '<insufficient privilege>'
-AND pg_locks.pid=pg_stat_activity.pid
+AND pg_locks.pid = pg_stat_activity.pid
 AND pg_locks.mode = 'ExclusiveLock'
 ORDER BY query_start`
 
@@ -145,13 +146,13 @@ const LONG_RUNNING_QUERY = `SELECT
   age(now(), pg_stat_activity.query_start)::text AS duration,
   query AS query
 FROM
-pg_stat_activity
+  pg_stat_activity
 WHERE
-pg_stat_activity.query <> ''::text
-AND state <> 'idle'
-AND now() - pg_stat_activity.query_start > interval '5 minutes'
+  pg_stat_activity.query <> ''::text
+  AND state <> 'idle'
+  AND age(now(), pg_stat_activity.query_start) > interval '5 minutes'
 ORDER BY
-now() - pg_stat_activity.query_start DESC`
+  age(now(), pg_stat_activity.query_start) DESC`
 
 const OUTLIERS_QUERY = `SELECT
   (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
@@ -164,32 +165,32 @@ ORDER BY total_exec_time DESC
 LIMIT 10`
 
 const REPLICATION_SLOTS_QUERY = `SELECT
-s.slot_name,
-s.active,
-COALESCE(r.state, 'N/A') as state,
-CASE WHEN r.client_addr IS NULL
-   THEN 'N/A'
-   ELSE r.client_addr::text
-END replication_client_address,
-GREATEST(0, ROUND((redo_lsn-restart_lsn)/1024/1024/1024, 2)) as replication_lag_gb
+  s.slot_name,
+  s.active,
+  COALESCE(r.state, 'N/A') as state,
+  CASE WHEN r.client_addr IS NULL
+    THEN 'N/A'
+    ELSE r.client_addr::text
+  END replication_client_address,
+  GREATEST(0, ROUND((redo_lsn-restart_lsn)/1024/1024/1024, 2)) as replication_lag_gb
 FROM pg_control_checkpoint(), pg_replication_slots s
 LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid)`
 
 const ROLE_CONNECTIONS_QUERY = `SELECT
-rolname,
-(
-  SELECT
-    count(*)
-  FROM
-    pg_stat_activity
-  WHERE
-    pg_roles.rolname = pg_stat_activity.usename
-) AS active_connections,
-CASE WHEN rolconnlimit = -1 THEN current_setting('max_connections') :: int8
-     ELSE rolconnlimit
-END AS connection_limit
-FROM
-pg_roles
+  rolname,
+  (
+    SELECT
+      count(*)
+    FROM
+      pg_stat_activity
+    WHERE
+      pg_roles.rolname = pg_stat_activity.usename
+  ) AS active_connections,
+  CASE WHEN rolconnlimit = -1
+    THEN current_setting('max_connections')::int8
+    ELSE rolconnlimit
+  END AS connection_limit
+FROM pg_roles
 ORDER BY 2 DESC`
 
 const SEQ_SCANS_QUERY = `SELECT
@@ -199,8 +200,9 @@ FROM pg_stat_user_tables
 WHERE NOT schemaname LIKE ANY($1)
 ORDER BY seq_scan DESC`
 
-const TABLE_INDEX_SIZE_QUERY = `SELECT c.relname AS table,
-pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
+const TABLE_INDEX_SIZES_QUERY = `SELECT
+  c.relname AS table,
+  pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
@@ -208,29 +210,32 @@ AND c.relkind = 'r'
 ORDER BY pg_indexes_size(c.oid) DESC`
 
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
-relname AS name,
-n_live_tup AS estimated_count
+  relname AS name,
+  n_live_tup AS estimated_count
 FROM
-pg_stat_user_tables
+  pg_stat_user_tables
 ORDER BY
-n_live_tup DESC`
+  n_live_tup DESC`
 
-const TABLE_SIZE_QUERY = `SELECT c.relname AS name,
-pg_size_pretty(pg_table_size(c.oid)) AS size
+const TABLE_SIZES_QUERY = `SELECT
+  c.relname AS name,
+  pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'r'
 ORDER BY pg_table_size(c.oid) DESC`
 
-const TOTAL_INDEX_SIZE_QUERY = `SELECT pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
+const TOTAL_INDEX_SIZE_QUERY = `SELECT
+  pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'i'`
 
-const TOTAL_TABLE_SIZE_QUERY = `SELECT c.relname AS name,
-pg_size_pretty(pg_total_relation_size(c.oid)) AS size
+const TOTAL_TABLE_SIZES_QUERY = `SELECT
+  c.relname AS name,
+  pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
 WHERE NOT n.nspname LIKE ANY($1)
@@ -238,21 +243,24 @@ AND c.relkind = 'r'
 ORDER BY pg_total_relation_size(c.oid) DESC`
 
 const UNUSED_INDEXES_QUERY = `SELECT
-schemaname || '.' || relname AS table,
-indexrelname AS index,
-pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
-idx_scan as index_scans
+  schemaname || '.' || relname AS table,
+  indexrelname AS index,
+  pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
+  idx_scan as index_scans
 FROM pg_stat_user_indexes ui
 JOIN pg_index i ON ui.indexrelid = i.indexrelid
-WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND NOT schemaname LIKE ANY($1)
-ORDER BY pg_relation_size(i.indexrelid) / nullif(idx_scan, 0) DESC NULLS FIRST,
-pg_relation_size(i.indexrelid) DESC`
+WHERE
+  NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192
+  AND NOT schemaname LIKE ANY($1)
+ORDER BY
+  pg_relation_size(i.indexrelid) / nullif(idx_scan, 0) DESC NULLS FIRST,
+  pg_relation_size(i.indexrelid) DESC`
 
 const VACUUM_STATS_QUERY = `WITH table_opts AS (
   SELECT
     pg_class.oid, relname, nspname, array_to_string(reloptions, '') AS relopts
   FROM
-     pg_class INNER JOIN pg_namespace ns ON relnamespace = ns.oid
+    pg_class INNER JOIN pg_namespace ns ON relnamespace = ns.oid
 ), vacuum_settings AS (
   SELECT
     oid, relname, nspname,
