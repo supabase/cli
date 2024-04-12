@@ -290,7 +290,7 @@ SELECT
 FROM
   pg_stat_user_tables psut INNER JOIN pg_class ON psut.relid = pg_class.oid
 INNER JOIN vacuum_settings ON pg_class.oid = vacuum_settings.oid
-WHERE NOT schema LIKE ANY($1)
+WHERE NOT vacuum_settings.nspname LIKE ANY($1)
 ORDER BY
   case
     when pg_class.reltuples = -1 then 1
