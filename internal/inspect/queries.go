@@ -101,7 +101,7 @@ ORDER BY calls DESC
 LIMIT 10`
 
 const INDEX_SIZES_QUERY = `SELECT
-  c.relname AS name,
+  n.nspname || '.' || c.relname AS name,
   pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
@@ -111,7 +111,7 @@ GROUP BY c.relname
 ORDER BY sum(c.relpages) DESC`
 
 const INDEX_USAGE_QUERY = `SELECT
-  relname,
+  schemaname || '.' || relname AS name,
   CASE
     WHEN idx_scan IS NULL THEN 'Insufficient data'
     WHEN idx_scan = 0 THEN 'Insufficient data'
@@ -194,14 +194,14 @@ FROM pg_roles
 ORDER BY 2 DESC`
 
 const SEQ_SCANS_QUERY = `SELECT
-  relname AS name,
+  schemaname || '.' || relname AS name,
   seq_scan as count
 FROM pg_stat_user_tables
 WHERE NOT schemaname LIKE ANY($1)
 ORDER BY seq_scan DESC`
 
 const TABLE_INDEX_SIZES_QUERY = `SELECT
-  c.relname AS table,
+  n.nspname || '.' || c.relname AS table,
   pg_size_pretty(pg_indexes_size(c.oid)) AS index_size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
@@ -210,7 +210,7 @@ AND c.relkind = 'r'
 ORDER BY pg_indexes_size(c.oid) DESC`
 
 const TABLE_RECORD_COUNTS_QUERY = `SELECT
-  relname AS name,
+  schemaname || '.' || relname AS name,
   n_live_tup AS estimated_count
 FROM
   pg_stat_user_tables
@@ -218,7 +218,7 @@ ORDER BY
   n_live_tup DESC`
 
 const TABLE_SIZES_QUERY = `SELECT
-  c.relname AS name,
+  n.nspname || '.' || c.relname AS name,
   pg_size_pretty(pg_table_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
@@ -234,7 +234,7 @@ WHERE NOT n.nspname LIKE ANY($1)
 AND c.relkind = 'i'`
 
 const TOTAL_TABLE_SIZES_QUERY = `SELECT
-  c.relname AS name,
+  n.nspname || '.' || c.relname AS name,
   pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
