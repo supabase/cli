@@ -12,13 +12,14 @@ For example, your migration history table may look like this after running `db p
 $ supabase migration list
         LOCAL      │     REMOTE     │     TIME (UTC)
   ─────────────────┼────────────────┼──────────────────────
-    20230103054303 │ 20230103054303 │ 2023-01-03 05:43:03
+                   │ 20230103054303 │ 2023-01-03 05:43:03
+   20230103054315  │                │ 2023-01-03 05:43:15
 ```
 
 To reset your migration history to a clean state, first delete your local migration file.
 
 ```bash
-$ rm supabase/migrations/20230103054303_remote_commit.sql
+$ rm supabase/migrations/20230103054315_remote_commit.sql
 $ supabase migration list
         LOCAL      │     REMOTE     │     TIME (UTC)
   ─────────────────┼────────────────┼──────────────────────
