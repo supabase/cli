@@ -166,6 +166,10 @@ var Config = config{
 	},
 	Storage: storage{
 		Image: StorageImage,
+		S3Credentials: storageS3Credentials{
+			AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
+			SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+		},
 	},
 	Auth: auth{
 		Image: GotrueImage,
@@ -299,9 +303,15 @@ type (
 	}
 
 	storage struct {
-		Enabled       bool        `toml:"enabled"`
-		Image         string      `toml:"-"`
-		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
+		Enabled       bool                 `toml:"enabled"`
+		Image         string               `toml:"-"`
+		FileSizeLimit sizeInBytes          `toml:"file_size_limit"`
+		S3Credentials storageS3Credentials `toml:"s3_credentials"`
+	}
+
+	storageS3Credentials struct {
+		AccessKeyId     string `toml:"access_key_id"`
+		SecretAccessKey string `toml:"secret_access_key"`
 	}
 
 	auth struct {
