@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
@@ -17,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -28,6 +28,33 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
+}
+
+var escapedSchemas = []string{
+	"auth",
+	"pgbouncer",
+	"realtime",
+	`\_realtime`,
+	"storage",
+	`\_analytics`,
+	`supabase\_functions`,
+	`supabase\_migrations`,
+	"cron",
+	"graphql",
+	`graphql\_public`,
+	"net",
+	"pgsodium",
+	`pgsodium\_masks`,
+	"pgtle",
+	"repack",
+	"tiger",
+	`tiger\_data`,
+	`timescaledb\_%`,
+	`\_timescaledb\_%`,
+	"topology",
+	"vault",
+	`information\_schema`,
+	`pg\_%`,
 }
 
 func TestPullCommand(t *testing.T) {
@@ -143,7 +170,7 @@ func TestPullSchema(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -168,11 +195,11 @@ func TestPullSchema(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(strings.ReplaceAll(reset.LIST_SCHEMAS, "$1", `'{auth,pgbouncer,realtime,"\\_realtime",storage,"\\_analytics","supabase\\_functions","supabase\\_migrations","information\\_schema","pg\\_%",cron,graphql,"graphql\\_public",net,pgsodium,"pgsodium\\_masks",pgtle,repack,tiger,"tiger\\_data","timescaledb\\_%","\\_timescaledb\\_%",topology,vault}'`)).
+			Query(reset.LIST_SCHEMAS, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -201,7 +228,7 @@ func TestPullSchema(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"0"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -217,7 +244,7 @@ func TestPullSchema(t *testing.T) {
 func TestSyncRemote(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -225,7 +252,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -247,7 +274,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -269,7 +296,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test
@@ -289,7 +316,7 @@ func TestSyncRemote(t *testing.T) {
 			Reply("SELECT 0")
 		// Connect to mock
 		ctx := context.Background()
-		mock, err := utils.ConnectRemotePostgres(ctx, dbConfig, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

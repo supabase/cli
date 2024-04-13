@@ -1,22 +1,27 @@
 package flags
 
 import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/pkg/api"
 )
 
 type connection int
 
 const (
-	direct connection = iota
+	unknown connection = iota
+	direct
 	local
 	linked
 	proxy
@@ -56,6 +61,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
+		// Ignore other PG settings
 		DbConfig.Host = utils.Config.Hostname
 		DbConfig.Port = uint16(utils.Config.Db.Port)
 		DbConfig.User = "postgres"
@@ -69,8 +75,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		DbConfig = link.GetDbConfigNoPassword(projectRef)
-		DbConfig.Password = getPassword(projectRef)
+		DbConfig = NewDbConfigWithPassword(projectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -89,6 +94,12 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	return nil
 }
 
+func NewDbConfigWithPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
+	config.Password = getPassword(projectRef)
+	return config
+}
+
 func getPassword(projectRef string) string {
 	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
 		return password
@@ -96,5 +107,51 @@ func getPassword(projectRef string) string {
 	if password, err := credentials.Get(projectRef); err == nil {
 		return password
 	}
-	return link.PromptPassword(os.Stdin)
+	fmt.Fprint(os.Stderr, "Enter your database password: ")
+	return credentials.PromptMasked(os.Stdin)
+}
+
+const PASSWORD_LENGTH = 16
+
+func PromptPassword(stdin *os.File) string {
+	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to generate one): ")
+	if input := credentials.PromptMasked(stdin); len(input) > 0 {
+		return input
+	}
+	// Generate a password, see ./Settings/Database/DatabaseSettings/ResetDbPassword.tsx#L83
+	var password []byte
+	charset := string(api.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891)
+	charset = strings.ReplaceAll(charset, ":", "")
+	maxRange := big.NewInt(int64(len(charset)))
+	for i := 0; i < PASSWORD_LENGTH; i++ {
+		random, err := rand.Int(rand.Reader, maxRange)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to randomise password:", err)
+			continue
+		}
+		password = append(password, charset[random.Int64()])
+	}
+	return string(password)
+}
+
+func getDbConfig(projectRef string) pgconn.Config {
+	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
+		return *poolerConfig
+	}
+	return pgconn.Config{
+		Host:     utils.GetSupabaseDbHost(projectRef),
+		Port:     5432,
+		User:     "postgres",
+		Database: "postgres",
+	}
+}
+
+func GetDbConfigOptionalPassword(projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
+	config.Password = viper.GetString("DB_PASSWORD")
+	if config.Password == "" {
+		fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
+		config.Password = credentials.PromptMasked(os.Stdin)
+	}
+	return config
 }

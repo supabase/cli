@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	noBackup bool
+	noBackup  bool
+	projectId string
 
 	stopCmd = &cobra.Command{
 		GroupID: groupLocalDev,

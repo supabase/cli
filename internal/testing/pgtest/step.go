@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgtype"
 )
 
+var ci = pgtype.NewConnInfo()
+
 type extendedQueryStep struct {
 	sql    string
 	params [][]byte
@@ -51,8 +53,8 @@ func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 
 	if m, ok := msg.(*pgproto3.Bind); ok {
 		var codes []int16
-		for range e.oids {
-			codes = append(codes, pgtype.TextFormatCode)
+		for _, oid := range e.oids {
+			codes = append(codes, ci.ParamFormatCodeForOID(oid))
 		}
 		want := &pgproto3.Bind{
 			ParameterFormatCodes: codes,

@@ -86,5 +86,6 @@ func TestLoginCommand(t *testing.T) {
 		saved, err := credentials.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
 		assert.Equal(t, token, saved)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

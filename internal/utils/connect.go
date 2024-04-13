@@ -26,36 +26,23 @@ func ToPostgresURL(config pgconn.Config) string {
 	for k, v := range config.RuntimeParams {
 		queryParams += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
 	}
+	// IPv6 address must be wrapped in square brackets
+	host := config.Host
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		host = fmt.Sprintf("[%s]", host)
+	}
 	return fmt.Sprintf(
 		"postgresql://%s@%s:%d/%s?%s",
 		url.UserPassword(config.User, config.Password),
-		config.Host,
+		host,
 		config.Port,
 		url.PathEscape(config.Database),
 		queryParams,
 	)
 }
 
-// Connnect to remote Postgres with optimised settings. The caller is responsible for closing the connection returned.
-func ConnectRemotePostgres(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	// Simple protocol is preferred over pgx default Parse -> Bind flow because
-	//   1. Using a single command for each query reduces RTT over an Internet connection.
-	//   2. Performance gains from using the alternate binary protocol is negligible because
-	//      we are only selecting from migrations table. Large reads are handled by PostgREST.
-	//   3. Any prepared statements are cleared server side upon closing the TCP connection.
-	//      Since CLI workloads are one-off scripts, we don't use connection pooling and hence
-	//      don't benefit from per connection server side cache.
-	opts := append(options, func(cc *pgx.ConnConfig) {
-		cc.PreferSimpleProtocol = true
-		if DNSResolver.Value == DNS_OVER_HTTPS {
-			cc.LookupFunc = FallbackLookupIP
-		}
-	})
-	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
-}
-
 func GetPoolerConfig(projectRef string) *pgconn.Config {
-	logger := getDebugLogger()
+	logger := GetDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
 		return nil
@@ -69,9 +56,19 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		fmt.Fprintln(logger, "Failed to parse pooler URL:", poolerUrl)
 		return nil
 	}
+	if poolerConfig.RuntimeParams == nil {
+		poolerConfig.RuntimeParams = make(map[string]string)
+	}
 	// Verify that the pooler username matches the database host being connected to
-	parts := strings.Split(poolerConfig.User, ".")
-	if projectRef != parts[len(parts)-1] {
+	if _, ref, found := strings.Cut(poolerConfig.User, "."); !found {
+		for _, option := range strings.Split(poolerConfig.RuntimeParams["options"], ",") {
+			key, value, found := strings.Cut(option, "=")
+			if found && key == "reference" && value != projectRef {
+				fmt.Fprintln(logger, "Pooler options does not match project ref:", projectRef)
+				return nil
+			}
+		}
+	} else if projectRef != ref {
 		fmt.Fprintln(logger, "Pooler username does not match project ref:", projectRef)
 		return nil
 	}
@@ -81,14 +78,9 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
+	// Supavisor transaction mode does not support prepared statement
+	poolerConfig.Port = 5432
 	return poolerConfig
-}
-
-func getDebugLogger() io.Writer {
-	if viper.GetBool("DEBUG") {
-		return os.Stderr
-	}
-	return io.Discard
 }
 
 func isSupabaseDomain(host string) bool {
@@ -144,21 +136,24 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	return conn, nil
 }
 
-func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	if IsLoopback(config.Host) {
-		fmt.Fprintln(os.Stderr, "Connecting to local database...")
+func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Writer, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
+	if IsLocalDatabase(config) {
+		fmt.Fprintln(w, "Connecting to local database...")
 		return ConnectLocalPostgres(ctx, config, options...)
 	}
-	fmt.Fprintln(os.Stderr, "Connecting to remote database...")
-	return ConnectRemotePostgres(ctx, config, options...)
+	fmt.Fprintln(w, "Connecting to remote database...")
+	opts := append(options, func(cc *pgx.ConnConfig) {
+		if DNSResolver.Value == DNS_OVER_HTTPS {
+			cc.LookupFunc = FallbackLookupIP
+		}
+	})
+	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)
 }
 
-func IsLoopback(host string) bool {
-	if strings.ToLower(host) == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
+	return ConnectByConfigStream(ctx, config, os.Stderr, options...)
+}
+
+func IsLocalDatabase(config pgconn.Config) bool {
+	return config.Host == Config.Hostname && config.Port == uint16(Config.Db.Port)
 }

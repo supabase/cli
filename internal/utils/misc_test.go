@@ -31,9 +31,8 @@ func TestProjectRoot(t *testing.T) {
 		_, err := fsys.Create(filepath.Join("/", ConfigPath))
 		require.NoError(t, err)
 		// Run test
-		path, err := GetProjectRoot(fsys)
+		path := getProjectRoot("/home/user/project", fsys)
 		// Check error
-		assert.NoError(t, err)
 		assert.Equal(t, "/", path)
 	})
 
@@ -43,7 +42,7 @@ func TestProjectRoot(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		path, err := GetProjectRoot(fsys)
+		path := getProjectRoot(cwd, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, cwd, path)
@@ -55,7 +54,7 @@ func TestProjectRoot(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &MockFs{DenyPath: filepath.Join(cwd, "supabase")}
 		// Run test
-		path, err := GetProjectRoot(fsys)
+		path := getProjectRoot(cwd, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, cwd, path)

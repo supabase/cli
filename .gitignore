@@ -21,6 +21,7 @@
 
 # IDE
 /.vscode
+/.idea
 
 # NPM
 node_modules

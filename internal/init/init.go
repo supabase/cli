@@ -17,6 +17,8 @@ var (
 	vscodeDir      = ".vscode"
 	extensionsPath = filepath.Join(vscodeDir, "extensions.json")
 	settingsPath   = filepath.Join(vscodeDir, "settings.json")
+	intellijDir    = ".idea"
+	denoPath       = filepath.Join(intellijDir, "deno.xml")
 
 	//go:embed templates/.gitignore
 	initGitignore []byte
@@ -24,28 +26,19 @@ var (
 	vscodeExtensions string
 	//go:embed templates/.vscode/settings.json
 	vscodeSettings string
-
-	errAlreadyInitialized = errors.Errorf("Project already initialized. Remove %s to reinitialize.", utils.Bold(utils.ConfigPath))
+	//go:embed templates/.idea/deno.xml
+	intelliJDeno string
 )
 
-func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
-	// Sanity checks.
-	{
-		if _, err := fsys.Stat(utils.ConfigPath); err == nil {
-			return errors.New(errAlreadyInitialized)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return errors.Errorf("failed to read config file: %w", err)
-		}
-	}
-
+func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
 	// 1. Write `config.toml`.
-	if err := utils.InitConfig(utils.InitParams{UseOrioleDB: useOrioleDB}, fsys); err != nil {
+	if err := utils.InitConfig(params, fsys); err != nil {
 		return err
 	}
 
 	// 2. Create `seed.sql`.
-	if _, err := fsys.Create(utils.SeedDataPath); err != nil {
-		return errors.Errorf("failed to create seed file: %w", err)
+	if err := initSeed(fsys); err != nil {
+		return err
 	}
 
 	// 3. Append to `.gitignore`.
@@ -60,12 +53,27 @@ func Run(fsys afero.Fs, createVscodeSettings *bool, useOrioleDB bool) error {
 		if *createVscodeSettings {
 			return writeVscodeConfig(fsys)
 		}
+	} else if createIntellijSettings != nil {
+		if *createIntellijSettings {
+			return writeIntelliJConfig(fsys)
+		}
 	} else {
 		if isVscode := utils.PromptYesNo("Generate VS Code settings for Deno?", false, os.Stdin); isVscode {
 			return writeVscodeConfig(fsys)
 		}
+		if isIntelliJ := utils.PromptYesNo("Generate IntelliJ Settings for Deno?", false, os.Stdin); isIntelliJ {
+			return writeIntelliJConfig(fsys)
+		}
 	}
+	return nil
+}
 
+func initSeed(fsys afero.Fs) error {
+	f, err := fsys.OpenFile(utils.SeedDataPath, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return errors.Errorf("failed to create seed file: %w", err)
+	}
+	defer f.Close()
 	return nil
 }
 
@@ -154,5 +162,13 @@ func writeVscodeConfig(fsys afero.Fs) error {
 		return err
 	}
 	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ". Please install the recommended extension!")
+	return nil
+}
+
+func writeIntelliJConfig(fsys afero.Fs) error {
+	if err := utils.WriteFile(denoPath, []byte(intelliJDeno), fsys); err != nil {
+		return err
+	}
+	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ". Please install the Deno plugin!")
 	return nil
 }

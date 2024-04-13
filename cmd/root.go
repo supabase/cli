@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,6 +10,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/go-errors/errors"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -22,6 +21,7 @@ import (
 )
 
 const (
+	groupQuickStart    = "quick-start"
 	groupLocalDev      = "local-dev"
 	groupManagementAPI = "management-api"
 )
@@ -40,7 +40,7 @@ func IsManagementAPI(cmd *cobra.Command) bool {
 	return false
 }
 
-func PromptLogin(ctx context.Context, fsys afero.Fs) error {
+func promptLogin(fsys afero.Fs) error {
 	if _, err := utils.LoadAccessTokenFS(fsys); err == utils.ErrMissingToken {
 		utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
 		return errors.New("You need to be logged-in in order to use Management API commands.")
@@ -93,21 +93,21 @@ var (
 			cmd.SilenceUsage = true
 			// Change workdir
 			fsys := afero.NewOsFs()
-			if err := changeWorkDir(fsys); err != nil {
+			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
 			// Add common flags
 			ctx := cmd.Context()
 			if IsManagementAPI(cmd) {
-				if err := PromptLogin(ctx, fsys); err != nil {
+				if err := promptLogin(fsys); err != nil {
 					return err
 				}
+				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
-					if err := flags.ParseProjectRef(fsys); err != nil {
+					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
 						return err
 					}
 				}
-				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 			}
 			if err := flags.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
 				return err
@@ -199,6 +199,7 @@ func init() {
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	rootCmd.AddGroup(&cobra.Group{ID: groupQuickStart, Title: "Quick Start:"})
 	rootCmd.AddGroup(&cobra.Group{ID: groupLocalDev, Title: "Local Development:"})
 	rootCmd.AddGroup(&cobra.Group{ID: groupManagementAPI, Title: "Management APIs:"})
 }
@@ -207,17 +208,6 @@ func init() {
 // approach for example: https://github.com/portworx/pxc/tree/master/cmd
 func GetRootCmd() *cobra.Command {
 	return rootCmd
-}
-
-func changeWorkDir(fsys afero.Fs) error {
-	workdir := viper.GetString("WORKDIR")
-	if workdir == "" {
-		var err error
-		if workdir, err = utils.GetProjectRoot(fsys); err != nil {
-			return err
-		}
-	}
-	return os.Chdir(workdir)
 }
 
 func addSentryScope(scope *sentry.Scope) {

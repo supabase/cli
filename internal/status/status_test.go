@@ -152,6 +152,7 @@ func TestPrintStatus(t *testing.T) {
 	}
 
 	t.Run("outputs env var", func(t *testing.T) {
+		utils.Config.Hostname = "127.0.0.1"
 		// Run test
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputEnv, &stdout, exclude...))

@@ -1,22 +1,27 @@
 package squash
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -55,19 +60,25 @@ func TestSquashCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		pgtest.MockMigrationHistory(conn)
 		conn.Query(sql).
-			Reply("CREATE SCHEMA")
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
-			Reply("INSERT 0 1")
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "1", "target", "{}").
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
+			Reply("INSERT 0 1").
+			Query(history.INSERT_MIGRATION_VERSION, "1", "target", nil).
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "127.0.0.1"}, fsys, conn.Intercept)
+		err := Run(context.Background(), "", pgconn.Config{
+			Host: "127.0.0.1",
+			Port: 54322,
+		}, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -89,10 +100,13 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.NoError(t, err)
 		match, err := afero.FileContainsBytes(fsys, path, []byte(sql))
@@ -122,9 +136,9 @@ func TestSquashCommand(t *testing.T) {
 func TestSquashVersion(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		err := squashToVersion(context.Background(), "0", afero.NewReadOnlyFs(fsys))
+		err := squashToVersion(context.Background(), "0", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -220,13 +234,17 @@ func TestSquashMigrations(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(sql).
-			Reply("CREATE SCHEMA")
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "init", fmt.Sprintf("{%s}", sql)).
+		conn.Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
@@ -250,10 +268,13 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '0';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'init', '{%s}')", sql)).
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
 			Reply("INSERT 0 1")
 		// Run test
-		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept)
+		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -275,10 +296,13 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <= '%[1]s';INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('%[1]s', 'init', null)", "0")).
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '%[1]s' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '%[1]s' ,  'init' ,  null )", "0")).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
-		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
+		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)`)
 	})
@@ -289,9 +313,63 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		pgtest.MockMigrationHistory(conn)
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+//go:embed testdata/*.sql
+var testdata embed.FS
+
+func TestLineByLine(t *testing.T) {
+	t.Run("diffs output from pg_dump", func(t *testing.T) {
+		before, err := testdata.Open("testdata/before.sql")
+		require.NoError(t, err)
+		after, err := testdata.Open("testdata/after.sql")
+		require.NoError(t, err)
+		expected, err := testdata.ReadFile("testdata/diff.sql")
+		require.NoError(t, err)
+		// Run test
+		var out bytes.Buffer
+		err = lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, expected, out.Bytes())
+	})
+
+	t.Run("diffs shorter before", func(t *testing.T) {
+		before := strings.NewReader("select 1;")
+		after := strings.NewReader("select 0;\nselect 1;\nselect 2;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "select 0;\nselect 2;\n", out.String())
+	})
+
+	t.Run("diffs shorter after", func(t *testing.T) {
+		before := strings.NewReader("select 1;\nselect 2;")
+		after := strings.NewReader("select 1;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "", out.String())
+	})
+
+	t.Run("diffs no match", func(t *testing.T) {
+		before := strings.NewReader("select 0;\nselect 1;")
+		after := strings.NewReader("select 1;")
+		// Run test
+		var out bytes.Buffer
+		err := lineByLineDiff(before, after, &out)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "select 1;\n", out.String())
 	})
 }

@@ -287,7 +287,12 @@ func resolveHostPath(hostPath string, fsys afero.Fs) string {
 		return hostPath
 	}
 	rebased := filepath.Join(cwd, rel)
-	if exists, _ := afero.Exists(fsys, rebased); !exists {
+	exists, err := afero.Exists(fsys, rebased)
+	if err != nil {
+		logger := GetDebugLogger()
+		fmt.Fprintln(logger, err)
+	}
+	if !exists {
 		return hostPath
 	}
 	// Directory imports need to be suffixed with /
@@ -321,9 +326,13 @@ func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error)
 			if !filepath.IsAbs(importMapPath) {
 				importMapPath = filepath.Join(SupabaseDirPath, importMapPath)
 			}
-		} else if exists, _ := afero.Exists(fsys, FallbackImportMapPath); exists {
+		} else if exists, err := afero.Exists(fsys, FallbackImportMapPath); exists {
 			importMapPath = FallbackImportMapPath
 		} else {
+			if err != nil {
+				logger := GetDebugLogger()
+				fmt.Fprintln(logger, err)
+			}
 			return importMapPath, nil
 		}
 	}

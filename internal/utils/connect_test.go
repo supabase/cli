@@ -24,7 +24,12 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestConnectRemotePostgres(t *testing.T) {
+const (
+	PG13_POOLER_URL = "postgres://postgres:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?options=reference%3Dzupyfdrjfhbeevcogohz"
+	PG15_POOLER_URL = "postgres://postgres.zupyfdrjfhbeevcogohz:[YOUR-PASSWORD]@fly-0-sin.pooler.supabase.com:6543/postgres"
+)
+
+func TestConnectByConfig(t *testing.T) {
 	t.Run("connects to remote postgres with DoH", func(t *testing.T) {
 		Config.Db.Pooler.ConnectionString = ""
 		DNSResolver.Value = DNS_OVER_HTTPS
@@ -51,7 +56,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), dbConfig, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.NoError(t, err)
@@ -66,20 +71,20 @@ func TestConnectRemotePostgres(t *testing.T) {
 		config := *dbConfig.Copy()
 		config.Host = "localhost"
 		config.Password = "pass word"
-		c, err := ConnectRemotePostgres(context.Background(), config, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), config, conn.Intercept)
 		require.NoError(t, err)
 		defer c.Close(context.Background())
 		assert.Equal(t, config.Password, c.Config().Password)
 	})
 
 	t.Run("no retry on connecting successfully with pooler", func(t *testing.T) {
-		Config.Db.Pooler.ConnectionString = "postgres://postgres.nlhaskwsizylhnffaqkd:[YOUR-PASSWORD]@fly-0-sin.pooler.supabase.green:6543/postgres"
+		Config.Db.Pooler.ConnectionString = PG15_POOLER_URL
 		DNSResolver.Value = DNS_GO_NATIVE
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		c, err := ConnectRemotePostgres(context.Background(), dbConfig, conn.Intercept)
+		c, err := ConnectByConfig(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		require.NoError(t, err)
 		defer c.Close(context.Background())
@@ -87,7 +92,7 @@ func TestConnectRemotePostgres(t *testing.T) {
 	})
 
 	t.Run("fallback to postgres port on dial error", func(t *testing.T) {
-		Config.Db.Pooler.ConnectionString = "postgres://postgres.nlhaskwsizylhnffaqkd:[YOUR-PASSWORD]@fly-0-sin.pooler.supabase.green:6543/postgres"
+		Config.Db.Pooler.ConnectionString = PG15_POOLER_URL
 		DNSResolver.Value = DNS_OVER_HTTPS
 		netErr := errors.New("network error")
 		// Setup http mock
@@ -99,11 +104,11 @@ func TestConnectRemotePostgres(t *testing.T) {
 			ReplyError(&net.OpError{Op: "dial", Err: netErr})
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
-			MatchParam("name", "fly-0-sin.pooler.supabase.green").
+			MatchParam("name", "fly-0-sin.pooler.supabase.com").
 			MatchHeader("accept", "application/dns-json").
 			ReplyError(&net.OpError{Op: "dial", Err: netErr})
 		// Run test
-		_, err := ConnectRemotePostgres(context.Background(), dbConfig)
+		_, err := ConnectByConfig(context.Background(), dbConfig)
 		// Check error
 		require.ErrorIs(t, err, netErr)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -122,4 +127,51 @@ func TestConnectLocal(t *testing.T) {
 		_, err := ConnectLocalPostgres(context.Background(), pgconn.Config{})
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
+}
+
+func TestPoolerConfig(t *testing.T) {
+	t.Run("parses options ref", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = PG13_POOLER_URL
+		assert.NotNil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
+	})
+
+	t.Run("parses username ref", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = PG15_POOLER_URL
+		assert.NotNil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
+	})
+
+	t.Run("returns nil on missing url", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = ""
+		assert.Nil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
+	})
+
+	t.Run("returns nil on malformed url", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = "malformed"
+		assert.Nil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
+	})
+
+	t.Run("returns nil on mismatched project", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = PG13_POOLER_URL
+		assert.Nil(t, GetPoolerConfig("nlhaskwsizylhnffaqkd"))
+		Config.Db.Pooler.ConnectionString = PG15_POOLER_URL
+		assert.Nil(t, GetPoolerConfig("nlhaskwsizylhnffaqkd"))
+	})
+
+	t.Run("returns nil on invalid host", func(t *testing.T) {
+		Config.Db.Pooler.ConnectionString = "postgres://postgres.zupyfdrjfhbeevcogohz:[YOUR-PASSWORD]@localhost:6543/postgres"
+		assert.Nil(t, GetPoolerConfig("zupyfdrjfhbeevcogohz"))
+	})
+}
+
+func TestPostgresURL(t *testing.T) {
+	url := ToPostgresURL(pgconn.Config{
+		Host:     "2406:da18:4fd:9b0d:80ec:9812:3e65:450b",
+		Port:     5432,
+		User:     "postgres",
+		Password: "!@#$%^&*()",
+		RuntimeParams: map[string]string{
+			"options": "test",
+		},
+	})
+	assert.Equal(t, `postgresql://postgres:%21%40%23$%25%5E&%2A%28%29@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
 }

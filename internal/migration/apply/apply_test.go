@@ -2,7 +2,6 @@ package apply
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,10 +27,10 @@ func TestMigrateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(sql).
-			Reply("CREATE SCHEMA")
 		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", fmt.Sprintf("{%s}", sql)).
+		conn.Query(sql).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Connect to mock
 		ctx := context.Background()
@@ -48,11 +47,11 @@ func TestMigrateDatabase(t *testing.T) {
 		assert.NoError(t, MigrateAndSeed(context.Background(), "", nil, afero.NewMemMapFs()))
 	})
 
-	t.Run("throws error on write failure", func(t *testing.T) {
+	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test
-		err := MigrateAndSeed(context.Background(), "", nil, afero.NewReadOnlyFs(fsys))
+		err := MigrateAndSeed(context.Background(), "", nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -122,6 +121,7 @@ func TestMigrateUp(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		pgtest.MockMigrationHistory(conn)
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)

@@ -75,16 +75,29 @@ services:
           add:
             headers:
               - "Content-Profile: graphql_public"
-  - name: realtime-v1
+  - name: realtime-v1-ws
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
     url: http://{{ .RealtimeId }}:4000/socket
+    protocol: ws
     routes:
-      - name: realtime-v1-all
+      - name: realtime-v1-ws
         strip_path: true
         paths:
           - /realtime/v1/
     plugins:
       - name: cors
+  - name: realtime-v1-rest
+    _comment: "Realtime: /realtime/v1/* -> http://realtime:4000/api/*"
+    url: http://{{ .RealtimeId }}:4000/api
+    protocol: http
+    routes:
+      - name: realtime-v1-rest
+        strip_path: true
+        paths:
+          - /realtime/v1/api
+    plugins:
+      - name: cors
+
   - name: storage-v1
     _comment: "Storage: /storage/v1/* -> http://storage-api:5000/*"
     url: http://{{ .StorageId }}:5000/

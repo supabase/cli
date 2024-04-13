@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -50,21 +49,18 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 			return err
 		}
 	}
-	if !utils.IsLoopback(config.Host) {
-		if shouldReset := utils.PromptYesNo("Confirm resetting the remote database?", true, os.Stdin); !shouldReset {
+	if !utils.IsLocalDatabase(config) {
+		msg := "Do you want to reset the remote database?"
+		if shouldReset := utils.PromptYesNo(msg, true, os.Stdin); !shouldReset {
+			utils.CmdSuggestion = ""
 			return errors.New(context.Canceled)
 		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
 
-	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
+	// Config file is loaded before parsing --linked or --local flags
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
 	}
 
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
@@ -116,7 +112,7 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 }
 
 func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, types.ContainerRemoveOptions{Force: true}); err != nil {
+	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, container.RemoveOptions{Force: true}); err != nil {
 		return errors.Errorf("failed to remove container: %w", err)
 	}
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
@@ -241,8 +237,8 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 	}
 	if !start.RetryEverySecond(ctx, probe, serviceTimeout) {
 		// Print container logs for easier debugging
-		for _, container := range started {
-			logs, err := utils.Docker.ContainerLogs(ctx, container, types.ContainerLogsOptions{
+		for _, containerId := range started {
+			logs, err := utils.Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
 			})
@@ -250,7 +246,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 				fmt.Fprintln(os.Stderr, err)
 				continue
 			}
-			fmt.Fprintln(os.Stderr, container, "container logs:")
+			fmt.Fprintln(os.Stderr, containerId, "container logs:")
 			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
@@ -263,7 +259,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfigStream(ctx, config, io.Discard, options...)
 	if err != nil {
 		return err
 	}
@@ -293,7 +289,7 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 }
 
 func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	exclude = likeEscapeSchema(exclude)
+	exclude = LikeEscapeSchema(exclude)
 	if len(exclude) == 0 {
 		exclude = append(exclude, "")
 	}
@@ -304,7 +300,7 @@ func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]stri
 	return pgxv5.CollectStrings(rows)
 }
 
-func likeEscapeSchema(schemas []string) (result []string) {
+func LikeEscapeSchema(schemas []string) (result []string) {
 	// Treat _ as literal, * as any character
 	replacer := strings.NewReplacer("_", `\_`, "*", "%")
 	for _, sch := range schemas {

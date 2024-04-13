@@ -4,109 +4,167 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/parser"
 )
 
-var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
-Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`
+type DiffFunc func(context.Context, string, string, []string) (string, error)
 
-func SaveDiff(out, file string, fsys afero.Fs) error {
-	if len(out) < 2 {
-		fmt.Fprintln(os.Stderr, "No schema changes found")
-	} else if len(file) > 0 {
-		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
-		if err := afero.WriteFile(fsys, path, []byte(out), 0644); err != nil {
-			return errors.Errorf("failed to save diff: %w", err)
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+	// Sanity checks.
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	// 1. Load all user defined schemas
+	if len(schema) == 0 {
+		schema, err = loadSchema(ctx, config, options...)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintln(os.Stderr, warnDiff)
-	} else {
-		fmt.Println(out)
+	}
+	// 3. Run migra to diff schema
+	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
+	if err != nil {
+		return err
+	}
+	branch := keys.GetGitBranch(fsys)
+	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
+	if err := SaveDiff(out, file, fsys); err != nil {
+		return err
+	}
+	drops := findDropStatements(out)
+	if len(drops) > 0 {
+		fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
+		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
 }
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs) error {
-	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
+// https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
+var dropStatementPattern = regexp.MustCompile(`(?i)drop\s+`)
+
+func findDropStatements(out string) []string {
+	lines, err := parser.SplitAndTrim(strings.NewReader(out))
+	if err != nil {
+		return nil
+	}
+	var drops []string
+	for _, line := range lines {
+		if dropStatementPattern.MatchString(line) {
+			drops = append(drops, line)
 		}
 	}
-
-	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, schema, config, fsys)
-	}); err != nil {
-		return err
-	}
-
-	return SaveDiff(output, file, fsys)
+	return drops
 }
 
-var output string
+func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(context.Background())
+	return LoadUserSchemas(ctx, conn)
+}
 
-func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
-	p.Send(utils.StatusMsg("Creating shadow database..."))
+func LoadUserSchemas(ctx context.Context, conn *pgx.Conn) ([]string, error) {
+	// RLS policies in auth and storage schemas can be included with -s flag
+	exclude := append([]string{
+		"auth",
+		// "extensions",
+		"pgbouncer",
+		"realtime",
+		"_realtime",
+		"storage",
+		"_analytics",
+		// Exclude functions because Webhooks support is early alpha
+		"supabase_functions",
+		"supabase_migrations",
+	}, utils.SystemSchemas...)
+	return reset.ListSchemas(ctx, conn, exclude...)
+}
 
-	// 1. Create shadow db and run migrations
-	shadow, err := CreateShadowDatabase(ctx)
+func CreateShadowDatabase(ctx context.Context) (string, error) {
+	config := start.NewContainerConfig()
+	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
+	hostConfig := container.HostConfig{
+		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
+		AutoRemove:   true,
+	}
+	networkingConfig := network.NetworkingConfig{}
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = nil
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
+	}
+	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")
+}
+
+func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
+	// Retry until connected, cancelled, or timeout
+	policy := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second), uint64(timeout.Seconds()))
+	config := pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}
+	connect := func() (*pgx.Conn, error) {
+		return utils.ConnectLocalPostgres(ctx, config, options...)
+	}
+	return backoff.RetryWithData(connect, backoff.WithContext(policy, ctx))
+}
+
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	migrations, err := list.LoadLocalMigrations(fsys)
 	if err != nil {
 		return err
 	}
-	defer utils.DockerRemove(shadow)
-	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return errors.New(start.ErrDatabase)
-	}
-	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
 		return err
 	}
-
-	p.Send(utils.StatusMsg("Diffing local database with current migrations..."))
-
-	// 2. Diff local db (source) with shadow db (target), print it.
-	source := utils.ToPostgresURL(config)
-	target := fmt.Sprintf("postgresql://postgres:postgres@127.0.0.1:%d/postgres", utils.Config.Db.ShadowPort)
-	output, err = DiffSchema(ctx, source, target, schema, p)
-	return err
+	defer conn.Close(context.Background())
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+		return err
+	}
+	return apply.MigrateUp(ctx, conn, migrations, fsys)
 }
 
-func DiffSchema(ctx context.Context, source, target string, schema []string, p utils.Program) (string, error) {
-	stream := utils.NewDiffStream(p)
-	args := []string{"--json-diff", source, target}
-	if len(schema) == 0 {
-		if err := utils.DockerRunOnceWithStream(
-			ctx,
-			utils.DifferImage,
-			nil,
-			args,
-			stream.Stdout(),
-			stream.Stderr(),
-		); err != nil {
-			return "", err
-		}
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ func(context.Context, string, string, []string) (string, error), options ...func(*pgx.ConnConfig)) (string, error) {
+	fmt.Fprintln(w, "Creating shadow database...")
+	shadow, err := CreateShadowDatabase(ctx)
+	if err != nil {
+		return "", err
 	}
-	for _, s := range schema {
-		p.Send(utils.StatusMsg("Diffing schema: " + s))
-		if err := utils.DockerRunOnceWithStream(
-			ctx,
-			utils.DifferImage,
-			nil,
-			append([]string{"--schema", s}, args...),
-			stream.Stdout(),
-			stream.Stderr(),
-		); err != nil {
-			return "", err
-		}
+	defer utils.DockerRemove(shadow)
+	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
+		return "", errors.New(start.ErrDatabase)
 	}
-	diffBytes, err := stream.Collect()
-	return string(diffBytes), err
+	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
+		return "", err
+	}
+	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
+	source := utils.ToPostgresURL(pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     uint16(utils.Config.Db.ShadowPort),
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	})
+	target := utils.ToPostgresURL(config)
+	return differ(ctx, source, target, schema)
 }

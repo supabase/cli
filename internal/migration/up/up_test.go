@@ -2,6 +2,7 @@ package up
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -47,7 +49,7 @@ func TestPendingMigrations(t *testing.T) {
 
 	t.Run("throws error on local load failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -61,7 +63,7 @@ func TestPendingMigrations(t *testing.T) {
 		// Run test
 		_, err = GetPendingMigrations(ctx, false, mock, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "operation not permitted")
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
 	t.Run("throws error on missing local migration", func(t *testing.T) {
@@ -81,6 +83,7 @@ func TestPendingMigrations(t *testing.T) {
 		_, err = GetPendingMigrations(ctx, false, mock, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errMissingLocal)
+		assert.Contains(t, utils.CmdSuggestion, "supabase migration repair --status reverted 0")
 	})
 
 	t.Run("throws error on missing remote version", func(t *testing.T) {
@@ -142,13 +145,20 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 	t.Run("throws error on missing local migration", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "20221201000000_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		files := []string{
+			"20221201000000_test.sql",
+			"20221201000002_test.sql",
+			"20221201000003_test.sql",
+		}
+		for _, name := range files {
+			path := filepath.Join(utils.MigrationsDir, name)
+			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"20221201000001"})
+			Reply("SELECT 1", []interface{}{"20221201000000"}, []interface{}{"20221201000001"}, []interface{}{"20221201000002"}, []interface{}{"20221201000003"})
 		// Connect to mock
 		ctx := context.Background()
 		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
@@ -158,5 +168,6 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		_, err = GetPendingMigrations(ctx, true, mock, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errMissingLocal)
+		assert.Contains(t, utils.CmdSuggestion, "supabase migration repair --status reverted 20221201000001")
 	})
 }

@@ -404,6 +404,8 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 
+			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
+
 			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
 			"GOTRUE_SMTP_PORT=2500",
 			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
@@ -713,7 +715,7 @@ EOF
 					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
-					"REGION=stub",
+					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
 					"ENABLE_IMAGE_TRANSFORMATION=true",
 					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
@@ -809,7 +811,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -842,11 +844,11 @@ EOF
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					fmt.Sprintf("SUPABASE_REST_URL=%s:%v/rest/v1/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					"OPENAI_KEY=" + utils.Config.Studio.OpenaiApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
@@ -854,7 +856,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,

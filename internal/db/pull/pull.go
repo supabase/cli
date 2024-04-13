@@ -93,6 +93,9 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Special case if this is the first migration
 	p.Send(utils.StatusMsg("Dumping schema from remote database..."))
+	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+		return err
+	}
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return errors.Errorf("failed to open dump file: %w", err)
@@ -104,14 +107,14 @@ func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config 
 func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
 	w := utils.StatusWriter{Program: p}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys)
+	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
 	if err != nil {
 		return err
 	}
 	if len(output) == 0 {
 		return errors.New(errInSync)
 	}
-	if err := afero.WriteFile(fsys, path, []byte(output), 0644); err != nil {
+	if err := utils.WriteFile(path, []byte(output), fsys); err != nil {
 		return errors.Errorf("failed to write dump file: %w", err)
 	}
 	return nil

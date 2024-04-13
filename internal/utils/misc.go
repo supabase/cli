@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -31,15 +33,15 @@ const (
 	PostgrestImage   = "postgrest/postgrest:v12.0.1"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
-	PgmetaImage      = "supabase/postgres-meta:v0.75.0"
-	StudioImage      = "supabase/studio:20240205-b145c86"
+	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
+	StudioImage      = "supabase/studio:20240408-6bf3b81"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.34.1"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.41.3"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.132.3"
-	RealtimeImage    = "supabase/realtime:v2.25.50"
+	GotrueImage      = "supabase/gotrue:v2.145.0"
+	RealtimeImage    = "supabase/realtime:v2.27.5"
 	StorageImage     = "supabase/storage-api:v1.0.4"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
@@ -87,6 +89,7 @@ DO 'BEGIN WHILE (
 
 var (
 	CmdSuggestion string
+	CurrentDirAbs string
 
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
@@ -104,9 +107,11 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	SystemSchemas = []string{
+	PgSchemas = []string{
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
+	}
+	SystemSchemas = append([]string{
 		// Owned by extensions
 		"cron",
 		"graphql",
@@ -122,7 +127,7 @@ var (
 		"_timescaledb_*",
 		"topology",
 		"vault",
-	}
+	}, PgSchemas...)
 	InternalSchemas = append([]string{
 		"auth",
 		"extensions",
@@ -225,22 +230,44 @@ func IsGitRepo() bool {
 // If the `os.Getwd()` is within a supabase project, this will return
 // the root of the given project as the current working directory.
 // Otherwise, the `os.Getwd()` is kept as is.
-func GetProjectRoot(fsys afero.Fs) (string, error) {
-	origWd, err := os.Getwd()
-	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
+func getProjectRoot(absPath string, fsys afero.Fs) string {
+	for cwd := absPath; ; cwd = filepath.Dir(cwd) {
 		path := filepath.Join(cwd, ConfigPath)
 		// Treat all errors as file not exists
-		if isSupaProj, _ := afero.Exists(fsys, path); isSupaProj {
-			return cwd, nil
+		if isSupaProj, err := afero.Exists(fsys, path); isSupaProj {
+			return cwd
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger := GetDebugLogger()
+			fmt.Fprintln(logger, err)
 		}
 		if isRootDirectory(cwd) {
 			break
 		}
 	}
-	if err != nil {
-		return "", errors.Errorf("failed to find project root: %w", err)
+	return absPath
+}
+
+func isRootDirectory(cleanPath string) bool {
+	// A cleaned path only ends with separator if it is root
+	return os.IsPathSeparator(cleanPath[len(cleanPath)-1])
+}
+
+func ChangeWorkDir(fsys afero.Fs) error {
+	// Track the original workdir before changing to project root
+	if !filepath.IsAbs(CurrentDirAbs) {
+		var err error
+		if CurrentDirAbs, err = os.Getwd(); err != nil {
+			return errors.Errorf("failed to get current directory: %w", err)
+		}
 	}
-	return origWd, nil
+	workdir := viper.GetString("WORKDIR")
+	if len(workdir) == 0 {
+		workdir = getProjectRoot(CurrentDirAbs, fsys)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		return errors.Errorf("failed to change workdir: %w", err)
+	}
+	return nil
 }
 
 func IsBranchNameReserved(branch string) bool {

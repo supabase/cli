@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
@@ -46,13 +47,20 @@ func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...fu
 }
 
 func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
+	versions, err := listMigrationVersions(ctx, conn)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
 			// If migration history table is undefined, the remote project has no migrations
 			return nil, nil
 		}
+	}
+	return versions, err
+}
+
+func listMigrationVersions(ctx context.Context, conn *pgx.Conn) ([]string, error) {
+	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
+	if err != nil {
 		return nil, errors.Errorf("failed to query rows: %w", err)
 	}
 	return pgxv5.CollectStrings(rows)
@@ -66,6 +74,9 @@ const (
 func formatTimestamp(version string) string {
 	timestamp, err := time.Parse(layoutVersion, version)
 	if err != nil {
+		if viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		return version
 	}
 	return timestamp.Format(layoutHuman)
@@ -140,11 +151,8 @@ func LoadLocalMigrations(fsys afero.Fs) ([]string, error) {
 }
 
 func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
-		return nil, err
-	}
 	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Errorf("failed to read directory: %w", err)
 	}
 	var names []string

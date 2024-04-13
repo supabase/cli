@@ -1,6 +1,7 @@
 package login
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -12,14 +13,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 type RunParams struct {
@@ -168,39 +171,46 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 	return accessTokenResponse, errors.Errorf("HTTP %s: cannot retrieve access token", resp.Status)
 }
 
-func Run(ctx context.Context, stdout *os.File, params RunParams) error {
+func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 	if params.Token != "" {
-		err := utils.SaveAccessToken(params.Token, params.Fsys)
-		if err != nil {
+		if err := utils.SaveAccessToken(params.Token, params.Fsys); err != nil {
 			return errors.Errorf("cannot save provided token: %w", err)
 		}
 		fmt.Println(loggedInMsg)
 		return nil
 	}
 
-	if params.OpenBrowser {
-		fmt.Fprint(stdout, "Hello from ", utils.Aqua("Supabase"), "! Press ", utils.Aqua("Enter"), " to open browser and login automatically.\n")
-		fmt.Scanln()
+	// Initialise login encryption and Session ID for end-to-end communication.
+	if params.Encryption == nil {
+		var err error
+		if params.Encryption, err = NewLoginEncryption(); err != nil {
+			return err
+		}
+		params.SessionId = uuid.New().String()
 	}
 
-	tokenName := params.TokenName
-	encodedPublicKey := params.Encryption.encodedPublicKey()
+	// Initialise default token name
+	if params.TokenName == "" {
+		params.TokenName = generateTokenNameWithFallback()
+	}
 
+	encodedPublicKey := params.Encryption.encodedPublicKey()
 	createLoginSessionPath := "/cli/login"
-	createLoginSessionQuery := "?session_id=" + params.SessionId + "&token_name=" + tokenName + "&public_key=" + encodedPublicKey
+	createLoginSessionQuery := "?session_id=" + params.SessionId + "&token_name=" + params.TokenName + "&public_key=" + encodedPublicKey
 	createLoginSessionUrl := utils.GetSupabaseDashboardURL() + createLoginSessionPath + createLoginSessionQuery
 
 	if params.OpenBrowser {
+		fmt.Fprintf(stdout, "Hello from %s! Press %s to open browser and login automatically.\n", utils.Aqua("Supabase"), utils.Aqua("Enter"))
+		fmt.Scanln()
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
-
 		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
-			return errors.Errorf("cannot open default browser: %w", err)
+			fmt.Fprintln(os.Stderr, err)
 		}
 	} else {
 		fmt.Fprintf(stdout, "Here is your login link, open it in the browser %s\n\n", utils.Bold(createLoginSessionUrl))
 	}
 
-	err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		p.Send(utils.StatusMsg("Your token is now being generated and securely encrypted. Waiting for it to arrive..."))
 
 		sessionPollingUrl := utils.GetSupabaseAPIHost() + "/platform/cli/login/" + params.SessionId
@@ -215,21 +225,49 @@ func Run(ctx context.Context, stdout *os.File, params RunParams) error {
 		}
 
 		return utils.SaveAccessToken(decryptedAccessToken, params.Fsys)
-	})
-
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Token %s created successfully.\n\n", utils.Bold(tokenName))
+	fmt.Fprintf(stdout, "Token %s created successfully.\n\n", utils.Bold(params.TokenName))
 	fmt.Fprintln(stdout, loggedInMsg)
 
 	return nil
 }
 
-func PromptAccessToken(stdin *os.File) string {
-	fmt.Fprintf(os.Stderr, `You can generate an access token from %s/account/tokens
-Enter your access token: `, utils.GetSupabaseDashboardURL())
-	input := credentials.PromptMasked(stdin)
-	return strings.TrimSpace(input)
+func ParseAccessToken(stdin afero.File) string {
+	// Not using viper so we can reset env easily in tests
+	token := os.Getenv("SUPABASE_ACCESS_TOKEN")
+	if len(token) == 0 {
+		var buf bytes.Buffer
+		if err := new.CopyStdinIfExists(stdin, &buf); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		token = strings.TrimSpace(buf.String())
+	}
+	return token
+}
+
+func generateTokenName() (string, error) {
+	user, err := user.Current()
+	if err != nil {
+		return "", errors.Errorf("cannot retrieve username: %w", err)
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", errors.Errorf("cannot retrieve hostname: %w", err)
+	}
+
+	return fmt.Sprintf("cli_%s@%s_%d", user.Username, hostname, time.Now().Unix()), nil
+}
+
+func generateTokenNameWithFallback() string {
+	name, err := generateTokenName()
+	if err != nil {
+		logger := utils.GetDebugLogger()
+		fmt.Fprintln(logger, err)
+		name = fmt.Sprintf("cli_%d", time.Now().Unix())
+	}
+	return name
 }

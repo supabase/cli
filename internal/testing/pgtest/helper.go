@@ -5,7 +5,8 @@ import (
 )
 
 func MockMigrationHistory(conn *MockConn) {
-	conn.Query(history.CREATE_VERSION_SCHEMA).
+	conn.Query(history.SET_LOCK_TIMEOUT).
+		Query(history.CREATE_VERSION_SCHEMA).
 		Reply("CREATE SCHEMA").
 		Query(history.CREATE_VERSION_TABLE).
 		Reply("CREATE TABLE").

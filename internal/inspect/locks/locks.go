@@ -9,31 +9,17 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT
-	pg_stat_activity.pid,
-	COALESCE(pg_class.relname, 'null') AS relname,
-	COALESCE(pg_locks.transactionid, 'null') AS transactionid,
-	pg_locks.granted,
-	pg_stat_activity.query,
-	age(now(),pg_stat_activity.query_start) AS age
-FROM pg_stat_activity, pg_locks LEFT OUTER JOIN pg_class ON (pg_locks.relation = pg_class.oid)
-WHERE pg_stat_activity.query <> '<insufficient privilege>'
-AND pg_locks.pid=pg_stat_activity.pid
-AND pg_locks.mode = 'ExclusiveLock'
-ORDER BY query_start;
-`
-
 type Result struct {
-	Pid           string
+	Pid           int
 	Relname       string
 	Transactionid string
-	Granted       string
+	Granted       bool
 	Query         string
 	Age           string
 }
@@ -43,7 +29,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	rows, err := conn.Query(ctx, inspect.LOCKS_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -61,7 +47,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		// escape pipes in query
 		re = regexp.MustCompile(`\|`)
 		query = re.ReplaceAllString(query, `\|`)
-		table += fmt.Sprintf("|`%v`|`%v`|`%v`|`%v`|%s|`%v`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%t`|%s|`%s`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
 	}
 	return list.RenderTable(table)
 }

@@ -37,9 +37,8 @@ func TestMain(m *testing.M) {
 	TempDir = NewTempDir(Logger, "")
 
 	// redirect clients to mock servers
-	if err := client.WithHost("tcp://127.0.0.1" + DockerPort)(utils.Docker); err != nil {
-		Logger.Fatal(err)
-	}
+	os.Setenv("DOCKER_HOST", "tcp://127.0.0.1"+DockerPort)
+	utils.Docker = utils.NewDocker()
 	if err := client.WithVersion(docker.APIVersion)(utils.Docker); err != nil {
 		Logger.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -33,12 +34,12 @@ func TestRepairCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("select 1"), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		pgtest.MockMigrationHistory(conn)
-		conn.Query("INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'test', null)").
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{"select 1"}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
@@ -53,7 +54,7 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		pgtest.MockMigrationHistory(conn)
-		conn.Query("DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY('{0}')").
+		conn.Query(history.DELETE_MIGRATION_VERSION, []string{"0"}).
 			Reply("DELETE 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, []string{"0"}, Reverted, fsys, conn.Intercept)
@@ -79,7 +80,7 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		pgtest.MockMigrationHistory(conn)
-		conn.Query("INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES('0', 'test', null)").
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
 		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
@@ -117,6 +118,29 @@ func TestMigrationFile(t *testing.T) {
 		assert.Nil(t, migration)
 	})
 
+	t.Run("encodes statements in binary format", func(t *testing.T) {
+		migration := MigrationFile{
+			Lines:   []string{"create schema public"},
+			Version: "0",
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.Lines[0]).
+			Reply("CREATE SCHEMA").
+			Query(history.INSERT_MIGRATION_VERSION, "0", "", migration.Lines).
+			Reply("INSERT 0 1")
+		// Connect to mock
+		ctx := context.Background()
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
+		require.NoError(t, err)
+		defer mock.Close(ctx)
+		// Run test
+		err = migration.ExecBatch(context.Background(), mock)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on insert failure", func(t *testing.T) {
 		migration := MigrationFile{
 			Lines:   []string{"create schema public"},
@@ -126,13 +150,14 @@ func TestMigrationFile(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.Lines[0]).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0])).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
+			Query(history.INSERT_MIGRATION_VERSION, "0", "", fmt.Sprintf("{%s}", migration.Lines[0])).
 			Reply("INSERT 0 1")
-		// Connect to mock
+		// Connect to mock via text protocol
 		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
+		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		})
 		require.NoError(t, err)
 		defer mock.Close(ctx)
 		// Run test

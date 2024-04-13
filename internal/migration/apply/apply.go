@@ -2,14 +2,15 @@ package apply
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
@@ -39,6 +40,11 @@ func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 }
 
 func MigrateUp(ctx context.Context, conn *pgx.Conn, pending []string, fsys afero.Fs) error {
+	if len(pending) > 0 {
+		if err := history.CreateMigrationTable(ctx, conn); err != nil {
+			return err
+		}
+	}
 	for _, filename := range pending {
 		if err := applyMigration(ctx, conn, filename, fsys); err != nil {
 			return err

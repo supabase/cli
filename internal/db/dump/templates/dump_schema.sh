@@ -11,28 +11,34 @@ export PGDATABASE="$PGDATABASE"
 #
 #   --schema-only     omit data like migration history, pgsodium key, etc.
 #   --exclude-schema  omit internal schemas as they are maintained by platform
-#   --no-comments     only object owner can set comment, omit to allow restore by non-superuser
 #
 # Explanation of sed substitutions:
 #
 #   - do not alter superuser role "supabase_admin"
 #   - do not include ACL changes on internal schemas
 #   - do not include RLS policies on cron extension schema
+#   - do not include event triggers
+#   - do not include creating publication "supabase_realtime"
 pg_dump \
     --schema-only \
     --quote-all-identifier \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
-    --schema "${INCLUDED_SCHEMAS:-}" \
-    --no-comments \
+    ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed -E 's/^CREATE TABLE "/CREATE TABLE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE VIEW "/CREATE OR REPLACE VIEW "/' \
 | sed -E 's/^CREATE FUNCTION "/CREATE OR REPLACE FUNCTION "/' \
 | sed -E 's/^CREATE TRIGGER "/CREATE OR REPLACE TRIGGER "/' \
+| sed -E 's/^CREATE PUBLICATION "supabase_realtime"/-- &/' \
+| sed -E 's/^CREATE EVENT TRIGGER /-- &/' \
+| sed -E 's/^         WHEN TAG IN /-- &/' \
+| sed -E 's/^   EXECUTE FUNCTION /-- &/' \
+| sed -E 's/^ALTER EVENT TRIGGER /-- &/' \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
 | sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
+| sed -E 's/^COMMENT ON EXTENSION (.+)/-- &/' \
 | sed -E 's/^CREATE POLICY "cron_job_/-- &/' \
 | sed -E 's/^ALTER TABLE "cron"/-- &/' \
 | sed -E "${EXTRA_SED:-}" \

@@ -15,8 +15,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-var ci = pgtype.NewConnInfo()
-
 type MockConn struct {
 	// Duplex server listener backed by in-memory buffer
 	server *bufconn.Listener
@@ -34,11 +32,15 @@ type MockConn struct {
 func (r *MockConn) getStartupMessage(config *pgx.ConnConfig) []pgmock.Step {
 	var steps []pgmock.Step
 	// Add auth message
+	params := map[string]string{"user": config.User}
+	if len(config.Database) > 0 {
+		params["database"] = config.Database
+	}
 	steps = append(
 		steps,
 		pgmock.ExpectMessage(&pgproto3.StartupMessage{
 			ProtocolVersion: pgproto3.ProtocolVersionNumber,
-			Parameters:      map[string]string{"database": config.Database, "user": config.User},
+			Parameters:      params,
 		}),
 		pgmock.SendMessage(&pgproto3.AuthenticationOk{}),
 	)
@@ -78,20 +80,40 @@ func (r *MockConn) Query(sql string, args ...interface{}) *MockConn {
 	var oids []uint32
 	var params [][]byte
 	for _, v := range args {
-		if dt, ok := ci.DataTypeForValue(v); ok {
-			if err := dt.Value.Set(v); err != nil {
-				continue
-			}
-			value, err := (dt.Value).(pgtype.TextEncoder).EncodeText(ci, []byte{})
-			if err != nil {
-				continue
-			}
+		if value, oid := r.encodeValueArg(v); oid > 0 {
 			params = append(params, value)
-			oids = append(oids, dt.OID)
+			oids = append(oids, oid)
 		}
 	}
 	r.script.Steps = append(r.script.Steps, ExpectQuery(sql, params, oids))
 	return r
+}
+
+func (r *MockConn) encodeValueArg(v interface{}) (value []byte, oid uint32) {
+	if v == nil {
+		return nil, pgtype.TextArrayOID
+	}
+	dt, ok := ci.DataTypeForValue(v)
+	if !ok {
+		r.errChan <- fmt.Errorf("no suitable type for arg: %v", v)
+		return nil, 0
+	}
+	if err := dt.Value.Set(v); err != nil {
+		r.errChan <- fmt.Errorf("failed to set value: %w", err)
+		return nil, 0
+	}
+	var err error
+	switch dt.OID {
+	case pgtype.TextArrayOID:
+		value, err = (dt.Value).(pgtype.BinaryEncoder).EncodeBinary(ci, []byte{})
+	default:
+		value, err = (dt.Value).(pgtype.TextEncoder).EncodeText(ci, []byte{})
+	}
+	if err != nil {
+		r.errChan <- fmt.Errorf("failed to encode arg: %w", err)
+		return nil, 0
+	}
+	return value, dt.OID
 }
 
 func getDataTypeSize(v interface{}) int16 {
@@ -107,9 +129,9 @@ func (r *MockConn) lastQuery() *extendedQueryStep {
 	return r.script.Steps[len(r.script.Steps)-1].(*extendedQueryStep)
 }
 
-// Adds a server reply using text protocol format.
+// Adds a server reply using binary or text protocol format.
 //
-// TODO: support binary protocol
+// TODO: support prepared statements when using binary protocol
 func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	q := r.lastQuery()
 	// Add field description
@@ -119,6 +141,7 @@ func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 			name := fmt.Sprintf("c_%02d", i)
 			if dt, ok := ci.DataTypeForValue(v); ok {
 				size := getDataTypeSize(v)
+				format := ci.ParamFormatCodeForOID(dt.OID)
 				desc.Fields = append(desc.Fields, pgproto3.FieldDescription{
 					Name:                 []byte(name),
 					TableOID:             17131,
@@ -126,7 +149,7 @@ func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 					DataTypeOID:          dt.OID,
 					DataTypeSize:         size,
 					TypeModifier:         -1,
-					Format:               pgtype.TextFormatCode,
+					Format:               format,
 				})
 			}
 		}
@@ -139,13 +162,8 @@ func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	for _, data := range rows {
 		var dr pgproto3.DataRow
 		for _, v := range data {
-			if dt, ok := ci.DataTypeForValue(v); ok {
-				if err := dt.Value.Set(v); err != nil {
-					continue
-				}
-				if value, err := (dt.Value).(pgtype.TextEncoder).EncodeText(ci, []byte{}); err == nil {
-					dr.Values = append(dr.Values, value)
-				}
+			if value, oid := r.encodeValueArg(v); oid > 0 {
+				dr.Values = append(dr.Values, value)
 			}
 		}
 		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&dr))
@@ -180,10 +198,10 @@ func (r *MockConn) ReplyError(code, message string) *MockConn {
 
 func (r *MockConn) Close(t *testing.T) {
 	if err := <-r.errChan; err != nil {
-		t.Fatalf("failed to close %v", err)
+		t.Fatalf("failed to close: %v", err)
 	}
 	if err := r.server.Close(); err != nil {
-		t.Fatalf("failed to close %v", err)
+		t.Fatalf("failed to close: %v", err)
 	}
 }
 

@@ -18,7 +18,7 @@ func TestInitCommand(t *testing.T) {
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, fsys.Mkdir(".git", 0755))
 		// Run test
-		assert.NoError(t, Run(fsys, nil, false))
+		assert.NoError(t, Run(fsys, nil, nil, utils.InitParams{}))
 		// Validate generated config.toml
 		exists, err := afero.Exists(fsys, utils.ConfigPath)
 		assert.NoError(t, err)
@@ -38,6 +38,10 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, extensionsPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
+		// Validate intellij settings file isn't generated
+		exists, err = afero.Exists(fsys, denoPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 
 	t.Run("throws error when config file exists", func(t *testing.T) {
@@ -46,14 +50,14 @@ func TestInitCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(fsys, nil, false))
+		assert.Error(t, Run(fsys, nil, nil, utils.InitParams{}))
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.StatErrorFs{DenyPath: utils.ConfigPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.ConfigPath}
 		// Run test
-		err := Run(fsys, nil, false)
+		err := Run(fsys, nil, nil, utils.InitParams{})
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -62,14 +66,14 @@ func TestInitCommand(t *testing.T) {
 		// Setup read-only fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		assert.Error(t, Run(fsys, nil, false))
+		assert.Error(t, Run(fsys, nil, nil, utils.InitParams{}))
 	})
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.CreateErrorFs{DenyPath: utils.SeedDataPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.SeedDataPath}
 		// Run test
-		err := Run(fsys, nil, false)
+		err := Run(fsys, nil, nil, utils.InitParams{})
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -78,7 +82,7 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(fsys, boolPointer(true), false))
+		assert.NoError(t, Run(fsys, utils.Ptr(true), nil, utils.InitParams{}))
 		// Validate generated vscode settings
 		exists, err := afero.Exists(fsys, settingsPath)
 		assert.NoError(t, err)
@@ -92,12 +96,34 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(fsys, boolPointer(false), false))
+		assert.NoError(t, Run(fsys, utils.Ptr(false), nil, utils.InitParams{}))
 		// Validate vscode settings file isn't generated
 		exists, err := afero.Exists(fsys, settingsPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
 		exists, err = afero.Exists(fsys, extensionsPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("creates intellij deno file", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &afero.MemMapFs{}
+		// Run test
+		assert.NoError(t, Run(fsys, nil, utils.Ptr(true), utils.InitParams{}))
+		// Validate generated intellij deno config
+		exists, err := afero.Exists(fsys, denoPath)
+		assert.NoError(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("does not create intellij deno file", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &afero.MemMapFs{}
+		// Run test
+		assert.NoError(t, Run(fsys, nil, utils.Ptr(false), utils.InitParams{}))
+		// Validate intellij deno config file isn't generated
+		exists, err := afero.Exists(fsys, denoPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -232,8 +258,4 @@ func TestUpdateJsonFile(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
-}
-
-func boolPointer(b bool) *bool {
-	return &b
 }

@@ -78,7 +78,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		return nil, errors.Errorf("failed to get working directory: %w", err)
 	}
 
-	// create temp directory to store generated eszip
+	// Create temp directory to store generated eszip
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 	// BitBucket pipelines require docker bind mounts to be world writable
 	if err := fsys.MkdirAll(hostOutputDir, 0777); err != nil {
@@ -214,7 +214,11 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			return errors.Errorf("failed to resolve absolute path: %w", err)
 		}
 	}
-	exists, _ := afero.Exists(fsys, resolved)
+	exists, err := afero.Exists(fsys, resolved)
+	if err != nil {
+		logger := utils.GetDebugLogger()
+		fmt.Fprintln(logger, err)
+	}
 	if exists {
 		importMapPath = resolved
 	} else {

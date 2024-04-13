@@ -15,9 +15,10 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -34,30 +35,21 @@ func (c ConfigCopy) IsEmpty() bool {
 	return c.Api == nil && c.Db == nil && c.Pooler == nil
 }
 
-func PreRun(projectRef string, fsys afero.Fs) error {
-	// Sanity checks
-	if err := utils.AssertProjectRefIsValid(projectRef); err != nil {
-		return err
-	}
-	return utils.LoadConfigFS(fsys)
-}
-
-func Run(ctx context.Context, projectRef, password string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
 	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
 		return err
 	}
-	linkServices(ctx, projectRef, fsys)
+	LinkServices(ctx, projectRef, fsys)
 
 	// 2. Check database connection
-	if len(password) > 0 {
-		dbConfig := GetDbConfigNoPassword(projectRef)
-		dbConfig.Password = password
-		if err := linkDatabase(ctx, dbConfig, options...); err != nil {
+	config := flags.GetDbConfigOptionalPassword(projectRef)
+	if len(config.Password) > 0 {
+		if err := linkDatabase(ctx, config, options...); err != nil {
 			return err
 		}
 		// Save database password
-		if err := credentials.Set(projectRef, password); err != nil {
+		if err := credentials.Set(projectRef, config.Password); err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 		}
 	}
@@ -80,7 +72,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return nil
 }
 
-func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
 	wg.Add(6)
@@ -185,14 +177,14 @@ func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) e
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectRemotePostgres(ctx, config, options...)
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	return repair.CreateMigrationTable(ctx, conn)
+	return history.CreateMigrationTable(ctx, conn)
 }
 
 func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -251,27 +243,5 @@ func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
 		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
 	if changed {
 		updatedConfig.Pooler = copy
-	}
-}
-
-func PromptPassword(stdin *os.File) string {
-	fmt.Fprint(os.Stderr, "Enter your database password: ")
-	return credentials.PromptMasked(stdin)
-}
-
-func PromptPasswordAllowBlank(stdin *os.File) string {
-	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
-	return credentials.PromptMasked(stdin)
-}
-
-func GetDbConfigNoPassword(projectRef string) pgconn.Config {
-	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
-		return *poolerConfig
-	}
-	return pgconn.Config{
-		Host:     utils.GetSupabaseDbHost(projectRef),
-		Port:     5432,
-		User:     "postgres",
-		Database: "postgres",
 	}
 }

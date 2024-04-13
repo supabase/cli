@@ -27,6 +27,7 @@ type CustomName struct {
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
+	StorageS3Region          string `env:"api.storage_s3_region,default=STORAGE_S3_REGION"`
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -53,6 +54,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.StorageS3URL] = fmt.Sprintf("%s/%s", values[c.ApiURL], "storage/v1/s3")
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
+		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
 	}
 	return values
 }
@@ -167,6 +169,7 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
 		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
 		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
+		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields

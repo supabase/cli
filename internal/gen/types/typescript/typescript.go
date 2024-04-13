@@ -3,7 +3,6 @@ package typescript
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -11,27 +10,21 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, dbUrl string, schemas []string, postgrestV9Compat bool, fsys afero.Fs) error {
-	coalesce := func(args ...[]string) []string {
-		for _, arg := range args {
-			if len(arg) != 0 {
-				return arg
-			}
-		}
-		return []string{}
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	originalURL := utils.ToPostgresURL(dbConfig)
+	// Add default schemas if --schema flag is not specified
+	if len(schemas) == 0 {
+		schemas = utils.RemoveDuplicates(append([]string{"public"}, utils.Config.Api.Schemas...))
 	}
-
-	// Generating types on `projectId` and `dbUrl` should work without `supabase
-	// init` - i.e. we shouldn't try to load the config for these cases.
+	included := strings.Join(schemas, ",")
 
 	if projectId != "" {
-		included := strings.Join(coalesce(schemas, []string{"public"}), ",")
 		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
 			IncludedSchemas: &included,
 		})
@@ -47,48 +40,8 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 		return nil
 	}
 
-	if dbUrl != "" {
-		config, err := pgconn.ParseConfig(dbUrl)
-		if err != nil {
-			return errors.New("URL is not a valid Supabase connection string: " + err.Error())
-		}
-		escaped := fmt.Sprintf(
-			"postgresql://%s@%s:%d/%s",
-			url.UserPassword(config.User, config.Password),
-			config.Host,
-			config.Port,
-			url.PathEscape(config.Database),
-		)
-		fmt.Fprintln(os.Stderr, "Connecting to", config.Host)
-
-		return utils.DockerRunOnceWithConfig(
-			ctx,
-			container.Config{
-				Image: utils.PgmetaImage,
-				Env: []string{
-					"PG_META_DB_URL=" + escaped,
-					"PG_META_GENERATE_TYPES=typescript",
-					"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, []string{"public"}), ","),
-					fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
-				},
-				Cmd: []string{"node", "dist/server/server.js"},
-			},
-			container.HostConfig{
-				NetworkMode: container.NetworkMode("host"),
-			},
-			network.NetworkingConfig{},
-			"",
-			os.Stdout,
-			os.Stderr,
-		)
-	}
-
-	// only load config on `--local` or `--linked`
-	if err := utils.LoadConfigFS(fsys); err != nil {
-		return err
-	}
-
-	if useLocal {
+	networkID := "host"
+	if utils.IsLocalDatabase(dbConfig) {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
@@ -97,42 +50,54 @@ func Run(ctx context.Context, useLocal bool, useLinked bool, projectId string, d
 			postgrestV9Compat = true
 		}
 
-		return utils.DockerRunOnceWithStream(
-			ctx,
-			utils.PgmetaImage,
-			[]string{
-				"PG_META_DB_HOST=" + utils.DbId,
+		// Use custom network when connecting to local database
+		dbConfig.Host = utils.DbAliases[0]
+		dbConfig.Port = 5432
+		networkID = utils.NetId
+	}
+	// pg-meta does not set username as the default database, ie. postgres
+	if len(dbConfig.Database) == 0 {
+		dbConfig.Database = "postgres"
+	}
+
+	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
+	escaped := utils.ToPostgresURL(dbConfig)
+	if require, err := isRequireSSL(ctx, originalURL, options...); err != nil {
+		return err
+	} else if require {
+		// node-postgres does not support sslmode=prefer
+		escaped += "&sslmode=require"
+	}
+
+	return utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image: utils.PgmetaImage,
+			Env: []string{
+				"PG_META_DB_URL=" + escaped,
 				"PG_META_GENERATE_TYPES=typescript",
-				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ","),
+				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
 			},
-			[]string{"node", "dist/server/server.js"},
-			os.Stdout,
-			os.Stderr,
-		)
+			Cmd: []string{"node", "dist/server/server.js"},
+		},
+		container.HostConfig{
+			NetworkMode: container.NetworkMode(networkID),
+		},
+		network.NetworkingConfig{},
+		"",
+		os.Stdout,
+		os.Stderr,
+	)
+}
+
+func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
+	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", options...)
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
+			return false, nil
+		}
+		return false, err
 	}
-
-	if useLinked {
-		projectId, err := flags.LoadProjectRef(fsys)
-		if err != nil {
-			return err
-		}
-
-		included := strings.Join(coalesce(schemas, utils.Config.Api.Schemas, []string{"public"}), ",")
-		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
-			IncludedSchemas: &included,
-		})
-		if err != nil {
-			return errors.Errorf("failed to get typescript types: %w", err)
-		}
-
-		if resp.JSON200 == nil {
-			return errors.New("failed to retrieve generated types: " + string(resp.Body))
-		}
-
-		fmt.Print(resp.JSON200.Types)
-		return nil
-	}
-
-	return nil
+	return true, conn.Close(ctx)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 var (
@@ -26,6 +27,25 @@ func (a ApiKey) IsEmpty() bool {
 	return len(apiKey.Anon) == 0 && len(apiKey.ServiceRole) == 0
 }
 
+func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
+	var result ApiKey
+	for _, key := range resp {
+		if key.Name == "anon" {
+			result.Anon = key.ApiKey
+		}
+		if key.Name == "service_role" {
+			result.ServiceRole = key.ApiKey
+		}
+	}
+	return result
+}
+
+func SetApiKeys(keys ApiKey) {
+	keyOnce.Do(func() {
+		apiKey = keys
+	})
+}
+
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 	var errKey error
 	keyOnce.Do(func() {
@@ -38,14 +58,7 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 			errKey = errors.Errorf("%w: %s", ErrAuthToken, string(resp.Body))
 			return
 		}
-		for _, key := range *resp.JSON200 {
-			if key.Name == "anon" {
-				apiKey.Anon = key.ApiKey
-			}
-			if key.Name == "service_role" {
-				apiKey.ServiceRole = key.ApiKey
-			}
-		}
+		apiKey = NewApiKey(*resp.JSON200)
 		if apiKey.IsEmpty() {
 			errKey = errors.New(errMissingKey)
 		}

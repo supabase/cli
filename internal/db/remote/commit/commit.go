@@ -3,12 +3,11 @@ package commit
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
@@ -41,8 +40,8 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.
 
 func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
-	p.Send(utils.StatusMsg("Connecting to remote database..."))
-	conn, err := utils.ConnectRemotePostgres(ctx, config)
+	w := utils.StatusWriter{Program: p}
+	conn, err := utils.ConnectByConfigStream(ctx, config, w)
 	if err != nil {
 		return err
 	}
@@ -79,7 +78,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 
 	w := utils.StatusWriter{Program: p}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys)
+	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
 	if err != nil {
 		return err
 	}
@@ -92,10 +91,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UndefinedTable {
-			return err
-		}
+		return err
 	}
 	localMigrations, err := list.LoadLocalMigrations(fsys)
 	if err != nil {
