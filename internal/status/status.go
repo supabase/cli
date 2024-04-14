@@ -27,7 +27,7 @@ type CustomName struct {
 	ServiceRoleKey           string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
-	StorageS3Region          string `env:"api.storage_s3_region,default=STORAGE_S3_REGION"`
+	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -41,7 +41,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
-	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
@@ -50,7 +50,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
-		values[c.StorageS3URL] = fmt.Sprintf("%s/%s", values[c.ApiURL], "storage/v1/s3")
+		values[c.StorageS3URL] = fmt.Sprintf("http://%s:%d/storage/v1/s3", utils.Config.Hostname, utils.Config.Api.Port)
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
 		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
