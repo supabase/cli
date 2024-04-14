@@ -52,7 +52,10 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 	}
 	defer conn.Close(context.Background())
 	// Update migration history
-	return UpdateMigrationTable(ctx, conn, version, status, repairAll, fsys)
+	if err = UpdateMigrationTable(ctx, conn, version, status, repairAll, fsys); err == nil {
+		utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
+	}
+	return err
 }
 
 func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string, status string, repairAll bool, fsys afero.Fs) error {
@@ -84,7 +87,6 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 	if !repairAll {
 		fmt.Fprintf(os.Stderr, "Repaired migration history: %v => %s\n", version, status)
 	}
-	utils.CmdSuggestion = fmt.Sprintf("Run %s to show the updated migration history.", utils.Aqua("supabase migration list"))
 	return nil
 }
 
