@@ -243,24 +243,24 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	// 3. Deploy new Function.
 	functionSize := units.HumanSize(float64(functionBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
-	return deployFunction(
-		ctx,
-		projectRef,
-		slug,
-		"file://"+dockerEntrypointPath,
-		"file://"+dockerImportMapPath,
-		!*noVerifyJWT,
-		functionBody,
-	)
+	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
+	return backoff.Retry(func() error {
+		return deployFunction(
+			ctx,
+			projectRef,
+			slug,
+			"file://"+dockerEntrypointPath,
+			"file://"+dockerImportMapPath,
+			!*noVerifyJWT,
+			functionBody,
+		)
+	}, policy)
 }
 
 func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
 	// TODO: api has a race condition that prevents deploying in parallel
 	for _, slug := range slugs {
-		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
-		if err := backoff.Retry(func() error {
-			return deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys)
-		}, policy); err != nil {
+		if err := deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys); err != nil {
 			return err
 		}
 	}
