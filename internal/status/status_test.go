@@ -144,6 +144,7 @@ func TestServiceHealth(t *testing.T) {
 
 func TestPrintStatus(t *testing.T) {
 	utils.Config.Db.Port = 0
+	utils.Config.Hostname = "127.0.0.1"
 	exclude := []string{
 		utils.ShortContainerImageName(utils.Config.Api.Image),
 		utils.ShortContainerImageName(utils.StudioImage),
