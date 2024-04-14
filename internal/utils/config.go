@@ -308,13 +308,13 @@ type (
 		Enabled       bool                 `toml:"enabled"`
 		Image         string               `toml:"-"`
 		FileSizeLimit sizeInBytes          `toml:"file_size_limit"`
-		S3Credentials storageS3Credentials `toml:"s3_credentials"`
+		S3Credentials storageS3Credentials `toml:"-"`
 	}
 
 	storageS3Credentials struct {
-		AccessKeyId     string `toml:"access_key_id"`
-		SecretAccessKey string `toml:"secret_access_key"`
-		Region          string `toml:"region"`
+		AccessKeyId     string `toml:"-"`
+		SecretAccessKey string `toml:"-"`
+		Region          string `toml:"-"`
 	}
 
 	auth struct {
