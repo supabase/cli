@@ -19,29 +19,28 @@ func TestSuggestAppStart(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
-		suggestion := suggestAppStart(cwd)
+		suggestion := suggestAppStart(cwd, "npm ci && npm run dev")
 		// Check error
-		assert.Equal(t, "To start your app:\n  npm ci\n  npm run dev", suggestion)
+		assert.Equal(t, "To start your app:\n  npm ci && npm run dev", suggestion)
 	})
 
 	t.Run("suggest cd", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
-		suggestion := suggestAppStart(filepath.Dir(cwd))
+		suggestion := suggestAppStart(filepath.Dir(cwd), "npm ci && npm run dev")
 		// Check error
 		expected := "To start your app:"
 		expected += "\n  cd " + filepath.Base(cwd)
-		expected += "\n  npm ci"
-		expected += "\n  npm run dev"
+		expected += "\n  npm ci && npm run dev"
 		assert.Equal(t, expected, suggestion)
 	})
 
 	t.Run("ignore relative path", func(t *testing.T) {
 		// Run test
-		suggestion := suggestAppStart(".")
+		suggestion := suggestAppStart(".", "supabase start")
 		// Check error
-		assert.Equal(t, "To start your app:\n  npm ci\n  npm run dev", suggestion)
+		assert.Equal(t, "To start your app:\n  supabase start", suggestion)
 	})
 }
 

@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,7 +16,11 @@ import (
 )
 
 var (
-	templateUrl string
+	starter = bootstrap.StarterTemplate{
+		Name:        "scratch",
+		Description: "An empty project from scratch.",
+		Start:       "supabase start",
+	}
 
 	bootstrapCmd = &cobra.Command{
 		GroupID: groupQuickStart,
@@ -41,16 +46,19 @@ var (
 				name := strings.ToLower(args[0])
 				for _, t := range templates {
 					if t.Name == name {
-						templateUrl = t.Url
+						starter = t
+						break
 					}
 				}
-			}
-			if len(templateUrl) == 0 {
+				if name != starter.Name {
+					return errors.New("Invalid template: " + args[0])
+				}
+			} else {
 				if err := promptStarterTemplate(ctx, templates); err != nil {
 					return err
 				}
 			}
-			return bootstrap.Run(ctx, templateUrl, afero.NewOsFs())
+			return bootstrap.Run(ctx, starter, afero.NewOsFs())
 		},
 	}
 )
@@ -73,8 +81,8 @@ func promptStarterTemplate(ctx context.Context, templates []bootstrap.StarterTem
 	}
 	items = append(items, utils.PromptItem{
 		Index:   len(items),
-		Summary: "scratch",
-		Details: "An empty project from scratch.",
+		Summary: starter.Name,
+		Details: starter.Description,
 	})
 	title := "Which starter template do you want to use?"
 	choice, err := utils.PromptChoice(ctx, title, items)
@@ -82,7 +90,7 @@ func promptStarterTemplate(ctx context.Context, templates []bootstrap.StarterTem
 		return err
 	}
 	if choice.Index < len(templates) {
-		templateUrl = templates[choice.Index].Url
+		starter = templates[choice.Index]
 	}
 	return nil
 }

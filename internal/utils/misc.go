@@ -34,13 +34,13 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240326-5e5586d"
+	StudioImage      = "supabase/studio:20240408-6bf3b81"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.43.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.143.0"
+	GotrueImage      = "supabase/gotrue:v2.145.0"
 	RealtimeImage    = "supabase/realtime:v2.27.5"
 	StorageImage     = "supabase/storage-api:v0.46.4"
 	LogflareImage    = "supabase/logflare:1.4.0"
@@ -107,9 +107,11 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	SystemSchemas = []string{
+	PgSchemas = []string{
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
+	}
+	SystemSchemas = append([]string{
 		// Owned by extensions
 		"cron",
 		"graphql",
@@ -125,7 +127,7 @@ var (
 		"_timescaledb_*",
 		"topology",
 		"vault",
-	}
+	}, PgSchemas...)
 	InternalSchemas = append([]string{
 		"auth",
 		"extensions",

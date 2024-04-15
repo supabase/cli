@@ -13,8 +13,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.10.0
 	github.com/containers/common v0.58.1
 	github.com/deepmap/oapi-codegen v1.16.2
-	github.com/docker/cli v26.0.0+incompatible
-	github.com/docker/docker v26.0.0+incompatible
+	github.com/docker/cli v26.0.1+incompatible
+	github.com/docker/docker v26.0.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.27.0
@@ -46,10 +46,10 @@ require (
 	github.com/stripe/pg-schema-diff v0.6.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.4
-	golang.org/x/mod v0.16.0
-	golang.org/x/oauth2 v0.18.0
-	golang.org/x/term v0.18.0
-	google.golang.org/grpc v1.62.1
+	golang.org/x/mod v0.17.0
+	golang.org/x/oauth2 v0.19.0
+	golang.org/x/term v0.19.0
+	google.golang.org/grpc v1.63.2
 	gopkg.in/h2non/gock.v1 v1.1.2
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.11.0
@@ -156,7 +156,7 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golangci/dupl v0.0.0-20180902072040-3e9179ac440a // indirect
 	github.com/golangci/gofmt v0.0.0-20231018234816-f50ced29576e // indirect
 	github.com/golangci/misspell v0.4.1 // indirect
@@ -325,10 +325,9 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/net v0.22.0 // indirect
 	golang.org/x/sync v0.6.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.19.0 // indirect
-	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect

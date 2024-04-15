@@ -56,6 +56,14 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	return deployAll(ctx, slugs, projectRef, importMapPath, noVerifyJWT, fsys)
 }
 
+func RunDefault(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	slugs, err := getFunctionSlugs(fsys)
+	if len(slugs) == 0 {
+		return err
+	}
+	return deployAll(ctx, slugs, projectRef, "", nil, fsys)
+}
+
 func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
@@ -78,7 +86,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		return nil, errors.Errorf("failed to get working directory: %w", err)
 	}
 
-	// create temp directory to store generated eszip
+	// Create temp directory to store generated eszip
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 	// BitBucket pipelines require docker bind mounts to be world writable
 	if err := fsys.MkdirAll(hostOutputDir, 0777); err != nil {
@@ -235,24 +243,24 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	// 3. Deploy new Function.
 	functionSize := units.HumanSize(float64(functionBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
-	return deployFunction(
-		ctx,
-		projectRef,
-		slug,
-		"file://"+dockerEntrypointPath,
-		"file://"+dockerImportMapPath,
-		!*noVerifyJWT,
-		functionBody,
-	)
+	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
+	return backoff.Retry(func() error {
+		return deployFunction(
+			ctx,
+			projectRef,
+			slug,
+			"file://"+dockerEntrypointPath,
+			"file://"+dockerImportMapPath,
+			!*noVerifyJWT,
+			functionBody,
+		)
+	}, policy)
 }
 
 func deployAll(ctx context.Context, slugs []string, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
 	// TODO: api has a race condition that prevents deploying in parallel
 	for _, slug := range slugs {
-		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
-		if err := backoff.Retry(func() error {
-			return deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys)
-		}, policy); err != nil {
+		if err := deployOne(ctx, slug, projectRef, importMapPath, noVerifyJWT, fsys); err != nil {
 			return err
 		}
 	}
