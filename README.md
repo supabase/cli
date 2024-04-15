@@ -165,7 +165,7 @@ Command & config reference can be found [here](https://supabase.com/docs/referen
 
 ## Breaking changes
 
-The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Please file an issue if these steps don't work!
+We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations. Due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. Instead, we encourage you to sync your local settings with the hosted project from time to time using `supabase link` command.
 
 ## Developing
 
