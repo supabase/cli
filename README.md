@@ -9,7 +9,7 @@ This repository contains all the functionality for Supabase CLI.
 - [x] Running Supabase locally
 - [x] Managing database migrations
 - [x] Creating and deploying Supabase Functions
-- [x] Generating types from your database schema
+- [x] Generating types directly from your database schema
 - [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
 
 ## Getting started
