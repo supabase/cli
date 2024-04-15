@@ -21,7 +21,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/push"
-	"github.com/supabase/cli/internal/functions/deploy"
 	initBlank "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/link"
 	"github.com/supabase/cli/internal/login"
@@ -123,10 +122,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
-	// 7. [Optional] Deploy functions
-	if err := deploy.RunDefault(ctx, flags.ProjectRef, fsys); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to deploy Functions:", err)
-	}
+	// 7. TODO: deploy functions
 	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs, starter.Start)
 	return nil
 }
