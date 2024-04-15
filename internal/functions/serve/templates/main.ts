@@ -1,38 +1,67 @@
-import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
+import {
+  STATUS_CODE,
+  STATUS_TEXT,
+} from "https://deno.land/std/http/status.ts";
+
 import * as jose from "https://deno.land/x/jose@v4.13.1/index.ts";
+
+const SB_SPECIFIC_ERROR_CODE = {
+  BootError: STATUS_CODE.ServiceUnavailable, /** Service Unavailable (RFC 7231, 6.6.4) */
+  WorkerRequestCancelled: STATUS_CODE.BadGateway, /** Bad Gateway (RFC 7231, 6.6.3) */
+  WorkerLimit: 546, /** Extended */
+};
+
+const SB_SPECIFIC_ERROR_TEXT = {
+  [SB_SPECIFIC_ERROR_CODE.BootError]: "BOOT_ERROR",
+  [SB_SPECIFIC_ERROR_CODE.WorkerRequestCancelled]: "WORKER_REQUEST_CANCELLED",
+  [SB_SPECIFIC_ERROR_CODE.WorkerLimit]: "WORKER_LIMIT",
+};
+
+const SB_SPECIFIC_ERROR_REASON = {
+  [SB_SPECIFIC_ERROR_CODE.BootError]: "Worker failed to boot (please check logs)",
+  [SB_SPECIFIC_ERROR_CODE.WorkerRequestCancelled]: "Request cancelled by the proxy due to an error or resource limit of worker (please check logs)",
+  [SB_SPECIFIC_ERROR_CODE.WorkerLimit]: "Worker failed to respond due to an error or resource limit (please check logs)",
+}
+
+// OS stuff - we don't want to expose these to the functions.
+const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
 const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
-// OS stuff - we don't want to expose these to the functions.
-const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const FUNCTIONS_PATH = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_PATH")!;
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
 )!;
 
+const DENO_SB_ERROR_MAP = new Map([
+  [Deno.errors.InvalidWorkerCreation, SB_SPECIFIC_ERROR_CODE.BootError],
+  [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
+  [Deno.errors.WorkerRequestCancelled, SB_SPECIFIC_ERROR_CODE.WorkerRequestCancelled],
+]);
+
 interface FunctionConfig {
   importMapPath: string;
   verifyJWT: boolean;
 }
 
-enum WorkerErrors {
-  InvalidWorkerCreation = "InvalidWorkerCreation",
-  InvalidWorkerResponse = "InvalidWorkerResponse",
-}
-
-function respondWith(payload: any, status: number, customHeaders = {}) {
+function getResponse(payload: any, status: number, customHeaders = {}) {
   const headers = { ...customHeaders };
-  let body = null;
+  let body: string | null = null;
+
   if (payload) {
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(payload);
+    if (typeof payload === "object") {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(payload);
+    } else if (typeof payload === "string") {
+      headers["Content-Type"] = "text/plain";
+      body = payload;
+    } else {
+      body = null;
+    }
   }
-  const res = new Response(body, {
-    status,
-    headers,
-  });
-  return res;
+
+  return new Response(body, { status, headers });
 }
 
 const functionsConfig: Record<string, FunctionConfig> = (() => {
@@ -69,120 +98,129 @@ async function verifyJWT(jwt: string): Promise<boolean> {
   const secretKey = encoder.encode(JWT_SECRET);
   try {
     await jose.jwtVerify(jwt, secretKey);
-  } catch (err) {
-    console.error(err);
+  } catch (e) {
+    console.error(e);
     return false;
   }
   return true;
 }
 
-serve(async (req: Request) => {
-  const url = new URL(req.url);
-  const { pathname } = url;
+Deno.serve({
+  handler: async (req: Request) => {
+    const url = new URL(req.url);
+    const { pathname } = url;
 
-  // handle health checks
-  if (pathname === "/_internal/health") {
-    return new Response(
-      JSON.stringify({ "message": "ok" }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  }
+    // handle health checks
+    if (pathname === "/_internal/health") {
+      return getResponse({ message: "ok" }, STATUS_CODE.OK);
+    }
 
-  const pathParts = pathname.split("/");
-  const functionName = pathParts[1];
+    const pathParts = pathname.split("/");
+    const functionName = pathParts[1];
 
-  if (!functionName || !(functionName in functionsConfig)) {
-    return new Response("Function not found", { status: 404 });
-  }
+    if (!functionName || !(functionName in functionsConfig)) {
+      return getResponse("Function not found", STATUS_CODE.NotFound);
+    }
 
-  if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
-    try {
-      const token = getAuthToken(req);
-      const isValidJWT = await verifyJWT(token);
+    if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
+      try {
+        const token = getAuthToken(req);
+        const isValidJWT = await verifyJWT(token);
 
-      if (!isValidJWT) {
-        return new Response(
-          JSON.stringify({ msg: "Invalid JWT" }),
-          { status: 401, headers: { "Content-Type": "application/json" } },
-        );
+        if (!isValidJWT) {
+          return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
+        }
+      } catch (e) {
+        console.error(e);
+        return getResponse({ msg: e.toString() }, STATUS_CODE.Unauthorized);
       }
+    }
+
+    const servicePath = `${FUNCTIONS_PATH}/${functionName}`;
+    console.error(`serving the request with ${servicePath}`);
+
+    const memoryLimitMb = 150;
+    const workerTimeoutMs = 400 * 1000;
+    const noModuleCache = false;
+    const envVarsObj = Deno.env.toObject();
+    const envVars = Object.entries(envVarsObj)
+      .filter(([name, _]) =>
+        !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
+      );
+
+    const forceCreate = true;
+    const customModuleRoot = ""; // empty string to allow any local path
+    const cpuTimeSoftLimitMs = 1000;
+    const cpuTimeHardLimitMs = 2000;
+
+    // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
+    // but in my opinion, we should probably expose this to customers at some
+    // point, as their migration process will not be easy.
+    const decoratorType = "tc39";
+
+    try {
+      const worker = await EdgeRuntime.userWorkers.create({
+        servicePath,
+        memoryLimitMb,
+        workerTimeoutMs,
+        noModuleCache,
+        importMapPath: functionsConfig[functionName].importMapPath,
+        envVars,
+        forceCreate,
+        customModuleRoot,
+        cpuTimeSoftLimitMs,
+        cpuTimeHardLimitMs,
+        decoratorType
+      });
+
+      const controller = new AbortController();
+      const { signal } = controller;
+
+      // Note: Requests are aborted after 200s (same config as in production)
+      // TODO: make this configuarable
+      setTimeout(() => controller.abort(), 200 * 1000);
+
+      return await worker.fetch(req, { signal });
     } catch (e) {
       console.error(e);
-      return new Response(
-        JSON.stringify({ msg: e.toString() }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
-      );
-    }
-  }
 
-  const servicePath = `${FUNCTIONS_PATH}/${functionName}`;
-  console.error(`serving the request with ${servicePath}`);
+      for (const [denoError, sbCode] of DENO_SB_ERROR_MAP.entries()) {
+        if (denoError !== void 0 && e instanceof denoError) {
+          return getResponse(
+            {
+              code: SB_SPECIFIC_ERROR_TEXT[sbCode],
+              message: SB_SPECIFIC_ERROR_REASON[sbCode],
+            },
+            sbCode
+          );
+        }
+      }
 
-  const memoryLimitMb = 150;
-  const workerTimeoutMs = 400 * 1000;
-  const noModuleCache = false;
-  const envVarsObj = Deno.env.toObject();
-  const envVars = Object.entries(envVarsObj)
-    .filter(([name, _]) =>
-      !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
-    );
-  const forceCreate = true;
-  const customModuleRoot = ""; // empty string to allow any local path
-  const cpuTimeSoftLimitMs = 1000;
-  const cpuTimeHardLimitMs = 2000;
-  try {
-    const worker = await EdgeRuntime.userWorkers.create({
-      servicePath,
-      memoryLimitMb,
-      workerTimeoutMs,
-      noModuleCache,
-      importMapPath: functionsConfig[functionName].importMapPath,
-      envVars,
-      forceCreate,
-      customModuleRoot,
-      cpuTimeSoftLimitMs,
-      cpuTimeHardLimitMs,
-    });
-    const controller = new AbortController();
-
-    const { signal } = controller;
-    // Note: Requests are aborted after 200s (same config as in production)
-    // TODO: make this configuarable
-    setTimeout(() => controller.abort(), 200 * 1000);
-    return await worker.fetch(req, { signal });
-  } catch (e) {
-    console.error(e);
-    if (e.name === WorkerErrors.InvalidWorkerCreation) {
-      return respondWith(
+      return getResponse(
         {
-          code: "BOOT_ERROR",
-          message: "Worker failed to boot (please check logs)",
+          code: STATUS_TEXT[STATUS_CODE.InternalServerError],
+          message: "Request failed due to an internal server error",
+          trace: JSON.stringify(e.stack)
         },
-        503,
+        STATUS_CODE.InternalServerError,
       );
     }
-    if (e.name === WorkerErrors.InvalidWorkerResponse) {
-      return respondWith(
-        {
-          code: "WORKER_LIMIT",
-          message:
-            "Worker failed to respond due to an error or resource limit (please check logs)",
-        },
-        546, // custom error code
-      );
-    }
-    return respondWith(
-      {
-        code: Status.InternalServerError,
-        message: "Request failed due to a server error",
-      },
-      Status.InternalServerError,
-    );
-  }
-}, {
+  },
+
   onListen: () => {
     console.log(
       `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>\nUsing ${Deno.version.deno}`,
     );
   },
+
+  onError: e => {
+    return getResponse(
+      {
+        code: STATUS_TEXT[STATUS_CODE.InternalServerError],
+        message: "Request failed due to an internal server error",
+        trace: JSON.stringify(e.stack)
+      },
+      STATUS_CODE.InternalServerError
+    )
+  }
 });
