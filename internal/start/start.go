@@ -724,6 +724,8 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
 					"S3_ALLOW_FORWARDED_HEADER=true",
+					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
+					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
