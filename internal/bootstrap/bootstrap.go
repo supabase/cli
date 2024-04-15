@@ -368,7 +368,7 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			switch file.GetType() {
 			case "file":
 				path := strings.TrimPrefix(file.GetPath(), root)
-				hostPath := filepath.FromSlash("." + path)
+				hostPath := filepath.Join(".", filepath.FromSlash(path))
 				if err := jq.Put(func() error {
 					return utils.DownloadFile(ctx, hostPath, file.GetDownloadURL(), fsys)
 				}); err != nil {
