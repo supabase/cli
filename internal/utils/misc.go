@@ -41,7 +41,7 @@ const (
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
 	GotrueImage      = "supabase/gotrue:v2.145.0"
-	RealtimeImage    = "supabase/realtime:v2.27.5"
+	RealtimeImage    = "supabase/realtime:v2.28.23"
 	StorageImage     = "supabase/storage-api:v0.46.4"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
