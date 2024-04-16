@@ -288,7 +288,7 @@ func TestLinkPostgrest(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.PostgrestConfigResponse{
-				DbSchema:          "public, storage, graphql_public",
+				DbSchema:          "public, graphql_public",
 				DbExtraSearchPath: "public, extensions",
 				MaxRows:           1000,
 			})
@@ -297,7 +297,7 @@ func TestLinkPostgrest(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		utils.Config.Api.Schemas = []string{"public", "storage", "graphql_public"}
+		utils.Config.Api.Schemas = []string{"public", "graphql_public"}
 		utils.Config.Api.ExtraSearchPath = []string{"public", "extensions"}
 		utils.Config.Api.MaxRows = 1000
 		assert.Equal(t, ConfigCopy{
