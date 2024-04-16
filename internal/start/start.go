@@ -708,18 +708,24 @@ EOF
 				Env: []string{
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"POSTGREST_URL=http://" + utils.RestId + ":3000",
-					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
 					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
-					"REGION=stub",
+					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
 					"ENABLE_IMAGE_TRANSFORMATION=true",
 					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
+					"TUS_URL_PATH=/storage/v1/upload/resumable",
+					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
+					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
+					"S3_PROTOCOL_PREFIX=/storage/v1",
+					"S3_ALLOW_FORWARDED_HEADER=true",
+					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
+					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.

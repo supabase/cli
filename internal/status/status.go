@@ -16,14 +16,18 @@ import (
 )
 
 type CustomName struct {
-	ApiURL         string `env:"api.url,default=API_URL"`
-	GraphqlURL     string `env:"api.graphql_url,default=GRAPHQL_URL"`
-	DbURL          string `env:"db.url,default=DB_URL"`
-	StudioURL      string `env:"studio.url,default=STUDIO_URL"`
-	InbucketURL    string `env:"inbucket.url,default=INBUCKET_URL"`
-	JWTSecret      string `env:"auth.jwt_secret,default=JWT_SECRET"`
-	AnonKey        string `env:"auth.anon_key,default=ANON_KEY"`
-	ServiceRoleKey string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
+	ApiURL                   string `env:"api.url,default=API_URL"`
+	GraphqlURL               string `env:"api.graphql_url,default=GRAPHQL_URL"`
+	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
+	DbURL                    string `env:"db.url,default=DB_URL"`
+	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
+	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL"`
+	JWTSecret                string `env:"auth.jwt_secret,default=JWT_SECRET"`
+	AnonKey                  string `env:"auth.anon_key,default=ANON_KEY"`
+	ServiceRoleKey           string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
+	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
+	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
+	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -37,13 +41,19 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
-	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
+	}
+	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
+		values[c.StorageS3URL] = fmt.Sprintf("http://%s:%d/storage/v1/s3", utils.Config.Hostname, utils.Config.Api.Port)
+		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
+		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
+		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
 	}
 	return values
 }
@@ -147,14 +157,18 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 
 func PrettyPrint(w io.Writer, exclude ...string) {
 	names := CustomName{
-		ApiURL:         "         " + utils.Aqua("API URL"),
-		GraphqlURL:     "     " + utils.Aqua("GraphQL URL"),
-		DbURL:          "          " + utils.Aqua("DB URL"),
-		StudioURL:      "      " + utils.Aqua("Studio URL"),
-		InbucketURL:    "    " + utils.Aqua("Inbucket URL"),
-		JWTSecret:      "      " + utils.Aqua("JWT secret"),
-		AnonKey:        "        " + utils.Aqua("anon key"),
-		ServiceRoleKey: "" + utils.Aqua("service_role key"),
+		ApiURL:                   "         " + utils.Aqua("API URL"),
+		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
+		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
+		DbURL:                    "          " + utils.Aqua("DB URL"),
+		StudioURL:                "      " + utils.Aqua("Studio URL"),
+		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
+		JWTSecret:                "      " + utils.Aqua("JWT secret"),
+		AnonKey:                  "        " + utils.Aqua("anon key"),
+		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
+		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
+		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
+		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields

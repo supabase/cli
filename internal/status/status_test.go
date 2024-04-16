@@ -144,17 +144,20 @@ func TestServiceHealth(t *testing.T) {
 
 func TestPrintStatus(t *testing.T) {
 	utils.Config.Db.Port = 0
-	exclude := []string{
-		utils.ShortContainerImageName(utils.Config.Api.Image),
-		utils.ShortContainerImageName(utils.StudioImage),
-		utils.GotrueId,
-		utils.InbucketId,
-	}
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Api.Enabled = false
+	utils.Config.Auth.Enabled = false
+	utils.Config.Storage.Enabled = false
+	utils.Config.Realtime.Enabled = false
+	utils.Config.Studio.Enabled = false
+	utils.Config.Analytics.Enabled = false
+	utils.Config.Inbucket.Enabled = false
 
 	t.Run("outputs env var", func(t *testing.T) {
+		utils.Config.Hostname = "127.0.0.1"
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputEnv, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputEnv, &stdout))
 		// Check error
 		assert.Equal(t, "DB_URL=\"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
 	})
@@ -162,7 +165,7 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs json object", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputJson, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputJson, &stdout))
 		// Check error
 		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
 	})
@@ -170,7 +173,7 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs yaml properties", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputYaml, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputYaml, &stdout))
 		// Check error
 		assert.Equal(t, "DB_URL: postgresql://postgres:postgres@127.0.0.1:0/postgres\n", stdout.String())
 	})
@@ -178,7 +181,7 @@ func TestPrintStatus(t *testing.T) {
 	t.Run("outputs toml fields", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
-		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputToml, &stdout, exclude...))
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputToml, &stdout))
 		// Check error
 		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
 	})

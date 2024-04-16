@@ -42,7 +42,7 @@ const (
 	PgProveImage     = "supabase/pg_prove:3.36"
 	GotrueImage      = "supabase/gotrue:v2.145.0"
 	RealtimeImage    = "supabase/realtime:v2.28.23"
-	StorageImage     = "supabase/storage-api:v0.46.4"
+	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
