@@ -207,6 +207,48 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
+	realtimeId, err := utils.DockerStart(
+		ctx,
+		container.Config{
+			Image: utils.RealtimeImage,
+			Env: []string{
+				"PORT=4000",
+				"DB_HOST=" + host,
+				"DB_PORT=5432",
+				"DB_USER=supabase_admin",
+				"DB_PASSWORD=" + utils.Config.Db.Password,
+				"DB_NAME=postgres",
+				"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+				"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+				"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+				"FLY_APP_NAME=realtime",
+				"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+				"ERL_AFLAGS=-proto_dist inet_tcp",
+				"ENABLE_TAILSCALE=false",
+				"DNS_NODES=''",
+				"RLIMIT_NOFILE=",
+				"REALTIME_IP_VERSION=" + string(utils.Config.Realtime.IpVersion),
+				fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
+			},
+			Cmd: []string{
+				"/bin/sh", "-c",
+				"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
+			},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD", "/app/bin/realtime", "rpc", `Realtime.Tenants.health_check("realtime-dev")`},
+				Interval: 3 * time.Second,
+				Timeout:  2 * time.Second,
+				Retries:  5,
+			},
+		},
+		container.HostConfig{},
+		network.NetworkingConfig{},
+		"",
+	)
+	if err != nil {
+		return err
+	}
+	defer utils.DockerRemove(realtimeId)
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
 		"DB_INSTALL_ROLES=false",
 		"ANON_KEY=" + utils.Config.Auth.AnonKey,
@@ -222,14 +264,20 @@ func initSchema15(ctx context.Context, host string) error {
 	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, os.Stderr); err != nil {
 		return err
 	}
-	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
+	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
 		fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", host, utils.Config.Api.Port),
 		"GOTRUE_LOG_LEVEL=error",
 		"GOTRUE_DB_DRIVER=postgres",
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr)
+	}, []string{"gotrue", "migrate"}, io.Discard, os.Stderr); err != nil {
+		return err
+	}
+	if !WaitForHealthyService(ctx, realtimeId, 10*time.Second) {
+		return errors.New(ErrDatabase)
+	}
+	return nil
 }
 
 func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
