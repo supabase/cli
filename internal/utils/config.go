@@ -163,6 +163,8 @@ var Config = config{
 	Realtime: realtime{
 		IpVersion:       AddressIPv6,
 		MaxHeaderLength: 4096,
+		EncryptionKey:   "supabaserealtime",
+		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 	},
 	Storage: storage{
 		Image: StorageImage,
@@ -288,6 +290,8 @@ type (
 		Enabled         bool          `toml:"enabled"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
+		EncryptionKey   string        `toml:"-"`
+		SecretKeyBase   string        `toml:"-"`
 	}
 
 	studio struct {
