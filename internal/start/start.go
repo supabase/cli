@@ -641,7 +641,7 @@ EOF
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/4000"},
+					Test:     []string{"CMD", "/app/bin/realtime", "rpc", `Realtime.Tenants.health_check("realtime-dev")`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
