@@ -235,7 +235,7 @@ func initSchema15(ctx context.Context, host string) error {
 				"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 			},
 			Healthcheck: &container.HealthConfig{
-				Test:     []string{"CMD", "/app/bin/realtime", "rpc", `Realtime.Tenants.health_check("realtime-dev")`},
+				Test:     []string{"CMD", "/app/bin/realtime", "rpc", fmt.Sprintf(`Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)},
 				Interval: 3 * time.Second,
 				Timeout:  2 * time.Second,
 				Retries:  5,
