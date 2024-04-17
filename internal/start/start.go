@@ -625,6 +625,7 @@ EOF
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"FLY_APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=-proto_dist inet_tcp",
