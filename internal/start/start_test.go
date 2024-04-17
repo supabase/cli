@@ -118,24 +118,13 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusNotFound)
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
-					Running: true,
-					Health:  &types.Health{Status: "healthy"},
-				},
-			}})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime").
-			Reply(http.StatusOK)
-		utils.Config.Auth.Image = utils.GotrueImage
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
 		utils.Config.Storage.Image = utils.StorageImage
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
+		utils.Config.Auth.Image = utils.GotrueImage
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		// Start services
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)
