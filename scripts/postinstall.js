@@ -11,7 +11,7 @@ import fetch from "node-fetch";
 import { Agent } from "https";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import path from "path";
-import tar from "tar";
+import { extract } from "tar";
 import zlib from "zlib";
 
 // Mapping from Node's `process.arch` to Golang's `$GOARCH`
@@ -111,7 +111,7 @@ async function main() {
   // First we will Un-GZip, then we will untar.
   const ungz = zlib.createGunzip();
   const binName = path.basename(binPath);
-  const untar = tar.x({ cwd: binDir }, [binName]);
+  const untar = extract({ cwd: binDir }, [binName]);
 
   const url = getDownloadUrl(pkg);
   console.info("Downloading", url);

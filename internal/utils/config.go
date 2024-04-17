@@ -44,7 +44,7 @@ var (
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
-	RealtimeAliases    = []string{"realtime"}
+	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
 	RestAliases        = []string{"rest"}
 	StorageAliases     = []string{"storage"}
 	ImgProxyAliases    = []string{"imgproxy"}
@@ -79,10 +79,10 @@ func UpdateDockerIds() {
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])
-	RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
-	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+	ImgProxyId = GetId(ImgProxyAliases[0])
 	DifferId = GetId("differ")
 	PgmetaId = GetId(PgmetaAliases[0])
 	StudioId = GetId(StudioAliases[0])
@@ -128,6 +128,13 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func ToRealtimeEnv(addr AddressFamily) string {
+	if addr == AddressIPv6 {
+		return "-proto_dist inet6_tcp"
+	}
+	return "-proto_dist inet_tcp"
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -161,11 +168,22 @@ var Config = config{
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 	},
 	Realtime: realtime{
-		IpVersion:       AddressIPv6,
+		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
+		TenantId:        "realtime-dev",
+		EncryptionKey:   "supabaserealtime",
+		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 	},
 	Storage: storage{
 		Image: StorageImage,
+		S3Credentials: storageS3Credentials{
+			AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
+			SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+			Region:          "local",
+		},
+		ImageTransformation: imageTransformation{
+			Enabled: true,
+		},
 	},
 	Auth: auth{
 		Image: GotrueImage,
@@ -283,6 +301,9 @@ type (
 		Enabled         bool          `toml:"enabled"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
+		TenantId        string        `toml:"-"`
+		EncryptionKey   string        `toml:"-"`
+		SecretKeyBase   string        `toml:"-"`
 	}
 
 	studio struct {
@@ -300,9 +321,21 @@ type (
 	}
 
 	storage struct {
-		Enabled       bool        `toml:"enabled"`
-		Image         string      `toml:"-"`
-		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
+		Enabled             bool                 `toml:"enabled"`
+		Image               string               `toml:"-"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
+		S3Credentials       storageS3Credentials `toml:"-"`
+		ImageTransformation imageTransformation  `toml:"image_transformation"`
+	}
+
+	imageTransformation struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	storageS3Credentials struct {
+		AccessKeyId     string `toml:"-"`
+		SecretAccessKey string `toml:"-"`
+		Region          string `toml:"-"`
 	}
 
 	auth struct {
@@ -393,11 +426,12 @@ type (
 	}
 
 	provider struct {
-		Enabled     bool   `toml:"enabled"`
-		ClientId    string `toml:"client_id"`
-		Secret      string `toml:"secret"`
-		Url         string `toml:"url"`
-		RedirectUri string `toml:"redirect_uri"`
+		Enabled        bool   `toml:"enabled"`
+		ClientId       string `toml:"client_id"`
+		Secret         string `toml:"secret"`
+		Url            string `toml:"url"`
+		RedirectUri    string `toml:"redirect_uri"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
 
 	function struct {
@@ -689,7 +723,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if provider.ClientId == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				}
-				if provider.Secret == "" {
+				if !SliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				}
 				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {

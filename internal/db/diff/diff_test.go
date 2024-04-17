@@ -84,10 +84,12 @@ func TestRun(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-shadow-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-shadow-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))

@@ -7,9 +7,9 @@ enabled = true
 # Port to use for the API URL.
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
-# endpoints. public and storage are always included.
-schemas = ["public", "storage", "graphql_public"]
-# Extra schemas to add to the search_path of every request. public is always included.
+# endpoints. `public` is always included.
+schemas = ["public", "graphql_public"]
+# Extra schemas to add to the search_path of every request. `public` is always included.
 extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
@@ -38,7 +38,7 @@ max_client_conn = 100
 
 [realtime]
 enabled = true
-# Bind realtime via either IPv4 or IPv6. (default: IPv6)
+# Bind realtime via either IPv4 or IPv6. (default: IPv4)
 # ip_version = "IPv6"
 # The maximum length in bytes of HTTP request headers. (default: 4096)
 # max_header_length = 4096
@@ -66,6 +66,9 @@ port = 54324
 enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
+
+[storage.image_transformation]
+enabled = true
 
 [auth]
 enabled = true
@@ -115,14 +118,13 @@ template = "Your code is {{ `{{ .Code }}` }} ."
 max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
-[auth.sms.test_otp]
+# [auth.sms.test_otp]
 # 4152127777 = "123456"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-[auth.hook.custom_access_token]
+# [auth.hook.custom_access_token]
 # enabled = true
 # uri = "pg-functions://<database>/<schema>/<hook_name>"
-
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
@@ -145,6 +147,8 @@ redirect_uri = ""
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
 # or any other third-party OIDC providers.
 url = ""
+# If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
+skip_nonce_check = false
 
 [analytics]
 enabled = false
