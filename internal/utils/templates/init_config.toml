@@ -99,6 +99,8 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
+# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
+max_frequency = "1s"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -112,6 +114,8 @@ enable_signup = true
 enable_confirmations = false
 # Template for sending OTP to users
 template = "Your code is {{ `{{ .Code }}` }} ."
+# Controls the minimum amount of time that must pass before sending another sms otp.
+max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]
