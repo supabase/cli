@@ -67,18 +67,7 @@ func TestSquashCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
-					Running: true,
-					Health:  &types.Health{Status: "healthy"},
-				},
-			}})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime").
-			Reply(http.StatusOK)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
@@ -295,18 +284,7 @@ func TestSquashMigrations(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
-					Running: true,
-					Health:  &types.Health{Status: "healthy"},
-				},
-			}})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-realtime").
-			Reply(http.StatusOK)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
