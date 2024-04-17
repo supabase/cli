@@ -138,6 +138,8 @@ secret = "env(AZURE_SECRET)"
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
 # or any other third-party OIDC providers.
 url = "https://login.microsoftonline.com/tenant"
+# If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
+skip_nonce_check = true
 
 [analytics]
 enabled = false
