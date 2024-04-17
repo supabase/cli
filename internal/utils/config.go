@@ -82,7 +82,7 @@ func UpdateDockerIds() {
 	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
-	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+	ImgProxyId = GetId(ImgProxyAliases[0])
 	DifferId = GetId("differ")
 	PgmetaId = GetId(PgmetaAliases[0])
 	StudioId = GetId(StudioAliases[0])
@@ -180,6 +180,9 @@ var Config = config{
 			AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
 			SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
 			Region:          "local",
+		},
+		ImageTransformation: imageTransformation{
+			Enabled: true,
 		},
 	},
 	Auth: auth{
@@ -318,10 +321,15 @@ type (
 	}
 
 	storage struct {
-		Enabled       bool                 `toml:"enabled"`
-		Image         string               `toml:"-"`
-		FileSizeLimit sizeInBytes          `toml:"file_size_limit"`
-		S3Credentials storageS3Credentials `toml:"-"`
+		Enabled             bool                 `toml:"enabled"`
+		Image               string               `toml:"-"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
+		S3Credentials       storageS3Credentials `toml:"-"`
+		ImageTransformation imageTransformation  `toml:"image_transformation"`
+	}
+
+	imageTransformation struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	storageS3Credentials struct {

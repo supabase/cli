@@ -714,8 +714,8 @@ EOF
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					"ENABLE_IMAGE_TRANSFORMATION=true",
-					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
@@ -751,7 +751,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{

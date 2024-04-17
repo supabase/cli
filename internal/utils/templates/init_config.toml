@@ -7,9 +7,9 @@ enabled = true
 # Port to use for the API URL.
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
-# endpoints. public and storage are always included.
+# endpoints. `public` is always included.
 schemas = ["public", "graphql_public"]
-# Extra schemas to add to the search_path of every request. public is always included.
+# Extra schemas to add to the search_path of every request. `public` is always included.
 extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
@@ -38,7 +38,7 @@ max_client_conn = 100
 
 [realtime]
 enabled = true
-# Bind realtime via either IPv4 or IPv6. (default: IPv6)
+# Bind realtime via either IPv4 or IPv6. (default: IPv4)
 # ip_version = "IPv6"
 # The maximum length in bytes of HTTP request headers. (default: 4096)
 # max_header_length = 4096
@@ -66,6 +66,9 @@ port = 54324
 enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
+
+[storage.image_transformation]
+enabled = true
 
 [auth]
 enabled = true
