@@ -424,11 +424,12 @@ type (
 	}
 
 	provider struct {
-		Enabled     bool   `toml:"enabled"`
-		ClientId    string `toml:"client_id"`
-		Secret      string `toml:"secret"`
-		Url         string `toml:"url"`
-		RedirectUri string `toml:"redirect_uri"`
+		Enabled        bool   `toml:"enabled"`
+		ClientId       string `toml:"client_id"`
+		Secret         string `toml:"secret"`
+		Url            string `toml:"url"`
+		RedirectUri    string `toml:"redirect_uri"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
 
 	function struct {
