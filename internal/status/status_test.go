@@ -29,7 +29,7 @@ func TestStatusCommand(t *testing.T) {
 			"supabase_realtime_",
 			"supabase_rest_",
 			"supabase_storage_",
-			"storage_imgproxy_",
+			"supabase_imgproxy_",
 			"supabase_pg_meta_",
 			"supabase_studio_",
 			"supabase_analytics_",
