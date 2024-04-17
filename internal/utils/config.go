@@ -716,7 +716,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if provider.ClientId == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				}
-				if provider.Secret == "" {
+				if !SliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				}
 				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
