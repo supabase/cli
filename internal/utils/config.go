@@ -44,7 +44,7 @@ var (
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
-	RealtimeAliases    = []string{"realtime"}
+	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
 	RestAliases        = []string{"rest"}
 	StorageAliases     = []string{"storage"}
 	ImgProxyAliases    = []string{"imgproxy"}
@@ -79,7 +79,7 @@ func UpdateDockerIds() {
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])
-	RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
 	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
@@ -170,6 +170,7 @@ var Config = config{
 	Realtime: realtime{
 		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
+		TenantId:        "realtime-dev",
 		EncryptionKey:   "supabaserealtime",
 		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 	},
@@ -297,6 +298,7 @@ type (
 		Enabled         bool          `toml:"enabled"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
+		TenantId        string        `toml:"-"`
 		EncryptionKey   string        `toml:"-"`
 		SecretKeyBase   string        `toml:"-"`
 	}

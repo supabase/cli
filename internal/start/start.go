@@ -303,7 +303,7 @@ EOF
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
+			RealtimeId:    utils.Config.Realtime.TenantId,
 			StorageId:     utils.StorageId,
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
@@ -636,7 +636,9 @@ EOF
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "/app/bin/realtime", "rpc", `Realtime.Tenants.health_check("realtime-dev")`},
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer " + utils.Config.Auth.AnonKey,
+						fmt.Sprintf("http://127.0.0.1:4000/api/tenants/%s/health", utils.Config.Realtime.TenantId),
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
