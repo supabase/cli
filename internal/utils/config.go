@@ -196,9 +196,6 @@ var Config = config{
 				"email_change": {},
 			},
 		},
-		Sms: sms{
-			Template: "Your code is {{ .Code }} .",
-		},
 		External: map[string]provider{
 			"apple":         {},
 			"azure":         {},
@@ -219,8 +216,6 @@ var Config = config{
 			"workos":        {},
 			"zoom":          {},
 		},
-		Hook:      hook{},
-		JwtExpiry: 3600,
 		JwtSecret: defaultJwtSecret,
 	},
 	Analytics: analytics{
