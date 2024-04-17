@@ -334,6 +334,7 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
+		MaxFrequency         string                   `toml:"max_frequency"`
 	}
 
 	emailTemplate struct {
@@ -351,6 +352,7 @@ type (
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
+		MaxFrequency        string            `toml:"max_frequency"`
 	}
 
 	hook struct {
@@ -570,6 +572,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: inbucket.port")
 			}
 		}
+
 		// Validate auth config
 		if Config.Auth.Enabled {
 			if Config.Auth.SiteUrl == "" {
@@ -656,6 +659,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			}
 
+			if !IsValidTimeSecondLiteral(Config.Auth.Sms.MaxFrequency) {
+				return errors.Errorf("Invalid config for auth.sms.max_frequency. Must be a valid time second duration, e.g. 30s")
+			}
+
 			if Config.Auth.Hook.MFAVerificationAttempt.Enabled {
 				if Config.Auth.Hook.MFAVerificationAttempt.URI == "" {
 					return errors.New("Missing required field in config: auth.hook.mfa_verification_atempt.uri")
@@ -698,6 +705,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 				Config.Auth.External[ext] = provider
+			}
+
+			if !IsValidTimeSecondLiteral(Config.Auth.Email.MaxFrequency) {
+				return errors.Errorf("Invalid config for auth.email.max_frequency. Must be a valid time second duration, e.g. 30s")
 			}
 		}
 	}
