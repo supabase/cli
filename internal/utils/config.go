@@ -128,6 +128,13 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func ToRealtimeEnv(addr AddressFamily) string {
+	if addr == AddressIPv6 {
+		return "-proto_dist inet6_tcp"
+	}
+	return "-proto_dist inet_tcp"
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -161,7 +168,7 @@ var Config = config{
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 	},
 	Realtime: realtime{
-		IpVersion:       AddressIPv6,
+		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
 		EncryptionKey:   "supabaserealtime",
 		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
