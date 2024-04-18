@@ -73,7 +73,7 @@ func promptMissingParams(ctx context.Context, body *api.CreateProjectBody) error
 }
 
 func promptProjectName() (string, error) {
-	name, err := utils.PromptText("Enter your project name: ", os.Stdin)
+	name, err := utils.NewConsole().PromptText("Enter your project name: ")
 	if err != nil {
 		return "", err
 	}

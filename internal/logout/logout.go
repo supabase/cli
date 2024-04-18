@@ -11,7 +11,7 @@ import (
 )
 
 func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
-	if !utils.PromptYesNo("Do you want to log out? This will remove the access token from your system.", false, os.Stdin) {
+	if !utils.NewConsole().PromptYesNo("Do you want to log out? This will remove the access token from your system.", false) {
 		fmt.Fprintln(os.Stderr, "Not deleting access token.")
 		return nil
 	}
