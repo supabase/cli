@@ -635,6 +635,11 @@ EOF
 					"RLIMIT_NOFILE=",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
+				// TODO: remove this after deprecating PG14
+				Cmd: []string{
+					"/bin/sh", "-c",
+					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
+				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer " + utils.Config.Auth.AnonKey,
