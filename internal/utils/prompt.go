@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -148,7 +149,14 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 
 // PromptYesNo asks yes/no questions using the label.
 func PromptYesNo(label string, def bool, stdin *os.File) bool {
+	logger := GetDebugLogger()
 	if !term.IsTerminal(int(stdin.Fd())) {
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, stdin); err != nil {
+			fmt.Fprintln(logger, err)
+		} else if answer := parseYesNo(buf.String()); answer != nil {
+			return *answer
+		}
 		return def
 	}
 
@@ -156,28 +164,26 @@ func PromptYesNo(label string, def bool, stdin *os.File) bool {
 	if !def {
 		choices = "y/N"
 	}
+	labelWithChoice := fmt.Sprintf("%s [%s] ", label, choices)
 
-	r := bufio.NewReader(stdin)
-	for {
-		fmt.Fprintf(os.Stderr, "%s [%s] ", label, choices)
-		// Any error will be handled as empty string
-		s, err := r.ReadString('\n')
-		if err != nil {
-			logger := GetDebugLogger()
-			fmt.Fprintln(logger, err)
-		}
-		s = strings.TrimSpace(s)
-		if s == "" {
-			return def
-		}
-		s = strings.ToLower(s)
-		if s == "y" || s == "yes" {
-			return true
-		}
-		if s == "n" || s == "no" {
-			return false
-		}
+	// Any error will be handled as empty string
+	if s, err := PromptText(labelWithChoice, stdin); err != nil {
+		fmt.Fprintln(logger, err)
+	} else if answer := parseYesNo(s); answer != nil {
+		return *answer
 	}
+	return def
+}
+
+func parseYesNo(s string) *bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "y" || s == "yes" {
+		return Ptr(true)
+	}
+	if s == "n" || s == "no" {
+		return Ptr(false)
+	}
+	return nil
 }
 
 func PromptText(label string, stdin io.Reader) (string, error) {
