@@ -30,6 +30,27 @@ services:
           - /auth/v1/authorize
     plugins:
       - name: cors
+  - name: auth-v1-open-sso-acs
+    _comment: "GoTrue: /auth/v1/sso/saml/acs* -> http://auth:9999/sso/saml/acs*"
+    url: "http://{{ .GotrueId }}:9999/sso/saml/acs"
+    routes:
+      - name: auth-v1-open-sso-acs
+        strip_path: true
+        paths:
+          - /auth/v1/sso/saml/acs
+          - /sso/saml/acs
+    plugins:
+      - name: cors
+  - name: auth-v1-open-sso-metadata
+    _comment: "GoTrue: /auth/v1/sso/saml/metadata* -> http://auth:9999/sso/saml/metadata*"
+    url: "http://{{ .GotrueId }}:9999/sso/saml/metadata"
+    routes:
+      - name: auth-v1-open-sso-metadata
+        strip_path: true
+        paths:
+          - /auth/v1/sso/saml/metadata
+    plugins:
+      - name: cors
   - name: auth-v1
     _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
     url: http://{{ .GotrueId }}:9999/

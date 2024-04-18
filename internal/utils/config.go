@@ -352,6 +352,7 @@ type (
 		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
 		Email                  email `toml:"email"`
 		Sms                    sms   `toml:"sms"`
+		Sso                    sso   `toml:"sso"`
 		External               map[string]provider
 
 		// Custom secrets can be injected from .env file
@@ -384,6 +385,11 @@ type (
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
+	}
+
+	sso struct {
+		Enabled    bool   `toml:"enabled"`
+		PrivateKey string `toml:"private_key"`
 	}
 
 	hook struct {
@@ -687,6 +693,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 				if Config.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(Config.Auth.Sms.Vonage.ApiSecret); err != nil {
+					return err
+				}
+			}
+
+			if Config.Auth.Sso.Enabled {
+				if Config.Auth.Sso.PrivateKey == "" {
+					return errors.New("Missing required field in config: auth.sso.private_key")
+				}
+				if Config.Auth.Sso.PrivateKey, err = maybeLoadEnv(Config.Auth.Sso.PrivateKey); err != nil {
 					return err
 				}
 			}

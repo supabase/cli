@@ -492,6 +492,15 @@ EOF
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
+
+		if utils.Config.Auth.Sso.Enabled {
+			env = append(
+				env,
+				"GOTRUE_SAML_ENABLED=true",
+				"GOTRUE_SAML_PRIVATE_KEY="+utils.Config.Auth.Sso.PrivateKey,
+			)
+		}
+
 		if utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
 			env = append(
 				env,
