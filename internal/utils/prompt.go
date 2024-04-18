@@ -1,19 +1,15 @@
 package utils
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/go-errors/errors"
-	"golang.org/x/term"
 )
 
 var (
@@ -145,54 +141,4 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 		return m.choice, nil
 	}
 	return initial.choice, err
-}
-
-// PromptYesNo asks yes/no questions using the label.
-func PromptYesNo(label string, def bool, stdin *os.File) bool {
-	logger := GetDebugLogger()
-	if !term.IsTerminal(int(stdin.Fd())) {
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, stdin); err != nil {
-			fmt.Fprintln(logger, err)
-		} else if answer := parseYesNo(buf.String()); answer != nil {
-			return *answer
-		}
-		return def
-	}
-
-	choices := "Y/n"
-	if !def {
-		choices = "y/N"
-	}
-	labelWithChoice := fmt.Sprintf("%s [%s] ", label, choices)
-
-	// Any error will be handled as empty string
-	if s, err := PromptText(labelWithChoice, stdin); err != nil {
-		fmt.Fprintln(logger, err)
-	} else if answer := parseYesNo(s); answer != nil {
-		return *answer
-	}
-	return def
-}
-
-func parseYesNo(s string) *bool {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "y" || s == "yes" {
-		return Ptr(true)
-	}
-	if s == "n" || s == "no" {
-		return Ptr(false)
-	}
-	return nil
-}
-
-func PromptText(label string, stdin io.Reader) (string, error) {
-	fmt.Fprint(os.Stderr, label)
-	scanner := bufio.NewScanner(stdin)
-	// Scan a single line for input
-	scanner.Scan()
-	if err := scanner.Err(); err != nil {
-		return "", errors.Errorf("failed to read stdin: %w", err)
-	}
-	return strings.TrimSpace(scanner.Text()), nil
 }

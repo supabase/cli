@@ -46,7 +46,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return errors.Errorf("failed to read workdir: %w", err)
 	} else if !empty {
 		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(workdir))
-		if !utils.PromptYesNo(title, true, os.Stdin) {
+		if !utils.NewConsole().PromptYesNo(title, true) {
 			return context.Canceled
 		}
 	}

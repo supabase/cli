@@ -17,7 +17,7 @@ func PreRun(ref string) error {
 	if err := utils.AssertProjectRefIsValid(ref); err != nil {
 		return err
 	}
-	if !utils.PromptYesNo("Do you want to delete project "+utils.Aqua(ref)+"? This action is irreversible.", true, os.Stdin) {
+	if !utils.NewConsole().PromptYesNo("Do you want to delete project "+utils.Aqua(ref)+"? This action is irreversible.", true) {
 		return errors.New("Not deleting project: " + utils.Aqua(ref))
 	}
 	return nil
