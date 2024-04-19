@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/branches/list"
 	"github.com/supabase/cli/internal/branches/update"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -105,7 +106,8 @@ var (
 )
 
 func init() {
-	branchesCmd.AddCommand(branchCreateCmd)
+	branchFlags := branchesCmd.PersistentFlags()
+	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	// Setup enum flags
 	i := 0
 	for k := range utils.FlyRegions {
@@ -115,6 +117,7 @@ func init() {
 	sort.Strings(branchRegion.Allowed)
 	createFlags := branchCreateCmd.Flags()
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
+	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
 	updateFlags := branchUpdateCmd.Flags()
