@@ -471,7 +471,7 @@ func (h *hookConfig) HandleHook(hookType string) error {
 	if h.URI == "" {
 		return fmt.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
 	}
-	if err := validateHTTPHookURI(h.URI, hookType); err != nil {
+	if err := validateHookURI(h.URI, hookType); err != nil {
 		return err
 	}
 	var err error
@@ -880,13 +880,13 @@ func loadEnvIfExists(path string) error {
 	return nil
 }
 
-func validateHTTPHookURI(uri, hookName string) error {
+func validateHookURI(uri, hookName string) error {
 	parsed, err := url.Parse(uri)
 	if err != nil {
 		return errors.Errorf("failed to parse template url: %w", err)
 	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a HTTP or HTTPS URL", hookName)
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
 }
