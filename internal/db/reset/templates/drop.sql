@@ -33,6 +33,17 @@ begin
     execute format('drop table if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
+  -- truncate auth tables
+  for rec in
+    select *
+    from pg_class c
+    where
+      c.relnamespace::regnamespace::name = 'auth'
+      and c.relkind = 'r'
+  loop
+    execute format('truncate %I.%I restart identity cascade', rec.relnamespace::regnamespace::name, rec.relname);
+  end loop;
+
   -- sequences
   for rec in
     select *
