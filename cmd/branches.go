@@ -44,6 +44,7 @@ var (
 		Use:   "list",
 		Short: "List all preview branches",
 		Long:  "List all preview branches of the linked project.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return list.Run(cmd.Context(), afero.NewOsFs())
 		},
