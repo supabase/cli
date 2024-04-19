@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/h2non/gock.v1"
@@ -35,6 +36,16 @@ func TestResetCommand(t *testing.T) {
 	}
 
 	t.Run("throws error on context canceled", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		// Check error
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("throws error on invalid port", func(t *testing.T) {
+		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
