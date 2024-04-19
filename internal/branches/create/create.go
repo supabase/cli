@@ -14,7 +14,11 @@ import (
 
 func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
 	gitBranch := keys.GetGitBranchOrDefault("", fsys)
-	if len(name) == 0 {
+	if len(name) == 0 && len(gitBranch) > 0 {
+		title := fmt.Sprintf("Do you want to create a branch named %s?", utils.Aqua(gitBranch))
+		if shouldCreate := utils.NewConsole().PromptYesNo(title, true); !shouldCreate {
+			return context.Canceled
+		}
 		name = gitBranch
 	}
 
