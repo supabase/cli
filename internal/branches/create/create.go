@@ -13,8 +13,7 @@ import (
 )
 
 func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
-	ref, err := flags.LoadProjectRef(fsys)
-	if err != nil {
+	if err := flags.ParseProjectRef(ctx, fsys); err != nil {
 		return err
 	}
 	gitBranch := keys.GetGitBranchOrDefault("", fsys)
@@ -22,7 +21,7 @@ func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
 		name = gitBranch
 	}
 
-	resp, err := utils.GetSupabase().CreateBranchWithResponse(ctx, ref, api.CreateBranchJSONRequestBody{
+	resp, err := utils.GetSupabase().CreateBranchWithResponse(ctx, flags.ProjectRef, api.CreateBranchJSONRequestBody{
 		BranchName: name,
 		GitBranch:  &gitBranch,
 		Region:     &region,
