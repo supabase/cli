@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"gopkg.in/h2non/gock.v1"
@@ -70,6 +71,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes multiple objects", func(t *testing.T) {
+		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		projectRef := apitest.RandomProjectRef()
@@ -113,6 +115,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes buckets and directories", func(t *testing.T) {
+		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		projectRef := apitest.RandomProjectRef()
@@ -187,6 +190,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("throws error on delete failure", func(t *testing.T) {
+		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		projectRef := apitest.RandomProjectRef()
