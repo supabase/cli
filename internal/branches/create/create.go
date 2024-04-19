@@ -13,9 +13,6 @@ import (
 )
 
 func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
-	if err := flags.ParseProjectRef(ctx, fsys); err != nil {
-		return err
-	}
 	gitBranch := keys.GetGitBranchOrDefault("", fsys)
 	if len(name) == 0 {
 		name = gitBranch
