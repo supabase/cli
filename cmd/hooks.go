@@ -3,6 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/hooks/trigger"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -26,9 +27,9 @@ var (
 		Long:    "Trigger a mock payload to your local extensibility point. Currently only supports local",
 		Example: `  supabase hooks trigger --extension-point <name>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(cmd.Context(), create.RunParams{
-				ProjectRef:        flags.ProjectRef,
-				ExtensionPoint:    someType.String(),
+			return create.Run(cmd.Context(), afero.NewOsFs(), create.RunParams{
+				ProjectRef:     flags.ProjectRef,
+				ExtensionPoint: someType.String(),
 			})
 		},
 	}
