@@ -12,7 +12,7 @@ import (
 )
 
 type Console struct {
-	isTTY  bool
+	IsTTY  bool
 	stdin  *bufio.Scanner
 	stdout io.Writer
 	stderr io.Writer
@@ -20,7 +20,7 @@ type Console struct {
 
 func NewConsole() Console {
 	return Console{
-		isTTY:  term.IsTerminal(int(os.Stdin.Fd())),
+		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
 		stdin:  bufio.NewScanner(os.Stdin),
 		stdout: os.Stdout,
 		stderr: GetDebugLogger(),
@@ -69,7 +69,7 @@ func (c Console) PromptText(label string) (string, error) {
 	}
 	token := strings.TrimSpace(c.stdin.Text())
 	// Echo input from non-interactive terminal
-	if !c.isTTY {
+	if !c.IsTTY {
 		fmt.Fprintln(c.stdout, token)
 	}
 	return token, nil
