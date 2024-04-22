@@ -482,8 +482,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 	}
 	// Load secrets from .env file
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	if err := loadDefaultEnv(); err != nil {
+		return err
 	}
 	if err := viper.Unmarshal(&Config); err != nil {
 		return errors.Errorf("failed to parse env to config: %w", err)
@@ -836,4 +836,29 @@ func RemoveDuplicates(slice []string) (result []string) {
 		}
 	}
 	return result
+}
+
+func loadDefaultEnv() error {
+	env := viper.GetString("ENV")
+	if env == "" {
+		env = "development"
+	}
+	filenames := []string{".env." + env + ".local"}
+	if env != "test" {
+		filenames = append(filenames, ".env.local")
+	}
+	filenames = append(filenames, ".env."+env, ".env")
+	for _, path := range filenames {
+		if err := loadEnvIfExists(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadEnvIfExists(path string) error {
+	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	}
+	return nil
 }
