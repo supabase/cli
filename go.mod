@@ -20,8 +20,10 @@ require (
 	github.com/getsentry/sentry-go v0.27.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-errors/errors v1.5.1
+	github.com/go-faker/faker/v4 v4.4.1
 	github.com/go-git/go-git/v5 v5.12.0
 	github.com/go-xmlfmt/xmlfmt v1.1.2
+	github.com/gofrs/uuid v4.0.0+incompatible
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golangci/golangci-lint v1.57.2
 	github.com/google/go-github/v53 v53.2.0
@@ -42,6 +44,7 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.18.2
+	github.com/standard-webhooks/standard-webhooks/libraries v0.0.0-20240414214247-757afe24b8ff
 	github.com/stretchr/testify v1.9.0
 	github.com/stripe/pg-schema-diff v0.6.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0

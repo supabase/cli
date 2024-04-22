@@ -17,7 +17,7 @@ var (
 	}
 
 	someType = utils.EnumFlag{
-		Allowed: []string{"send-email", "send-sms"},
+		Allowed: []string{"send-email", "send-sms", "mfa-verification-attempt", "password-verification-attempt", "custom-acess-token"},
 		// intentionally no default value so users have to specify --type saml explicitly
 	}
 
@@ -25,7 +25,7 @@ var (
 		Use:     "add",
 		Short:   "triger a hook payload",
 		Long:    "Trigger a mock payload to your local extensibility point. Currently only supports local",
-		Example: `  supabase hooks trigger --extension-point <name>`,
+		Example: `supabase hooks trigger --extension-point <name>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return create.Run(cmd.Context(), afero.NewOsFs(), create.RunParams{
 				ProjectRef:     flags.ProjectRef,
