@@ -40,7 +40,7 @@ const (
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.145.0"
+	GotrueImage      = "supabase/gotrue:v2.149.0"
 	RealtimeImage    = "supabase/realtime:v2.28.23"
 	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
