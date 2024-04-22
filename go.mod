@@ -13,8 +13,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.10.0
 	github.com/containers/common v0.58.2
 	github.com/deepmap/oapi-codegen v1.16.2
-	github.com/docker/cli v26.0.1+incompatible
-	github.com/docker/docker v26.0.1+incompatible
+	github.com/docker/cli v26.0.2+incompatible
+	github.com/docker/docker v26.0.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.27.0
@@ -323,7 +323,7 @@ require (
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20240222234643-814bf88cf225 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
-	golang.org/x/net v0.22.0 // indirect
+	golang.org/x/net v0.23.0 // indirect
 	golang.org/x/sync v0.6.0 // indirect
 	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
