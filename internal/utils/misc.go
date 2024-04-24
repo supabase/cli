@@ -111,6 +111,7 @@ var (
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
+	// Initialised by postgres image and owned by postgres role
 	ManagedSchemas = append([]string{
 		"pgbouncer",
 		"pgsodium",

@@ -295,6 +295,7 @@ func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 	if err != nil {
 		return nil, errors.Errorf("failed to list schemas: %w", err)
 	}
+	// TODO: show detail and hint from pgconn.PgError
 	return pgxv5.CollectStrings(rows)
 }
 
