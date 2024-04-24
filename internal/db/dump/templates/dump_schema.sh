@@ -18,7 +18,7 @@ export PGDATABASE="$PGDATABASE"
 #   - do not include ACL changes on internal schemas
 #   - do not include RLS policies on cron extension schema
 #   - do not include event triggers
-#   - do not include creating publication "supabase_realtime"
+#   - do not create publication "supabase_realtime"
 pg_dump \
     --schema-only \
     --quote-all-identifier \
