@@ -40,6 +40,7 @@ var escapedSchemas = []string{
 	`supabase\_functions`,
 	`supabase\_migrations`,
 	"cron",
+	"dbdev",
 	"graphql",
 	`graphql\_public`,
 	"net",
