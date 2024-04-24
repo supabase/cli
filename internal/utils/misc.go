@@ -114,6 +114,7 @@ var (
 	SystemSchemas = append([]string{
 		// Owned by extensions
 		"cron",
+		"dbdev",
 		"graphql",
 		"graphql_public",
 		"net",
