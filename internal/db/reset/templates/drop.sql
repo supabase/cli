@@ -59,7 +59,8 @@ begin
   for rec in
     select *
     from pg_type t
-    where t.typnamespace::regnamespace::name = 'public'
+    where
+      t.typnamespace::regnamespace::name = 'public'
       and typtype != 'b'
   loop
     execute format('drop type if exists %I.%I cascade', rec.typnamespace::regnamespace::name, rec.typname);
