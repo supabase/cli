@@ -111,7 +111,24 @@ var (
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
-	SystemSchemas = append([]string{
+	// Initialised by postgres image and owned by postgres role
+	ManagedSchemas = append([]string{
+		"pgbouncer",
+		"pgsodium",
+		"pgtle",
+		"supabase_migrations",
+		"vault",
+	}, PgSchemas...)
+	InternalSchemas = append([]string{
+		"auth",
+		"extensions",
+		"pgbouncer",
+		"realtime",
+		"_realtime",
+		"storage",
+		"_analytics",
+		"supabase_functions",
+		"supabase_migrations",
 		// Owned by extensions
 		"cron",
 		"dbdev",
@@ -129,17 +146,6 @@ var (
 		"topology",
 		"vault",
 	}, PgSchemas...)
-	InternalSchemas = append([]string{
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		"supabase_functions",
-		"supabase_migrations",
-	}, SystemSchemas...)
 	ReservedRoles = []string{
 		"anon",
 		"authenticated",

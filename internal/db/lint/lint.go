@@ -93,7 +93,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		return nil, errors.Errorf("failed to begin transaction: %w", err)
 	}
 	if len(schema) == 0 {
-		schema, err = reset.ListSchemas(ctx, conn, utils.InternalSchemas...)
+		schema, err = reset.LoadUserSchemas(ctx, conn)
 		if err != nil {
 			return nil, err
 		}

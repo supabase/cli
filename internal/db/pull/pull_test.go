@@ -31,28 +31,10 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
-	"auth",
 	"pgbouncer",
-	"realtime",
-	`\_realtime`,
-	"storage",
-	`\_analytics`,
-	`supabase\_functions`,
-	`supabase\_migrations`,
-	"cron",
-	"dbdev",
-	"graphql",
-	`graphql\_public`,
-	"net",
 	"pgsodium",
-	`pgsodium\_masks`,
 	"pgtle",
-	"repack",
-	"tiger",
-	`tiger\_data`,
-	`timescaledb\_%`,
-	`\_timescaledb\_%`,
-	"topology",
+	`supabase\_migrations`,
 	"vault",
 	`information\_schema`,
 	`pg\_%`,
@@ -196,7 +178,7 @@ func TestPullSchema(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(reset.LIST_SCHEMAS, escapedSchemas).
+			Query(reset.ListSchemas, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Connect to mock
 		ctx := context.Background()
