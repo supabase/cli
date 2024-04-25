@@ -60,13 +60,7 @@ begin
     select *
     from pg_type t
     where t.typnamespace::regnamespace::name = 'public'
-    order by (
-      select count(d.objid)
-      from pg_depend d
-        left join pg_class c on d.refclassid = c.oid
-      where t.oid = d.objid
-        and c.relname = 'pg_type'
-    )
+      and typtype != 'b'
   loop
     execute format('drop type if exists %I.%I cascade', rec.typnamespace::regnamespace::name, rec.typname);
   end loop;
