@@ -73,14 +73,11 @@ func promptMissingParams(ctx context.Context, body *api.CreateProjectBody) error
 }
 
 func promptProjectName() (string, error) {
-	name, err := utils.NewConsole().PromptText("Enter your project name: ")
-	if err != nil {
-		return "", err
+	title := "Enter your project name: "
+	if name := utils.NewConsole().PromptText(title); len(name) > 0 {
+		return name, nil
 	}
-	if len(name) == 0 {
-		return "", errors.New("project name cannot be empty")
-	}
-	return name, nil
+	return "", errors.New("project name cannot be empty")
 }
 
 func promptOrgId(ctx context.Context) (string, error) {

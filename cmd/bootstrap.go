@@ -30,10 +30,7 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !viper.IsSet("WORKDIR") {
 				title := fmt.Sprintf("Enter a directory to bootstrap your project (or leave blank to use %s): ", utils.Bold(utils.CurrentDirAbs))
-				workdir, err := utils.NewConsole().PromptText(title)
-				if err != nil {
-					return err
-				}
+				workdir := utils.NewConsole().PromptText(title)
 				viper.Set("WORKDIR", workdir)
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)

@@ -177,10 +177,11 @@ func promptBranchId(ctx context.Context, ref string) error {
 		if len(gitBranch) > 0 {
 			title = fmt.Sprintf("%-2s (or leave blank to use %s): ", title, utils.Aqua(gitBranch))
 		}
-		if name, err := console.PromptText(title); err != nil {
-			return err
-		} else if len(name) > 0 {
+		if name := console.PromptText(title); len(name) > 0 {
 			gitBranch = name
+		}
+		if len(gitBranch) == 0 {
+			return errors.New("git branch cannot be empty")
 		}
 		for _, branch := range *resp.JSON200 {
 			if branch.Name == gitBranch {
