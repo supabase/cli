@@ -120,11 +120,13 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			return err
 		}
 	}
-	modules, err := utils.BindImportMap(fallbackImportMapPath, dockerFallbackImportMapPath, fsys)
-	if err != nil {
-		return err
+	if fallbackImportMapPath != importMapPath {
+		modules, err := utils.BindImportMap(fallbackImportMapPath, dockerFallbackImportMapPath, fsys)
+		if err != nil {
+			return err
+		}
+		binds = append(binds, modules...)
 	}
-	binds = append(binds, modules...)
 
 	if err := utils.MkdirIfNotExistFS(fsys, utils.FunctionsDir); err != nil {
 		return err

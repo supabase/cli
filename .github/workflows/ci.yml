@@ -41,7 +41,7 @@ jobs:
           # Linter requires no cache
           cache: false
 
-      - uses: golangci/golangci-lint-action@v4
+      - uses: golangci/golangci-lint-action@v5
         with:
           args: --timeout 3m --verbose
 

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -56,7 +57,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}
 	// 4. Insert a row to `schema_migrations`
 	fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(path))
-	if shouldUpdate := utils.PromptYesNo("Update remote migration history table?", true, os.Stdin); shouldUpdate {
+	if shouldUpdate := utils.NewConsole().PromptYesNo("Update remote migration history table?", true); shouldUpdate {
 		return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
 	}
 	return nil
@@ -78,7 +79,7 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 	defaultSchema := len(schema) == 0
 	if defaultSchema {
 		var err error
-		schema, err = diff.LoadUserSchemas(ctx, conn)
+		schema, err = reset.LoadUserSchemas(ctx, conn)
 		if err != nil {
 			return err
 		}

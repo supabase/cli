@@ -51,7 +51,7 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 	}
 	for bucket, prefixes := range groups {
 		confirm := fmt.Sprintf("Confirm deleting files in bucket %v?", utils.Bold(bucket))
-		if shouldDelete := utils.PromptYesNo(confirm, true, os.Stdin); !shouldDelete {
+		if shouldDelete := utils.NewConsole().PromptYesNo(confirm, false); !shouldDelete {
 			continue
 		}
 		// Always try deleting first in case the paths resolve to extensionless files

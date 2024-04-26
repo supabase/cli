@@ -34,14 +34,14 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240408-6bf3b81"
+	StudioImage      = "supabase/studio:20240422-5cf8f30"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.43.2"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.45.2"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
 	GotrueImage      = "supabase/gotrue:v2.149.0"
-	RealtimeImage    = "supabase/realtime:v2.28.23"
+	RealtimeImage    = "supabase/realtime:v2.28.32"
 	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
@@ -111,9 +111,27 @@ var (
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
-	SystemSchemas = append([]string{
+	// Initialised by postgres image and owned by postgres role
+	ManagedSchemas = append([]string{
+		"pgbouncer",
+		"pgsodium",
+		"pgtle",
+		"supabase_migrations",
+		"vault",
+	}, PgSchemas...)
+	InternalSchemas = append([]string{
+		"auth",
+		"extensions",
+		"pgbouncer",
+		"realtime",
+		"_realtime",
+		"storage",
+		"_analytics",
+		"supabase_functions",
+		"supabase_migrations",
 		// Owned by extensions
 		"cron",
+		"dbdev",
 		"graphql",
 		"graphql_public",
 		"net",
@@ -128,17 +146,6 @@ var (
 		"topology",
 		"vault",
 	}, PgSchemas...)
-	InternalSchemas = append([]string{
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		"supabase_functions",
-		"supabase_migrations",
-	}, SystemSchemas...)
 	ReservedRoles = []string{
 		"anon",
 		"authenticated",

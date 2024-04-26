@@ -58,10 +58,11 @@ func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, para
 			return writeIntelliJConfig(fsys)
 		}
 	} else {
-		if isVscode := utils.PromptYesNo("Generate VS Code settings for Deno?", false, os.Stdin); isVscode {
+		console := utils.NewConsole()
+		if isVscode := console.PromptYesNo("Generate VS Code settings for Deno?", false); isVscode {
 			return writeVscodeConfig(fsys)
 		}
-		if isIntelliJ := utils.PromptYesNo("Generate IntelliJ Settings for Deno?", false, os.Stdin); isIntelliJ {
+		if isIntelliJ := console.PromptYesNo("Generate IntelliJ Settings for Deno?", false); isIntelliJ {
 			return writeIntelliJConfig(fsys)
 		}
 	}
