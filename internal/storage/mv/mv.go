@@ -29,14 +29,6 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	if err != nil {
 		return err
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	api, err := client.NewStorageAPI(ctx, projectRef)
-	if err != nil {
-		return err
-	}
 	srcBucket, srcPrefix := client.SplitBucketPrefix(srcParsed)
 	dstBucket, dstPrefix := client.SplitBucketPrefix(dstParsed)
 	if len(srcPrefix) == 0 && len(dstPrefix) == 0 {
@@ -44,6 +36,10 @@ func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) er
 	}
 	if srcBucket != dstBucket {
 		return errors.New(errUnsupportedMove)
+	}
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintln(os.Stderr, "Moving object:", srcParsed, "=>", dstParsed)
 	data, err := api.MoveObject(ctx, srcBucket, srcPrefix, dstPrefix)

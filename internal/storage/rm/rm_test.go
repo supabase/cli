@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/pkg/storage"
@@ -39,6 +39,11 @@ var mockApi = storage.StorageAPI{Fetcher: fetcher.NewFetcher(
 )}
 
 func TestStorageRM(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("throws error on invalid url", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -66,34 +71,20 @@ func TestStorageRM(t *testing.T) {
 		assert.ErrorIs(t, err, errMissingFlag)
 	})
 
-	t.Run("throws error on missing project", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), []string{}, false, fsys)
-		// Check error
-		assert.ErrorIs(t, err, utils.ErrNotLinked)
-	})
-
 	t.Run("removes multiple objects", func(t *testing.T) {
 		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: []string{
 				"abstract.pdf",
@@ -123,53 +114,48 @@ func TestStorageRM(t *testing.T) {
 		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
 		// Delete /test/ bucket
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/list/test").
 			Reply(http.StatusOK).
 			JSON([]storage.ObjectResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/test").
 			JSON(storage.DeleteObjectsRequest{Prefixes: []string{
 				"",
 			}}).
 			Reply(http.StatusOK).
 			JSON([]storage.DeleteObjectsResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/list/test").
 			Reply(http.StatusOK).
 			JSON([]storage.ObjectResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/bucket/test").
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"error": "Bucket not found"})
 		// Delete /private/docs/ directory
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: []string{
 				"docs",
 			}}).
 			Reply(http.StatusOK).
 			JSON([]storage.DeleteObjectsResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
 			JSON([]storage.ObjectResponse{mockFile})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: []string{
 				"docs/abstract.pdf",
@@ -198,21 +184,16 @@ func TestStorageRM(t *testing.T) {
 		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
