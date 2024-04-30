@@ -59,7 +59,6 @@ func IterateStoragePaths(ctx context.Context, api storage.StorageAPI, remotePath
 		pages := 1
 		for i := 0; i < pages; i++ {
 			objects, err := api.ListObjects(ctx, bucket, prefix, i)
-			fmt.Println(len(objects), err)
 			if err != nil {
 				return err
 			}
