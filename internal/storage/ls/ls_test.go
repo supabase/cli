@@ -9,21 +9,22 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/pkg/storage"
 	"gopkg.in/h2non/gock.v1"
 )
 
-var mockFile = client.ObjectResponse{
+var mockFile = storage.ObjectResponse{
 	Name:           "abstract.pdf",
 	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
 	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
 	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
 	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-	Metadata: &client.ObjectMetadata{
+	Metadata: &storage.ObjectMetadata{
 		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
 		Size:           82702,
 		Mimetype:       "application/pdf",
@@ -33,6 +34,10 @@ var mockFile = client.ObjectResponse{
 		HttpStatusCode: 200,
 	},
 }
+
+var mockApi = storage.StorageAPI{Fetcher: fetcher.NewFetcher(
+	"http://127.0.0.1",
+)}
 
 func TestStorageLS(t *testing.T) {
 	t.Run("lists buckets", func(t *testing.T) {
@@ -55,7 +60,7 @@ func TestStorageLS(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{})
+			JSON([]storage.BucketResponse{})
 		// Run test
 		err := Run(context.Background(), "ss:///", false, fsys)
 		// Check error
@@ -68,7 +73,7 @@ func TestStorageLS(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", false, fsys)
 		// Check error
-		assert.ErrorIs(t, err, storage.ErrInvalidURL)
+		assert.ErrorIs(t, err, client.ErrInvalidURL)
 	})
 
 	t.Run("throws error on invalid project", func(t *testing.T) {
@@ -100,7 +105,7 @@ func TestStorageLS(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "private",
 				Name:      "private",
 				CreatedAt: "2023-10-13T17:48:58.491Z",
@@ -109,7 +114,7 @@ func TestStorageLS(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
+			JSON([]storage.ObjectResponse{})
 		// Run test
 		err := Run(context.Background(), "ss:///", true, fsys)
 		// Check error
@@ -118,26 +123,13 @@ func TestStorageLS(t *testing.T) {
 }
 
 func TestListStoragePaths(t *testing.T) {
-	// Setup valid project ref
-	projectRef := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
 	t.Run("lists bucket paths by prefix", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "test",
 				Name:      "test",
 				Public:    true,
@@ -150,7 +142,7 @@ func TestListStoragePaths(t *testing.T) {
 				UpdatedAt: "2023-10-13T17:48:58.491Z",
 			}})
 		// Run test
-		paths, err := ListStoragePaths(context.Background(), projectRef, "te")
+		paths, err := ListStoragePaths(context.Background(), mockApi, "te")
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"test/"}, paths)
@@ -160,18 +152,11 @@ func TestListStoragePaths(t *testing.T) {
 	t.Run("throws error on bucket service unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		paths, err := ListStoragePaths(context.Background(), projectRef, "/")
+		paths, err := ListStoragePaths(context.Background(), mockApi, "/")
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, paths)
@@ -181,21 +166,14 @@ func TestListStoragePaths(t *testing.T) {
 	t.Run("lists object paths by prefix", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
+			JSON([]storage.ObjectResponse{{
 				Name: "folder",
 			}, mockFile})
 		// Run test
-		paths, err := ListStoragePaths(context.Background(), projectRef, "bucket/")
+		paths, err := ListStoragePaths(context.Background(), mockApi, "bucket/")
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"folder/", "abstract.pdf"}, paths)
@@ -205,18 +183,11 @@ func TestListStoragePaths(t *testing.T) {
 	t.Run("throws error on object service unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		paths, err := ListStoragePaths(context.Background(), projectRef, "bucket/")
+		paths, err := ListStoragePaths(context.Background(), mockApi, "bucket/")
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, paths)
@@ -226,41 +197,34 @@ func TestListStoragePaths(t *testing.T) {
 	t.Run("lists object paths with pagination", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		expected := make([]string, client.PAGE_LIMIT)
-		resp := make([]client.ObjectResponse, client.PAGE_LIMIT)
+		expected := make([]string, storage.PAGE_LIMIT)
+		resp := make([]storage.ObjectResponse, storage.PAGE_LIMIT)
 		for i := 0; i < len(resp); i++ {
-			resp[i] = client.ObjectResponse{Name: fmt.Sprintf("dir_%d", i)}
+			resp[i] = storage.ObjectResponse{Name: fmt.Sprintf("dir_%d", i)}
 			expected[i] = resp[i].Name + "/"
 		}
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/bucket").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "",
 				Search: "dir",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
 			JSON(resp)
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/bucket").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "",
 				Search: "dir",
-				Limit:  client.PAGE_LIMIT,
-				Offset: client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
+				Offset: storage.PAGE_LIMIT,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
+			JSON([]storage.ObjectResponse{})
 		// Run test
-		paths, err := ListStoragePaths(context.Background(), projectRef, "/bucket/dir")
+		paths, err := ListStoragePaths(context.Background(), mockApi, "/bucket/dir")
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, expected, paths)
@@ -269,27 +233,14 @@ func TestListStoragePaths(t *testing.T) {
 }
 
 func TestListStoragePathsAll(t *testing.T) {
-	// Setup valid project ref
-	projectRef := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
 	t.Run("lists nested object paths", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
 		// List buckets
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "test",
 				Name:      "test",
 				Public:    true,
@@ -302,41 +253,41 @@ func TestListStoragePathsAll(t *testing.T) {
 				UpdatedAt: "2023-10-13T17:48:58.491Z",
 			}})
 		// List folders
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/test").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
+			JSON([]storage.ObjectResponse{{
 				Name: "folder",
 			}})
 		// List files
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "folder/",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{mockFile})
+			JSON([]storage.ObjectResponse{mockFile})
 		// Run test
-		paths, err := ListStoragePathsAll(context.Background(), projectRef, "")
+		paths, err := ListStoragePathsAll(context.Background(), mockApi, "")
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{"private/folder/abstract.pdf", "test/"}, paths)
@@ -346,47 +297,40 @@ func TestListStoragePathsAll(t *testing.T) {
 	t.Run("returns partial result on error", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
 		// List folders
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
+			JSON([]storage.ObjectResponse{{
 				Name: "error",
 			}, mockFile})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "empty/",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "error/",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		paths, err := ListStoragePathsAll(context.Background(), projectRef, "private/")
+		paths, err := ListStoragePathsAll(context.Background(), mockApi, "private/")
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.ElementsMatch(t, []string{"private/abstract.pdf"}, paths)

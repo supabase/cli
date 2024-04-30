@@ -9,20 +9,21 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/pkg/storage"
 	"gopkg.in/h2non/gock.v1"
 )
 
-var mockFile = client.ObjectResponse{
+var mockFile = storage.ObjectResponse{
 	Name:           "abstract.pdf",
 	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
 	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
 	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
 	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
-	Metadata: &client.ObjectMetadata{
+	Metadata: &storage.ObjectMetadata{
 		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
 		Size:           82702,
 		Mimetype:       "application/pdf",
@@ -32,6 +33,10 @@ var mockFile = client.ObjectResponse{
 		HttpStatusCode: 200,
 	},
 }
+
+var mockApi = storage.StorageAPI{Fetcher: fetcher.NewFetcher(
+	"http://127.0.0.1",
+)}
 
 func TestStorageCP(t *testing.T) {
 	t.Run("copy local to remote", func(t *testing.T) {
@@ -78,7 +83,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{})
+			JSON([]storage.BucketResponse{})
 		// Run test
 		err := Run(context.Background(), "abstract.pdf", "ss:///private", true, 1, fsys)
 		// Check error
@@ -133,7 +138,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{})
+			JSON([]storage.BucketResponse{})
 		// Run test
 		err := Run(context.Background(), "ss:///private", ".", true, 1, fsys)
 		// Check error
@@ -181,42 +186,29 @@ func TestStorageCP(t *testing.T) {
 }
 
 func TestUploadAll(t *testing.T) {
-	// Setup valid project ref
-	projectRef := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
 	t.Run("uploads directory to new bucket", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/readme.md", []byte{}, 0644))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.BucketResponse{})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/tmp/readme.md").
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"error": "Bucket not found"})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON(client.CreateBucketResponse{Name: "tmp"})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON(storage.CreateBucketResponse{Name: "tmp"})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/tmp/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -228,26 +220,19 @@ func TestUploadAll(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/readme.md", []byte{}, 0644))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.BucketResponse{})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/tmp/readme.md").
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"error": "Bucket not found"})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", "/tmp", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "", "/tmp", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -260,27 +245,20 @@ func TestUploadAll(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/docs/api.md", []byte{}, 0644))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
+			JSON([]storage.ObjectResponse{{
 				Name: "dir",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/dir/tmp/readme.md").
 			Reply(http.StatusOK)
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/dir/tmp/docs/api.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "/private/dir/", "/tmp", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "/private/dir/", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -292,27 +270,20 @@ func TestUploadAll(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/readme.md", []byte{}, 0644))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "private",
 				Name:      "private",
 				CreatedAt: "2023-10-13T17:48:58.491Z",
 				UpdatedAt: "2023-10-13T17:48:58.491Z",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "private", "/tmp/readme.md", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "private", "/tmp/readme.md", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -324,24 +295,17 @@ func TestUploadAll(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/readme.md", []byte{}, 0644))
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
 		fileObject := mockFile
 		fileObject.Name = "file"
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{fileObject})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{fileObject})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "private/file", "/tmp/readme.md", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "private/file", "/tmp/readme.md", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -352,18 +316,11 @@ func TestUploadAll(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), projectRef, "", ".", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "", ".", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -371,28 +328,15 @@ func TestUploadAll(t *testing.T) {
 }
 
 func TestDownloadAll(t *testing.T) {
-	// Setup valid project ref
-	projectRef := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
 	t.Run("downloads buckets to existing directory", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "test",
 				Name:      "test",
 				Public:    true,
@@ -404,16 +348,16 @@ func TestDownloadAll(t *testing.T) {
 				CreatedAt: "2023-10-13T17:48:58.491Z",
 				UpdatedAt: "2023-10-13T17:48:58.491Z",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{})
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/test").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
+			JSON([]storage.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "", "/", 1, fsys)
+		err := DownloadStorageObjectAll(context.Background(), mockApi, "", "/", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -430,32 +374,25 @@ func TestDownloadAll(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/object/private").
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"error": "Not Found"})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
-			JSON([]client.BucketResponse{{
+			JSON([]storage.BucketResponse{{
 				Id:        "private",
 				Name:      "private",
 				CreatedAt: "2023-10-13T17:48:58.491Z",
 				UpdatedAt: "2023-10-13T17:48:58.491Z",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
+			JSON([]storage.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private", "/tmp", 1, fsys)
+		err := DownloadStorageObjectAll(context.Background(), mockApi, "/private", "/tmp", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -472,19 +409,12 @@ func TestDownloadAll(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{})
+			JSON([]storage.ObjectResponse{})
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/dir/", "/", 1, fsys)
+		err := DownloadStorageObjectAll(context.Background(), mockApi, "private/dir/", "/", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Object not found: private/dir/")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -498,47 +428,40 @@ func TestDownloadAll(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
 		// Lists /private/tmp directory
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "tmp/",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{{
+			JSON([]storage.ObjectResponse{{
 				Name: "docs",
 			}, mockFile})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/object/private/tmp/abstract.pdf").
 			Reply(http.StatusOK)
 		// Lists /private/tmp/docs directory
 		readme := mockFile
 		readme.Name = "readme.md"
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
-			JSON(client.ListObjectsQuery{
+			JSON(storage.ListObjectsQuery{
 				Prefix: "tmp/docs/",
 				Search: "",
-				Limit:  client.PAGE_LIMIT,
+				Limit:  storage.PAGE_LIMIT,
 				Offset: 0,
 			}).
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{readme})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{readme})
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/object/private/tmp/docs/readme.md").
 			Reply(http.StatusOK)
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "private/tmp/", "/", 1, fsys)
+		err := DownloadStorageObjectAll(context.Background(), mockApi, "private/tmp/", "/", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -555,22 +478,15 @@ func TestDownloadAll(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
-			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
-			JSON([]client.ObjectResponse{mockFile})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			JSON([]storage.ObjectResponse{mockFile})
+		gock.New("http://127.0.0.1").
 			Get("/storage/v1/object/private/abstract.pdf").
 			Reply(http.StatusOK)
 		// Run test
-		err := DownloadStorageObjectAll(context.Background(), projectRef, "/private/abstract.pdf", "/tmp/file", 1, fsys)
+		err := DownloadStorageObjectAll(context.Background(), mockApi, "/private/abstract.pdf", "/tmp/file", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

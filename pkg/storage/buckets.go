@@ -1,12 +1,10 @@
-package client
+package storage
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/tenant"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type BucketResponse struct {
@@ -20,13 +18,13 @@ type BucketResponse struct {
 	UpdatedAt        string   `json:"updated_at"`         // "2023-10-13T17:48:58.491Z"
 }
 
-func ListStorageBuckets(ctx context.Context, projectRef string) ([]BucketResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/bucket", utils.GetSupabaseHost(projectRef))
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) {
+	resp, err := s.Send(ctx, http.MethodGet, "/storage/v1/bucket", nil)
 	if err != nil {
 		return nil, err
 	}
-	data, err := tenant.JsonResponseWithBearer[[]BucketResponse](ctx, http.MethodGet, url, apiKey.ServiceRole, nil)
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[[]BucketResponse](resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -45,25 +43,25 @@ type CreateBucketResponse struct {
 	Name string `json:"name"`
 }
 
-func CreateStorageBucket(ctx context.Context, projectRef, bucketName string) (*CreateBucketResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/bucket", utils.GetSupabaseHost(projectRef))
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+func (s *StorageAPI) CreateBucket(ctx context.Context, bucketName string) (*CreateBucketResponse, error) {
+	body := CreateBucketRequest{Name: bucketName}
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/bucket", body)
 	if err != nil {
 		return nil, err
 	}
-	body := CreateBucketRequest{Name: bucketName}
-	return tenant.JsonResponseWithBearer[CreateBucketResponse](ctx, http.MethodPost, url, apiKey.ServiceRole, body)
+	defer resp.Body.Close()
+	return fetcher.ParseJSON[CreateBucketResponse](resp.Body)
 }
 
 type DeleteBucketResponse struct {
 	Message string `json:"message"`
 }
 
-func DeleteStorageBucket(ctx context.Context, projectRef, bucketId string) (*DeleteBucketResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/bucket/%s", utils.GetSupabaseHost(projectRef), bucketId)
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+func (s *StorageAPI) DeleteBucket(ctx context.Context, bucketId string) (*DeleteBucketResponse, error) {
+	resp, err := s.Send(ctx, http.MethodDelete, "/storage/v1/bucket/"+bucketId, nil)
 	if err != nil {
 		return nil, err
 	}
-	return tenant.JsonResponseWithBearer[DeleteBucketResponse](ctx, http.MethodDelete, url, apiKey.ServiceRole, nil)
+	defer resp.Body.Close()
+	return fetcher.ParseJSON[DeleteBucketResponse](resp.Body)
 }
