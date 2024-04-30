@@ -3,8 +3,6 @@ package client
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -26,9 +24,7 @@ func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, 
 	api := storage.StorageAPI{Fetcher: fetcher.NewFetcher(
 		server,
 		fetcher.WithBearerToken(token),
-		fetcher.WithHTTPClient(&http.Client{
-			Timeout: 10 * time.Second,
-		}),
+		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 	)}
 	return api, nil
 }
