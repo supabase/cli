@@ -30,6 +30,7 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/oauth2"
 	"golang.org/x/term"
 )
@@ -88,9 +89,6 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Linking project...")
 		keys, err = apiKeys.RunGetApiKeys(ctx, flags.ProjectRef)
-		if err == nil {
-			tenant.SetApiKeys(tenant.NewApiKey(keys))
-		}
 		return err
 	}, policy, newErrorCallback()); err != nil {
 		return err
@@ -99,7 +97,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	link.LinkServices(ctx, flags.ProjectRef, fsys)
+	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
@@ -356,7 +354,7 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 	opts := github.RepositoryContentGetOptions{Ref: ref}
 	queue := make([]string, 0)
 	queue = append(queue, root)
-	jq := utils.NewJobQueue(5)
+	download := NewDownloader(5, fsys)
 	for len(queue) > 0 {
 		contentPath := queue[0]
 		queue = queue[1:]
@@ -369,9 +367,7 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			case "file":
 				path := strings.TrimPrefix(file.GetPath(), root)
 				hostPath := filepath.Join(".", filepath.FromSlash(path))
-				if err := jq.Put(func() error {
-					return utils.DownloadFile(ctx, hostPath, file.GetDownloadURL(), fsys)
-				}); err != nil {
+				if err := download.Start(ctx, hostPath, file.GetDownloadURL()); err != nil {
 					return err
 				}
 			case "dir":
@@ -381,5 +377,38 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			}
 		}
 	}
-	return jq.Collect()
+	return download.Wait()
+}
+
+type Downloader struct {
+	api   *fetcher.Fetcher
+	queue *utils.JobQueue
+	fsys  afero.Fs
+}
+
+func NewDownloader(concurrency uint, fsys afero.Fs) *Downloader {
+	return &Downloader{
+		api:   fetcher.NewFetcher(""),
+		queue: utils.NewJobQueue(concurrency),
+		fsys:  fsys,
+	}
+}
+
+func (d *Downloader) Start(ctx context.Context, localPath, remotePath string) error {
+	job := func() error {
+		resp, err := d.api.Send(ctx, http.MethodGet, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if err := afero.WriteReader(d.fsys, localPath, resp.Body); err != nil {
+			return errors.Errorf("failed to write file: %w", err)
+		}
+		return nil
+	}
+	return d.queue.Put(job)
+}
+
+func (d *Downloader) Wait() error {
+	return d.queue.Collect()
 }

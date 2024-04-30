@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var updatedConfig ConfigCopy
@@ -37,10 +38,11 @@ func (c ConfigCopy) IsEmpty() bool {
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
-	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
+	keys, err := tenant.GetApiKeys(ctx, projectRef)
+	if err != nil {
 		return err
 	}
-	LinkServices(ctx, projectRef, fsys)
+	LinkServices(ctx, projectRef, keys.Anon, fsys)
 
 	// 2. Check database connection
 	config := flags.GetDbConfigOptionalPassword(projectRef)
@@ -72,7 +74,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return nil
 }
 
-func LinkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
 	wg.Add(6)
@@ -90,25 +92,26 @@ func LinkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkStorageVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
 		if err := linkPooler(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	api := tenant.NewTenantAPI(ctx, projectRef, anonKey)
+	go func() {
+		defer wg.Done()
+		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkGotrueVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkStorageVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -127,8 +130,8 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func linkPostgrestVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetPostgrestVersion(ctx, projectRef)
+func linkPostgrestVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
+	version, err := tenant.GetPostgrestVersion(ctx, api)
 	if err != nil {
 		return err
 	}
@@ -160,16 +163,16 @@ func readCsv(line string) []string {
 	return result
 }
 
-func linkGotrueVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetGotrueVersion(ctx, projectRef)
+func linkGotrueVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
+	version, err := tenant.GetGotrueVersion(ctx, api)
 	if err != nil {
 		return err
 	}
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
-func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetStorageVersion(ctx, projectRef)
+func linkStorageVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
+	version, err := tenant.GetStorageVersion(ctx, api)
 	if err != nil {
 		return err
 	}

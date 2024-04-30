@@ -39,17 +39,19 @@ func WithBearerToken(token string) FetcherOption {
 	addHeader := func(req *http.Request) {
 		req.Header.Add("Authorization", "Bearer "+token)
 	}
-	return func(s *Fetcher) {
-		s.editors = append(s.editors, addHeader)
-	}
+	return WithRequestEditor(addHeader)
 }
 
 func WithUserAgent(agent string) FetcherOption {
 	addHeader := func(req *http.Request) {
 		req.Header.Add("User-Agent", agent)
 	}
+	return WithRequestEditor(addHeader)
+}
+
+func WithRequestEditor(fn RequestEditor) FetcherOption {
 	return func(s *Fetcher) {
-		s.editors = append(s.editors, addHeader)
+		s.editors = append(s.editors, fn)
 	}
 }
 
