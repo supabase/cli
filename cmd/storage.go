@@ -78,6 +78,10 @@ rm ss:///bucket/docs/example.md ss:///bucket/readme.md
 )
 
 func init() {
+	storageFlags := storageCmd.PersistentFlags()
+	storageFlags.Bool("linked", true, "Connects to Storage API of the linked project.")
+	storageFlags.Bool("local", false, "Connects to Storage API of the local database.")
+	storageCmd.MarkFlagsMutuallyExclusive("linked", "local")
 	lsCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively list a directory.")
 	storageCmd.AddCommand(lsCmd)
 	cpFlags := cpCmd.Flags()

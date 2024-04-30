@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/pkg/storage"
@@ -38,24 +38,24 @@ var mockApi = storage.StorageAPI{Fetcher: fetcher.NewFetcher(
 )}
 
 func TestStorageMV(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("moves single object", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/move").
 			JSON(storage.MoveObjectRequest{
 				BucketId:       "private",
@@ -74,21 +74,16 @@ func TestStorageMV(t *testing.T) {
 	t.Run("moves directory when recursive", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/api-keys").
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "service_role",
 				ApiKey: "service-key",
 			}})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/move").
 			JSON(storage.MoveObjectRequest{
 				BucketId:       "private",
@@ -98,11 +93,11 @@ func TestStorageMV(t *testing.T) {
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"error": "not_found"})
 		// List bucket /private/
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/list/private").
 			Reply(http.StatusOK).
 			JSON([]storage.ObjectResponse{mockFile})
-		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/move").
 			JSON(storage.MoveObjectRequest{
 				BucketId:       "private",
@@ -136,20 +131,9 @@ func TestStorageMV(t *testing.T) {
 		assert.ErrorContains(t, err, "missing protocol scheme")
 	})
 
-	t.Run("throws error on missing project", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), "ss:///", "ss:///", false, fsys)
-		// Check error
-		assert.ErrorIs(t, err, utils.ErrNotLinked)
-	})
-
 	t.Run("throws error on missing object path", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
 		// Run test
 		err := Run(context.Background(), "ss:///", "ss:///", false, fsys)
 		// Check error
@@ -159,8 +143,6 @@ func TestStorageMV(t *testing.T) {
 	t.Run("throws error on bucket mismatch", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		projectRef := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
 		// Run test
 		err := Run(context.Background(), "ss:///bucket/docs", "ss:///private", false, fsys)
 		// Check error

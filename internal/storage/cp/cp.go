@@ -30,11 +30,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 	if err != nil {
 		return errors.Errorf("failed to parse dst url: %w", err)
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	api, err := client.NewStorageAPI(ctx, projectRef)
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	}

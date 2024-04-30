@@ -45,11 +45,7 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		}
 		groups[bucket] = append(groups[bucket], prefix)
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	api, err := client.NewStorageAPI(ctx, projectRef)
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	}

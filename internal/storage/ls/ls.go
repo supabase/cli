@@ -18,15 +18,11 @@ func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
 	callback := func(objectPath string) error {
 		fmt.Println(objectPath)
 		return nil
 	}
-	api, err := client.NewStorageAPI(ctx, projectRef)
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	}
