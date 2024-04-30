@@ -125,6 +125,23 @@ max_frequency = "5s"
 # [auth.hook.custom_access_token]
 # enabled = true
 # uri = "pg-functions://<database>/<schema>/<hook_name>"
+# secrets = env(SUPABASE_AUTH_CUSTOM_ACCESS_TOKEN_SECRETS)
+
+
+# Use a custom sms sender
+[auth.hook.send_sms]
+# enabled = true
+# We use host.docker.internal to connect to port 54321 on the host. See: https://docs.docker.com/desktop/networking/
+# uri = "http://host.docker.internal/functions/v1/sms_sender"
+# Use this secret in the email_sender edge function as well.
+# secrets = env(SUPABASE_AUTH_SEND_SMS_SECRETS)
+
+## Use a custom email sender
+[auth.hook.send_email]
+# enabled = true
+# uri = "http://host.docker.internal/functions/v1/email_sender"
+# Use this secret in the email_sender edge function as well.
+# secrets = "env(SUPABASE_AUTH_SEND_EMAIL_SECRETS)
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
