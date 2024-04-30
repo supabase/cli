@@ -3,12 +3,12 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/storage/mv"
 	"github.com/supabase/cli/internal/storage/rm"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var (
@@ -26,7 +26,7 @@ var (
 		Short:   "List objects by path prefix",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			objectPath := storage.STORAGE_SCHEME + ":///"
+			objectPath := client.STORAGE_SCHEME + ":///"
 			if len(args) > 0 {
 				objectPath = args[0]
 			}
@@ -34,7 +34,7 @@ var (
 		},
 	}
 
-	options client.FileOptions
+	options storage.FileOptions
 	maxJobs uint
 
 	cpCmd = &cobra.Command{
@@ -46,7 +46,7 @@ cp -r ss:///bucket/docs .
 		Short: "Copy objects from src to dst path",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := func(fo *client.FileOptions) {
+			opts := func(fo *storage.FileOptions) {
 				fo.CacheControl = options.CacheControl
 				fo.ContentType = options.ContentType
 			}

@@ -1,8 +1,7 @@
-package client
+package storage
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -10,11 +9,8 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/tenant"
+	"github.com/supabase/cli/pkg/fetcher"
 )
-
-const PAGE_LIMIT = 100
 
 type ListObjectsQuery struct {
 	Prefix string `json:"prefix"`
@@ -42,12 +38,7 @@ type ObjectMetadata struct {
 	HttpStatusCode int    `json:"httpStatusCode"` // 200
 }
 
-func ListStorageObjects(ctx context.Context, projectRef, bucket, prefix string, page int) ([]ObjectResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/object/list/%s", utils.GetSupabaseHost(projectRef), bucket)
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
-	if err != nil {
-		return nil, err
-	}
+func (s *StorageAPI) ListObjects(ctx context.Context, bucket, prefix string, page int) ([]ObjectResponse, error) {
 	dir, name := path.Split(prefix)
 	query := ListObjectsQuery{
 		Prefix: dir,
@@ -55,7 +46,12 @@ func ListStorageObjects(ctx context.Context, projectRef, bucket, prefix string, 
 		Limit:  PAGE_LIMIT,
 		Offset: PAGE_LIMIT * page,
 	}
-	data, err := tenant.JsonResponseWithBearer[[]ObjectResponse](ctx, http.MethodPost, url, apiKey.ServiceRole, query)
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/list/"+bucket, query)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[[]ObjectResponse](resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +63,7 @@ type FileOptions struct {
 	ContentType  string
 }
 
-func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
+func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
 	f, err := fsys.Open(localPath)
 	if err != nil {
 		return errors.Errorf("failed to open file: %w", err)
@@ -96,46 +92,30 @@ func UploadStorageObject(ctx context.Context, projectRef, remotePath, localPath 
 		}
 	}
 	// Prepare request
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, func(ctx context.Context, req *http.Request) error {
+		req.Header.Add("Content-Type", fo.ContentType)
+		req.Header.Add("Cache-Control", fo.CacheControl)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	remotePath = strings.TrimPrefix(remotePath, "/")
-	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, f)
-	if err != nil {
-		return errors.Errorf("failed to initialise http request: %w", err)
-	}
-	req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
-	req.Header.Add("Content-Type", fo.ContentType)
-	req.Header.Add("Cache-Control", fo.CacheControl)
-	// Sends request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.Errorf("failed to send http request: %w", err)
-	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Errorf("failed to read http response: %w", err)
-		}
-		return errors.Errorf("Error status %d: %s", resp.StatusCode, body)
-	}
 	return nil
 }
 
-func DownloadStorageObject(ctx context.Context, projectRef, remotePath, localPath string, fsys afero.Fs) error {
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+func (s *StorageAPI) DownloadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs) error {
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	resp, err := s.Send(ctx, http.MethodGet, "/storage/v1/object/"+remotePath, nil)
 	if err != nil {
 		return err
 	}
-	remotePath = strings.TrimPrefix(remotePath, "/")
-	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), remotePath)
-	return utils.DownloadFile(ctx, localPath, url, fsys, func(ctx context.Context, req *http.Request) error {
-		req.Header.Add("Authorization", "Bearer "+apiKey.ServiceRole)
-		return nil
-	})
+	defer resp.Body.Close()
+	if err := afero.WriteReader(fsys, localPath, resp.Body); err != nil {
+		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }
 
 type MoveObjectRequest struct {
@@ -146,18 +126,18 @@ type MoveObjectRequest struct {
 
 type MoveObjectResponse = DeleteBucketResponse
 
-func MoveStorageObject(ctx context.Context, projectRef, bucketId, srcPath, dstPath string) (*MoveObjectResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/object/move", utils.GetSupabaseHost(projectRef))
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
-	if err != nil {
-		return nil, err
-	}
+func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath string) (*MoveObjectResponse, error) {
 	body := MoveObjectRequest{
 		BucketId:       bucketId,
 		SourceKey:      srcPath,
 		DestinationKey: dstPath,
 	}
-	return tenant.JsonResponseWithBearer[MoveObjectResponse](ctx, http.MethodPost, url, apiKey.ServiceRole, body)
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/move", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return fetcher.ParseJSON[MoveObjectResponse](resp.Body)
 }
 
 type CopyObjectRequest = MoveObjectRequest
@@ -166,18 +146,18 @@ type CopyObjectResponse struct {
 	Key string `json:"key"`
 }
 
-func CopyStorageObject(ctx context.Context, projectRef, bucketId, srcPath, dstPath string) (*CopyObjectResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/object/copy", utils.GetSupabaseHost(projectRef))
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
-	if err != nil {
-		return nil, err
-	}
+func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath string) (*CopyObjectResponse, error) {
 	body := CopyObjectRequest{
 		BucketId:       bucketId,
 		SourceKey:      srcPath,
 		DestinationKey: dstPath,
 	}
-	return tenant.JsonResponseWithBearer[CopyObjectResponse](ctx, http.MethodPost, url, apiKey.ServiceRole, body)
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/copy", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return fetcher.ParseJSON[CopyObjectResponse](resp.Body)
 }
 
 type DeleteObjectsRequest struct {
@@ -197,14 +177,14 @@ type DeleteObjectsResponse struct {
 	Metadata       ObjectMetadata `json:"metadata"`         // null
 }
 
-func DeleteStorageObjects(ctx context.Context, projectRef, bucket string, prefixes []string) ([]DeleteObjectsResponse, error) {
-	url := fmt.Sprintf("https://%s/storage/v1/object/%s", utils.GetSupabaseHost(projectRef), bucket)
-	apiKey, err := tenant.GetApiKeys(ctx, projectRef)
+func (s *StorageAPI) DeleteObjects(ctx context.Context, bucket string, prefixes []string) ([]DeleteObjectsResponse, error) {
+	body := DeleteObjectsRequest{Prefixes: prefixes}
+	resp, err := s.Send(ctx, http.MethodDelete, "/storage/v1/object/"+bucket, body)
 	if err != nil {
 		return nil, err
 	}
-	body := DeleteObjectsRequest{Prefixes: prefixes}
-	data, err := tenant.JsonResponseWithBearer[[]DeleteObjectsResponse](ctx, http.MethodDelete, url, apiKey.ServiceRole, body)
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[[]DeleteObjectsResponse](resp.Body)
 	if err != nil {
 		return nil, err
 	}
