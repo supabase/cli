@@ -93,10 +93,9 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 	}
 	// Prepare request
 	remotePath = strings.TrimPrefix(remotePath, "/")
-	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, func(ctx context.Context, req *http.Request) error {
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, func(req *http.Request) {
 		req.Header.Add("Content-Type", fo.ContentType)
 		req.Header.Add("Cache-Control", fo.CacheControl)
-		return nil
 	})
 	if err != nil {
 		return err
