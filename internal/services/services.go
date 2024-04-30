@@ -58,31 +58,37 @@ func GetServiceImages() []string {
 }
 
 func GetRemoteImages(ctx context.Context, projectRef string) map[string]string {
-	const cap = 4
-	linked := make(map[string]string, cap)
+	linked := make(map[string]string, 4)
 	var wg sync.WaitGroup
-	wg.Add(cap)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
 			linked[utils.Config.Db.Image] = version
 		}
 	}()
+	keys, err := tenant.GetApiKeys(ctx, projectRef)
+	if err != nil {
+		wg.Wait()
+		return linked
+	}
+	api := tenant.NewTenantAPI(ctx, projectRef, keys.Anon)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetGotrueVersion(ctx, projectRef); err == nil {
+		if version, err := tenant.GetGotrueVersion(ctx, api); err == nil {
 			linked[utils.Config.Auth.Image] = version
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetPostgrestVersion(ctx, projectRef); err == nil {
+		if version, err := tenant.GetPostgrestVersion(ctx, api); err == nil {
 			linked[utils.Config.Api.Image] = version
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetStorageVersion(ctx, projectRef); err == nil {
+		if version, err := tenant.GetStorageVersion(ctx, api); err == nil {
 			linked[utils.Config.Storage.Image] = version
 		}
 	}()

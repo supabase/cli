@@ -160,6 +160,15 @@ func TestStorageCP(t *testing.T) {
 	t.Run("throws error on unsupported operation", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
+			Reply(http.StatusOK).
+			JSON([]api.ApiKeyResponse{{
+				Name:   "service_role",
+				ApiKey: "service-key",
+			}})
 		// Run test
 		err := Run(context.Background(), ".", ".", false, 1, fsys)
 		// Check error

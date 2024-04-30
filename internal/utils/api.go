@@ -11,10 +11,12 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"sync"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
 	supabase "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 const (
@@ -54,11 +56,13 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	url := "https://1.1.1.1/dns-query?name=" + host
-	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
-		req.Header.Add("accept", "application/dns-json")
-		return nil
-	})
+	api := NewCloudflareAPI()
+	resp, err := api.Send(ctx, http.MethodGet, "/dns-query?name="+host, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[dnsResponse](resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +81,13 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	url := fmt.Sprintf("https://1.1.1.1/dns-query?name=%s&type=CNAME", host)
-	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
-		req.Header.Add("accept", "application/dns-json")
-		return nil
-	})
+	api := NewCloudflareAPI()
+	resp, err := api.Send(ctx, http.MethodGet, "/dns-query?type=CNAME&name="+host, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[dnsResponse](resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -97,6 +103,22 @@ func ResolveCNAME(ctx context.Context, host string) (string, error) {
 		return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, data.Answer)
 	}
 	return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, serialized)
+}
+
+func NewCloudflareAPI() *fetcher.Fetcher {
+	server := "https://1.1.1.1"
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	header := func(req *http.Request) {
+		req.Header.Add("accept", "application/dns-json")
+	}
+	api := fetcher.NewFetcher(
+		server,
+		fetcher.WithHTTPClient(client),
+		fetcher.WithRequestEditor(header),
+	)
+	return api
 }
 
 func WithTraceContext(ctx context.Context) context.Context {

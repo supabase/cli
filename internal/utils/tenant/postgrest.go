@@ -2,11 +2,11 @@ package tenant
 
 import (
 	"context"
-	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var errPostgrestVersion = errors.New("PostgREST version not found.")
@@ -22,13 +22,13 @@ type SwaggerResponse struct {
 	Info    SwaggerInfo `json:"info"`
 }
 
-func GetPostgrestVersion(ctx context.Context, projectRef string) (string, error) {
-	apiKey, err := GetApiKeys(ctx, projectRef)
+func GetPostgrestVersion(ctx context.Context, api *fetcher.Fetcher) (string, error) {
+	resp, err := api.Send(ctx, http.MethodGet, "/rest/v1/", nil)
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("https://%s/rest/v1/", utils.GetSupabaseHost(projectRef))
-	data, err := GetJsonResponse[SwaggerResponse](ctx, url, apiKey.Anon)
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[SwaggerResponse](resp.Body)
 	if err != nil {
 		return "", err
 	}
