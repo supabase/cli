@@ -63,12 +63,7 @@ type FileOptions struct {
 	ContentType  string
 }
 
-func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
-	f, err := fsys.Open(localPath)
-	if err != nil {
-		return errors.Errorf("failed to open file: %w", err)
-	}
-	defer f.Close()
+func ParseFileOptions(f afero.File, opts ...func(*FileOptions)) (*FileOptions, error) {
 	// Customise file options
 	fo := &FileOptions{}
 	for _, apply := range opts {
@@ -83,20 +78,34 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 		header := io.LimitReader(f, 512)
 		buf, err := io.ReadAll(header)
 		if err != nil {
-			return errors.Errorf("failed to read file: %w", err)
+			return nil, errors.Errorf("failed to read file: %w", err)
 		}
 		fo.ContentType = http.DetectContentType(buf)
 		_, err = f.Seek(0, io.SeekStart)
 		if err != nil {
-			return errors.Errorf("failed to seek file: %w", err)
+			return nil, errors.Errorf("failed to seek file: %w", err)
 		}
+	}
+	return fo, nil
+}
+
+func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
+	f, err := fsys.Open(localPath)
+	if err != nil {
+		return errors.Errorf("failed to open file: %w", err)
+	}
+	defer f.Close()
+	fo, err := ParseFileOptions(f, opts...)
+	if err != nil {
+		return err
+	}
+	headers := func(req *http.Request) {
+		req.Header.Add("Content-Type", fo.ContentType)
+		req.Header.Add("Cache-Control", fo.CacheControl)
 	}
 	// Prepare request
 	remotePath = strings.TrimPrefix(remotePath, "/")
-	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, func(req *http.Request) {
-		req.Header.Add("Content-Type", fo.ContentType)
-		req.Header.Add("Cache-Control", fo.CacheControl)
-	})
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, headers)
 	if err != nil {
 		return err
 	}
