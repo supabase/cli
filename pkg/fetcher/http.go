@@ -13,7 +13,7 @@ import (
 type Fetcher struct {
 	server  string
 	client  *http.Client
-	editors []RequestEditorFn
+	editors []RequestEditor
 }
 
 type FetcherOption func(*Fetcher)
@@ -36,28 +36,26 @@ func WithHTTPClient(client *http.Client) FetcherOption {
 }
 
 func WithBearerToken(token string) FetcherOption {
-	reqEditor := func(_ context.Context, req *http.Request) error {
+	addHeader := func(req *http.Request) {
 		req.Header.Add("Authorization", "Bearer "+token)
-		return nil
 	}
 	return func(s *Fetcher) {
-		s.editors = append(s.editors, reqEditor)
+		s.editors = append(s.editors, addHeader)
 	}
 }
 
 func WithUserAgent(agent string) FetcherOption {
-	reqEditor := func(_ context.Context, req *http.Request) error {
+	addHeader := func(req *http.Request) {
 		req.Header.Add("User-Agent", agent)
-		return nil
 	}
 	return func(s *Fetcher) {
-		s.editors = append(s.editors, reqEditor)
+		s.editors = append(s.editors, addHeader)
 	}
 }
 
-type RequestEditorFn func(ctx context.Context, req *http.Request) error
+type RequestEditor func(req *http.Request)
 
-func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, reqEditors ...RequestEditor) (*http.Response, error) {
 	body, ok := reqBody.(io.Reader)
 	if !ok && reqBody != nil {
 		var buf bytes.Buffer
@@ -65,9 +63,8 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 		if err := enc.Encode(reqBody); err != nil {
 			return nil, errors.Errorf("failed to encode request body: %w", err)
 		}
-		reqEditors = append(reqEditors, func(ctx context.Context, req *http.Request) error {
+		reqEditors = append(reqEditors, func(req *http.Request) {
 			req.Header.Set("Content-Type", "application/json")
-			return nil
 		})
 		body = &buf
 	}
@@ -77,14 +74,10 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 		return nil, errors.Errorf("failed to initialise http request: %w", err)
 	}
 	for _, apply := range s.editors {
-		if err := apply(ctx, req); err != nil {
-			return nil, err
-		}
+		apply(req)
 	}
 	for _, apply := range reqEditors {
-		if err := apply(ctx, req); err != nil {
-			return nil, err
-		}
+		apply(req)
 	}
 	// Sends request
 	resp, err := s.client.Do(req)
