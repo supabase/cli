@@ -13,7 +13,7 @@ require (
 	github.com/charmbracelet/lipgloss v0.10.0
 	github.com/containers/common v0.58.2
 	github.com/deepmap/oapi-codegen v1.16.2
-	github.com/docker/cli v26.1.0+incompatible
+	github.com/docker/cli v26.1.1+incompatible
 	github.com/docker/docker v26.1.0+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
