@@ -21,7 +21,6 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var updatedConfig ConfigCopy
@@ -130,8 +129,8 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func linkPostgrestVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
-	version, err := tenant.GetPostgrestVersion(ctx, api)
+func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetPostgrestVersion(ctx)
 	if err != nil {
 		return err
 	}
@@ -163,16 +162,16 @@ func readCsv(line string) []string {
 	return result
 }
 
-func linkGotrueVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
-	version, err := tenant.GetGotrueVersion(ctx, api)
+func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetGotrueVersion(ctx)
 	if err != nil {
 		return err
 	}
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
-func linkStorageVersion(ctx context.Context, api *fetcher.Fetcher, fsys afero.Fs) error {
-	version, err := tenant.GetStorageVersion(ctx, api)
+func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetStorageVersion(ctx)
 	if err != nil {
 		return err
 	}

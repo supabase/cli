@@ -6,13 +6,12 @@ import (
 	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var errStorageVersion = errors.New("Storage version not found.")
 
-func GetStorageVersion(ctx context.Context, api *fetcher.Fetcher) (string, error) {
-	resp, err := api.Send(ctx, http.MethodGet, "/storage/v1/version", nil)
+func (t *TenantAPI) GetStorageVersion(ctx context.Context) (string, error) {
+	resp, err := t.Send(ctx, http.MethodGet, "/storage/v1/version", nil)
 	if err != nil {
 		return "", err
 	}

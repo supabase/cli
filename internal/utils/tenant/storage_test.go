@@ -19,7 +19,7 @@ func TestStorageVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			BodyString("0.40.4")
 		// Run test
-		version, err := GetStorageVersion(context.Background(), mockApi)
+		version, err := mockApi.GetStorageVersion(context.Background())
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "v0.40.4", version)
@@ -32,7 +32,7 @@ func TestStorageVersion(t *testing.T) {
 			Get("/storage/v1/version").
 			ReplyError(errors.New("network error"))
 		// Run test
-		version, err := GetStorageVersion(context.Background(), mockApi)
+		version, err := mockApi.GetStorageVersion(context.Background())
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, version)
@@ -46,7 +46,7 @@ func TestStorageVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			BodyString("0.0.0")
 		// Run test
-		version, err := GetStorageVersion(context.Background(), mockApi)
+		version, err := mockApi.GetStorageVersion(context.Background())
 		// Check error
 		assert.ErrorIs(t, err, errStorageVersion)
 		assert.Empty(t, version)
