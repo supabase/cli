@@ -16,8 +16,8 @@ type HealthResponse struct {
 	Description string `json:"description"`
 }
 
-func GetGotrueVersion(ctx context.Context, api *fetcher.Fetcher) (string, error) {
-	resp, err := api.Send(ctx, http.MethodGet, "/auth/v1/health", nil)
+func (t *TenantAPI) GetGotrueVersion(ctx context.Context) (string, error) {
+	resp, err := t.Send(ctx, http.MethodGet, "/auth/v1/health", nil)
 	if err != nil {
 		return "", err
 	}

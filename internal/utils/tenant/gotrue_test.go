@@ -11,7 +11,9 @@ import (
 	"gopkg.in/h2non/gock.v1"
 )
 
-var mockApi = fetcher.NewFetcher("http://127.0.0.1")
+var mockApi = TenantAPI{Fetcher: fetcher.NewFetcher(
+	"http://127.0.0.1",
+)}
 
 func TestGotrueVersion(t *testing.T) {
 	t.Run("gets gotrue version", func(t *testing.T) {
@@ -22,7 +24,7 @@ func TestGotrueVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(HealthResponse{Version: "v2.92.1"})
 		// Run test
-		version, err := GetGotrueVersion(context.Background(), mockApi)
+		version, err := mockApi.GetGotrueVersion(context.Background())
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "v2.92.1", version)
@@ -35,7 +37,7 @@ func TestGotrueVersion(t *testing.T) {
 			Get("/auth/v1/health").
 			ReplyError(errors.New("network error"))
 		// Run test
-		version, err := GetGotrueVersion(context.Background(), mockApi)
+		version, err := mockApi.GetGotrueVersion(context.Background())
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, version)
@@ -49,7 +51,7 @@ func TestGotrueVersion(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(HealthResponse{})
 		// Run test
-		version, err := GetGotrueVersion(context.Background(), mockApi)
+		version, err := mockApi.GetGotrueVersion(context.Background())
 		// Check error
 		assert.ErrorIs(t, err, errGotrueVersion)
 		assert.Empty(t, version)

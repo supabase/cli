@@ -53,7 +53,11 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 	return keys, nil
 }
 
-func NewTenantAPI(ctx context.Context, projectRef, anonKey string) *fetcher.Fetcher {
+type TenantAPI struct {
+	*fetcher.Fetcher
+}
+
+func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
 	server := "https://" + utils.GetSupabaseHost(projectRef)
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -61,11 +65,11 @@ func NewTenantAPI(ctx context.Context, projectRef, anonKey string) *fetcher.Fetc
 	header := func(req *http.Request) {
 		req.Header.Add("apikey", anonKey)
 	}
-	api := fetcher.NewFetcher(
+	api := TenantAPI{Fetcher: fetcher.NewFetcher(
 		server,
 		fetcher.WithHTTPClient(client),
 		fetcher.WithRequestEditor(header),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
-	)
+	)}
 	return api
 }

@@ -22,8 +22,8 @@ type SwaggerResponse struct {
 	Info    SwaggerInfo `json:"info"`
 }
 
-func GetPostgrestVersion(ctx context.Context, api *fetcher.Fetcher) (string, error) {
-	resp, err := api.Send(ctx, http.MethodGet, "/rest/v1/", nil)
+func (t *TenantAPI) GetPostgrestVersion(ctx context.Context) (string, error) {
+	resp, err := t.Send(ctx, http.MethodGet, "/rest/v1/", nil)
 	if err != nil {
 		return "", err
 	}

@@ -76,19 +76,19 @@ func GetRemoteImages(ctx context.Context, projectRef string) map[string]string {
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetGotrueVersion(ctx, api); err == nil {
+		if version, err := api.GetGotrueVersion(ctx); err == nil {
 			linked[utils.Config.Auth.Image] = version
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetPostgrestVersion(ctx, api); err == nil {
+		if version, err := api.GetPostgrestVersion(ctx); err == nil {
 			linked[utils.Config.Api.Image] = version
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		if version, err := tenant.GetStorageVersion(ctx, api); err == nil {
+		if version, err := api.GetStorageVersion(ctx); err == nil {
 			linked[utils.Config.Storage.Image] = version
 		}
 	}()
