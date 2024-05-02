@@ -26,7 +26,7 @@ var (
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.147"
+	Pg15Image = "supabase/postgres:15.1.1.41"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -40,8 +40,8 @@ const (
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.145.0"
-	RealtimeImage    = "supabase/realtime:v2.28.23"
+	GotrueImage      = "supabase/gotrue:v2.149.0"
+	RealtimeImage    = "supabase/realtime:v2.28.32"
 	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
@@ -111,9 +111,27 @@ var (
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
-	SystemSchemas = append([]string{
+	// Initialised by postgres image and owned by postgres role
+	ManagedSchemas = append([]string{
+		"pgbouncer",
+		"pgsodium",
+		"pgtle",
+		"supabase_migrations",
+		"vault",
+	}, PgSchemas...)
+	InternalSchemas = append([]string{
+		"auth",
+		"extensions",
+		"pgbouncer",
+		"realtime",
+		"_realtime",
+		"storage",
+		"_analytics",
+		"supabase_functions",
+		"supabase_migrations",
 		// Owned by extensions
 		"cron",
+		"dbdev",
 		"graphql",
 		"graphql_public",
 		"net",
@@ -128,17 +146,6 @@ var (
 		"topology",
 		"vault",
 	}, PgSchemas...)
-	InternalSchemas = append([]string{
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		"supabase_functions",
-		"supabase_migrations",
-	}, SystemSchemas...)
 	ReservedRoles = []string{
 		"anon",
 		"authenticated",

@@ -33,12 +33,12 @@ begin
     execute format('drop table if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
-  -- truncate auth tables
+  -- truncate tables in auth and migrations schema
   for rec in
     select *
     from pg_class c
     where
-      c.relnamespace::regnamespace::name = 'auth'
+      c.relnamespace::regnamespace::name in ('auth', 'supabase_migrations')
       and c.relkind = 'r'
   loop
     execute format('truncate %I.%I restart identity cascade', rec.relnamespace::regnamespace::name, rec.relname);
@@ -59,7 +59,9 @@ begin
   for rec in
     select *
     from pg_type t
-    where t.typnamespace::regnamespace::name = 'public'
+    where
+      t.typnamespace::regnamespace::name = 'public'
+      and typtype != 'b'
   loop
     execute format('drop type if exists %I.%I cascade', rec.typnamespace::regnamespace::name, rec.typname);
   end loop;
