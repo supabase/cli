@@ -75,7 +75,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 2. Create project
-	params := api.CreateProjectBody{
+	params := api.V1CreateProjectBody{
 		Name:        filepath.Base(workdir),
 		TemplateUrl: &starter.Url,
 	}

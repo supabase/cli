@@ -93,7 +93,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
+			JSON(api.V1PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
@@ -113,14 +113,14 @@ func TestLinkCommand(t *testing.T) {
 			Get("/storage/v1/version").
 			Reply(200).
 			BodyString("0.40.4")
-		postgres := api.DatabaseResponse{
+		postgres := api.V1DatabaseResponse{
 			Host:    utils.GetSupabaseDbHost(project),
 			Version: "15.1.0.117",
 		}
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
-			JSON([]api.ProjectResponse{
+			JSON([]api.V1ProjectResponse{
 				{
 					Id:             project,
 					Database:       &postgres,
@@ -246,7 +246,7 @@ func TestLinkPostgrest(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
+			JSON(api.V1PostgrestConfigResponse{})
 		// Run test
 		err := linkPostgrest(context.Background(), project)
 		// Check error
@@ -262,7 +262,7 @@ func TestLinkPostgrest(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{
+			JSON(api.V1PostgrestConfigResponse{
 				DbSchema:          "public, graphql_public",
 				DbExtraSearchPath: "public, extensions",
 				MaxRows:           1000,
