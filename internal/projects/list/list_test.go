@@ -25,7 +25,7 @@ func TestProjectListCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
-			JSON([]api.ProjectResponse{
+			JSON([]api.V1ProjectResponse{
 				{
 					Id:             apitest.RandomProjectRef(),
 					OrganizationId: "combined-fuchsia-lion",

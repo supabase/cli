@@ -11,6 +11,7 @@ import (
 
 const (
 	BearerScopes = "bearer.Scopes"
+	Oauth2Scopes = "oauth2.Scopes"
 )
 
 // Defines values for BillingPlanId.
@@ -42,31 +43,6 @@ const (
 	MIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
 	MIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
 	RUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
-)
-
-// Defines values for CreateProjectBodyPlan.
-const (
-	CreateProjectBodyPlanFree CreateProjectBodyPlan = "free"
-	CreateProjectBodyPlanPro  CreateProjectBodyPlan = "pro"
-)
-
-// Defines values for CreateProjectBodyRegion.
-const (
-	CreateProjectBodyRegionApEast1      CreateProjectBodyRegion = "ap-east-1"
-	CreateProjectBodyRegionApNortheast1 CreateProjectBodyRegion = "ap-northeast-1"
-	CreateProjectBodyRegionApNortheast2 CreateProjectBodyRegion = "ap-northeast-2"
-	CreateProjectBodyRegionApSouth1     CreateProjectBodyRegion = "ap-south-1"
-	CreateProjectBodyRegionApSoutheast1 CreateProjectBodyRegion = "ap-southeast-1"
-	CreateProjectBodyRegionApSoutheast2 CreateProjectBodyRegion = "ap-southeast-2"
-	CreateProjectBodyRegionCaCentral1   CreateProjectBodyRegion = "ca-central-1"
-	CreateProjectBodyRegionEuCentral1   CreateProjectBodyRegion = "eu-central-1"
-	CreateProjectBodyRegionEuWest1      CreateProjectBodyRegion = "eu-west-1"
-	CreateProjectBodyRegionEuWest2      CreateProjectBodyRegion = "eu-west-2"
-	CreateProjectBodyRegionEuWest3      CreateProjectBodyRegion = "eu-west-3"
-	CreateProjectBodyRegionSaEast1      CreateProjectBodyRegion = "sa-east-1"
-	CreateProjectBodyRegionUsEast1      CreateProjectBodyRegion = "us-east-1"
-	CreateProjectBodyRegionUsWest1      CreateProjectBodyRegion = "us-west-1"
-	CreateProjectBodyRegionUsWest2      CreateProjectBodyRegion = "us-west-2"
 )
 
 // Defines values for CreateProviderBodyType.
@@ -105,6 +81,20 @@ const (
 	N0 DatabaseUpgradeStatusStatus = 0
 	N1 DatabaseUpgradeStatusStatus = 1
 	N2 DatabaseUpgradeStatusStatus = 2
+)
+
+// Defines values for DesiredInstanceSize.
+const (
+	Large     DesiredInstanceSize = "large"
+	Medium    DesiredInstanceSize = "medium"
+	Micro     DesiredInstanceSize = "micro"
+	N12xlarge DesiredInstanceSize = "12xlarge"
+	N16xlarge DesiredInstanceSize = "16xlarge"
+	N2xlarge  DesiredInstanceSize = "2xlarge"
+	N4xlarge  DesiredInstanceSize = "4xlarge"
+	N8xlarge  DesiredInstanceSize = "8xlarge"
+	Small     DesiredInstanceSize = "small"
+	Xlarge    DesiredInstanceSize = "xlarge"
 )
 
 // Defines values for FunctionResponseStatus.
@@ -149,23 +139,6 @@ const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
 	PostgresConfigResponseSessionReplicationRoleOrigin  PostgresConfigResponseSessionReplicationRole = "origin"
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
-)
-
-// Defines values for ServiceHealthResponseName.
-const (
-	ServiceHealthResponseNameAuth     ServiceHealthResponseName = "auth"
-	ServiceHealthResponseNameDb       ServiceHealthResponseName = "db"
-	ServiceHealthResponseNamePooler   ServiceHealthResponseName = "pooler"
-	ServiceHealthResponseNameRealtime ServiceHealthResponseName = "realtime"
-	ServiceHealthResponseNameRest     ServiceHealthResponseName = "rest"
-	ServiceHealthResponseNameStorage  ServiceHealthResponseName = "storage"
-)
-
-// Defines values for ServiceHealthResponseStatus.
-const (
-	ACTIVEHEALTHY ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	COMINGUP      ServiceHealthResponseStatus = "COMING_UP"
-	UNHEALTHY     ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -246,10 +219,34 @@ const (
 	V1BackupStatusREMOVED   V1BackupStatus = "REMOVED"
 )
 
+// Defines values for V1CreateProjectBodyPlan.
+const (
+	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
+	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
+)
+
+// Defines values for V1CreateProjectBodyRegion.
+const (
+	V1CreateProjectBodyRegionApEast1      V1CreateProjectBodyRegion = "ap-east-1"
+	V1CreateProjectBodyRegionApNortheast1 V1CreateProjectBodyRegion = "ap-northeast-1"
+	V1CreateProjectBodyRegionApNortheast2 V1CreateProjectBodyRegion = "ap-northeast-2"
+	V1CreateProjectBodyRegionApSouth1     V1CreateProjectBodyRegion = "ap-south-1"
+	V1CreateProjectBodyRegionApSoutheast1 V1CreateProjectBodyRegion = "ap-southeast-1"
+	V1CreateProjectBodyRegionApSoutheast2 V1CreateProjectBodyRegion = "ap-southeast-2"
+	V1CreateProjectBodyRegionCaCentral1   V1CreateProjectBodyRegion = "ca-central-1"
+	V1CreateProjectBodyRegionEuCentral1   V1CreateProjectBodyRegion = "eu-central-1"
+	V1CreateProjectBodyRegionEuWest1      V1CreateProjectBodyRegion = "eu-west-1"
+	V1CreateProjectBodyRegionEuWest2      V1CreateProjectBodyRegion = "eu-west-2"
+	V1CreateProjectBodyRegionEuWest3      V1CreateProjectBodyRegion = "eu-west-3"
+	V1CreateProjectBodyRegionSaEast1      V1CreateProjectBodyRegion = "sa-east-1"
+	V1CreateProjectBodyRegionUsEast1      V1CreateProjectBodyRegion = "us-east-1"
+	V1CreateProjectBodyRegionUsWest1      V1CreateProjectBodyRegion = "us-west-1"
+	V1CreateProjectBodyRegionUsWest2      V1CreateProjectBodyRegion = "us-west-2"
+)
+
 // Defines values for V1OrganizationSlugResponseOptInTags.
 const (
-	AISQLGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
-	PREVIEWBRANCHESOPTIN V1OrganizationSlugResponseOptInTags = "PREVIEW_BRANCHES_OPT_IN"
+	AISQLGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
 )
 
 // Defines values for V1PgbouncerConfigResponsePoolMode.
@@ -257,6 +254,38 @@ const (
 	Session     V1PgbouncerConfigResponsePoolMode = "session"
 	Statement   V1PgbouncerConfigResponsePoolMode = "statement"
 	Transaction V1PgbouncerConfigResponsePoolMode = "transaction"
+)
+
+// Defines values for V1ProjectResponseStatus.
+const (
+	V1ProjectResponseStatusACTIVEHEALTHY   V1ProjectResponseStatus = "ACTIVE_HEALTHY"
+	V1ProjectResponseStatusACTIVEUNHEALTHY V1ProjectResponseStatus = "ACTIVE_UNHEALTHY"
+	V1ProjectResponseStatusCOMINGUP        V1ProjectResponseStatus = "COMING_UP"
+	V1ProjectResponseStatusGOINGDOWN       V1ProjectResponseStatus = "GOING_DOWN"
+	V1ProjectResponseStatusINACTIVE        V1ProjectResponseStatus = "INACTIVE"
+	V1ProjectResponseStatusINITFAILED      V1ProjectResponseStatus = "INIT_FAILED"
+	V1ProjectResponseStatusPAUSING         V1ProjectResponseStatus = "PAUSING"
+	V1ProjectResponseStatusREMOVED         V1ProjectResponseStatus = "REMOVED"
+	V1ProjectResponseStatusRESTORING       V1ProjectResponseStatus = "RESTORING"
+	V1ProjectResponseStatusUNKNOWN         V1ProjectResponseStatus = "UNKNOWN"
+	V1ProjectResponseStatusUPGRADING       V1ProjectResponseStatus = "UPGRADING"
+)
+
+// Defines values for V1ServiceHealthResponseName.
+const (
+	V1ServiceHealthResponseNameAuth     V1ServiceHealthResponseName = "auth"
+	V1ServiceHealthResponseNameDb       V1ServiceHealthResponseName = "db"
+	V1ServiceHealthResponseNamePooler   V1ServiceHealthResponseName = "pooler"
+	V1ServiceHealthResponseNameRealtime V1ServiceHealthResponseName = "realtime"
+	V1ServiceHealthResponseNameRest     V1ServiceHealthResponseName = "rest"
+	V1ServiceHealthResponseNameStorage  V1ServiceHealthResponseName = "storage"
+)
+
+// Defines values for V1ServiceHealthResponseStatus.
+const (
+	V1ServiceHealthResponseStatusACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	V1ServiceHealthResponseStatusCOMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
+	V1ServiceHealthResponseStatusUNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -333,6 +362,7 @@ type AttributeValue_Default struct {
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
 	DisableSignup                                 *bool    `json:"disable_signup"`
+	ExternalAnonymousUsersEnabled                 *bool    `json:"external_anonymous_users_enabled"`
 	ExternalAppleAdditionalClientIds              *string  `json:"external_apple_additional_client_ids"`
 	ExternalAppleClientId                         *string  `json:"external_apple_client_id"`
 	ExternalAppleEnabled                          *bool    `json:"external_apple_enabled"`
@@ -414,16 +444,19 @@ type AuthConfigResponse struct {
 	MailerSubjectsEmailChange                     *string  `json:"mailer_subjects_email_change"`
 	MailerSubjectsInvite                          *string  `json:"mailer_subjects_invite"`
 	MailerSubjectsMagicLink                       *string  `json:"mailer_subjects_magic_link"`
+	MailerSubjectsReauthentication                *string  `json:"mailer_subjects_reauthentication"`
 	MailerSubjectsRecovery                        *string  `json:"mailer_subjects_recovery"`
 	MailerTemplatesConfirmationContent            *string  `json:"mailer_templates_confirmation_content"`
 	MailerTemplatesEmailChangeContent             *string  `json:"mailer_templates_email_change_content"`
 	MailerTemplatesInviteContent                  *string  `json:"mailer_templates_invite_content"`
 	MailerTemplatesMagicLinkContent               *string  `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesReauthenticationContent        *string  `json:"mailer_templates_reauthentication_content"`
 	MailerTemplatesRecoveryContent                *string  `json:"mailer_templates_recovery_content"`
 	MfaMaxEnrolledFactors                         *float32 `json:"mfa_max_enrolled_factors"`
 	PasswordHibpEnabled                           *bool    `json:"password_hibp_enabled"`
 	PasswordMinLength                             *float32 `json:"password_min_length"`
 	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
+	RateLimitAnonymousUsers                       *float32 `json:"rate_limit_anonymous_users"`
 	RateLimitEmailSent                            *float32 `json:"rate_limit_email_sent"`
 	RateLimitSmsSent                              *float32 `json:"rate_limit_sms_sent"`
 	RateLimitTokenRefresh                         *float32 `json:"rate_limit_token_refresh"`
@@ -483,6 +516,11 @@ type AuthHealthResponse struct {
 // BillingPlanId defines model for BillingPlanId.
 type BillingPlanId string
 
+// BranchDeleteResponse defines model for BranchDeleteResponse.
+type BranchDeleteResponse struct {
+	Message string `json:"message"`
+}
+
 // BranchDetailResponse defines model for BranchDetailResponse.
 type BranchDetailResponse struct {
 	DbHost          string                     `json:"db_host"`
@@ -498,6 +536,11 @@ type BranchDetailResponse struct {
 // BranchDetailResponseStatus defines model for BranchDetailResponse.Status.
 type BranchDetailResponseStatus string
 
+// BranchResetResponse defines model for BranchResetResponse.
+type BranchResetResponse struct {
+	Message string `json:"message"`
+}
+
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
 	CreatedAt        string               `json:"created_at"`
@@ -506,6 +549,7 @@ type BranchResponse struct {
 	IsDefault        bool                 `json:"is_default"`
 	Name             string               `json:"name"`
 	ParentProjectRef string               `json:"parent_project_ref"`
+	Persistent       bool                 `json:"persistent"`
 	PrNumber         *float32             `json:"pr_number,omitempty"`
 	ProjectRef       string               `json:"project_ref"`
 	ResetOnPush      bool                 `json:"reset_on_push"`
@@ -523,48 +567,10 @@ type CreateBranchBody struct {
 	Region     *string `json:"region,omitempty"`
 }
 
-// CreateFunctionBody defines model for CreateFunctionBody.
-type CreateFunctionBody struct {
-	Body      string `json:"body"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
-}
-
 // CreateOrganizationBodyV1 defines model for CreateOrganizationBodyV1.
 type CreateOrganizationBodyV1 struct {
 	Name string `json:"name"`
 }
-
-// CreateProjectBody defines model for CreateProjectBody.
-type CreateProjectBody struct {
-	// DbPass Database password
-	DbPass string `json:"db_pass"`
-	// Deprecated:
-	KpsEnabled *bool `json:"kps_enabled,omitempty"`
-
-	// Name Name of your project, should not contain dots
-	Name string `json:"name"`
-
-	// OrganizationId Slug of your organization
-	OrganizationId string `json:"organization_id"`
-
-	// Plan Subscription plan is now set on organization level and is ignored in this request
-	// Deprecated:
-	Plan *CreateProjectBodyPlan `json:"plan,omitempty"`
-
-	// Region Region you want your server to reside in
-	Region CreateProjectBodyRegion `json:"region"`
-
-	// TemplateUrl Template URL used to create the project from the CLI.
-	TemplateUrl *string `json:"template_url,omitempty"`
-}
-
-// CreateProjectBodyPlan Subscription plan is now set on organization level and is ignored in this request
-type CreateProjectBodyPlan string
-
-// CreateProjectBodyRegion Region you want your server to reside in
-type CreateProjectBodyRegion string
 
 // CreateProviderBody defines model for CreateProviderBody.
 type CreateProviderBody struct {
@@ -596,13 +602,11 @@ type CreateSecretBody struct {
 	Value string `json:"value"`
 }
 
-// DatabaseResponse defines model for DatabaseResponse.
-type DatabaseResponse struct {
-	// Host Database host
-	Host string `json:"host"`
-
-	// Version Database version
-	Version string `json:"version"`
+// CreateThirdPartyAuthBody defines model for CreateThirdPartyAuthBody.
+type CreateThirdPartyAuthBody struct {
+	CustomJwks    *map[string]interface{} `json:"custom_jwks,omitempty"`
+	JwksUrl       *string                 `json:"jwks_url,omitempty"`
+	OidcIssuerUrl *string                 `json:"oidc_issuer_url,omitempty"`
 }
 
 // DatabaseUpgradeStatus defines model for DatabaseUpgradeStatus.
@@ -636,6 +640,9 @@ type DeleteProviderResponse struct {
 	Saml      *SamlDescriptor `json:"saml,omitempty"`
 	UpdatedAt *string         `json:"updated_at,omitempty"`
 }
+
+// DesiredInstanceSize defines model for DesiredInstanceSize.
+type DesiredInstanceSize string
 
 // Domain defines model for Domain.
 type Domain struct {
@@ -756,12 +763,6 @@ type PgsodiumConfigResponse struct {
 	RootKey string `json:"root_key"`
 }
 
-// PhysicalBackup defines model for PhysicalBackup.
-type PhysicalBackup struct {
-	EarliestPhysicalBackupDateUnix *float32 `json:"earliest_physical_backup_date_unix,omitempty"`
-	LatestPhysicalBackupDateUnix   *float32 `json:"latest_physical_backup_date_unix,omitempty"`
-}
-
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
@@ -771,6 +772,8 @@ type PostgresConfigResponse struct {
 	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxStandbyArchiveDelay        *string                                       `json:"max_standby_archive_delay,omitempty"`
+	MaxStandbyStreamingDelay      *string                                       `json:"max_standby_streaming_delay,omitempty"`
 	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
@@ -781,45 +784,15 @@ type PostgresConfigResponse struct {
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
 type PostgresConfigResponseSessionReplicationRole string
 
-// PostgrestConfigResponse defines model for PostgrestConfigResponse.
-type PostgrestConfigResponse struct {
-	DbExtraSearchPath string `json:"db_extra_search_path"`
-	DbSchema          string `json:"db_schema"`
-	MaxRows           int    `json:"max_rows"`
-}
-
 // PostgrestConfigWithJWTSecretResponse defines model for PostgrestConfigWithJWTSecretResponse.
 type PostgrestConfigWithJWTSecretResponse struct {
-	DbExtraSearchPath string  `json:"db_extra_search_path"`
-	DbSchema          string  `json:"db_schema"`
-	JwtSecret         *string `json:"jwt_secret,omitempty"`
-	MaxRows           int     `json:"max_rows"`
-}
+	DbExtraSearchPath string `json:"db_extra_search_path"`
 
-// ProjectRefResponse defines model for ProjectRefResponse.
-type ProjectRefResponse struct {
-	Id   float32 `json:"id"`
-	Name string  `json:"name"`
-	Ref  string  `json:"ref"`
-}
-
-// ProjectResponse defines model for ProjectResponse.
-type ProjectResponse struct {
-	// CreatedAt Creation timestamp
-	CreatedAt string            `json:"created_at"`
-	Database  *DatabaseResponse `json:"database,omitempty"`
-
-	// Id Id of your project
-	Id string `json:"id"`
-
-	// Name Name of your project
-	Name string `json:"name"`
-
-	// OrganizationId Slug of your organization
-	OrganizationId string `json:"organization_id"`
-
-	// Region Region of your project
-	Region string `json:"region"`
+	// DbPool If `null`, the value is automatically configured based on compute size.
+	DbPool    *int    `json:"db_pool"`
+	DbSchema  string  `json:"db_schema"`
+	JwtSecret *string `json:"jwt_secret,omitempty"`
+	MaxRows   int     `json:"max_rows"`
 }
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
@@ -878,11 +851,6 @@ type RemoveReadReplicaBody struct {
 	DatabaseIdentifier string `json:"database_identifier"`
 }
 
-// RunQueryBody defines model for RunQueryBody.
-type RunQueryBody struct {
-	Query string `json:"query"`
-}
-
 // SamlDescriptor defines model for SamlDescriptor.
 type SamlDescriptor struct {
 	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
@@ -897,26 +865,6 @@ type SecretResponse struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
-
-// ServiceHealthResponse defines model for ServiceHealthResponse.
-type ServiceHealthResponse struct {
-	Error   *string                     `json:"error,omitempty"`
-	Healthy bool                        `json:"healthy"`
-	Info    *ServiceHealthResponse_Info `json:"info,omitempty"`
-	Name    ServiceHealthResponseName   `json:"name"`
-	Status  ServiceHealthResponseStatus `json:"status"`
-}
-
-// ServiceHealthResponse_Info defines model for ServiceHealthResponse.Info.
-type ServiceHealthResponse_Info struct {
-	union json.RawMessage
-}
-
-// ServiceHealthResponseName defines model for ServiceHealthResponse.Name.
-type ServiceHealthResponseName string
-
-// ServiceHealthResponseStatus defines model for ServiceHealthResponse.Status.
-type ServiceHealthResponseStatus string
 
 // SetUpReadReplicaBody defines model for SetUpReadReplicaBody.
 type SetUpReadReplicaBody struct {
@@ -1013,6 +961,19 @@ type SubdomainAvailabilityResponse struct {
 	Available bool `json:"available"`
 }
 
+// ThirdPartyAuth defines model for ThirdPartyAuth.
+type ThirdPartyAuth struct {
+	CustomJwks    *map[string]interface{} `json:"custom_jwks"`
+	Id            string                  `json:"id"`
+	InsertedAt    string                  `json:"inserted_at"`
+	JwksUrl       *string                 `json:"jwks_url"`
+	OidcIssuerUrl *string                 `json:"oidc_issuer_url"`
+	ResolvedAt    *string                 `json:"resolved_at"`
+	ResolvedJwks  *map[string]interface{} `json:"resolved_jwks"`
+	Type          string                  `json:"type"`
+	UpdatedAt     string                  `json:"updated_at"`
+}
+
 // TypescriptResponse defines model for TypescriptResponse.
 type TypescriptResponse struct {
 	Types string `json:"types"`
@@ -1021,6 +982,7 @@ type TypescriptResponse struct {
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	DisableSignup                                 *bool                                           `json:"disable_signup,omitempty"`
+	ExternalAnonymousUsersEnabled                 *bool                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds              *string                                         `json:"external_apple_additional_client_ids,omitempty"`
 	ExternalAppleClientId                         *string                                         `json:"external_apple_client_id,omitempty"`
 	ExternalAppleEnabled                          *bool                                           `json:"external_apple_enabled,omitempty"`
@@ -1093,6 +1055,10 @@ type UpdateAuthConfigBody struct {
 	HookMfaVerificationAttemptUri                 *string                                         `json:"hook_mfa_verification_attempt_uri,omitempty"`
 	HookPasswordVerificationAttemptEnabled        *bool                                           `json:"hook_password_verification_attempt_enabled,omitempty"`
 	HookPasswordVerificationAttemptUri            *string                                         `json:"hook_password_verification_attempt_uri,omitempty"`
+	HookSendEmailEnabled                          *bool                                           `json:"hook_send_email_enabled,omitempty"`
+	HookSendEmailUri                              *string                                         `json:"hook_send_email_uri,omitempty"`
+	HookSendSmsEnabled                            *bool                                           `json:"hook_send_sms_enabled,omitempty"`
+	HookSendSmsUri                                *string                                         `json:"hook_send_sms_uri,omitempty"`
 	JwtExp                                        *float32                                        `json:"jwt_exp,omitempty"`
 	MailerAllowUnverifiedEmailSignIns             *bool                                           `json:"mailer_allow_unverified_email_sign_ins,omitempty"`
 	MailerAutoconfirm                             *bool                                           `json:"mailer_autoconfirm,omitempty"`
@@ -1102,16 +1068,19 @@ type UpdateAuthConfigBody struct {
 	MailerSubjectsEmailChange                     *string                                         `json:"mailer_subjects_email_change,omitempty"`
 	MailerSubjectsInvite                          *string                                         `json:"mailer_subjects_invite,omitempty"`
 	MailerSubjectsMagicLink                       *string                                         `json:"mailer_subjects_magic_link,omitempty"`
+	MailerSubjectsReauthentication                *string                                         `json:"mailer_subjects_reauthentication,omitempty"`
 	MailerSubjectsRecovery                        *string                                         `json:"mailer_subjects_recovery,omitempty"`
 	MailerTemplatesConfirmationContent            *string                                         `json:"mailer_templates_confirmation_content,omitempty"`
 	MailerTemplatesEmailChangeContent             *string                                         `json:"mailer_templates_email_change_content,omitempty"`
 	MailerTemplatesInviteContent                  *string                                         `json:"mailer_templates_invite_content,omitempty"`
 	MailerTemplatesMagicLinkContent               *string                                         `json:"mailer_templates_magic_link_content,omitempty"`
+	MailerTemplatesReauthenticationContent        *string                                         `json:"mailer_templates_reauthentication_content,omitempty"`
 	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content,omitempty"`
 	MfaMaxEnrolledFactors                         *float32                                        `json:"mfa_max_enrolled_factors,omitempty"`
 	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                             *float32                                        `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
+	RateLimitAnonymousUsers                       *float32                                        `json:"rate_limit_anonymous_users,omitempty"`
 	RateLimitEmailSent                            *float32                                        `json:"rate_limit_email_sent,omitempty"`
 	RateLimitSmsSent                              *float32                                        `json:"rate_limit_sms_sent,omitempty"`
 	RateLimitTokenRefresh                         *float32                                        `json:"rate_limit_token_refresh,omitempty"`
@@ -1168,6 +1137,7 @@ type UpdateAuthConfigBodyPasswordRequiredCharacters string
 type UpdateBranchBody struct {
 	BranchName  *string `json:"branch_name,omitempty"`
 	GitBranch   *string `json:"git_branch,omitempty"`
+	Persistent  *bool   `json:"persistent,omitempty"`
 	ResetOnPush *bool   `json:"reset_on_push,omitempty"`
 }
 
@@ -1186,13 +1156,6 @@ type UpdateCustomHostnameResponse struct {
 // UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
 type UpdateCustomHostnameResponseStatus string
 
-// UpdateFunctionBody defines model for UpdateFunctionBody.
-type UpdateFunctionBody struct {
-	Body      *string `json:"body,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
-}
-
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
@@ -1207,6 +1170,8 @@ type UpdatePostgresConfigBody struct {
 	MaxParallelMaintenanceWorkers *int                                            `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                            `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                            `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxStandbyArchiveDelay        *string                                         `json:"max_standby_archive_delay,omitempty"`
+	MaxStandbyStreamingDelay      *string                                         `json:"max_standby_streaming_delay,omitempty"`
 	MaxWorkerProcesses            *int                                            `json:"max_worker_processes,omitempty"`
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
@@ -1220,6 +1185,7 @@ type UpdatePostgresConfigBodySessionReplicationRole string
 // UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
 type UpdatePostgrestConfigBody struct {
 	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
+	DbPool            *int    `json:"db_pool,omitempty"`
 	DbSchema          *string `json:"db_schema,omitempty"`
 	MaxRows           *int    `json:"max_rows,omitempty"`
 }
@@ -1258,11 +1224,59 @@ type V1BackupStatus string
 
 // V1BackupsResponse defines model for V1BackupsResponse.
 type V1BackupsResponse struct {
-	Backups            []V1Backup     `json:"backups"`
-	PhysicalBackupData PhysicalBackup `json:"physical_backup_data"`
-	PitrEnabled        bool           `json:"pitr_enabled"`
-	Region             string         `json:"region"`
-	WalgEnabled        bool           `json:"walg_enabled"`
+	Backups            []V1Backup       `json:"backups"`
+	PhysicalBackupData V1PhysicalBackup `json:"physical_backup_data"`
+	PitrEnabled        bool             `json:"pitr_enabled"`
+	Region             string           `json:"region"`
+	WalgEnabled        bool             `json:"walg_enabled"`
+}
+
+// V1CreateFunctionBody defines model for V1CreateFunctionBody.
+type V1CreateFunctionBody struct {
+	Body      string `json:"body"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
+}
+
+// V1CreateProjectBody defines model for V1CreateProjectBody.
+type V1CreateProjectBody struct {
+	// DbPass Database password
+	DbPass              string               `json:"db_pass"`
+	DesiredInstanceSize *DesiredInstanceSize `json:"desired_instance_size,omitempty"`
+	// Deprecated:
+	KpsEnabled *bool `json:"kps_enabled,omitempty"`
+
+	// Name Name of your project, should not contain dots
+	Name string `json:"name"`
+
+	// OrganizationId Slug of your organization
+	OrganizationId string `json:"organization_id"`
+
+	// Plan Subscription plan is now set on organization level and is ignored in this request
+	// Deprecated:
+	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
+
+	// Region Region you want your server to reside in
+	Region V1CreateProjectBodyRegion `json:"region"`
+
+	// TemplateUrl Template URL used to create the project from the CLI.
+	TemplateUrl *string `json:"template_url,omitempty"`
+}
+
+// V1CreateProjectBodyPlan Subscription plan is now set on organization level and is ignored in this request
+type V1CreateProjectBodyPlan string
+
+// V1CreateProjectBodyRegion Region you want your server to reside in
+type V1CreateProjectBodyRegion string
+
+// V1DatabaseResponse defines model for V1DatabaseResponse.
+type V1DatabaseResponse struct {
+	// Host Database host
+	Host string `json:"host"`
+
+	// Version Database version
+	Version string `json:"version"`
 }
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
@@ -1297,10 +1311,81 @@ type V1PgbouncerConfigResponse struct {
 // V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
 type V1PgbouncerConfigResponsePoolMode string
 
+// V1PhysicalBackup defines model for V1PhysicalBackup.
+type V1PhysicalBackup struct {
+	EarliestPhysicalBackupDateUnix *float32 `json:"earliest_physical_backup_date_unix,omitempty"`
+	LatestPhysicalBackupDateUnix   *float32 `json:"latest_physical_backup_date_unix,omitempty"`
+}
+
+// V1PostgrestConfigResponse defines model for V1PostgrestConfigResponse.
+type V1PostgrestConfigResponse struct {
+	DbExtraSearchPath string `json:"db_extra_search_path"`
+
+	// DbPool If `null`, the value is automatically configured based on compute size.
+	DbPool   *int   `json:"db_pool"`
+	DbSchema string `json:"db_schema"`
+	MaxRows  int    `json:"max_rows"`
+}
+
+// V1ProjectRefResponse defines model for V1ProjectRefResponse.
+type V1ProjectRefResponse struct {
+	Id   float32 `json:"id"`
+	Name string  `json:"name"`
+	Ref  string  `json:"ref"`
+}
+
+// V1ProjectResponse defines model for V1ProjectResponse.
+type V1ProjectResponse struct {
+	// CreatedAt Creation timestamp
+	CreatedAt string              `json:"created_at"`
+	Database  *V1DatabaseResponse `json:"database,omitempty"`
+
+	// Id Id of your project
+	Id string `json:"id"`
+
+	// Name Name of your project
+	Name string `json:"name"`
+
+	// OrganizationId Slug of your organization
+	OrganizationId string `json:"organization_id"`
+
+	// Region Region of your project
+	Region string                  `json:"region"`
+	Status V1ProjectResponseStatus `json:"status"`
+}
+
+// V1ProjectResponseStatus defines model for V1ProjectResponse.Status.
+type V1ProjectResponseStatus string
+
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
 	RecoveryTimeTargetUnix float32 `json:"recovery_time_target_unix"`
 }
+
+// V1RunQueryBody defines model for V1RunQueryBody.
+type V1RunQueryBody struct {
+	Query string `json:"query"`
+}
+
+// V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
+type V1ServiceHealthResponse struct {
+	Error   *string                       `json:"error,omitempty"`
+	Healthy bool                          `json:"healthy"`
+	Info    *V1ServiceHealthResponse_Info `json:"info,omitempty"`
+	Name    V1ServiceHealthResponseName   `json:"name"`
+	Status  V1ServiceHealthResponseStatus `json:"status"`
+}
+
+// V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
+type V1ServiceHealthResponse_Info struct {
+	union json.RawMessage
+}
+
+// V1ServiceHealthResponseName defines model for V1ServiceHealthResponse.Name.
+type V1ServiceHealthResponseName string
+
+// V1ServiceHealthResponseStatus defines model for V1ServiceHealthResponse.Status.
+type V1ServiceHealthResponseStatus string
 
 // V1StorageBucketResponse defines model for V1StorageBucketResponse.
 type V1StorageBucketResponse struct {
@@ -1310,6 +1395,13 @@ type V1StorageBucketResponse struct {
 	Owner     string `json:"owner"`
 	Public    bool   `json:"public"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// V1UpdateFunctionBody defines model for V1UpdateFunctionBody.
+type V1UpdateFunctionBody struct {
+	Body      *string `json:"body,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -1399,7 +1491,7 @@ type TokenFormdataRequestBody = OAuthTokenBody
 type CreateOrganizationJSONRequestBody = CreateOrganizationBodyV1
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
-type CreateProjectJSONRequestBody = CreateProjectBody
+type CreateProjectJSONRequestBody = V1CreateProjectBody
 
 // CreateBranchJSONRequestBody defines body for CreateBranch for application/json ContentType.
 type CreateBranchJSONRequestBody = CreateBranchBody
@@ -1413,6 +1505,9 @@ type CreateProviderForProjectJSONRequestBody = CreateProviderBody
 // UpdateProviderByIdJSONRequestBody defines body for UpdateProviderById for application/json ContentType.
 type UpdateProviderByIdJSONRequestBody = UpdateProviderBody
 
+// CreateTPAForProjectJSONRequestBody defines body for CreateTPAForProject for application/json ContentType.
+type CreateTPAForProjectJSONRequestBody = CreateThirdPartyAuthBody
+
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = UpdatePostgresConfigBody
 
@@ -1423,13 +1518,13 @@ type CreateCustomHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
 type V1RestorePitrJSONRequestBody = V1RestorePitrBody
 
 // V1RunQueryJSONRequestBody defines body for V1RunQuery for application/json ContentType.
-type V1RunQueryJSONRequestBody = RunQueryBody
+type V1RunQueryJSONRequestBody = V1RunQueryBody
 
 // CreateFunctionJSONRequestBody defines body for CreateFunction for application/json ContentType.
-type CreateFunctionJSONRequestBody = CreateFunctionBody
+type CreateFunctionJSONRequestBody = V1CreateFunctionBody
 
 // UpdateFunctionJSONRequestBody defines body for UpdateFunction for application/json ContentType.
-type UpdateFunctionJSONRequestBody = UpdateFunctionBody
+type UpdateFunctionJSONRequestBody = V1UpdateFunctionBody
 
 // RemoveNetworkBanJSONRequestBody defines body for RemoveNetworkBan for application/json ContentType.
 type RemoveNetworkBanJSONRequestBody = RemoveNetworkBanRequest
@@ -1581,22 +1676,22 @@ func (t *AttributeValue_Default) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsAuthHealthResponse returns the union data inside the ServiceHealthResponse_Info as a AuthHealthResponse
-func (t ServiceHealthResponse_Info) AsAuthHealthResponse() (AuthHealthResponse, error) {
+// AsAuthHealthResponse returns the union data inside the V1ServiceHealthResponse_Info as a AuthHealthResponse
+func (t V1ServiceHealthResponse_Info) AsAuthHealthResponse() (AuthHealthResponse, error) {
 	var body AuthHealthResponse
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAuthHealthResponse overwrites any union data inside the ServiceHealthResponse_Info as the provided AuthHealthResponse
-func (t *ServiceHealthResponse_Info) FromAuthHealthResponse(v AuthHealthResponse) error {
+// FromAuthHealthResponse overwrites any union data inside the V1ServiceHealthResponse_Info as the provided AuthHealthResponse
+func (t *V1ServiceHealthResponse_Info) FromAuthHealthResponse(v AuthHealthResponse) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAuthHealthResponse performs a merge with any union data inside the ServiceHealthResponse_Info, using the provided AuthHealthResponse
-func (t *ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthResponse) error {
+// MergeAuthHealthResponse performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided AuthHealthResponse
+func (t *V1ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthResponse) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -1607,22 +1702,22 @@ func (t *ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthRespons
 	return err
 }
 
-// AsRealtimeHealthResponse returns the union data inside the ServiceHealthResponse_Info as a RealtimeHealthResponse
-func (t ServiceHealthResponse_Info) AsRealtimeHealthResponse() (RealtimeHealthResponse, error) {
+// AsRealtimeHealthResponse returns the union data inside the V1ServiceHealthResponse_Info as a RealtimeHealthResponse
+func (t V1ServiceHealthResponse_Info) AsRealtimeHealthResponse() (RealtimeHealthResponse, error) {
 	var body RealtimeHealthResponse
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromRealtimeHealthResponse overwrites any union data inside the ServiceHealthResponse_Info as the provided RealtimeHealthResponse
-func (t *ServiceHealthResponse_Info) FromRealtimeHealthResponse(v RealtimeHealthResponse) error {
+// FromRealtimeHealthResponse overwrites any union data inside the V1ServiceHealthResponse_Info as the provided RealtimeHealthResponse
+func (t *V1ServiceHealthResponse_Info) FromRealtimeHealthResponse(v RealtimeHealthResponse) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeRealtimeHealthResponse performs a merge with any union data inside the ServiceHealthResponse_Info, using the provided RealtimeHealthResponse
-func (t *ServiceHealthResponse_Info) MergeRealtimeHealthResponse(v RealtimeHealthResponse) error {
+// MergeRealtimeHealthResponse performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided RealtimeHealthResponse
+func (t *V1ServiceHealthResponse_Info) MergeRealtimeHealthResponse(v RealtimeHealthResponse) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -1633,12 +1728,12 @@ func (t *ServiceHealthResponse_Info) MergeRealtimeHealthResponse(v RealtimeHealt
 	return err
 }
 
-func (t ServiceHealthResponse_Info) MarshalJSON() ([]byte, error) {
+func (t V1ServiceHealthResponse_Info) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *ServiceHealthResponse_Info) UnmarshalJSON(b []byte) error {
+func (t *V1ServiceHealthResponse_Info) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
