@@ -11,12 +11,11 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"sync"
-	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils/cloudflare"
 	supabase "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 const (
@@ -34,42 +33,21 @@ var (
 	}
 )
 
-const (
-	// Ref: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-	dnsIPv4Type uint16 = 1
-	cnameType   uint16 = 5
-	dnsIPv6Type uint16 = 28
-)
-
-type dnsAnswer struct {
-	Type uint16 `json:"type"`
-	Data string `json:"data"`
-}
-
-type dnsResponse struct {
-	Answer []dnsAnswer `json:",omitempty"`
-}
-
 // Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
 func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 	if net.ParseIP(host) != nil {
 		return []string{host}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	api := NewCloudflareAPI()
-	resp, err := api.Send(ctx, http.MethodGet, "/dns-query?name="+host, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, err := fetcher.ParseJSON[dnsResponse](resp.Body)
+	cf := cloudflare.NewCloudflareAPI()
+	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host})
 	if err != nil {
 		return nil, err
 	}
 	// Look for first valid IP
 	var resolved []string
 	for _, answer := range data.Answer {
-		if answer.Type == dnsIPv4Type || answer.Type == dnsIPv6Type {
+		if answer.Type == cloudflare.TypeA || answer.Type == cloudflare.TypeAAAA {
 			resolved = append(resolved, answer.Data)
 		}
 	}
@@ -81,19 +59,14 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	api := NewCloudflareAPI()
-	resp, err := api.Send(ctx, http.MethodGet, "/dns-query?type=CNAME&name="+host, nil)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	data, err := fetcher.ParseJSON[dnsResponse](resp.Body)
+	cf := cloudflare.NewCloudflareAPI()
+	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host, Type: Ptr(cloudflare.TypeCNAME)})
 	if err != nil {
 		return "", err
 	}
 	// Look for first valid IP
 	for _, answer := range data.Answer {
-		if answer.Type == cnameType {
+		if answer.Type == cloudflare.TypeCNAME {
 			return answer.Data, nil
 		}
 	}
@@ -103,22 +76,6 @@ func ResolveCNAME(ctx context.Context, host string) (string, error) {
 		return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, data.Answer)
 	}
 	return "", errors.Errorf("failed to locate appropriate CNAME record for %s; resolves to %+v", host, serialized)
-}
-
-func NewCloudflareAPI() *fetcher.Fetcher {
-	server := "https://1.1.1.1"
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-	header := func(req *http.Request) {
-		req.Header.Add("accept", "application/dns-json")
-	}
-	api := fetcher.NewFetcher(
-		server,
-		fetcher.WithHTTPClient(client),
-		fetcher.WithRequestEditor(header),
-	)
-	return api
 }
 
 func WithTraceContext(ctx context.Context) context.Context {
