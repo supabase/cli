@@ -14,10 +14,10 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
-	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -183,18 +183,14 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	if len(envFilePath) == 0 {
 		return env, nil
 	}
-	f, err := fsys.Open(envFilePath)
+	envMap, err := set.ParseEnvFile(envFilePath, fsys)
 	if err != nil {
-		return env, errors.Errorf("failed to open env file: %w", err)
-	}
-	defer f.Close()
-	envMap, err := godotenv.Parse(f)
-	if err != nil {
-		return env, errors.Errorf("failed to parse env file: %w", err)
+		return env, err
 	}
 	for name, value := range envMap {
 		if strings.HasPrefix(name, "SUPABASE_") {
-			return env, errors.Errorf("Invalid env name: %s. Env names cannot start with SUPABASE_.", name)
+			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
+			continue
 		}
 		env = append(env, name+"="+value)
 	}
