@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -19,11 +20,15 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	{
 		var secrets api.CreateSecretsJSONBody
 		if envFilePath != "" {
-			envMap, err := godotenv.Read(envFilePath)
+			envMap, err := ParseEnvFile(envFilePath, fsys)
 			if err != nil {
-				return errors.Errorf("failed to read env file: %w", err)
+				return err
 			}
 			for name, value := range envMap {
+				if strings.HasPrefix(name, "SUPABASE_") {
+					fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
+					continue
+				}
 				secret := api.CreateSecretBody{
 					Name:  name,
 					Value: value,
@@ -60,4 +65,17 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 
 	fmt.Println("Finished " + utils.Aqua("supabase secrets set") + ".")
 	return nil
+}
+
+func ParseEnvFile(envFilePath string, fsys afero.Fs) (map[string]string, error) {
+	f, err := fsys.Open(envFilePath)
+	if err != nil {
+		return nil, errors.Errorf("failed to open env file: %w", err)
+	}
+	defer f.Close()
+	envMap, err := godotenv.Parse(f)
+	if err != nil {
+		return nil, errors.Errorf("failed to parse env file: %w", err)
+	}
+	return envMap, nil
 }
