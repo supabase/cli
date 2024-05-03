@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils/cloudflare"
 	supabase "github.com/supabase/cli/pkg/api"
 )
 
@@ -32,40 +33,21 @@ var (
 	}
 )
 
-const (
-	// Ref: https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-	dnsIPv4Type uint16 = 1
-	cnameType   uint16 = 5
-	dnsIPv6Type uint16 = 28
-)
-
-type dnsAnswer struct {
-	Type uint16 `json:"type"`
-	Data string `json:"data"`
-}
-
-type dnsResponse struct {
-	Answer []dnsAnswer `json:",omitempty"`
-}
-
 // Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
 func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 	if net.ParseIP(host) != nil {
 		return []string{host}, nil
 	}
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	url := "https://1.1.1.1/dns-query?name=" + host
-	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
-		req.Header.Add("accept", "application/dns-json")
-		return nil
-	})
+	cf := cloudflare.NewCloudflareAPI()
+	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host})
 	if err != nil {
 		return nil, err
 	}
 	// Look for first valid IP
 	var resolved []string
 	for _, answer := range data.Answer {
-		if answer.Type == dnsIPv4Type || answer.Type == dnsIPv6Type {
+		if answer.Type == cloudflare.TypeA || answer.Type == cloudflare.TypeAAAA {
 			resolved = append(resolved, answer.Data)
 		}
 	}
@@ -77,17 +59,14 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-	url := fmt.Sprintf("https://1.1.1.1/dns-query?name=%s&type=CNAME", host)
-	data, err := JsonResponse[dnsResponse](ctx, http.MethodGet, url, nil, func(ctx context.Context, req *http.Request) error {
-		req.Header.Add("accept", "application/dns-json")
-		return nil
-	})
+	cf := cloudflare.NewCloudflareAPI()
+	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host, Type: Ptr(cloudflare.TypeCNAME)})
 	if err != nil {
 		return "", err
 	}
 	// Look for first valid IP
 	for _, answer := range data.Answer {
-		if answer.Type == cnameType {
+		if answer.Type == cloudflare.TypeCNAME {
 			return answer.Data, nil
 		}
 	}

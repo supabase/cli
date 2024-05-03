@@ -44,7 +44,7 @@ var (
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
-	RealtimeAliases    = []string{"realtime"}
+	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
 	RestAliases        = []string{"rest"}
 	StorageAliases     = []string{"storage"}
 	ImgProxyAliases    = []string{"imgproxy"}
@@ -79,10 +79,10 @@ func UpdateDockerIds() {
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])
-	RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
-	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+	ImgProxyId = GetId(ImgProxyAliases[0])
 	DifferId = GetId("differ")
 	PgmetaId = GetId(PgmetaAliases[0])
 	StudioId = GetId(StudioAliases[0])
@@ -128,6 +128,13 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func ToRealtimeEnv(addr AddressFamily) string {
+	if addr == AddressIPv6 {
+		return "-proto_dist inet6_tcp"
+	}
+	return "-proto_dist inet_tcp"
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -161,11 +168,22 @@ var Config = config{
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 	},
 	Realtime: realtime{
-		IpVersion:       AddressIPv6,
+		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
+		TenantId:        "realtime-dev",
+		EncryptionKey:   "supabaserealtime",
+		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 	},
 	Storage: storage{
 		Image: StorageImage,
+		S3Credentials: storageS3Credentials{
+			AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
+			SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+			Region:          "local",
+		},
+		ImageTransformation: imageTransformation{
+			Enabled: true,
+		},
 	},
 	Auth: auth{
 		Image: GotrueImage,
@@ -177,9 +195,6 @@ var Config = config{
 				"magic_link":   {},
 				"email_change": {},
 			},
-		},
-		Sms: sms{
-			Template: "Your code is {{ .Code }} .",
 		},
 		External: map[string]provider{
 			"apple":         {},
@@ -201,8 +216,6 @@ var Config = config{
 			"workos":        {},
 			"zoom":          {},
 		},
-		Hook:      hook{},
-		JwtExpiry: 3600,
 		JwtSecret: defaultJwtSecret,
 	},
 	Analytics: analytics{
@@ -283,6 +296,9 @@ type (
 		Enabled         bool          `toml:"enabled"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
+		TenantId        string        `toml:"-"`
+		EncryptionKey   string        `toml:"-"`
+		SecretKeyBase   string        `toml:"-"`
 	}
 
 	studio struct {
@@ -300,9 +316,21 @@ type (
 	}
 
 	storage struct {
-		Enabled       bool        `toml:"enabled"`
-		Image         string      `toml:"-"`
-		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
+		Enabled             bool                 `toml:"enabled"`
+		Image               string               `toml:"-"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
+		S3Credentials       storageS3Credentials `toml:"-"`
+		ImageTransformation imageTransformation  `toml:"image_transformation"`
+	}
+
+	imageTransformation struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	storageS3Credentials struct {
+		AccessKeyId     string `toml:"-"`
+		SecretAccessKey string `toml:"-"`
+		Region          string `toml:"-"`
 	}
 
 	auth struct {
@@ -317,10 +345,11 @@ type (
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
 		Hook                       hook `toml:"hook"`
 
-		EnableSignup bool  `toml:"enable_signup"`
-		Email        email `toml:"email"`
-		Sms          sms   `toml:"sms"`
-		External     map[string]provider
+		EnableSignup           bool  `toml:"enable_signup"`
+		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
+		Email                  email `toml:"email"`
+		Sms                    sms   `toml:"sms"`
+		External               map[string]provider
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -333,6 +362,7 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
+		MaxFrequency         time.Duration            `toml:"max_frequency"`
 	}
 
 	emailTemplate struct {
@@ -350,6 +380,7 @@ type (
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
+		MaxFrequency        time.Duration     `toml:"max_frequency"`
 	}
 
 	hook struct {
@@ -390,11 +421,12 @@ type (
 	}
 
 	provider struct {
-		Enabled     bool   `toml:"enabled"`
-		ClientId    string `toml:"client_id"`
-		Secret      string `toml:"secret"`
-		Url         string `toml:"url"`
-		RedirectUri string `toml:"redirect_uri"`
+		Enabled        bool   `toml:"enabled"`
+		ClientId       string `toml:"client_id"`
+		Secret         string `toml:"secret"`
+		Url            string `toml:"url"`
+		RedirectUri    string `toml:"redirect_uri"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
 
 	function struct {
@@ -450,8 +482,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 	}
 	// Load secrets from .env file
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	if err := loadDefaultEnv(); err != nil {
+		return err
 	}
 	if err := viper.Unmarshal(&Config); err != nil {
 		return errors.Errorf("failed to parse env to config: %w", err)
@@ -569,6 +601,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: inbucket.port")
 			}
 		}
+
 		// Validate auth config
 		if Config.Auth.Enabled {
 			if Config.Auth.SiteUrl == "" {
@@ -681,7 +714,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if provider.ClientId == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				}
-				if provider.Secret == "" {
+				if !SliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				}
 				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
@@ -803,4 +836,29 @@ func RemoveDuplicates(slice []string) (result []string) {
 		}
 	}
 	return result
+}
+
+func loadDefaultEnv() error {
+	env := viper.GetString("ENV")
+	if env == "" {
+		env = "development"
+	}
+	filenames := []string{".env." + env + ".local"}
+	if env != "test" {
+		filenames = append(filenames, ".env.local")
+	}
+	filenames = append(filenames, ".env."+env, ".env")
+	for _, path := range filenames {
+		if err := loadEnvIfExists(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadEnvIfExists(path string) error {
+	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	}
+	return nil
 }

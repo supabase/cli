@@ -12,16 +12,16 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var errUnsupportedOperation = errors.New("Unsupported operation")
 
-func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsys afero.Fs, opts ...func(*client.FileOptions)) error {
+func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
 	srcParsed, err := url.Parse(src)
 	if err != nil {
 		return errors.Errorf("failed to parse src url: %w", err)
@@ -30,36 +30,36 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 	if err != nil {
 		return errors.Errorf("failed to parse dst url: %w", err)
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	}
-	if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && dstParsed.Scheme == "" {
+	if strings.ToLower(srcParsed.Scheme) == client.STORAGE_SCHEME && dstParsed.Scheme == "" {
 		localPath := dst
 		if !filepath.IsAbs(dst) {
 			localPath = filepath.Join(utils.CurrentDirAbs, dst)
 		}
 		if recursive {
-			return DownloadStorageObjectAll(ctx, projectRef, srcParsed.Path, localPath, maxJobs, fsys)
+			return DownloadStorageObjectAll(ctx, api, srcParsed.Path, localPath, maxJobs, fsys)
 		}
-		return client.DownloadStorageObject(ctx, projectRef, srcParsed.Path, localPath, fsys)
-	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
+		return api.DownloadObject(ctx, srcParsed.Path, localPath, fsys)
+	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == client.STORAGE_SCHEME {
 		localPath := src
 		if !filepath.IsAbs(localPath) {
 			localPath = filepath.Join(utils.CurrentDirAbs, localPath)
 		}
 		if recursive {
-			return UploadStorageObjectAll(ctx, projectRef, dstParsed.Path, localPath, maxJobs, fsys, opts...)
+			return UploadStorageObjectAll(ctx, api, dstParsed.Path, localPath, maxJobs, fsys, opts...)
 		}
-		return client.UploadStorageObject(ctx, projectRef, dstParsed.Path, src, fsys, opts...)
-	} else if strings.ToLower(srcParsed.Scheme) == storage.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == storage.STORAGE_SCHEME {
+		return api.UploadObject(ctx, dstParsed.Path, src, fsys, opts...)
+	} else if strings.ToLower(srcParsed.Scheme) == client.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == client.STORAGE_SCHEME {
 		return errors.New("Copying between buckets is not supported")
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to copy between local directories.", utils.Aqua("cp -r <src> <dst>"))
 	return errors.New(errUnsupportedOperation)
 }
 
-func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, maxJobs uint, fsys afero.Fs) error {
+func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, fsys afero.Fs) error {
 	// Prepare local directory for download
 	if fi, err := fsys.Stat(localPath); err == nil && fi.IsDir() {
 		localPath = filepath.Join(localPath, path.Base(remotePath))
@@ -67,7 +67,7 @@ func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, local
 	// No need to be atomic because it's incremented only on main thread
 	count := 0
 	jq := utils.NewJobQueue(maxJobs)
-	err := ls.IterateStoragePathsAll(ctx, projectRef, remotePath, func(objectPath string) error {
+	err := ls.IterateStoragePathsAll(ctx, api, remotePath, func(objectPath string) error {
 		relPath := strings.TrimPrefix(objectPath, remotePath)
 		dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
 		fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
@@ -79,7 +79,7 @@ func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, local
 			if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dstPath)); err != nil {
 				return err
 			}
-			return client.DownloadStorageObject(ctx, projectRef, objectPath, dstPath, fsys)
+			return api.DownloadObject(ctx, objectPath, dstPath, fsys)
 		}
 		return jq.Put(job)
 	})
@@ -89,12 +89,12 @@ func DownloadStorageObjectAll(ctx context.Context, projectRef, remotePath, local
 	return errors.Join(err, jq.Collect())
 }
 
-func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPath string, maxJobs uint, fsys afero.Fs, opts ...func(*client.FileOptions)) error {
+func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
 	noSlash := strings.TrimSuffix(remotePath, "/")
 	// Check if directory exists on remote
 	dirExists := false
 	fileExists := false
-	if err := ls.IterateStoragePaths(ctx, projectRef, noSlash, func(objectName string) error {
+	if err := ls.IterateStoragePaths(ctx, api, noSlash, func(objectName string) error {
 		if objectName == path.Base(noSlash) {
 			fileExists = true
 		}
@@ -121,7 +121,7 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 		dstPath := remotePath
 		// Copying single file
 		if relPath == "." {
-			_, prefix := storage.SplitBucketPrefix(dstPath)
+			_, prefix := client.SplitBucketPrefix(dstPath)
 			if IsDir(prefix) || (dirExists && !fileExists) {
 				dstPath = path.Join(dstPath, info.Name())
 			}
@@ -133,14 +133,14 @@ func UploadStorageObjectAll(ctx context.Context, projectRef, remotePath, localPa
 		}
 		fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
 		job := func() error {
-			err := client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys, opts...)
+			err := api.UploadObject(ctx, dstPath, filePath, fsys, opts...)
 			if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 				// Retry after creating bucket
-				if bucket, prefix := storage.SplitBucketPrefix(dstPath); len(prefix) > 0 {
-					if _, err := client.CreateStorageBucket(ctx, projectRef, bucket); err != nil {
+				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
+					if _, err := api.CreateBucket(ctx, bucket); err != nil {
 						return err
 					}
-					err = client.UploadStorageObject(ctx, projectRef, dstPath, filePath, fsys, opts...)
+					err = api.UploadObject(ctx, dstPath, filePath, fsys, opts...)
 				}
 			}
 			return err

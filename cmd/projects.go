@@ -33,8 +33,8 @@ var (
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
 	plan = utils.EnumFlag{
-		Allowed: []string{string(api.CreateProjectBodyPlanFree), string(api.CreateProjectBodyPlanPro)},
-		Value:   string(api.CreateProjectBodyPlanFree),
+		Allowed: []string{string(api.V1CreateProjectBodyPlanFree), string(api.V1CreateProjectBodyPlanPro)},
+		Value:   string(api.V1CreateProjectBodyPlanFree),
 	}
 
 	projectsCreateCmd = &cobra.Command{
@@ -55,11 +55,11 @@ var (
 			if len(args) > 0 {
 				projectName = args[0]
 			}
-			return create.Run(cmd.Context(), api.CreateProjectBody{
+			return create.Run(cmd.Context(), api.V1CreateProjectBody{
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
-				Region:         api.CreateProjectBodyRegion(region.Value),
+				Region:         api.V1CreateProjectBodyRegion(region.Value),
 			}, afero.NewOsFs())
 		},
 	}

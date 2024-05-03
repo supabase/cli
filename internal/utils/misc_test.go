@@ -25,18 +25,33 @@ func (m *MockFs) Stat(name string) (fs.FileInfo, error) {
 }
 
 func TestProjectRoot(t *testing.T) {
-	t.Run("searches project root recursively", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(filepath.Join("/", ConfigPath))
-		require.NoError(t, err)
-		// Run test
-		path := getProjectRoot("/home/user/project", fsys)
-		// Check error
-		assert.Equal(t, "/", path)
-	})
+	root := string(filepath.Separator)
 
 	t.Run("stops at root dir", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		_, err := fsys.Create(filepath.Join(root, ConfigPath))
+		require.NoError(t, err)
+		// Run test
+		cwd := filepath.Join(root, "home", "user", "project")
+		path := getProjectRoot(cwd, fsys)
+		// Check error
+		assert.Equal(t, root, path)
+	})
+
+	t.Run("stops at closest parent", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		_, err := fsys.Create(filepath.Join(root, "supabase", ConfigPath))
+		require.NoError(t, err)
+		// Run test
+		cwd := filepath.Join(root, "supabase", "supabase", "functions")
+		path := getProjectRoot(cwd, fsys)
+		// Check error
+		assert.Equal(t, filepath.Join(root, "supabase"), path)
+	})
+
+	t.Run("ignores error on config not found", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Setup in-memory fs

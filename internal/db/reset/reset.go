@@ -28,16 +28,13 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const (
-	SET_POSTGRES_ROLE = "SET ROLE postgres;"
-	LIST_SCHEMAS      = "SELECT schema_name FROM information_schema.schemata WHERE NOT schema_name LIKE ANY($1) ORDER BY schema_name"
-)
-
 var (
 	ErrUnhealthy   = errors.New("service not healthy")
 	serviceTimeout = 30 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
+	//go:embed templates/list.sql
+	ListSchemas string
 )
 
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -51,7 +48,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 	}
 	if !utils.IsLocalDatabase(config) {
 		msg := "Do you want to reset the remote database?"
-		if shouldReset := utils.PromptYesNo(msg, true, os.Stdin); !shouldReset {
+		if shouldReset := utils.NewConsole().PromptYesNo(msg, false); !shouldReset {
 			utils.CmdSuggestion = ""
 			return errors.New(context.Canceled)
 		}
@@ -264,23 +261,24 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	defer conn.Close(context.Background())
-	// List user defined schemas
-	excludes := []string{"public"}
-	for _, schema := range utils.InternalSchemas {
-		if schema != "supabase_migrations" {
-			excludes = append(excludes, schema)
-		}
-	}
-	userSchemas, err := ListSchemas(ctx, conn, excludes...)
+	// Only drop objects in extensions and public schema
+	excludes := append([]string{
+		"extensions",
+		"public",
+	}, utils.ManagedSchemas...)
+	userSchemas, err := LoadUserSchemas(ctx, conn, excludes...)
 	if err != nil {
 		return err
 	}
-	// Drop user defined objects
+	// Drop all user defined schemas
 	migration := repair.MigrationFile{}
 	for _, schema := range userSchemas {
 		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
 		migration.Lines = append(migration.Lines, sql)
 	}
+	// If an extension uses a schema it doesn't create, dropping the schema will cascade to also
+	// drop the extension. But if an extension creates its own schema, dropping the schema will
+	// throw an error. Hence, we drop the extension instead so it cascades to its own schema.
 	migration.Lines = append(migration.Lines, dropObjects)
 	if err := migration.ExecBatch(ctx, conn); err != nil {
 		return err
@@ -288,19 +286,20 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
-func ListSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	exclude = likeEscapeSchema(exclude)
+func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
 	if len(exclude) == 0 {
-		exclude = append(exclude, "")
+		exclude = utils.ManagedSchemas
 	}
-	rows, err := conn.Query(ctx, LIST_SCHEMAS, exclude)
+	exclude = LikeEscapeSchema(exclude)
+	rows, err := conn.Query(ctx, ListSchemas, exclude)
 	if err != nil {
 		return nil, errors.Errorf("failed to list schemas: %w", err)
 	}
+	// TODO: show detail and hint from pgconn.PgError
 	return pgxv5.CollectStrings(rows)
 }
 
-func likeEscapeSchema(schemas []string) (result []string) {
+func LikeEscapeSchema(schemas []string) (result []string) {
 	// Treat _ as literal, * as any character
 	replacer := strings.NewReplacer("_", `\_`, "*", "%")
 	for _, sch := range schemas {

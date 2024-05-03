@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error {
+func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) error {
 	if err := promptMissingParams(ctx, &params); err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func Run(ctx context.Context, params api.CreateProjectBody, fsys afero.Fs) error
 	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), projectUrl)
+	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
 	return nil
 }
 
@@ -45,7 +45,7 @@ func printKeyValue(key, value string) string {
 	return key + ":" + spaces + value
 }
 
-func promptMissingParams(ctx context.Context, body *api.CreateProjectBody) error {
+func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) error {
 	var err error
 	if len(body.Name) == 0 {
 		if body.Name, err = promptProjectName(); err != nil {
@@ -73,14 +73,11 @@ func promptMissingParams(ctx context.Context, body *api.CreateProjectBody) error
 }
 
 func promptProjectName() (string, error) {
-	name, err := utils.PromptText("Enter your project name: ", os.Stdin)
-	if err != nil {
-		return "", err
+	title := "Enter your project name: "
+	if name := utils.NewConsole().PromptText(title); len(name) > 0 {
+		return name, nil
 	}
-	if len(name) == 0 {
-		return "", errors.New("project name cannot be empty")
-	}
-	return name, nil
+	return "", errors.New("project name cannot be empty")
 }
 
 func promptOrgId(ctx context.Context) (string, error) {
@@ -103,7 +100,7 @@ func promptOrgId(ctx context.Context) (string, error) {
 	return choice.Details, nil
 }
 
-func promptProjectRegion(ctx context.Context) (api.CreateProjectBodyRegion, error) {
+func promptProjectRegion(ctx context.Context) (api.V1CreateProjectBodyRegion, error) {
 	title := "Which region do you want to host the project in?"
 	items := make([]utils.PromptItem, len(utils.RegionMap))
 	i := 0
@@ -115,5 +112,5 @@ func promptProjectRegion(ctx context.Context) (api.CreateProjectBodyRegion, erro
 	if err != nil {
 		return "", err
 	}
-	return api.CreateProjectBodyRegion(choice.Summary), nil
+	return api.V1CreateProjectBodyRegion(choice.Summary), nil
 }

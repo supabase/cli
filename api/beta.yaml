@@ -69,8 +69,37 @@ paths:
       responses:
         '200':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BranchDeleteResponse'
         '500':
           description: Failed to delete database branch
+      tags:
+        - database branches (beta)
+      security:
+        - bearer: []
+  /v1/branches/{branch_id}/reset:
+    post:
+      operationId: resetBranch
+      summary: Resets a database branch
+      description: Resets the specified database branch
+      parameters:
+        - name: branch_id
+          required: true
+          in: path
+          description: Branch ID
+          schema:
+            type: string
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BranchResetResponse'
+        '500':
+          description: Failed to reset database branch
       tags:
         - database branches (beta)
       security:
@@ -89,7 +118,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ProjectResponse'
+                  $ref: '#/components/schemas/V1ProjectResponse'
       tags:
         - projects
       security:
@@ -103,14 +132,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateProjectBody'
+              $ref: '#/components/schemas/V1CreateProjectBody'
       responses:
         '201':
           description: ''
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectResponse'
+                $ref: '#/components/schemas/V1ProjectResponse'
       tags:
         - projects
       security:
@@ -217,6 +246,9 @@ paths:
           description: ''
       tags:
         - oauth (beta)
+      security:
+        - oauth2:
+            - read
   /v1/oauth/token:
     post:
       operationId: token
@@ -237,6 +269,9 @@ paths:
                 $ref: '#/components/schemas/OAuthTokenResponse'
       tags:
         - oauth (beta)
+      security:
+        - oauth2:
+            - write
   /v1/snippets:
     get:
       operationId: listSnippets
@@ -772,7 +807,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PostgrestConfigResponse'
+                $ref: '#/components/schemas/V1PostgrestConfigResponse'
         '403':
           description: ''
         '500':
@@ -800,7 +835,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProjectRefResponse'
+                $ref: '#/components/schemas/V1ProjectRefResponse'
         '403':
           description: ''
       tags:
@@ -1357,7 +1392,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ServiceHealthResponse'
+                  $ref: '#/components/schemas/V1ServiceHealthResponse'
         '500':
           description: Failed to retrieve project's service health status
       tags:
@@ -1506,6 +1541,126 @@ paths:
         - projects config
       security:
         - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth:
+    post:
+      operationId: createTPAForProject
+      summary: Creates a new third-party auth integration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateThirdPartyAuthBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - third-party-auth (alpha)
+      security:
+        - bearer: []
+    get:
+      operationId: listTPAForProject
+      summary: Lists all third-party auth integrations
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - third-party-auth (alpha)
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth/{tpa_id}:
+    delete:
+      operationId: deleteTPAForProject
+      summary: Removes a third-party auth integration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - third-party-auth (alpha)
+      security:
+        - bearer: []
+    get:
+      operationId: getTPAForProject
+      summary: Get a third-party integration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - third-party-auth (alpha)
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/query:
     post:
       operationId: v1RunQuery
@@ -1524,7 +1679,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RunQueryBody'
+              $ref: '#/components/schemas/V1RunQueryBody'
       responses:
         '201':
           description: ''
@@ -1614,10 +1769,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateFunctionBody'
+              $ref: '#/components/schemas/V1CreateFunctionBody'
           application/vnd.denoland.eszip:
             schema:
-              $ref: '#/components/schemas/CreateFunctionBody'
+              $ref: '#/components/schemas/V1CreateFunctionBody'
       responses:
         '201':
           description: ''
@@ -1699,6 +1854,37 @@ paths:
         - functions
       security:
         - bearer: []
+    delete:
+      operationId: deleteFunction
+      summary: Delete a function
+      description: Deletes a function with the specified slug from the specified project.
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: function_slug
+          required: true
+          in: path
+          description: Function slug
+          schema:
+            pattern: /^[A-Za-z0-9_-]+$/
+            type: string
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to delete function with given slug
+      tags:
+        - functions
+      security:
+        - bearer: []
     patch:
       operationId: updateFunction
       summary: Update a function
@@ -1755,10 +1941,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateFunctionBody'
+              $ref: '#/components/schemas/V1UpdateFunctionBody'
           application/vnd.denoland.eszip:
             schema:
-              $ref: '#/components/schemas/UpdateFunctionBody'
+              $ref: '#/components/schemas/V1UpdateFunctionBody'
       responses:
         '200':
           description: ''
@@ -1770,37 +1956,6 @@ paths:
           description: ''
         '500':
           description: Failed to update function with given slug
-      tags:
-        - functions
-      security:
-        - bearer: []
-    delete:
-      operationId: deleteFunction
-      summary: Delete a function
-      description: Deletes a function with the specified slug from the specified project.
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-        - name: function_slug
-          required: true
-          in: path
-          description: Function slug
-          schema:
-            pattern: /^[A-Za-z0-9_-]+$/
-            type: string
-      responses:
-        '200':
-          description: ''
-        '403':
-          description: ''
-        '500':
-          description: Failed to delete function with given slug
       tags:
         - functions
       security:
@@ -2197,6 +2352,8 @@ components:
           type: string
         reset_on_push:
           type: boolean
+        persistent:
+          type: boolean
     BranchResponse:
       type: object
       properties:
@@ -2216,6 +2373,8 @@ components:
           type: number
         reset_on_push:
           type: boolean
+        persistent:
+          type: boolean
         status:
           enum:
             - CREATING_PROJECT
@@ -2234,10 +2393,25 @@ components:
         - parent_project_ref
         - is_default
         - reset_on_push
+        - persistent
         - status
         - created_at
         - updated_at
-    DatabaseResponse:
+    BranchDeleteResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    BranchResetResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    V1DatabaseResponse:
       type: object
       properties:
         host:
@@ -2249,7 +2423,7 @@ components:
       required:
         - host
         - version
-    ProjectResponse:
+    V1ProjectResponse:
       type: object
       properties:
         id:
@@ -2270,14 +2444,42 @@ components:
           description: Creation timestamp
           example: '2023-03-29T16:32:59Z'
         database:
-          $ref: '#/components/schemas/DatabaseResponse'
+          $ref: '#/components/schemas/V1DatabaseResponse'
+        status:
+          enum:
+            - ACTIVE_HEALTHY
+            - ACTIVE_UNHEALTHY
+            - COMING_UP
+            - GOING_DOWN
+            - INACTIVE
+            - INIT_FAILED
+            - REMOVED
+            - RESTORING
+            - UNKNOWN
+            - UPGRADING
+            - PAUSING
+          type: string
       required:
         - id
         - organization_id
         - name
         - region
         - created_at
-    CreateProjectBody:
+        - status
+    DesiredInstanceSize:
+      type: string
+      enum:
+        - micro
+        - small
+        - medium
+        - large
+        - xlarge
+        - 2xlarge
+        - 4xlarge
+        - 8xlarge
+        - 12xlarge
+        - 16xlarge
+    V1CreateProjectBody:
       type: object
       properties:
         db_pass:
@@ -2322,6 +2524,13 @@ components:
         kps_enabled:
           type: boolean
           deprecated: true
+        desired_instance_size:
+          $ref: '#/components/schemas/DesiredInstanceSize'
+        template_url:
+          type: string
+          description: Template URL used to create the project from the CLI.
+          example: >-
+            https://github.com/supabase/supabase/tree/master/examples/slack-clone/nextjs-slack-clone
       required:
         - db_pass
         - name
@@ -2631,6 +2840,12 @@ components:
       properties:
         max_rows:
           type: integer
+        db_pool:
+          type: integer
+          nullable: true
+          description: >-
+            If `null`, the value is automatically configured based on compute
+            size.
         db_schema:
           type: string
         db_extra_search_path:
@@ -2639,6 +2854,7 @@ components:
           type: string
       required:
         - max_rows
+        - db_pool
         - db_schema
         - db_extra_search_path
     UpdatePostgrestConfigBody:
@@ -2648,24 +2864,35 @@ components:
           type: integer
           minimum: 0
           maximum: 1000000
+        db_pool:
+          type: integer
+          minimum: 0
+          maximum: 1000
         db_extra_search_path:
           type: string
         db_schema:
           type: string
-    PostgrestConfigResponse:
+    V1PostgrestConfigResponse:
       type: object
       properties:
         max_rows:
           type: integer
+        db_pool:
+          type: integer
+          nullable: true
+          description: >-
+            If `null`, the value is automatically configured based on compute
+            size.
         db_schema:
           type: string
         db_extra_search_path:
           type: string
       required:
         - max_rows
+        - db_pool
         - db_schema
         - db_extra_search_path
-    ProjectRefResponse:
+    V1ProjectRefResponse:
       type: object
       properties:
         id:
@@ -2949,7 +3176,7 @@ components:
         - healthy
         - db_connected
         - connected_cluster
-    ServiceHealthResponse:
+    V1ServiceHealthResponse:
       type: object
       properties:
         info:
@@ -3008,6 +3235,10 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_standby_archive_delay:
+          type: string
+        max_standby_streaming_delay:
+          type: string
         max_worker_processes:
           type: integer
           minimum: 0
@@ -3051,6 +3282,10 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_standby_archive_delay:
+          type: string
+        max_standby_streaming_delay:
+          type: string
         max_worker_processes:
           type: integer
           minimum: 0
@@ -3086,6 +3321,9 @@ components:
       type: object
       properties:
         disable_signup:
+          type: boolean
+          nullable: true
+        external_anonymous_users_enabled:
           type: boolean
           nullable: true
         external_apple_additional_client_ids:
@@ -3334,6 +3572,9 @@ components:
         mailer_subjects_recovery:
           type: string
           nullable: true
+        mailer_subjects_reauthentication:
+          type: string
+          nullable: true
         mailer_templates_confirmation_content:
           type: string
           nullable: true
@@ -3349,6 +3590,9 @@ components:
         mailer_templates_recovery_content:
           type: string
           nullable: true
+        mailer_templates_reauthentication_content:
+          type: string
+          nullable: true
         mfa_max_enrolled_factors:
           type: number
           nullable: true
@@ -3360,6 +3604,9 @@ components:
           nullable: true
         password_required_characters:
           type: string
+          nullable: true
+        rate_limit_anonymous_users:
+          type: number
           nullable: true
         rate_limit_email_sent:
           type: number
@@ -3504,6 +3751,7 @@ components:
           nullable: true
       required:
         - disable_signup
+        - external_anonymous_users_enabled
         - external_apple_additional_client_ids
         - external_apple_client_id
         - external_apple_enabled
@@ -3586,15 +3834,18 @@ components:
         - mailer_subjects_invite
         - mailer_subjects_magic_link
         - mailer_subjects_recovery
+        - mailer_subjects_reauthentication
         - mailer_templates_confirmation_content
         - mailer_templates_email_change_content
         - mailer_templates_invite_content
         - mailer_templates_magic_link_content
         - mailer_templates_recovery_content
+        - mailer_templates_reauthentication_content
         - mfa_max_enrolled_factors
         - password_hibp_enabled
         - password_min_length
         - password_required_characters
+        - rate_limit_anonymous_users
         - rate_limit_email_sent
         - rate_limit_sms_sent
         - rate_limit_token_refresh
@@ -3684,6 +3935,8 @@ components:
           type: string
         mailer_subjects_magic_link:
           type: string
+        mailer_subjects_reauthentication:
+          type: string
         mailer_templates_invite_content:
           type: string
         mailer_templates_confirmation_content:
@@ -3694,12 +3947,16 @@ components:
           type: string
         mailer_templates_magic_link_content:
           type: string
+        mailer_templates_reauthentication_content:
+          type: string
         mfa_max_enrolled_factors:
           type: number
           minimum: 0
           maximum: 2147483647
         uri_allow_list:
           type: string
+        external_anonymous_users_enabled:
+          type: boolean
         external_email_enabled:
           type: boolean
         external_phone_enabled:
@@ -3723,6 +3980,10 @@ components:
         sessions_tags:
           type: string
           pattern: /^\s*([a-z0-9_-]+(\s*,+\s*)?)*\s*$/i
+        rate_limit_anonymous_users:
+          type: number
+          minimum: 1
+          maximum: 2147483647
         rate_limit_email_sent:
           type: number
           minimum: 1
@@ -3830,6 +4091,14 @@ components:
         hook_custom_access_token_enabled:
           type: boolean
         hook_custom_access_token_uri:
+          type: string
+        hook_send_sms_enabled:
+          type: boolean
+        hook_send_sms_uri:
+          type: string
+        hook_send_email_enabled:
+          type: boolean
+        hook_send_email_uri:
           type: string
         external_apple_enabled:
           type: boolean
@@ -3959,14 +4228,54 @@ components:
           type: string
         external_zoom_secret:
           type: string
-    RunQueryBody:
+    CreateThirdPartyAuthBody:
+      type: object
+      properties:
+        oidc_issuer_url:
+          type: string
+        jwks_url:
+          type: string
+        custom_jwks:
+          type: object
+    ThirdPartyAuth:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        oidc_issuer_url:
+          type: string
+          nullable: true
+        jwks_url:
+          type: string
+          nullable: true
+        custom_jwks:
+          type: object
+          nullable: true
+        resolved_jwks:
+          type: object
+          nullable: true
+        inserted_at:
+          type: string
+        updated_at:
+          type: string
+        resolved_at:
+          type: string
+          nullable: true
+      required:
+        - id
+        - type
+        - inserted_at
+        - updated_at
+    V1RunQueryBody:
       type: object
       properties:
         query:
           type: string
       required:
         - query
-    CreateFunctionBody:
+    V1CreateFunctionBody:
       type: object
       properties:
         slug:
@@ -4056,7 +4365,7 @@ components:
         - version
         - created_at
         - updated_at
-    UpdateFunctionBody:
+    V1UpdateFunctionBody:
       type: object
       properties:
         name:
@@ -4286,7 +4595,7 @@ components:
         - status
         - is_physical_backup
         - inserted_at
-    PhysicalBackup:
+    V1PhysicalBackup:
       type: object
       properties:
         earliest_physical_backup_date_unix:
@@ -4307,7 +4616,7 @@ components:
           items:
             $ref: '#/components/schemas/V1Backup'
         physical_backup_data:
-          $ref: '#/components/schemas/PhysicalBackup'
+          $ref: '#/components/schemas/V1PhysicalBackup'
       required:
         - region
         - walg_enabled
@@ -4357,7 +4666,6 @@ components:
             type: string
             enum:
               - AI_SQL_GENERATOR_OPT_IN
-              - PREVIEW_BRANCHES_OPT_IN
         id:
           type: string
         name:

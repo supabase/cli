@@ -35,30 +35,13 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
-	"auth",
 	"pgbouncer",
-	"realtime",
-	`\_realtime`,
-	"storage",
-	`\_analytics`,
-	`supabase\_functions`,
+	"pgsodium",
+	"pgtle",
 	`supabase\_migrations`,
+	"vault",
 	`information\_schema`,
 	`pg\_%`,
-	"cron",
-	"graphql",
-	`graphql\_public`,
-	"net",
-	"pgsodium",
-	`pgsodium\_masks`,
-	"pgtle",
-	"repack",
-	"tiger",
-	`tiger\_data`,
-	`timescaledb\_%`,
-	`\_timescaledb\_%`,
-	"topology",
-	"vault",
 }
 
 func TestRun(t *testing.T) {
@@ -84,10 +67,12 @@ func TestRun(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-shadow-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-shadow-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
@@ -127,7 +112,7 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
+		conn.Query(reset.ListSchemas, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := Run(context.Background(), []string{}, "", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
@@ -351,24 +336,6 @@ At statement 0: create schema public`)
 		assert.ErrorContains(t, err, "error diffing schema")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
-}
-
-func TestUserSchema(t *testing.T) {
-	// Setup mock postgres
-	conn := pgtest.NewConn()
-	defer conn.Close(t)
-	conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
-		Reply("SELECT 1", []interface{}{"test"})
-	// Connect to mock
-	ctx := context.Background()
-	mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-	require.NoError(t, err)
-	defer mock.Close(ctx)
-	// Run test
-	schemas, err := LoadUserSchemas(ctx, mock)
-	// Check error
-	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{"test"}, schemas)
 }
 
 func TestDropStatements(t *testing.T) {

@@ -303,7 +303,7 @@ EOF
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
+			RealtimeId:    utils.Config.Realtime.TenantId,
 			StorageId:     utils.StorageId,
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
@@ -404,10 +404,12 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 
+			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
+
 			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
 			"GOTRUE_SMTP_PORT=2500",
 			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
-			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
+			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100
 			// is fixed on upstream GoTrue.
@@ -419,7 +421,7 @@ EOF
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
 			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
-			"GOTRUE_SMS_MAX_FREQUENCY=5s",
+			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
@@ -520,6 +522,7 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
 			)
 
 			if config.RedirectUri != "" {
@@ -621,25 +624,27 @@ EOF
 					"DB_PASSWORD=" + dbConfig.Password,
 					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-					"DB_ENC_KEY=supabaserealtime",
+					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"FLY_ALLOC_ID=abc123",
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"FLY_APP_NAME=realtime",
-					"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-					"ERL_AFLAGS=-proto_dist inet_tcp",
+					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
 					"RLIMIT_NOFILE=",
-					"REALTIME_IP_VERSION=" + string(utils.Config.Realtime.IpVersion),
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
+				// TODO: remove this after deprecating PG14
 				Cmd: []string{
 					"/bin/sh", "-c",
 					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/4000"},
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer " + utils.Config.Auth.AnonKey,
+						fmt.Sprintf("http://127.0.0.1:4000/api/tenants/%s/health", utils.Config.Realtime.TenantId),
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -706,18 +711,24 @@ EOF
 				Env: []string{
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"POSTGREST_URL=http://" + utils.RestId + ":3000",
-					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
 					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
-					"REGION=stub",
+					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					"ENABLE_IMAGE_TRANSFORMATION=true",
-					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
+					"TUS_URL_PATH=/storage/v1/upload/resumable",
+					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
+					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
+					"S3_PROTOCOL_PREFIX=/storage/v1",
+					"S3_ALLOW_FORWARDED_HEADER=true",
+					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
+					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
@@ -746,7 +757,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -850,7 +861,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,

@@ -26,7 +26,7 @@ var (
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.147"
+	Pg15Image = "supabase/postgres:15.1.1.41"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
@@ -34,15 +34,15 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240326-5e5586d"
+	StudioImage      = "supabase/studio:20240422-5cf8f30"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.41.3"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.46.3"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.143.0"
-	RealtimeImage    = "supabase/realtime:v2.27.5"
-	StorageImage     = "supabase/storage-api:v0.46.4"
+	GotrueImage      = "supabase/gotrue:v2.149.0"
+	RealtimeImage    = "supabase/realtime:v2.28.32"
+	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
@@ -107,11 +107,31 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	SystemSchemas = []string{
+	PgSchemas = []string{
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
+	}
+	// Initialised by postgres image and owned by postgres role
+	ManagedSchemas = append([]string{
+		"pgbouncer",
+		"pgsodium",
+		"pgtle",
+		"supabase_migrations",
+		"vault",
+	}, PgSchemas...)
+	InternalSchemas = append([]string{
+		"auth",
+		"extensions",
+		"pgbouncer",
+		"realtime",
+		"_realtime",
+		"storage",
+		"_analytics",
+		"supabase_functions",
+		"supabase_migrations",
 		// Owned by extensions
 		"cron",
+		"dbdev",
 		"graphql",
 		"graphql_public",
 		"net",
@@ -125,18 +145,7 @@ var (
 		"_timescaledb_*",
 		"topology",
 		"vault",
-	}
-	InternalSchemas = append([]string{
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		"supabase_functions",
-		"supabase_migrations",
-	}, SystemSchemas...)
+	}, PgSchemas...)
 	ReservedRoles = []string{
 		"anon",
 		"authenticated",
@@ -149,6 +158,7 @@ var (
 		"supabase_auth_admin",
 		"supabase_functions_admin",
 		"supabase_read_only_user",
+		"supabase_realtime_admin",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
 		// Managed by extensions

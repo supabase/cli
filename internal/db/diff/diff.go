@@ -122,24 +122,8 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 		return nil, err
 	}
 	defer conn.Close(context.Background())
-	return LoadUserSchemas(ctx, conn)
-}
-
-func LoadUserSchemas(ctx context.Context, conn *pgx.Conn) ([]string, error) {
 	// RLS policies in auth and storage schemas can be included with -s flag
-	exclude := append([]string{
-		"auth",
-		// "extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		// Exclude functions because Webhooks support is early alpha
-		"supabase_functions",
-		"supabase_migrations",
-	}, utils.SystemSchemas...)
-	return reset.ListSchemas(ctx, conn, exclude...)
+	return reset.LoadUserSchemas(ctx, conn)
 }
 
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {

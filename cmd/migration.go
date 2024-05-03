@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/migration/fetch"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -88,6 +89,14 @@ var (
 			fmt.Println("Local database is up to date.")
 		},
 	}
+
+	migrationFetchCmd = &cobra.Command{
+		Use:   "fetch",
+		Short: "Fetch migration files from history table",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fetch.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -132,6 +141,13 @@ func init() {
 	upFlags.Bool("local", true, "Applies pending migrations to the local database.")
 	migrationUpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationUpCmd)
+	// Build up command
+	fetchFlags := migrationFetchCmd.Flags()
+	fetchFlags.String("db-url", "", "Fetches migrations from the database specified by the connection string (must be percent-encoded).")
+	fetchFlags.Bool("linked", true, "Fetches migration history from the linked project.")
+	fetchFlags.Bool("local", false, "Fetches migration history from the local database.")
+	migrationFetchCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	migrationCmd.AddCommand(migrationFetchCmd)
 	// Build new command
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)

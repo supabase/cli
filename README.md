@@ -8,12 +8,9 @@ This repository contains all the functionality for Supabase CLI.
 
 - [x] Running Supabase locally
 - [x] Managing database migrations
-- [x] Pushing your local changes to production
-- [x] Create and Deploy Supabase Functions
-- [ ] Manage your Supabase Account
-- [x] Manage your Supabase Projects
+- [x] Creating and deploying Supabase Functions
 - [x] Generating types directly from your database schema
-- [ ] Generating API and validation schemas from your database
+- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
 
 ## Getting started
 
@@ -165,13 +162,15 @@ Command & config reference can be found [here](https://supabase.com/docs/referen
 
 ## Breaking changes
 
-The CLI is a WIP and we're still exploring the design, so expect a lot of breaking changes. We try to document migration steps in [Releases](https://github.com/supabase/cli/releases). Please file an issue if these steps don't work!
+We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
+
+However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
 
 ## Developing
 
 To run from source:
 
 ```sh
-# Go >= 1.20
+# Go >= 1.22
 go run . help
 ```

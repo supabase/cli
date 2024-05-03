@@ -30,11 +30,12 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/oauth2"
 	"golang.org/x/term"
 )
 
-func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	workdir := viper.GetString("WORKDIR")
 	if !filepath.IsAbs(workdir) {
 		workdir = filepath.Join(utils.CurrentDirAbs, workdir)
@@ -46,7 +47,7 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return errors.Errorf("failed to read workdir: %w", err)
 	} else if !empty {
 		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(workdir))
-		if !utils.PromptYesNo(title, true, os.Stdin) {
+		if !utils.NewConsole().PromptYesNo(title, true) {
 			return context.Canceled
 		}
 	}
@@ -54,9 +55,9 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 0. Download starter template
-	if len(templateUrl) > 0 {
+	if len(starter.Url) > 0 {
 		client := GetGtihubClient(ctx)
-		if err := downloadSample(ctx, client, templateUrl, fsys); err != nil {
+		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
 	} else if err := initBlank.Run(fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
@@ -75,7 +76,10 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 		return err
 	}
 	// 2. Create project
-	params := api.CreateProjectBody{Name: filepath.Base(workdir)}
+	params := api.V1CreateProjectBody{
+		Name:        filepath.Base(workdir),
+		TemplateUrl: &starter.Url,
+	}
 	if err := create.Run(ctx, params, fsys); err != nil {
 		return err
 	}
@@ -85,9 +89,6 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Linking project...")
 		keys, err = apiKeys.RunGetApiKeys(ctx, flags.ProjectRef)
-		if err == nil {
-			tenant.SetApiKeys(tenant.NewApiKey(keys))
-		}
 		return err
 	}, policy, newErrorCallback()); err != nil {
 		return err
@@ -96,7 +97,7 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	link.LinkServices(ctx, flags.ProjectRef, fsys)
+	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
@@ -115,15 +116,16 @@ func Run(ctx context.Context, templateUrl string, fsys afero.Fs, options ...func
 	}
 	policy.Reset()
 	if err := backoff.RetryNotify(func() error {
-		return push.Run(ctx, false, false, false, false, config, fsys)
+		return push.Run(ctx, false, false, true, true, config, fsys)
 	}, policy, newErrorCallback()); err != nil {
 		return err
 	}
-	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs)
+	// 7. TODO: deploy functions
+	utils.CmdSuggestion = suggestAppStart(utils.CurrentDirAbs, starter.Start)
 	return nil
 }
 
-func suggestAppStart(cwd string) string {
+func suggestAppStart(cwd, command string) string {
 	logger := utils.GetDebugLogger()
 	workdir, err := os.Getwd()
 	if err != nil {
@@ -137,7 +139,9 @@ func suggestAppStart(cwd string) string {
 	if len(workdir) > 0 && workdir != "." {
 		cmd = append(cmd, "cd "+workdir)
 	}
-	cmd = append(cmd, "npm ci", "npm run dev")
+	if len(command) > 0 {
+		cmd = append(cmd, command)
+	}
 	suggestion := "To start your app:"
 	for _, c := range cmd {
 		suggestion += fmt.Sprintf("\n  %s", utils.Aqua(c))
@@ -206,6 +210,8 @@ const (
 	POSTGRES_DATABASE             = "POSTGRES_DATABASE"
 	NEXT_PUBLIC_SUPABASE_ANON_KEY = "NEXT_PUBLIC_SUPABASE_ANON_KEY"
 	NEXT_PUBLIC_SUPABASE_URL      = "NEXT_PUBLIC_SUPABASE_URL"
+	EXPO_PUBLIC_SUPABASE_ANON_KEY = "EXPO_PUBLIC_SUPABASE_ANON_KEY"
+	EXPO_PUBLIC_SUPABASE_URL      = "EXPO_PUBLIC_SUPABASE_URL"
 )
 
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
@@ -213,7 +219,7 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 	transactionMode := *config.Copy()
 	transactionMode.Port = 6543
 	initial := map[string]string{
-		SUPABASE_URL: utils.GetSupabaseHost(flags.ProjectRef),
+		SUPABASE_URL: "https://" + utils.GetSupabaseHost(flags.ProjectRef),
 		POSTGRES_URL: utils.ToPostgresURL(transactionMode),
 	}
 	for _, entry := range keys {
@@ -246,8 +252,12 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 		case POSTGRES_DATABASE:
 			initial[k] = config.Database
 		case NEXT_PUBLIC_SUPABASE_ANON_KEY:
+			fallthrough
+		case EXPO_PUBLIC_SUPABASE_ANON_KEY:
 			initial[k] = initial[SUPABASE_ANON_KEY]
 		case NEXT_PUBLIC_SUPABASE_URL:
+			fallthrough
+		case EXPO_PUBLIC_SUPABASE_URL:
 			initial[k] = initial[SUPABASE_URL]
 		default:
 			initial[k] = v
@@ -305,6 +315,7 @@ type StarterTemplate struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Url         string `json:"url"`
+	Start       string `json:"start"`
 }
 
 func ListSamples(ctx context.Context, client *github.Client) ([]StarterTemplate, error) {
@@ -343,7 +354,7 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 	opts := github.RepositoryContentGetOptions{Ref: ref}
 	queue := make([]string, 0)
 	queue = append(queue, root)
-	jq := utils.NewJobQueue(5)
+	download := NewDownloader(5, fsys)
 	for len(queue) > 0 {
 		contentPath := queue[0]
 		queue = queue[1:]
@@ -355,10 +366,8 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			switch file.GetType() {
 			case "file":
 				path := strings.TrimPrefix(file.GetPath(), root)
-				hostPath := filepath.FromSlash("." + path)
-				if err := jq.Put(func() error {
-					return utils.DownloadFile(ctx, hostPath, file.GetDownloadURL(), fsys)
-				}); err != nil {
+				hostPath := filepath.Join(".", filepath.FromSlash(path))
+				if err := download.Start(ctx, hostPath, file.GetDownloadURL()); err != nil {
 					return err
 				}
 			case "dir":
@@ -368,5 +377,38 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 			}
 		}
 	}
-	return jq.Collect()
+	return download.Wait()
+}
+
+type Downloader struct {
+	api   *fetcher.Fetcher
+	queue *utils.JobQueue
+	fsys  afero.Fs
+}
+
+func NewDownloader(concurrency uint, fsys afero.Fs) *Downloader {
+	return &Downloader{
+		api:   fetcher.NewFetcher(""),
+		queue: utils.NewJobQueue(concurrency),
+		fsys:  fsys,
+	}
+}
+
+func (d *Downloader) Start(ctx context.Context, localPath, remotePath string) error {
+	job := func() error {
+		resp, err := d.api.Send(ctx, http.MethodGet, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if err := afero.WriteReader(d.fsys, localPath, resp.Body); err != nil {
+			return errors.Errorf("failed to write file: %w", err)
+		}
+		return nil
+	}
+	return d.queue.Put(job)
+}
+
+func (d *Downloader) Wait() error {
+	return d.queue.Collect()
 }

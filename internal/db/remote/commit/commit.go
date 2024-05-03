@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
@@ -52,7 +53,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 
 	// 2. Fetch remote schema changes
 	if len(schema) == 0 {
-		schema, err = diff.LoadUserSchemas(ctx, conn)
+		schema, err = reset.LoadUserSchemas(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 		return err
 	}
 	if len(output) == 0 {
-		return errors.New("no schema changes found")
+		return errors.New("No schema changes found")
 	}
 	return afero.WriteFile(fsys, path, []byte(output), 0644)
 }

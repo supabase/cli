@@ -19,29 +19,28 @@ func TestSuggestAppStart(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
-		suggestion := suggestAppStart(cwd)
+		suggestion := suggestAppStart(cwd, "npm ci && npm run dev")
 		// Check error
-		assert.Equal(t, "To start your app:\n  npm ci\n  npm run dev", suggestion)
+		assert.Equal(t, "To start your app:\n  npm ci && npm run dev", suggestion)
 	})
 
 	t.Run("suggest cd", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
 		// Run test
-		suggestion := suggestAppStart(filepath.Dir(cwd))
+		suggestion := suggestAppStart(filepath.Dir(cwd), "npm ci && npm run dev")
 		// Check error
 		expected := "To start your app:"
 		expected += "\n  cd " + filepath.Base(cwd)
-		expected += "\n  npm ci"
-		expected += "\n  npm run dev"
+		expected += "\n  npm ci && npm run dev"
 		assert.Equal(t, expected, suggestion)
 	})
 
 	t.Run("ignore relative path", func(t *testing.T) {
 		// Run test
-		suggestion := suggestAppStart(".")
+		suggestion := suggestAppStart(".", "supabase start")
 		// Check error
-		assert.Equal(t, "To start your app:\n  npm ci\n  npm run dev", suggestion)
+		assert.Equal(t, "To start your app:\n  supabase start", suggestion)
 	})
 }
 
@@ -75,7 +74,7 @@ func TestWriteEnv(t *testing.T) {
 		assert.Equal(t, `POSTGRES_URL="postgresql://admin:password@db.supabase.co:6543/postgres?connect_timeout=10"
 SUPABASE_ANON_KEY="anonkey"
 SUPABASE_SERVICE_ROLE_KEY="servicekey"
-SUPABASE_URL="testing.supabase.co"`, string(env))
+SUPABASE_URL="https://testing.supabase.co"`, string(env))
 	})
 
 	t.Run("merges with .env.example", func(t *testing.T) {
@@ -106,7 +105,7 @@ SUPABASE_URL="testing.supabase.co"`, string(env))
 		env, err := afero.ReadFile(fsys, ".env")
 		assert.NoError(t, err)
 		assert.Equal(t, `NEXT_PUBLIC_SUPABASE_ANON_KEY="anonkey"
-NEXT_PUBLIC_SUPABASE_URL="testing.supabase.co"
+NEXT_PUBLIC_SUPABASE_URL="https://testing.supabase.co"
 POSTGRES_DATABASE="postgres"
 POSTGRES_HOST="db.supabase.co"
 POSTGRES_PASSWORD="password"
@@ -116,7 +115,7 @@ POSTGRES_URL_NON_POOLING="postgresql://admin:password@db.supabase.co:5432/postgr
 POSTGRES_USER="admin"
 SUPABASE_ANON_KEY="anonkey"
 SUPABASE_SERVICE_ROLE_KEY="servicekey"
-SUPABASE_URL="testing.supabase.co"
+SUPABASE_URL="https://testing.supabase.co"
 no_match="example"`, string(env))
 	})
 

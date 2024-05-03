@@ -3,7 +3,6 @@ package link
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -77,19 +76,7 @@ func TestLinkCommand(t *testing.T) {
 
 	t.Run("link valid project", func(t *testing.T) {
 		defer teardown()
-		// Change stdin to read from a file
-		stdin, err := os.CreateTemp("", "")
-		require.NoError(t, err)
-		defer os.Remove(stdin.Name())
-
-		_, err = stdin.Write([]byte{'\n'})
-		require.NoError(t, err)
-		_, err = stdin.Seek(0, 0)
-		require.NoError(t, err)
-
-		oldStdin := os.Stdin
-		defer func() { os.Stdin = oldStdin }()
-		os.Stdin = stdin
+		defer fstest.MockStdin(t, "\n")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -106,7 +93,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
+			JSON(api.V1PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pgbouncer").
 			Reply(200).
@@ -126,14 +113,14 @@ func TestLinkCommand(t *testing.T) {
 			Get("/storage/v1/version").
 			Reply(200).
 			BodyString("0.40.4")
-		postgres := api.DatabaseResponse{
+		postgres := api.V1DatabaseResponse{
 			Host:    utils.GetSupabaseDbHost(project),
 			Version: "15.1.0.117",
 		}
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
-			JSON([]api.ProjectResponse{
+			JSON([]api.V1ProjectResponse{
 				{
 					Id:             project,
 					Database:       &postgres,
@@ -144,7 +131,7 @@ func TestLinkCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		err = Run(context.Background(), project, fsys, conn.Intercept)
+		err := Run(context.Background(), project, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -164,19 +151,7 @@ func TestLinkCommand(t *testing.T) {
 	})
 
 	t.Run("ignores error linking services", func(t *testing.T) {
-		// Change stdin to read from a file
-		stdin, err := os.CreateTemp("", "")
-		require.NoError(t, err)
-		defer os.Remove(stdin.Name())
-
-		_, err = stdin.Write([]byte{'\n'})
-		require.NoError(t, err)
-		_, err = stdin.Seek(0, 0)
-		require.NoError(t, err)
-
-		oldStdin := os.Stdin
-		defer func() { os.Stdin = oldStdin }()
-		os.Stdin = stdin
+		defer fstest.MockStdin(t, "\n")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
@@ -206,7 +181,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err = Run(context.Background(), project, fsys, func(cc *pgx.ConnConfig) {
+		err := Run(context.Background(), project, fsys, func(cc *pgx.ConnConfig) {
 			cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
 				return nil, errors.New("hostname resolving error")
 			}
@@ -271,7 +246,7 @@ func TestLinkPostgrest(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{})
+			JSON(api.V1PostgrestConfigResponse{})
 		// Run test
 		err := linkPostgrest(context.Background(), project)
 		// Check error
@@ -287,8 +262,8 @@ func TestLinkPostgrest(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
-			JSON(api.PostgrestConfigResponse{
-				DbSchema:          "public, storage, graphql_public",
+			JSON(api.V1PostgrestConfigResponse{
+				DbSchema:          "public, graphql_public",
 				DbExtraSearchPath: "public, extensions",
 				MaxRows:           1000,
 			})
@@ -297,7 +272,7 @@ func TestLinkPostgrest(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		utils.Config.Api.Schemas = []string{"public", "storage", "graphql_public"}
+		utils.Config.Api.Schemas = []string{"public", "graphql_public"}
 		utils.Config.Api.ExtraSearchPath = []string{"public", "extensions"}
 		utils.Config.Api.MaxRows = 1000
 		assert.Equal(t, ConfigCopy{
