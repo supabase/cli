@@ -158,6 +158,7 @@ var (
 		"supabase_auth_admin",
 		"supabase_functions_admin",
 		"supabase_read_only_user",
+		"supabase_realtime_admin",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
 		// Managed by extensions
