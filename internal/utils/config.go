@@ -267,7 +267,7 @@ type (
 	api struct {
 		Enabled         bool     `toml:"enabled"`
 		Image           string   `toml:"-"`
-		Port            uint     `toml:"port"`
+		Port            uint16   `toml:"port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
@@ -275,8 +275,8 @@ type (
 
 	db struct {
 		Image        string `toml:"-"`
-		Port         uint   `toml:"port"`
-		ShadowPort   uint   `toml:"shadow_port"`
+		Port         uint16 `toml:"port"`
+		ShadowPort   uint16 `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
 		Password     string `toml:"-"`
 		RootKey      string `toml:"-" mapstructure:"root_key"`
@@ -303,16 +303,16 @@ type (
 
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
-		Port         uint   `toml:"port"`
+		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
 	}
 
 	inbucket struct {
-		Enabled  bool `toml:"enabled"`
-		Port     uint `toml:"port"`
-		SmtpPort uint `toml:"smtp_port"`
-		Pop3Port uint `toml:"pop3_port"`
+		Enabled  bool   `toml:"enabled"`
+		Port     uint16 `toml:"port"`
+		SmtpPort uint16 `toml:"smtp_port"`
+		Pop3Port uint16 `toml:"pop3_port"`
 	}
 
 	storage struct {
