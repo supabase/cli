@@ -26,7 +26,7 @@ func TestCacheCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.CACHE_QUERY).
+		conn.Query(inspect.ReadQuery("cache")).
 			Reply("SELECT 1", Result{
 				Name:  "index hit rate",
 				Ratio: 0.9,
@@ -43,7 +43,7 @@ func TestCacheCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.CACHE_QUERY).
+		conn.Query(inspect.ReadQuery("cache")).
 			Reply("SELECT 1", []interface{}{})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
