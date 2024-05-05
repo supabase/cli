@@ -28,7 +28,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.CALLS_QUERY)
+	rows, err := conn.Query(ctx, inspect.ReadQuery("calls"))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

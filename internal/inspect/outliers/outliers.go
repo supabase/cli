@@ -28,7 +28,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.OUTLIERS_QUERY)
+	rows, err := conn.Query(ctx, inspect.ReadQuery("outliers"))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

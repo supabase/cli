@@ -20,11 +20,12 @@ type Result struct {
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.CACHE_QUERY)
+	rows, err := conn.Query(ctx, inspect.ReadQuery("cache"))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

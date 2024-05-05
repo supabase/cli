@@ -25,7 +25,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.LONG_RUNNING_QUERY)
+	rows, err := conn.Query(ctx, inspect.ReadQuery("long_running_queries"))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

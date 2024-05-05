@@ -32,7 +32,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.VACUUM_STATS_QUERY, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, inspect.ReadQuery("vacuum_stats"), reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
