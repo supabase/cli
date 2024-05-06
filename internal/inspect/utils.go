@@ -35,17 +35,18 @@ func Report(cmd *cobra.Command, config pgconn.Config, fsys afero.Fs, options ...
 	if err != nil {
 		return err
 	}
-
+	fmt.Println("Running queries...")
 	for _, v := range queries {
 		name := strings.Split(v.Name(), ".")[0]
 		query := ReadQuery(name)
 		fq := strings.Replace(query, "$1", "'{"+strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ",")+"}'::text[]", -1)
 		copyCmd := fmt.Sprintf(`COPY (%s) TO STDOUT WITH CSV HEADER`, fq)
-		url := utils.ToPostgresURL(config)
-		cmd := exec.CommandContext(cmd.Context(), "psql", url, "-At", "-F\",\"", "-c", copyCmd, "-o", fmt.Sprintf("%s.csv", name))
+		cmd := exec.CommandContext(cmd.Context(), "psql", utils.ToPostgresURL(config), "-At", "-F\",\"", "-c", copyCmd, "-o", fmt.Sprintf("%s.csv", name))
 		if err := cmd.Run(); err != nil {
 			return err
 		}
+		// fmt.Printf("Output of %s saved to %s.csv\n", name, name)
 	}
+	fmt.Println("Reports saved!")
 	return nil
 }
