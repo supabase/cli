@@ -28,9 +28,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	query := inspect.ReadQuery("bloat")
-	print(query)
-	rows, err := conn.Query(ctx, query, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, inspect.ReadQuery("bloat"), reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

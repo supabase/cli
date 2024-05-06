@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/cache"
 	"github.com/supabase/cli/internal/utils/flags"
 
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/index_sizes"
 	"github.com/supabase/cli/internal/inspect/index_usage"
@@ -197,6 +198,14 @@ var (
 			return role_connections.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
+
+	reportCmd = &cobra.Command{
+		Use:   "report",
+		Short: "Generate a CSV output for all inspect commands.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return inspect.Report(cmd, flags.DbConfig, afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -225,5 +234,6 @@ func init() {
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
+	inspectDBCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
