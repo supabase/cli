@@ -48,7 +48,7 @@ require (
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.4
 	golang.org/x/mod v0.17.0
-	golang.org/x/oauth2 v0.19.0
+	golang.org/x/oauth2 v0.20.0
 	golang.org/x/term v0.20.0
 	google.golang.org/grpc v1.63.2
 	gopkg.in/h2non/gock.v1 v1.1.2
