@@ -3,9 +3,12 @@ package inspect
 import (
 	"embed"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -35,18 +38,31 @@ func Report(cmd *cobra.Command, config pgconn.Config, fsys afero.Fs, options ...
 	if err != nil {
 		return err
 	}
+	date := time.Now().Format("2006-01-02")
+	out, err := cmd.Flags().GetString("out-path")
+	if err != nil {
+		return err
+	}
+	if out != "" {
+		err := os.MkdirAll(out, os.ModePerm)
+		if err != nil {
+			return errors.Errorf("failed to create output directory: %w", err)
+		}
+	} else {
+		out = "./"
+	}
 	fmt.Println("Running queries...")
 	for _, v := range queries {
 		name := strings.Split(v.Name(), ".")[0]
 		query := ReadQuery(name)
 		fq := strings.Replace(query, "$1", "'{"+strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ",")+"}'::text[]", -1)
 		copyCmd := fmt.Sprintf(`COPY (%s) TO STDOUT WITH CSV HEADER`, fq)
-		cmd := exec.CommandContext(cmd.Context(), "psql", utils.ToPostgresURL(config), "-At", "-F\",\"", "-c", copyCmd, "-o", fmt.Sprintf("%s.csv", name))
+		// gosec lint error is unavoidable here because of formatted params
+		cmd := exec.CommandContext(cmd.Context(), "psql", utils.ToPostgresURL(config), "-At", "-F\",\"", "-c", copyCmd, "-o", fmt.Sprintf("%s/%s_%s.csv", out, name, date)) //nolint:gosec
 		if err := cmd.Run(); err != nil {
-			return err
+			return errors.Errorf("failed to run query: %w", err)
 		}
-		// fmt.Printf("Output of %s saved to %s.csv\n", name, name)
 	}
-	fmt.Println("Reports saved!")
+	fmt.Printf("Reports saved to %s/", out)
 	return nil
 }
