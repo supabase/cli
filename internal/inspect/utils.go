@@ -51,7 +51,7 @@ func Report(cmd *cobra.Command, config pgconn.Config, fsys afero.Fs, options ...
 	} else {
 		out = "./"
 	}
-	fmt.Println("Running queries...")
+	fmt.Fprintln(os.Stderr, "Running queries...")
 	for _, v := range queries {
 		name := strings.Split(v.Name(), ".")[0]
 		query := ReadQuery(name)
