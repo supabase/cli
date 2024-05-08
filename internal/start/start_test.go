@@ -61,16 +61,6 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
