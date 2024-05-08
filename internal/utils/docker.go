@@ -49,17 +49,6 @@ func NewDocker() *client.Client {
 	return cli.Client().(*client.Client)
 }
 
-func AssertDockerIsRunning(ctx context.Context) error {
-	if _, err := Docker.Ping(ctx); err != nil {
-		if client.IsErrConnectionFailed(err) {
-			CmdSuggestion = suggestDockerInstall
-		}
-		return errors.Errorf("failed to ping docker daemon: %w", err)
-	}
-
-	return nil
-}
-
 const (
 	CliProjectLabel     = "com.supabase.cli.project"
 	composeProjectLabel = "com.docker.compose.project"
