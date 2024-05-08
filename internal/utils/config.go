@@ -470,14 +470,14 @@ func (h *hookConfig) HandleHook(hookType string) error {
 		return nil
 	}
 	if h.URI == "" {
-		return fmt.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
 	}
 	if err := validateHookURI(h.URI, hookType); err != nil {
 		return err
 	}
 	var err error
 	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return fmt.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
 	}
 	return nil
 }
