@@ -140,8 +140,8 @@ func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 	var versions []string
 	for _, filename := range names {
 		// LoadLocalMigrations guarantees we always have a match
-		verion := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		versions = append(versions, verion)
+		version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		versions = append(versions, version)
 	}
 	return versions, nil
 }
