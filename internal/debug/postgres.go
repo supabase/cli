@@ -3,6 +3,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -59,7 +60,7 @@ func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, e
 
 		for {
 			// Since pgx closes connection first, every EOF is seen as unexpected
-			if err := <-p.errChan; err != nil && err != io.ErrUnexpectedEOF {
+			if err := <-p.errChan; err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 				panic(err)
 			}
 		}

@@ -104,10 +104,10 @@ func (r *MockConn) encodeValueArg(v interface{}) (value []byte, oid uint32) {
 	}
 	var err error
 	switch dt.OID {
-	case pgtype.TextArrayOID:
-		value, err = (dt.Value).(pgtype.BinaryEncoder).EncodeBinary(ci, []byte{})
-	default:
+	case pgtype.TextOID:
 		value, err = (dt.Value).(pgtype.TextEncoder).EncodeText(ci, []byte{})
+	default:
+		value, err = (dt.Value).(pgtype.BinaryEncoder).EncodeBinary(ci, []byte{})
 	}
 	if err != nil {
 		r.errChan <- fmt.Errorf("failed to encode arg: %w", err)
@@ -132,26 +132,35 @@ func (r *MockConn) lastQuery() *extendedQueryStep {
 // Adds a server reply using binary or text protocol format.
 //
 // TODO: support prepared statements when using binary protocol
-func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
+func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
 	q := r.lastQuery()
 	// Add field description
 	if len(rows) > 0 {
 		var desc pgproto3.RowDescription
-		for i, v := range rows[0] {
-			name := fmt.Sprintf("c_%02d", i)
-			if dt, ok := ci.DataTypeForValue(v); ok {
-				size := getDataTypeSize(v)
-				format := ci.ParamFormatCodeForOID(dt.OID)
-				desc.Fields = append(desc.Fields, pgproto3.FieldDescription{
-					Name:                 []byte(name),
-					TableOID:             17131,
-					TableAttributeNumber: 1,
-					DataTypeOID:          dt.OID,
-					DataTypeSize:         size,
-					TypeModifier:         -1,
-					Format:               format,
-				})
+		if arr, ok := rows[0].([]interface{}); ok {
+			for i, v := range arr {
+				name := fmt.Sprintf("c_%02d", i)
+				if fd := toFieldDescription(v); fd != nil {
+					fd.Name = []byte(name)
+					desc.Fields = append(desc.Fields, *fd)
+				} else {
+					r.errChan <- fmt.Errorf("failed to describe field: %s", name)
+				}
 			}
+		} else if t := reflect.TypeOf(rows[0]); t.Kind() == reflect.Struct {
+			s := reflect.ValueOf(rows[0])
+			for i := 0; i < s.NumField(); i++ {
+				name := t.Field(i).Name
+				v := s.Field(i).Interface()
+				if fd := toFieldDescription(v); fd != nil {
+					fd.Name = []byte(name)
+					desc.Fields = append(desc.Fields, *fd)
+				} else {
+					r.errChan <- fmt.Errorf("failed to describe field: %s", name)
+				}
+			}
+		} else {
+			r.errChan <- fmt.Errorf("reply type must be one of [array, struct], found: %s", t.Kind())
 		}
 		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&desc))
 	} else {
@@ -161,10 +170,22 @@ func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	// Add row data
 	for _, data := range rows {
 		var dr pgproto3.DataRow
-		for _, v := range data {
-			if value, oid := r.encodeValueArg(v); oid > 0 {
-				dr.Values = append(dr.Values, value)
+		if arr, ok := data.([]interface{}); ok {
+			for _, v := range arr {
+				if value, oid := r.encodeValueArg(v); oid > 0 {
+					dr.Values = append(dr.Values, value)
+				}
 			}
+		} else if t := reflect.TypeOf(data); t.Kind() == reflect.Struct {
+			s := reflect.ValueOf(rows[0])
+			for i := 0; i < s.NumField(); i++ {
+				v := s.Field(i).Interface()
+				if value, oid := r.encodeValueArg(v); oid > 0 {
+					dr.Values = append(dr.Values, value)
+				}
+			}
+		} else {
+			r.errChan <- fmt.Errorf("invalid reply value: %v", data)
 		}
 		q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(&dr))
 	}
@@ -177,6 +198,22 @@ func (r *MockConn) Reply(tag string, rows ...[]interface{}) *MockConn {
 	}
 	q.reply.Steps = append(q.reply.Steps, pgmock.SendMessage(complete))
 	return r
+}
+
+func toFieldDescription(v interface{}) *pgproto3.FieldDescription {
+	if dt, ok := ci.DataTypeForValue(v); ok {
+		size := getDataTypeSize(v)
+		format := ci.ParamFormatCodeForOID(dt.OID)
+		return &pgproto3.FieldDescription{
+			TableOID:             17131,
+			TableAttributeNumber: 1,
+			DataTypeOID:          dt.OID,
+			DataTypeSize:         size,
+			TypeModifier:         -1,
+			Format:               format,
+		}
+	}
+	return nil
 }
 
 // Simulates an error reply from the server.
@@ -197,8 +234,8 @@ func (r *MockConn) ReplyError(code, message string) *MockConn {
 }
 
 func (r *MockConn) Close(t *testing.T) {
-	if err := <-r.errChan; err != nil {
-		t.Fatalf("failed to close: %v", err)
+	for err := range r.errChan {
+		t.Errorf("pgmock error: %v", err)
 	}
 	if err := r.server.Close(); err != nil {
 		t.Fatalf("failed to close: %v", err)
@@ -210,7 +247,7 @@ func NewWithStatus(status map[string]string) *MockConn {
 	mock := MockConn{
 		server:  bufconn.Listen(bufSize),
 		status:  status,
-		errChan: make(chan error, 1),
+		errChan: make(chan error, 10),
 	}
 	// Start server in background
 	const timeout = time.Millisecond * 450
