@@ -81,7 +81,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 	if len(output) == 0 {
 		return errors.New("No schema changes found")
 	}
-	return afero.WriteFile(fsys, path, []byte(output), 0644)
+	return utils.WriteFile(path, []byte(output), fsys)
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
