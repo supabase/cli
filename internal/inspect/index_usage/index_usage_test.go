@@ -1,4 +1,4 @@
-package bloat
+package index_usage
 
 import (
 	"context"
@@ -21,21 +21,19 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestBloat(t *testing.T) {
+func TestIndexUsage(t *testing.T) {
 
 	// Execute
-	t.Run("inspects bloat", func(t *testing.T) {
+	t.Run("inspects index usage", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(inspect.ReadQuery("bloat"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(inspect.ReadQuery("index_usage"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Type:        "index hit rate",
-				Schemaname:  "public",
-				Object_name: "table",
-				Bloat:       "0.9",
-				Waste:       "0.1",
+				Name:                        "test_table_idx",
+				Percent_of_times_index_used: "0.9",
+				Rows_in_table:               300,
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

@@ -1,4 +1,4 @@
-package bloat
+package total_table_sizes
 
 import (
 	"context"
@@ -21,21 +21,19 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestBloat(t *testing.T) {
+func TestTotalTableSizesCommand(t *testing.T) {
 
 	// Execute
-	t.Run("inspects bloat", func(t *testing.T) {
+	t.Run("inspects total table sizes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(inspect.ReadQuery("bloat"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(inspect.ReadQuery("total_table_sizes"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Type:        "index hit rate",
-				Schemaname:  "public",
-				Object_name: "table",
-				Bloat:       "0.9",
-				Waste:       "0.1",
+				Schema: "public",
+				Name:   "test_table",
+				Size:   "3GB",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

@@ -1,4 +1,4 @@
-package bloat
+package calls
 
 import (
 	"context"
@@ -7,10 +7,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
-	"github.com/supabase/cli/internal/utils"
 )
 
 var dbConfig = pgconn.Config{
@@ -21,26 +19,23 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestBloat(t *testing.T) {
-
-	// Execute
-	t.Run("inspects bloat", func(t *testing.T) {
+func TestCallsCommand(t *testing.T) {
+	t.Run("inspects calls", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(inspect.ReadQuery("bloat"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(inspect.ReadQuery("calls")).
 			Reply("SELECT 1", Result{
-				Type:        "index hit rate",
-				Schemaname:  "public",
-				Object_name: "table",
-				Bloat:       "0.9",
-				Waste:       "0.1",
+				Total_exec_time: "0.9",
+				Prop_exec_time:  "0.9",
+				Ncalls:          "0.9",
+				Sync_io_time:    "0.9",
+				Query:           "SELECT 1",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

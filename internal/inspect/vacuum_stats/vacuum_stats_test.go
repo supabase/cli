@@ -1,4 +1,4 @@
-package bloat
+package vacuum_stats
 
 import (
 	"context"
@@ -21,21 +21,24 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestBloat(t *testing.T) {
+func TestVacuumCommand(t *testing.T) {
 
 	// Execute
-	t.Run("inspects bloat", func(t *testing.T) {
+	t.Run("inspects vacuum stats", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(inspect.ReadQuery("bloat"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(inspect.ReadQuery("vacuum_stats"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Type:        "index hit rate",
-				Schemaname:  "public",
-				Object_name: "table",
-				Bloat:       "0.9",
-				Waste:       "0.1",
+				Schema:               "test_schema",
+				Table:                "test_table",
+				Last_vacuum:          "2021-01-01 00:00:00",
+				Last_autovacuum:      "2021-01-01 00:00:00",
+				Rowcount:             "1000",
+				Dead_rowcount:        "100",
+				Autovacuum_threshold: "100",
+				Expect_autovacuum:    "yes",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
