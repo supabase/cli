@@ -20,8 +20,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestLongQueriesCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects long running queries", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -38,5 +36,4 @@ func TestLongQueriesCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

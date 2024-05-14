@@ -20,8 +20,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestLocksCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects locks", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -41,5 +39,4 @@ func TestLocksCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

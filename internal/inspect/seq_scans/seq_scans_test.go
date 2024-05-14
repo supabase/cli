@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestSequentialScansCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects sequential scans", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -39,5 +37,4 @@ func TestSequentialScansCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

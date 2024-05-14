@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestTotalTableSizesCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects total table sizes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -40,5 +38,4 @@ func TestTotalTableSizesCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

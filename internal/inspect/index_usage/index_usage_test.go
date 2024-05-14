@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestIndexUsage(t *testing.T) {
-
-	// Execute
 	t.Run("inspects index usage", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -40,5 +38,4 @@ func TestIndexUsage(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

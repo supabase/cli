@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestTableRecordCountsCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects table record counts", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -40,5 +38,4 @@ func TestTableRecordCountsCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

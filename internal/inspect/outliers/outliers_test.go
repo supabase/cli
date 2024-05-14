@@ -20,8 +20,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestOutliersCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects outliers", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -40,5 +38,4 @@ func TestOutliersCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

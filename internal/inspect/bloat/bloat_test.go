@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestBloat(t *testing.T) {
-
-	// Execute
 	t.Run("inspects bloat", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -42,5 +40,4 @@ func TestBloat(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

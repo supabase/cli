@@ -20,8 +20,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestReplicationCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects replication slots", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -40,5 +38,4 @@ func TestReplicationCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestVacuumCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects vacuum stats", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -45,5 +43,4 @@ func TestVacuumCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

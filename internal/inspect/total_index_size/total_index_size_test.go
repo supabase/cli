@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestTotalIndexSizeCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects size of all indexes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -38,5 +36,4 @@ func TestTotalIndexSizeCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }

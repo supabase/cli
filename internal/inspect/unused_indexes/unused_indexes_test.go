@@ -22,8 +22,6 @@ var dbConfig = pgconn.Config{
 }
 
 func TestUnusedIndexesCommand(t *testing.T) {
-
-	// Execute
 	t.Run("inspects unused indexes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -41,5 +39,4 @@ func TestUnusedIndexesCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
-
 }
