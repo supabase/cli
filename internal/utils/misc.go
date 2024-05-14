@@ -34,9 +34,9 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240422-5cf8f30"
+	StudioImage      = "supabase/studio:20240506-2976cd6"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.45.2"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.49.0"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
@@ -158,6 +158,7 @@ var (
 		"supabase_auth_admin",
 		"supabase_functions_admin",
 		"supabase_read_only_user",
+		"supabase_realtime_admin",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
 		// Managed by extensions
@@ -187,6 +188,7 @@ var (
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")

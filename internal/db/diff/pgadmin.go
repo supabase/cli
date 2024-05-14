@@ -22,8 +22,8 @@ func SaveDiff(out, file string, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, "No schema changes found")
 	} else if len(file) > 0 {
 		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
-		if err := afero.WriteFile(fsys, path, []byte(out), 0644); err != nil {
-			return errors.Errorf("failed to save diff: %w", err)
+		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
+			return err
 		}
 		fmt.Fprintln(os.Stderr, warnDiff)
 	} else {
@@ -58,7 +58,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 	p.Send(utils.StatusMsg("Creating shadow database..."))
 
 	// 1. Create shadow db and run migrations
-	shadow, err := CreateShadowDatabase(ctx)
+	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return err
 	}

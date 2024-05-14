@@ -103,7 +103,7 @@ type kongConfig struct {
 	EdgeRuntimeId string
 	LogflareId    string
 	ApiHost       string
-	ApiPort       uint
+	ApiPort       uint16
 }
 
 var (
@@ -497,6 +497,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets,
 			)
 		}
 
@@ -505,6 +506,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets,
 			)
 		}
 
@@ -513,6 +515,25 @@ EOF
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+utils.Config.Auth.Hook.CustomAccessToken.Secrets,
+			)
+		}
+
+		if utils.Config.Auth.Hook.SendSMS.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
+				"GOTRUE_HOOK_SEND_SMS_URI="+utils.Config.Auth.Hook.SendSMS.URI,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+utils.Config.Auth.Hook.SendSMS.Secrets,
+			)
+		}
+
+		if utils.Config.Auth.Hook.SendEmail.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
+				"GOTRUE_HOOK_SEND_EMAIL_URI="+utils.Config.Auth.Hook.SendEmail.URI,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
 

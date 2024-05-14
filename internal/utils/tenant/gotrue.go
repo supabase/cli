@@ -2,10 +2,10 @@ package tenant
 
 import (
 	"context"
-	"fmt"
+	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var errGotrueVersion = errors.New("GoTrue version not found.")
@@ -16,13 +16,13 @@ type HealthResponse struct {
 	Description string `json:"description"`
 }
 
-func GetGotrueVersion(ctx context.Context, projectRef string) (string, error) {
-	apiKey, err := GetApiKeys(ctx, projectRef)
+func (t *TenantAPI) GetGotrueVersion(ctx context.Context) (string, error) {
+	resp, err := t.Send(ctx, http.MethodGet, "/auth/v1/health", nil)
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("https://%s/auth/v1/health", utils.GetSupabaseHost(projectRef))
-	data, err := GetJsonResponse[HealthResponse](ctx, url, apiKey.Anon)
+	defer resp.Body.Close()
+	data, err := fetcher.ParseJSON[HealthResponse](resp.Body)
 	if err != nil {
 		return "", err
 	}

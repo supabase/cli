@@ -1,4 +1,4 @@
-package storage
+package client
 
 import (
 	"net/url"

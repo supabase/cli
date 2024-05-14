@@ -33,7 +33,7 @@ func TestDeleteCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(api.ProjectRefResponse{
+			JSON(api.V1ProjectRefResponse{
 				Ref:  ref,
 				Name: "test-project",
 			})

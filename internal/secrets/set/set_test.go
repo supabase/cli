@@ -3,7 +3,6 @@ package set
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -44,17 +43,12 @@ func TestSecretSetCommand(t *testing.T) {
 	t.Run("Sets secret value via env file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, "/tmp/.env", []byte(dummyEnv), 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup dotenv file
-		tmpfile, err := os.CreateTemp("", "secret")
-		require.NoError(t, err)
-		defer os.Remove(tmpfile.Name())
-		_, err = tmpfile.Write([]byte(dummyEnv))
-		require.NoError(t, err)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -63,7 +57,7 @@ func TestSecretSetCommand(t *testing.T) {
 			JSON(api.CreateSecretsJSONBody{dummy}).
 			Reply(200)
 		// Run test
-		err = Run(context.Background(), project, tmpfile.Name(), []string{}, fsys)
+		err := Run(context.Background(), project, "/tmp/.env", []string{}, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

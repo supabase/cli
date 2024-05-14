@@ -20,13 +20,8 @@ import (
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.AssertDockerIsRunning(ctx); err != nil {
-			return err
-		}
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
@@ -86,7 +81,7 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 	if len(output) == 0 {
 		return errors.New("No schema changes found")
 	}
-	return afero.WriteFile(fsys, path, []byte(output), 0644)
+	return utils.WriteFile(path, []byte(output), fsys)
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

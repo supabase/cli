@@ -5,7 +5,9 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/parser"
 )
@@ -34,6 +37,19 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	// Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
+	}
+	if utils.IsLocalDatabase(config) {
+		if container, err := createShadowIfNotExists(ctx, fsys); err != nil {
+			return err
+		} else if len(container) > 0 {
+			defer utils.DockerRemove(container)
+			if !start.WaitForHealthyService(ctx, container, start.HealthTimeout) {
+				return errors.New(start.ErrDatabase)
+			}
+			if err := migrateBaseDatabase(ctx, container, fsys, options...); err != nil {
+				return err
+			}
+		}
 	}
 	// 1. Load all user defined schemas
 	if len(schema) == 0 {
@@ -58,6 +74,35 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
+}
+
+func createShadowIfNotExists(ctx context.Context, fsys afero.Fs) (string, error) {
+	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
+		return "", errors.Errorf("failed to check schemas: %w", err)
+	} else if !exists {
+		return "", nil
+	}
+	if err := utils.AssertSupabaseDbIsRunning(); !errors.Is(err, utils.ErrNotRunning) {
+		return "", err
+	}
+	fmt.Fprintf(os.Stderr, "Creating local database from %s...\n", utils.Bold(utils.SchemasDir))
+	return CreateShadowDatabase(ctx, utils.Config.Db.Port)
+}
+
+func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	var declared []string
+	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+			declared = append(declared, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, errors.Errorf("failed to walk dir: %w", err)
+	}
+	return declared, nil
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
@@ -87,9 +132,9 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 	return reset.LoadUserSchemas(ctx, conn)
 }
 
-func CreateShadowDatabase(ctx context.Context) (string, error) {
+func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 	config := start.NewContainerConfig()
-	hostPort := strconv.FormatUint(uint64(utils.Config.Db.ShadowPort), 10)
+	hostPort := strconv.FormatUint(uint64(port), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		AutoRemove:   true,
@@ -105,7 +150,7 @@ func CreateShadowDatabase(ctx context.Context) (string, error) {
 func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
 	// Retry until connected, cancelled, or timeout
 	policy := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second), uint64(timeout.Seconds()))
-	config := pgconn.Config{Port: uint16(utils.Config.Db.ShadowPort)}
+	config := pgconn.Config{Port: utils.Config.Db.ShadowPort}
 	connect := func() (*pgx.Conn, error) {
 		return utils.ConnectLocalPostgres(ctx, config, options...)
 	}
@@ -128,9 +173,35 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return apply.MigrateUp(ctx, conn, migrations, fsys)
 }
 
+func migrateBaseDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	migrations, err := loadDeclaredSchemas(fsys)
+	if err != nil {
+		return err
+	}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+		return err
+	}
+	for _, path := range migrations {
+		fmt.Fprintln(os.Stderr, "Applying schema "+utils.Bold(path)+"...")
+		migration, err := repair.NewMigrationFromFile(path, fsys)
+		if err != nil {
+			return err
+		}
+		if err := migration.ExecBatch(ctx, conn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ func(context.Context, string, string, []string) (string, error), options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
-	shadow, err := CreateShadowDatabase(ctx)
+	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return "", err
 	}
@@ -144,7 +215,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	source := utils.ToPostgresURL(pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.ShadowPort),
+		Port:     utils.Config.Db.ShadowPort,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
 		Database: "postgres",

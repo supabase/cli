@@ -273,5 +273,5 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
-	return push.CreateCustomRoles(ctx, conn, w, fsys)
+	return push.CreateCustomRoles(ctx, conn, os.Stderr, fsys)
 }

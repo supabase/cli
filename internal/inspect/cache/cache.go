@@ -24,6 +24,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
+	defer conn.Close(context.Background())
 	rows, err := conn.Query(ctx, inspect.CACHE_QUERY)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)

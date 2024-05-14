@@ -100,6 +100,9 @@ type ClientInterface interface {
 
 	UpdateBranch(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ResetBranch request
+	ResetBranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// Authorize request
 	Authorize(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -173,6 +176,20 @@ type ClientInterface interface {
 	UpdateProviderByIdWithBody(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	UpdateProviderById(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTPAForProject request
+	ListTPAForProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateTPAForProjectWithBody request with any body
+	CreateTPAForProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateTPAForProject(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteTPAForProject request
+	DeleteTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTPAForProject request
+	GetTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetPgbouncerConfig request
 	V1GetPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -390,6 +407,18 @@ func (c *Client) UpdateBranchWithBody(ctx context.Context, branchId string, cont
 
 func (c *Client) UpdateBranch(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateBranchRequest(c.Server, branchId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResetBranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResetBranchRequest(c.Server, branchId)
 	if err != nil {
 		return nil, err
 	}
@@ -714,6 +743,66 @@ func (c *Client) UpdateProviderByIdWithBody(ctx context.Context, ref string, pro
 
 func (c *Client) UpdateProviderById(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateProviderByIdRequest(c.Server, ref, providerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListTPAForProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTPAForProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTPAForProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTPAForProjectRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTPAForProject(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTPAForProjectRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteTPAForProjectRequest(c.Server, ref, tpaId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTPAForProjectRequest(c.Server, ref, tpaId)
 	if err != nil {
 		return nil, err
 	}
@@ -1619,6 +1708,40 @@ func NewUpdateBranchRequestWithBody(server string, branchId string, contentType 
 	return req, nil
 }
 
+// NewResetBranchRequest generates requests for ResetBranch
+func NewResetBranchRequest(server string, branchId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branches/%s/reset", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAuthorizeRequest generates requests for Authorize
 func NewAuthorizeRequest(server string, params *AuthorizeParams) (*http.Request, error) {
 	var err error
@@ -2487,6 +2610,169 @@ func NewUpdateProviderByIdRequestWithBody(server string, ref string, providerId 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListTPAForProjectRequest generates requests for ListTPAForProject
+func NewListTPAForProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/third-party-auth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateTPAForProjectRequest calls the generic CreateTPAForProject builder with application/json body
+func NewCreateTPAForProjectRequest(server string, ref string, body CreateTPAForProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateTPAForProjectRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCreateTPAForProjectRequestWithBody generates requests for CreateTPAForProject with any type of body
+func NewCreateTPAForProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/third-party-auth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteTPAForProjectRequest generates requests for DeleteTPAForProject
+func NewDeleteTPAForProjectRequest(server string, ref string, tpaId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tpa_id", runtime.ParamLocationPath, tpaId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/third-party-auth/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetTPAForProjectRequest generates requests for GetTPAForProject
+func NewGetTPAForProjectRequest(server string, ref string, tpaId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tpa_id", runtime.ParamLocationPath, tpaId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/third-party-auth/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -4680,6 +4966,9 @@ type ClientWithResponsesInterface interface {
 
 	UpdateBranchWithResponse(ctx context.Context, branchId string, body UpdateBranchJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateBranchResponse, error)
 
+	// ResetBranchWithResponse request
+	ResetBranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*ResetBranchResponse, error)
+
 	// AuthorizeWithResponse request
 	AuthorizeWithResponse(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*AuthorizeResponse, error)
 
@@ -4753,6 +5042,20 @@ type ClientWithResponsesInterface interface {
 	UpdateProviderByIdWithBodyWithResponse(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error)
 
 	UpdateProviderByIdWithResponse(ctx context.Context, ref string, providerId string, body UpdateProviderByIdJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateProviderByIdResponse, error)
+
+	// ListTPAForProjectWithResponse request
+	ListTPAForProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListTPAForProjectResponse, error)
+
+	// CreateTPAForProjectWithBodyWithResponse request with any body
+	CreateTPAForProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error)
+
+	CreateTPAForProjectWithResponse(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error)
+
+	// DeleteTPAForProjectWithResponse request
+	DeleteTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*DeleteTPAForProjectResponse, error)
+
+	// GetTPAForProjectWithResponse request
+	GetTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*GetTPAForProjectResponse, error)
 
 	// V1GetPgbouncerConfigWithResponse request
 	V1GetPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPgbouncerConfigResponse, error)
@@ -4935,6 +5238,7 @@ type ClientWithResponsesInterface interface {
 type DeleteBranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *BranchDeleteResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -4991,6 +5295,28 @@ func (r UpdateBranchResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ResetBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *BranchResetResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ResetBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResetBranchResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5131,7 +5457,7 @@ func (r V1ListOrganizationMembersResponse) StatusCode() int {
 type GetProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]ProjectResponse
+	JSON200      *[]V1ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -5153,7 +5479,7 @@ func (r GetProjectsResponse) StatusCode() int {
 type CreateProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ProjectResponse
+	JSON201      *V1ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -5175,7 +5501,7 @@ func (r CreateProjectResponse) StatusCode() int {
 type DeleteProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectRefResponse
+	JSON200      *V1ProjectRefResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -5429,6 +5755,94 @@ func (r UpdateProviderByIdResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UpdateProviderByIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListTPAForProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]ThirdPartyAuth
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTPAForProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTPAForProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateTPAForProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *ThirdPartyAuth
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateTPAForProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateTPAForProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteTPAForProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ThirdPartyAuth
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteTPAForProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteTPAForProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetTPAForProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ThirdPartyAuth
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTPAForProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTPAForProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5829,7 +6243,7 @@ func (r GetFunctionBodyResponse) StatusCode() int {
 type CheckServiceHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]ServiceHealthResponse
+	JSON200      *[]V1ServiceHealthResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -6004,7 +6418,7 @@ func (r GetPostgRESTConfigResponse) StatusCode() int {
 type UpdatePostgRESTConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgrestConfigResponse
+	JSON200      *V1PostgrestConfigResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -6493,6 +6907,15 @@ func (c *ClientWithResponses) UpdateBranchWithResponse(ctx context.Context, bran
 	return ParseUpdateBranchResponse(rsp)
 }
 
+// ResetBranchWithResponse request returning *ResetBranchResponse
+func (c *ClientWithResponses) ResetBranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*ResetBranchResponse, error) {
+	rsp, err := c.ResetBranch(ctx, branchId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResetBranchResponse(rsp)
+}
+
 // AuthorizeWithResponse request returning *AuthorizeResponse
 func (c *ClientWithResponses) AuthorizeWithResponse(ctx context.Context, params *AuthorizeParams, reqEditors ...RequestEditorFn) (*AuthorizeResponse, error) {
 	rsp, err := c.Authorize(ctx, params, reqEditors...)
@@ -6727,6 +7150,50 @@ func (c *ClientWithResponses) UpdateProviderByIdWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseUpdateProviderByIdResponse(rsp)
+}
+
+// ListTPAForProjectWithResponse request returning *ListTPAForProjectResponse
+func (c *ClientWithResponses) ListTPAForProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListTPAForProjectResponse, error) {
+	rsp, err := c.ListTPAForProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTPAForProjectResponse(rsp)
+}
+
+// CreateTPAForProjectWithBodyWithResponse request with arbitrary body returning *CreateTPAForProjectResponse
+func (c *ClientWithResponses) CreateTPAForProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error) {
+	rsp, err := c.CreateTPAForProjectWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTPAForProjectResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateTPAForProjectWithResponse(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error) {
+	rsp, err := c.CreateTPAForProject(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTPAForProjectResponse(rsp)
+}
+
+// DeleteTPAForProjectWithResponse request returning *DeleteTPAForProjectResponse
+func (c *ClientWithResponses) DeleteTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*DeleteTPAForProjectResponse, error) {
+	rsp, err := c.DeleteTPAForProject(ctx, ref, tpaId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteTPAForProjectResponse(rsp)
+}
+
+// GetTPAForProjectWithResponse request returning *GetTPAForProjectResponse
+func (c *ClientWithResponses) GetTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*GetTPAForProjectResponse, error) {
+	rsp, err := c.GetTPAForProject(ctx, ref, tpaId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTPAForProjectResponse(rsp)
 }
 
 // V1GetPgbouncerConfigWithResponse request returning *V1GetPgbouncerConfigResponse
@@ -7309,6 +7776,16 @@ func ParseDeleteBranchResponse(rsp *http.Response) (*DeleteBranchResponse, error
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchDeleteResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -7358,6 +7835,32 @@ func ParseUpdateBranchResponse(rsp *http.Response) (*UpdateBranchResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResetBranchResponse parses an HTTP response from a ResetBranchWithResponse call
+func ParseResetBranchResponse(rsp *http.Response) (*ResetBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResetBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BranchResetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 
@@ -7525,7 +8028,7 @@ func ParseGetProjectsResponse(rsp *http.Response) (*GetProjectsResponse, error) 
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []ProjectResponse
+		var dest []V1ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7551,7 +8054,7 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ProjectResponse
+		var dest V1ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7577,7 +8080,7 @@ func ParseDeleteProjectResponse(rsp *http.Response) (*DeleteProjectResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectRefResponse
+		var dest V1ProjectRefResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7854,6 +8357,110 @@ func ParseUpdateProviderByIdResponse(rsp *http.Response) (*UpdateProviderByIdRes
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest UpdateProviderResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListTPAForProjectResponse parses an HTTP response from a ListTPAForProjectWithResponse call
+func ParseListTPAForProjectResponse(rsp *http.Response) (*ListTPAForProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTPAForProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []ThirdPartyAuth
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateTPAForProjectResponse parses an HTTP response from a CreateTPAForProjectWithResponse call
+func ParseCreateTPAForProjectResponse(rsp *http.Response) (*CreateTPAForProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateTPAForProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ThirdPartyAuth
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteTPAForProjectResponse parses an HTTP response from a DeleteTPAForProjectWithResponse call
+func ParseDeleteTPAForProjectResponse(rsp *http.Response) (*DeleteTPAForProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteTPAForProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ThirdPartyAuth
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTPAForProjectResponse parses an HTTP response from a GetTPAForProjectWithResponse call
+func ParseGetTPAForProjectResponse(rsp *http.Response) (*GetTPAForProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTPAForProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ThirdPartyAuth
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -8297,7 +8904,7 @@ func ParseCheckServiceHealthResponse(rsp *http.Response) (*CheckServiceHealthRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []ServiceHealthResponse
+		var dest []V1ServiceHealthResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -8495,7 +9102,7 @@ func ParseUpdatePostgRESTConfigResponse(rsp *http.Response) (*UpdatePostgRESTCon
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgrestConfigResponse
+		var dest V1PostgrestConfigResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
