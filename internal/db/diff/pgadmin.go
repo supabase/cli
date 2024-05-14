@@ -22,8 +22,8 @@ func SaveDiff(out, file string, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, "No schema changes found")
 	} else if len(file) > 0 {
 		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
-		if err := afero.WriteFile(fsys, path, []byte(out), 0644); err != nil {
-			return errors.Errorf("failed to save diff: %w", err)
+		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
+			return err
 		}
 		fmt.Fprintln(os.Stderr, warnDiff)
 	} else {

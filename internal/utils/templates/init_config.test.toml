@@ -123,6 +123,11 @@ max_frequency = "5s"
 enabled = true
 uri = "pg-functions://postgres/auth/custom-access-token-hook"
 
+[auth.hook.send_sms]
+enabled = true
+uri = "http://host.docker.internal/functions/v1/send_sms"
+secrets = "env(AUTH_SEND_SMS_SECRETS)"
+
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]

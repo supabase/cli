@@ -35,9 +35,6 @@ var (
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks.
-	if err := utils.AssertDockerIsRunning(ctx); err != nil {
-		return err
-	}
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}

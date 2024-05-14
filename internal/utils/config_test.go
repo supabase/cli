@@ -41,6 +41,7 @@ func TestConfigParsing(t *testing.T) {
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
 		assert.NoError(t, LoadConfigFS(fsys))
 		// Check error
 		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)
@@ -154,4 +155,59 @@ func TestSigningJWT(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, defaultServiceRoleKey, signed)
 	})
+}
+
+func TestValidateHookURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		uri       string
+		hookName  string
+		shouldErr bool
+		errorMsg  string
+	}{
+		{
+			name:      "valid http URL",
+			uri:       "http://example.com",
+			hookName:  "testHook",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL",
+			uri:       "https://example.com",
+			hookName:  "testHook",
+			shouldErr: false,
+		},
+		{
+			name:      "valid pg-functions URI",
+			uri:       "pg-functions://functionName",
+			hookName:  "pgHook",
+			shouldErr: false,
+		},
+		{
+			name:      "invalid URI with unsupported scheme",
+			uri:       "ftp://example.com",
+			hookName:  "malformedHook",
+			shouldErr: true,
+			errorMsg:  "Invalid HTTP hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
+		},
+		{
+			name:      "invalid URI with parsing error",
+			uri:       "http://a b.com",
+			hookName:  "errorHook",
+			shouldErr: true,
+			errorMsg:  "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHookURI(tt.uri, tt.hookName)
+			if tt.shouldErr {
+				assert.Error(t, err, "Expected an error for %v", tt.name)
+				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
+			} else {
+				assert.NoError(t, err, "Expected no error for %v", tt.name)
+			}
+		})
+	}
 }
