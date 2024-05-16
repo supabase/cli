@@ -9,12 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/joho/godotenv"
@@ -31,7 +30,6 @@ import (
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
-	"golang.org/x/oauth2"
 	"golang.org/x/term"
 )
 
@@ -56,7 +54,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}
 	// 0. Download starter template
 	if len(starter.Url) > 0 {
-		client := GetGtihubClient(ctx)
+		client := utils.GetGtihubClient(ctx)
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
@@ -285,26 +283,6 @@ func parseExampleEnv(fsys afero.Fs) (map[string]string, error) {
 		return nil, errors.Errorf("failed to parse %s: %w", path, err)
 	}
 	return envs, nil
-}
-
-var (
-	githubClient *github.Client
-	clientOnce   sync.Once
-)
-
-func GetGtihubClient(ctx context.Context) *github.Client {
-	clientOnce.Do(func() {
-		var client *http.Client
-		token := os.Getenv("GITHUB_TOKEN")
-		if len(token) > 0 {
-			ts := oauth2.StaticTokenSource(
-				&oauth2.Token{AccessToken: token},
-			)
-			client = oauth2.NewClient(ctx, ts)
-		}
-		githubClient = github.NewClient(client)
-	})
-	return githubClient
 }
 
 type samplesRepo struct {
