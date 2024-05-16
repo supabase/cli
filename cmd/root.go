@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -137,9 +138,25 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		panic(err)
 	}
-	if utils.CmdSuggestion != utils.SuggestDebugFlag {
+	if vf := rootCmd.Flag("version"); vf != nil && vf.Changed {
+		version, err := utils.GetLatestRelease(rootCmd.Context())
+		if err != nil {
+			panic(err)
+		}
+		utils.CmdSuggestion = suggestUpgrade(version)
+	}
+	if len(utils.CmdSuggestion) > 0 && utils.CmdSuggestion != utils.SuggestDebugFlag {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func suggestUpgrade(version string) string {
+	if semver.Compare(version, "v"+utils.Version) <= 0 {
+		return ""
+	}
+	const guide = "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli"
+	return fmt.Sprintf(`A new version of Supabase CLI is available: %s
+Follow our guide to upgrade: %s`, utils.Aqua(version), utils.Bold(guide))
 }
 
 func recoverAndExit() {
