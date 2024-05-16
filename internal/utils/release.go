@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/go-errors/errors"
 	"github.com/google/go-github/v62/github"
 	"golang.org/x/oauth2"
 )
@@ -28,4 +29,21 @@ func GetGtihubClient(ctx context.Context) *github.Client {
 		githubClient = github.NewClient(client)
 	})
 	return githubClient
+}
+
+const (
+	CLI_OWNER = "supabase"
+	CLI_REPO  = "cli"
+)
+
+func GetLatestRelease(ctx context.Context) (string, error) {
+	client := GetGtihubClient(ctx)
+	release, _, err := client.Repositories.GetLatestRelease(ctx, CLI_OWNER, CLI_REPO)
+	if err != nil {
+		return "", errors.Errorf("Failed to fetch latest release: %w", err)
+	}
+	if release.TagName == nil {
+		return "", nil
+	}
+	return *release.TagName, nil
 }
