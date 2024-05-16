@@ -17,7 +17,8 @@ import (
 	"text/template"
 
 	"github.com/go-errors/errors"
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/tools/shared"
 )
 
@@ -66,7 +67,7 @@ func publishPackages(ctx context.Context, version string, beta bool) error {
 		config.Description += " (Beta)"
 		filename += "-beta"
 	}
-	client := shared.NewGtihubClient(ctx)
+	client := utils.GetGtihubClient(ctx)
 	if err := updatePackage(ctx, client, HOMEBREW_REPO, filename+".rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}

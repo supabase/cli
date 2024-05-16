@@ -2,20 +2,10 @@ package shared
 
 import (
 	"context"
-	"os"
 	"strings"
 
-	"github.com/google/go-github/v53/github"
-	"golang.org/x/oauth2"
+	"github.com/google/go-github/v62/github"
 )
-
-func NewGtihubClient(ctx context.Context) *github.Client {
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	return github.NewClient(tc)
-}
 
 func CreateGitBranch(ctx context.Context, client *github.Client, owner, repo, branch, base string) error {
 	master, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+base)

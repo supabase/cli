@@ -24,7 +24,7 @@ require (
 	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golangci/golangci-lint v1.58.1
-	github.com/google/go-github/v53 v53.2.0
+	github.com/google/go-github/v62 v62.0.0
 	github.com/google/go-querystring v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgconn v1.14.3

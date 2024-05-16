@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
 	"github.com/slack-go/slack"
-	"github.com/supabase/cli/tools/shared"
+	"github.com/supabase/cli/internal/utils"
 )
 
 const (
@@ -35,7 +35,7 @@ func main() {
 }
 
 func showChangeLog(ctx context.Context, slackChannel string) error {
-	client := shared.NewGtihubClient(ctx)
+	client := utils.GetGtihubClient(ctx)
 	releases, _, err := client.Repositories.ListReleases(ctx, SUPABASE_OWNER, SUPABASE_REPO, &github.ListOptions{})
 	if err != nil {
 		return err
