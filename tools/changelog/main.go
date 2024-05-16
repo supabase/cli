@@ -17,11 +17,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const (
-	SUPABASE_OWNER = "supabase"
-	SUPABASE_REPO  = "cli"
-)
-
 func main() {
 	slackChannel := ""
 	if len(os.Args) > 1 {
@@ -36,7 +31,7 @@ func main() {
 
 func showChangeLog(ctx context.Context, slackChannel string) error {
 	client := utils.GetGtihubClient(ctx)
-	releases, _, err := client.Repositories.ListReleases(ctx, SUPABASE_OWNER, SUPABASE_REPO, &github.ListOptions{})
+	releases, _, err := client.Repositories.ListReleases(ctx, utils.CLI_OWNER, utils.CLI_REPO, &github.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -53,7 +48,7 @@ func showChangeLog(ctx context.Context, slackChannel string) error {
 		opts.TagName = "v1.0.0"
 	}
 	fmt.Fprintln(os.Stderr, "Generating changelog for", opts.TagName)
-	notes, _, err := client.Repositories.GenerateReleaseNotes(ctx, SUPABASE_OWNER, SUPABASE_REPO, &opts)
+	notes, _, err := client.Repositories.GenerateReleaseNotes(ctx, utils.CLI_OWNER, utils.CLI_REPO, &opts)
 	if err != nil {
 		return err
 	}
