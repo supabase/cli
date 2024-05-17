@@ -181,7 +181,7 @@ func shouldFetchRelease(fsys afero.Fs) bool {
 func suggestUpgrade(version string) string {
 	const guide = "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli"
 	return fmt.Sprintf(`A new version of Supabase CLI is available: v%s => %s
-Follow our guide to upgrade: %s`, utils.Version, utils.Aqua(version), utils.Bold(guide))
+Follow our guide to upgrade: %s`, utils.Version, utils.Yellow(version), utils.Bold(guide))
 }
 
 func recoverAndExit() {
