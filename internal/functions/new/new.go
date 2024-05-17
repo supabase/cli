@@ -48,7 +48,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		// Templatize index.ts by config.toml if available
 		utils.Config.Api.Port = 54321
 		if err := utils.LoadConfigFS(fsys); err != nil {
-			utils.CmdSuggestion = utils.SuggestDebugFlag
+			utils.CmdSuggestion = ""
 		}
 		config := indexConfig{
 			Port:  utils.Config.Api.Port,
