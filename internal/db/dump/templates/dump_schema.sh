@@ -15,9 +15,11 @@ export PGDATABASE="$PGDATABASE"
 # Explanation of sed substitutions:
 #
 #   - do not alter superuser role "supabase_admin"
+#   - do not alter foreign data wrappers owner
 #   - do not include ACL changes on internal schemas
 #   - do not include RLS policies on cron extension schema
 #   - do not include event triggers
+#   - do not create pgtle schema and extension comments
 #   - do not create publication "supabase_realtime"
 pg_dump \
     --schema-only \
@@ -35,9 +37,11 @@ pg_dump \
 | sed -E 's/^         WHEN TAG IN /-- &/' \
 | sed -E 's/^   EXECUTE FUNCTION /-- &/' \
 | sed -E 's/^ALTER EVENT TRIGGER /-- &/' \
+| sed -E 's/^ALTER FOREIGN DATA WRAPPER (.+) OWNER TO /-- &/' \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
 | sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
+| sed -E 's/^(CREATE EXTENSION IF NOT EXISTS "pg_tle").+/\1;/' \
 | sed -E 's/^COMMENT ON EXTENSION (.+)/-- &/' \
 | sed -E 's/^CREATE POLICY "cron_job_/-- &/' \
 | sed -E 's/^ALTER TABLE "cron"/-- &/' \
