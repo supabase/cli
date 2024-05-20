@@ -27,7 +27,7 @@ func TestTotalTableSizesCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(inspect.ReadQuery("total_table_sizes"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(inspect.ReadQuery("total_table_sizes"), reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
 				Schema: "public",
 				Name:   "test_table",
