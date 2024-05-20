@@ -34,13 +34,13 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240506-2976cd6"
+	StudioImage      = "supabase/studio:20240514-6f5cabd"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.49.0"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.53.0"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.149.0"
+	GotrueImage      = "supabase/gotrue:v2.151.0"
 	RealtimeImage    = "supabase/realtime:v2.28.32"
 	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
@@ -187,6 +187,7 @@ var (
 	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
+	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")

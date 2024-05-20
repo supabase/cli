@@ -34,7 +34,7 @@ var (
 				viper.Set("WORKDIR", workdir)
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			client := bootstrap.GetGtihubClient(ctx)
+			client := utils.GetGtihubClient(ctx)
 			templates, err := bootstrap.ListSamples(ctx, client)
 			if err != nil {
 				return err
