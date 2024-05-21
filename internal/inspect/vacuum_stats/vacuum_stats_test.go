@@ -27,6 +27,7 @@ func TestVacuumCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("vacuum_stats"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Schema:               "test_schema",

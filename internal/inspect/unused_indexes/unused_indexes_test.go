@@ -27,6 +27,7 @@ func TestUnusedIndexesCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("unused_indexes"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Table:       "test_table",

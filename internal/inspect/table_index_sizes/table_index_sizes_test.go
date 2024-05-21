@@ -27,6 +27,7 @@ func TestTableIndexSizesCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("table_index_sizes"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Table:      "public.test_table",

@@ -27,6 +27,7 @@ func TestSequentialScansCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("seq_scans"), reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name:  "test_table",

@@ -25,6 +25,7 @@ func TestBloatCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("blocking")).
 			Reply("SELECT 1", Result{
 				Blocked_pid:        1,

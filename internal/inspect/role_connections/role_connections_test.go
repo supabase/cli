@@ -25,6 +25,7 @@ func TestRoleCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("role_connections")).
 			Reply("SELECT 1", Result{
 				Rolname:            "postgres",

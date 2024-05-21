@@ -25,6 +25,7 @@ func TestOutliersCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("outliers")).
 			Reply("SELECT 1", Result{
 				Total_exec_time: "0.9",

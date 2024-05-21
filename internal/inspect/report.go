@@ -73,7 +73,7 @@ func copyToCSV(ctx context.Context, srcPath, outPath string, conn *pgconn.PgConn
 	}
 	placeholder := fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
 	fullQuery := strings.ReplaceAll(string(rawQuery), "$1", placeholder)
-	csvQuery := fmt.Sprintf(`COPY (%s) TO STDOUT WITH CSV HEADER`, fullQuery)
+	csvQuery := fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", fullQuery)
 	// Create output file
 	f, err := fsys.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {

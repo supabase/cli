@@ -25,6 +25,7 @@ func TestLongQueriesCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("long_running_queries")).
 			Reply("SELECT 1", Result{
 				Pid:      1,

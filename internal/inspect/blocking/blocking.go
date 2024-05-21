@@ -29,6 +29,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
+	defer conn.Close(context.Background())
 	// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
 	rows, err := conn.Query(ctx, inspect.ReadQuery("blocking"))
 	if err != nil {

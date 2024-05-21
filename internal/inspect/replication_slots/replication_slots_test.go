@@ -25,6 +25,7 @@ func TestReplicationCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		defer conn.Close(t)
 		conn.Query(inspect.ReadQuery("replication_slots")).
 			Reply("SELECT 1", Result{
 				Slot_name:                  "test",
