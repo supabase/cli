@@ -39,9 +39,13 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 		if d.IsDir() {
 			return nil
 		}
+		query, err := queries.ReadFile(path)
+		if err != nil {
+			return errors.Errorf("failed to read query: %w", err)
+		}
 		name := strings.Split(d.Name(), ".")[0]
 		outPath := filepath.Join(out, fmt.Sprintf("%s_%s.csv", name, date))
-		return copyToCSV(ctx, path, outPath, conn.PgConn(), fsys)
+		return copyToCSV(ctx, string(query), outPath, conn.PgConn(), fsys)
 	}); err != nil {
 		return err
 	}
@@ -52,19 +56,15 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 	return nil
 }
 
-func copyToCSV(ctx context.Context, srcPath, outPath string, conn *pgconn.PgConn, fsys afero.Fs) error {
-	// Prepare SQL query
-	rawQuery, err := queries.ReadFile(srcPath)
-	if err != nil {
-		return errors.Errorf("failed to read query: %w", err)
-	}
-	csvQuery := wrapQuery(string(rawQuery))
+func copyToCSV(ctx context.Context, query, outPath string, conn *pgconn.PgConn, fsys afero.Fs) error {
 	// Create output file
 	f, err := fsys.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create output file: %w", err)
 	}
 	defer f.Close()
+	// Execute query
+	csvQuery := wrapQuery(query)
 	if _, err = conn.CopyTo(ctx, f, csvQuery); err != nil {
 		return errors.Errorf("failed to copy output: %w", err)
 	}
