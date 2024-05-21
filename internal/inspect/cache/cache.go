@@ -2,17 +2,20 @@ package cache
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed cache.sql
+var CacheQuery string
 
 type Result struct {
 	Name  string
@@ -20,12 +23,13 @@ type Result struct {
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, inspect.CACHE_QUERY)
+	rows, err := conn.Query(ctx, CacheQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

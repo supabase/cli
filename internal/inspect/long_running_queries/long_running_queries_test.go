@@ -1,4 +1,4 @@
-package cache
+package long_running_queries
 
 import (
 	"context"
@@ -18,35 +18,22 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestCacheCommand(t *testing.T) {
-	t.Run("inspects cache hit rate", func(t *testing.T) {
+func TestLongQueriesCommand(t *testing.T) {
+	t.Run("inspects long running queries", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CacheQuery).
+		conn.Query(LongRunningQueriesQuery).
 			Reply("SELECT 1", Result{
-				Name:  "index hit rate",
-				Ratio: 0.9,
+				Pid:      1,
+				Duration: "300ms",
+				Query:    "select 1",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on empty result", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(CacheQuery).
-			Reply("SELECT 1", []interface{}{})
-		// Run test
-		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "cannot find field Name in returned row")
 	})
 }

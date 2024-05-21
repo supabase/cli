@@ -1,4 +1,4 @@
-package cache
+package index_usage
 
 import (
 	"context"
@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var dbConfig = pgconn.Config{
@@ -18,35 +20,22 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestCacheCommand(t *testing.T) {
-	t.Run("inspects cache hit rate", func(t *testing.T) {
+func TestIndexUsage(t *testing.T) {
+	t.Run("inspects index usage", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CacheQuery).
+		conn.Query(IndexUsageQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Name:  "index hit rate",
-				Ratio: 0.9,
+				Name:                        "test_table_idx",
+				Percent_of_times_index_used: "0.9",
+				Rows_in_table:               300,
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on empty result", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(CacheQuery).
-			Reply("SELECT 1", []interface{}{})
-		// Run test
-		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "cannot find field Name in returned row")
 	})
 }

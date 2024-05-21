@@ -1,4 +1,4 @@
-package cache
+package table_sizes
 
 import (
 	"context"
@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var dbConfig = pgconn.Config{
@@ -18,35 +20,22 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestCacheCommand(t *testing.T) {
-	t.Run("inspects cache hit rate", func(t *testing.T) {
+func TestTableSizesCommand(t *testing.T) {
+	t.Run("inspects table sizes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CacheQuery).
+		conn.Query(TableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Name:  "index hit rate",
-				Ratio: 0.9,
+				Schema: "schema",
+				Name:   "test_table",
+				Size:   "3GB",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on empty result", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(CacheQuery).
-			Reply("SELECT 1", []interface{}{})
-		// Run test
-		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "cannot find field Name in returned row")
 	})
 }

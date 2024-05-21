@@ -1,4 +1,4 @@
-package cache
+package vacuum_stats
 
 import (
 	"context"
@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var dbConfig = pgconn.Config{
@@ -18,35 +20,27 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestCacheCommand(t *testing.T) {
-	t.Run("inspects cache hit rate", func(t *testing.T) {
+func TestVacuumCommand(t *testing.T) {
+	t.Run("inspects vacuum stats", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CacheQuery).
+		conn.Query(VacuumStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Name:  "index hit rate",
-				Ratio: 0.9,
+				Schema:               "test_schema",
+				Table:                "test_table",
+				Last_vacuum:          "2021-01-01 00:00:00",
+				Last_autovacuum:      "2021-01-01 00:00:00",
+				Rowcount:             "1000",
+				Dead_rowcount:        "100",
+				Autovacuum_threshold: "100",
+				Expect_autovacuum:    "yes",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on empty result", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(CacheQuery).
-			Reply("SELECT 1", []interface{}{})
-		// Run test
-		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "cannot find field Name in returned row")
 	})
 }

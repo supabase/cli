@@ -1,4 +1,4 @@
-package cache
+package locks
 
 import (
 	"context"
@@ -18,35 +18,25 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestCacheCommand(t *testing.T) {
-	t.Run("inspects cache hit rate", func(t *testing.T) {
+func TestLocksCommand(t *testing.T) {
+	t.Run("inspects locks", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(CacheQuery).
+		conn.Query(LocksQuery).
 			Reply("SELECT 1", Result{
-				Name:  "index hit rate",
-				Ratio: 0.9,
+				Pid:           1,
+				Relname:       "rel",
+				Transactionid: "9301",
+				Granted:       true,
+				Query:         "select 1",
+				Age:           "300ms",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on empty result", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(CacheQuery).
-			Reply("SELECT 1", []interface{}{})
-		// Run test
-		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "cannot find field Name in returned row")
 	})
 }

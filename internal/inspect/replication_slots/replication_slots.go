@@ -2,17 +2,20 @@ package replication_slots
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed replication_slots.sql
+var ReplicationSlotsQuery string
 
 type Result struct {
 	Slot_name                  string
@@ -27,7 +30,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.REPLICATION_SLOTS_QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, ReplicationSlotsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
