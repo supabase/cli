@@ -2,17 +2,20 @@ package role_connections
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed role_connections.sql
+var RoleConnectionsQuery string
 
 type Result struct {
 	Rolname            string
@@ -26,7 +29,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, inspect.ReadQuery("role_connections"))
+	rows, err := conn.Query(ctx, RoleConnectionsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

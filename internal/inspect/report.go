@@ -18,21 +18,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-const ROOT_DIR = "queries/"
-const CSV_QUERY = `COPY (%s) TO STDOUT WITH CSV HEADER`
-
 //go:embed **/*.sql
 var queries embed.FS
-
-func ReadQuery(query string) string {
-	path := fmt.Sprintf("%s%s.sql", ROOT_DIR, query)
-	queryString, err := queries.ReadFile(path)
-	if err != nil {
-		println(err.Error())
-		return ""
-	}
-	return string(queryString)
-}
 
 func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	date := time.Now().Format("2006-01-02")
@@ -71,9 +58,7 @@ func copyToCSV(ctx context.Context, srcPath, outPath string, conn *pgconn.PgConn
 	if err != nil {
 		return errors.Errorf("failed to read query: %w", err)
 	}
-	placeholder := fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
-	fullQuery := strings.ReplaceAll(string(rawQuery), "$1", placeholder)
-	csvQuery := fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", fullQuery)
+	csvQuery := wrapQuery(string(rawQuery))
 	// Create output file
 	f, err := fsys.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -84,4 +69,11 @@ func copyToCSV(ctx context.Context, srcPath, outPath string, conn *pgconn.PgConn
 		return errors.Errorf("failed to copy output: %w", err)
 	}
 	return nil
+}
+
+var ignoreSchemas = fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
+
+func wrapQuery(query string) string {
+	fullQuery := strings.ReplaceAll(query, "$1", ignoreSchemas)
+	return fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", fullQuery)
 }

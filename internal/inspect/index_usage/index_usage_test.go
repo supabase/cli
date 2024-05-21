@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -28,7 +27,7 @@ func TestIndexUsage(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("index_usage"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(IndexUsageQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name:                        "test_table_idx",
 				Percent_of_times_index_used: "0.9",

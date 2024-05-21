@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -28,7 +27,7 @@ func TestTableRecordCountsCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("table_record_counts"), reset.LikeEscapeSchema(utils.PgSchemas)).
+		conn.Query(TableRecordCountsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
 				Schema:          "public",
 				Name:            "test_table",

@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 )
 
@@ -26,7 +25,7 @@ func TestCallsCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("calls")).
+		conn.Query(CallsQuery).
 			Reply("SELECT 1", Result{
 				Total_exec_time: "0.9",
 				Prop_exec_time:  "0.9",

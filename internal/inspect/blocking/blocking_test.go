@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 )
 
@@ -26,7 +25,7 @@ func TestBloatCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("blocking")).
+		conn.Query(BlockingQuery).
 			Reply("SELECT 1", Result{
 				Blocked_pid:        1,
 				Blocking_statement: "select 1",

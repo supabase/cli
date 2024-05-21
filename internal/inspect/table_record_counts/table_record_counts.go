@@ -2,6 +2,7 @@ package table_record_counts
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
@@ -9,11 +10,13 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed table_record_counts.sql
+var TableRecordCountsQuery string
 
 type Result struct {
 	Schema          string
@@ -27,7 +30,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, inspect.ReadQuery("table_record_counts"), reset.LikeEscapeSchema(utils.PgSchemas))
+	rows, err := conn.Query(ctx, TableRecordCountsQuery, reset.LikeEscapeSchema(utils.PgSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

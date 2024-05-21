@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 )
 
@@ -26,7 +25,7 @@ func TestCacheCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("cache")).
+		conn.Query(CacheQuery).
 			Reply("SELECT 1", Result{
 				Name:  "index hit rate",
 				Ratio: 0.9,
@@ -43,7 +42,7 @@ func TestCacheCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("cache")).
+		conn.Query(CacheQuery).
 			Reply("SELECT 1", []interface{}{})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

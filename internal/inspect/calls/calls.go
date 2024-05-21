@@ -2,6 +2,7 @@ package calls
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"regexp"
 
@@ -9,11 +10,13 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed calls.sql
+var CallsQuery string
 
 type Result struct {
 	Total_exec_time string
@@ -29,7 +32,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, inspect.ReadQuery("calls"))
+	rows, err := conn.Query(ctx, CallsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

@@ -2,6 +2,7 @@ package blocking
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"regexp"
 
@@ -9,11 +10,13 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed blocking.sql
+var BlockingQuery string
 
 type Result struct {
 	Blocked_pid        int
@@ -31,7 +34,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 	defer conn.Close(context.Background())
 	// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/blocking.js#L7
-	rows, err := conn.Query(ctx, inspect.ReadQuery("blocking"))
+	rows, err := conn.Query(ctx, BlockingQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

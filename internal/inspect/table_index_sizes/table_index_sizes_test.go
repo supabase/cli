@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -28,7 +27,7 @@ func TestTableIndexSizesCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("table_index_sizes"), reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(TableIndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Table:      "public.test_table",
 				Index_size: "3GB",

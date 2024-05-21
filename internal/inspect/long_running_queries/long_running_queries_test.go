@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 )
 
@@ -26,7 +25,7 @@ func TestLongQueriesCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("long_running_queries")).
+		conn.Query(LongRunningQueriesQuery).
 			Reply("SELECT 1", Result{
 				Pid:      1,
 				Duration: "300ms",

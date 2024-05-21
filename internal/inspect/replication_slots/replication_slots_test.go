@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/testing/pgtest"
 )
 
@@ -26,7 +25,7 @@ func TestReplicationCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(inspect.ReadQuery("replication_slots")).
+		conn.Query(ReplicationSlotsQuery).
 			Reply("SELECT 1", Result{
 				Slot_name:                  "test",
 				Active:                     true,
