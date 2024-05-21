@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
 	"github.com/supabase/cli/internal/inspect"
@@ -199,22 +202,30 @@ var (
 		},
 	}
 
+	outputDir string
+
 	reportCmd = &cobra.Command{
 		Use:   "report",
-		Short: "Generate a CSV output for all inspect commands.",
+		Short: "Generate a CSV output for all inspect commands",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return inspect.Report(cmd, flags.DbConfig, afero.NewOsFs())
+			if len(outputDir) == 0 {
+				defaultPath := filepath.Join(utils.CurrentDirAbs, "report")
+				title := fmt.Sprintf("Enter a directory to save output files (or leave blank to use %s): ", utils.Bold(defaultPath))
+				if outputDir = utils.NewConsole().PromptText(title); len(outputDir) == 0 {
+					outputDir = defaultPath
+				}
+			}
+			return inspect.Report(cmd.Context(), outputDir, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 )
 
 func init() {
-	inspectFlags := inspectDBCmd.PersistentFlags()
+	inspectFlags := inspectCmd.PersistentFlags()
 	inspectFlags.String("db-url", "", "Inspect the database specified by the connection string (must be percent-encoded).")
 	inspectFlags.Bool("linked", true, "Inspect the linked project.")
 	inspectFlags.Bool("local", false, "Inspect the local database.")
-	inspectDBCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	inspectCmd.AddCommand(inspectDBCmd)
+	inspectCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)
 	inspectDBCmd.AddCommand(inspectIndexUsageCmd)
@@ -234,7 +245,8 @@ func init() {
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
-	inspectDBCmd.AddCommand(reportCmd)
-	reportCmd.Flags().String("output-dir", "", "Path to save CSV files in")
+	inspectCmd.AddCommand(inspectDBCmd)
+	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
+	inspectCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(inspectCmd)
 }
