@@ -101,7 +101,7 @@ var (
 			} else if value, err := cmd.Flags().GetBool("inspect-brk"); err == nil && value {
 				inspectorFlag.Str = "inspect-brk"
 			} else if value, err := cmd.Flags().GetBool("inspect-wait"); err == nil && value {
-				inspectorFlag.Str = "inspect-brk"
+				inspectorFlag.Str = "inspect-wait"
 			} else {
 				inspectorFlag = nil
 			}
