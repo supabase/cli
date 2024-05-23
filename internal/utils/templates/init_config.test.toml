@@ -150,6 +150,9 @@ url = "https://login.microsoftonline.com/tenant"
 # If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
 skip_nonce_check = true
 
+[edge_runtime]
+enabled = true
+
 [analytics]
 enabled = false
 port = 54327
