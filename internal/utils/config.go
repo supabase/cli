@@ -258,6 +258,7 @@ type (
 		Inbucket     inbucket            `toml:"inbucket"`
 		Storage      storage             `toml:"storage"`
 		Auth         auth                `toml:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime         `toml:"edge_runtime"`
 		Functions    map[string]function `toml:"functions"`
 		Analytics    analytics           `toml:"analytics"`
 		Experimental experimental        `toml:"experimental" mapstructure:"-"`
@@ -431,6 +432,10 @@ type (
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+	}
+
+	edgeRuntime struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	function struct {

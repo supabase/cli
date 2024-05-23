@@ -814,7 +814,7 @@ EOF
 	}
 
 	// Start all functions.
-	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
 			return err
@@ -957,10 +957,8 @@ EOF
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 	short := utils.ShortContainerImageName(imageName)
-	if val, ok := excluded[short]; ok && val {
-		return true
-	}
-	return false
+	val, ok := excluded[short]
+	return ok && val
 }
 
 func ExcludableContainers() []string {
