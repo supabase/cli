@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -25,6 +26,7 @@ const (
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
 	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
 	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
+	dockerInternalInspectorPort = 8083
 )
 
 var (
@@ -32,7 +34,25 @@ var (
 	mainFuncEmbed string
 )
 
-func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+type InspectorFlag struct {
+	Str      string
+	WithMain bool
+}
+
+func (i *InspectorFlag) flags() []string {
+	flags := []string{
+		"--policy",
+		"oneshot",
+		fmt.Sprintf("--%s=0.0.0.0:%d", i.Str, dockerInternalInspectorPort),
+	}
+	if i.WithMain {
+		flags = append(flags, "--inspect-main")
+	}
+
+	return flags
+}
+
+func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, inspectorFlag *InspectorFlag, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -48,7 +68,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	// Use network alias because Deno cannot resolve `_` in hostname
 	dbUrl := "postgresql://postgres:postgres@" + utils.DbAliases[0] + ":5432/postgres"
 	// 3. Serve and log to console
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, os.Stderr, fsys); err != nil {
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, inspectorFlag, os.Stderr, fsys); err != nil {
 		return err
 	}
 	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
@@ -58,7 +78,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, w io.Writer, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, inspectorFlag *InspectorFlag, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -146,6 +166,9 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		if viper.GetBool("DEBUG") {
 			cmd = append(cmd, "--verbose")
 		}
+		if inspectorFlag != nil {
+			cmd = append(cmd, inspectorFlag.flags()...)
+		}
 		cmdString = strings.Join(cmd, " ")
 	}
 
@@ -153,18 +176,29 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 ` + mainFuncEmbed + `
 EOF
 `}
+
+	exposedPorts := nat.PortSet{"8081/tcp": {}}
+	portBindings := nat.PortMap{}
+	if inspectorFlag != nil {
+		portStr := fmt.Sprintf("%d/tcp", dockerInternalInspectorPort)
+		hostPort := strconv.FormatUint(uint64(utils.Config.Experimental.FunctionsInspectorPort), 10)
+		exposedPorts[nat.Port(portStr)] = struct{}{}
+		portBindings[nat.Port(portStr)] = []nat.PortBinding{{HostPort: hostPort}}
+	}
+
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
 			Image:        utils.EdgeRuntimeImage,
 			Env:          append(env, userEnv...),
 			Entrypoint:   entrypoint,
-			ExposedPorts: nat.PortSet{"8081/tcp": {}},
+			ExposedPorts: exposedPorts,
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		start.WithSyslogConfig(container.HostConfig{
-			Binds:      binds,
-			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+			Binds:        binds,
+			PortBindings: portBindings,
+			ExtraHosts:   []string{"host.docker.internal:host-gateway"},
 		}),
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{

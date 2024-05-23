@@ -461,11 +461,12 @@ type (
 	}
 
 	experimental struct {
-		OrioleDBVersion string `toml:"orioledb_version"`
-		S3Host          string `toml:"s3_host"`
-		S3Region        string `toml:"s3_region"`
-		S3AccessKey     string `toml:"s3_access_key"`
-		S3SecretKey     string `toml:"s3_secret_key"`
+		OrioleDBVersion        string `toml:"orioledb_version"`
+		S3Host                 string `toml:"s3_host"`
+		S3Region               string `toml:"s3_region"`
+		S3AccessKey            string `toml:"s3_access_key"`
+		S3SecretKey            string `toml:"s3_secret_key"`
+		FunctionsInspectorPort uint16 `toml:"functions_inspector_port"`
 	}
 
 	// TODO
