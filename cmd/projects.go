@@ -92,16 +92,17 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			if len(args) == 0 {
 				title := "Which project do you want to delete?"
-				cobra.CheckErr(flags.PromptProjectRef(cmd.Context(), title))
+				cobra.CheckErr(flags.PromptProjectRef(ctx, title))
 			} else {
 				flags.ProjectRef = args[0]
 			}
-			if err := delete.PreRun(flags.ProjectRef); err != nil {
+			if err := delete.PreRun(ctx, flags.ProjectRef); err != nil {
 				return err
 			}
-			return delete.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+			return delete.Run(ctx, flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )

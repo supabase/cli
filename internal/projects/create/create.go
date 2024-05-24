@@ -48,7 +48,7 @@ func printKeyValue(key, value string) string {
 func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) error {
 	var err error
 	if len(body.Name) == 0 {
-		if body.Name, err = promptProjectName(); err != nil {
+		if body.Name, err = promptProjectName(ctx); err != nil {
 			return err
 		}
 	} else {
@@ -72,9 +72,11 @@ func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) err
 	return nil
 }
 
-func promptProjectName() (string, error) {
+func promptProjectName(ctx context.Context) (string, error) {
 	title := "Enter your project name: "
-	if name := utils.NewConsole().PromptText(title); len(name) > 0 {
+	if name, err := utils.NewConsole().PromptText(ctx, title); err != nil {
+		return "", err
+	} else if len(name) > 0 {
 		return name, nil
 	}
 	return "", errors.New("project name cannot be empty")

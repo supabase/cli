@@ -46,7 +46,9 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		}
 	} else {
 		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n • %s\n\n", strings.Join(pending, "\n • "))
-		if shouldPush := utils.NewConsole().PromptYesNo(msg, true); !shouldPush {
+		if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+			return err
+		} else if !shouldPush {
 			return errors.New(context.Canceled)
 		}
 		if includeRoles {

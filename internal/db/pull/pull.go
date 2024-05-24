@@ -54,7 +54,9 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}
 	// 4. Insert a row to `schema_migrations`
 	fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(path))
-	if shouldUpdate := utils.NewConsole().PromptYesNo("Update remote migration history table?", true); shouldUpdate {
+	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
+		return err
+	} else if shouldUpdate {
 		return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
 	}
 	return nil

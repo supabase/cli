@@ -48,7 +48,9 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 	}
 	if !utils.IsLocalDatabase(config) {
 		msg := "Do you want to reset the remote database?"
-		if shouldReset := utils.NewConsole().PromptYesNo(msg, false); !shouldReset {
+		if shouldReset, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
+			return err
+		} else if !shouldReset {
 			return errors.New(context.Canceled)
 		}
 		return resetRemote(ctx, version, config, fsys, options...)

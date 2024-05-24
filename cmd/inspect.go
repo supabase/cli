@@ -208,14 +208,17 @@ var (
 		Use:   "report",
 		Short: "Generate a CSV output for all inspect commands",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			if len(outputDir) == 0 {
 				defaultPath := filepath.Join(utils.CurrentDirAbs, "report")
 				title := fmt.Sprintf("Enter a directory to save output files (or leave blank to use %s): ", utils.Bold(defaultPath))
-				if outputDir = utils.NewConsole().PromptText(title); len(outputDir) == 0 {
+				if dir, err := utils.NewConsole().PromptText(ctx, title); err != nil {
+					return err
+				} else if len(dir) == 0 {
 					outputDir = defaultPath
 				}
 			}
-			return inspect.Report(cmd.Context(), outputDir, flags.DbConfig, afero.NewOsFs())
+			return inspect.Report(ctx, outputDir, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 )
