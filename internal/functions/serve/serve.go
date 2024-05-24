@@ -181,7 +181,7 @@ EOF
 	portBindings := nat.PortMap{}
 	if inspectorFlag != nil {
 		portStr := fmt.Sprintf("%d/tcp", dockerInternalInspectorPort)
-		hostPort := strconv.FormatUint(uint64(utils.Config.Experimental.FunctionsInspectorPort), 10)
+		hostPort := strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10)
 		exposedPorts[nat.Port(portStr)] = struct{}{}
 		portBindings[nat.Port(portStr)] = []nat.PortBinding{{HostPort: hostPort}}
 	}
