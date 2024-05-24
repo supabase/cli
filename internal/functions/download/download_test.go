@@ -182,8 +182,7 @@ func TestDownloadFunction(t *testing.T) {
 		// Run test
 		err := downloadFunction(context.Background(), project, slug, "")
 		// Check error
-		assert.ErrorContains(t, err, "Error downloading function: exit status 1")
-		assert.ErrorContains(t, err, "extract failed")
+		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
