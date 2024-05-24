@@ -17,14 +17,27 @@ type Console struct {
 	IsTTY  bool
 	stdin  *bufio.Scanner
 	logger io.Writer
+	token  chan string
 }
 
 func NewConsole() Console {
-	return Console{
+	c := Console{
 		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
 		stdin:  bufio.NewScanner(os.Stdin),
 		logger: GetDebugLogger(),
+		token:  make(chan string),
 	}
+	go func() {
+		// Scan a single line from input or file
+		if !c.stdin.Scan() {
+			fmt.Fprintln(c.logger, io.EOF)
+		}
+		if err := c.stdin.Err(); err != nil {
+			fmt.Fprintln(c.logger, err)
+		}
+		c.token <- strings.TrimSpace(c.stdin.Text())
+	}()
+	return c
 }
 
 // PromptYesNo asks yes/no questions using the label.
@@ -61,17 +74,6 @@ const ttyTimeout = time.Minute * 10
 // PromptText asks for input using the label.
 func (c Console) PromptText(ctx context.Context, label string) (string, error) {
 	fmt.Fprint(os.Stderr, label)
-	token := make(chan string)
-	go func() {
-		// Scan a single line from input or file
-		if !c.stdin.Scan() {
-			fmt.Fprintln(c.logger, io.EOF)
-		}
-		if err := c.stdin.Err(); err != nil {
-			fmt.Fprintln(c.logger, err)
-		}
-		token <- strings.TrimSpace(c.stdin.Text())
-	}()
 	// Wait a few ms for input
 	timeout := time.Millisecond
 	if c.IsTTY {
@@ -82,7 +84,7 @@ func (c Console) PromptText(ctx context.Context, label string) (string, error) {
 	// Read from stdin
 	var input string
 	select {
-	case input = <-token:
+	case input = <-c.token:
 	case <-ctx.Done():
 	case <-timer.C:
 	}
