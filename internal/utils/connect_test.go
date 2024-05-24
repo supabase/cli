@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-errors/errors"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils/cloudflare"
-	"gopkg.in/h2non/gock.v1"
 )
 
 var dbConfig = pgconn.Config{
