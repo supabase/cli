@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -15,7 +16,6 @@ import (
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestGenLocalCommand(t *testing.T) {

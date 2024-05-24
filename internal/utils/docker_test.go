@@ -11,11 +11,11 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/h2non/gock"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"gopkg.in/h2non/gock.v1"
 )
 
 const (

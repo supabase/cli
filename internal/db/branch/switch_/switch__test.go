@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -16,7 +17,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestSwitchCommand(t *testing.T) {
