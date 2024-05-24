@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -54,17 +55,27 @@ func parseYesNo(s string) *bool {
 // PromptText asks for input using the label.
 func (c Console) PromptText(label string) string {
 	fmt.Fprint(os.Stderr, label)
-	// Scan a single line from input or file
-	if !c.stdin.Scan() {
-		fmt.Fprintln(c.logger, io.EOF)
+	token := make(chan string)
+	go func() {
+		// Scan a single line from input or file
+		if !c.stdin.Scan() {
+			fmt.Fprintln(c.logger, io.EOF)
+		}
+		if err := c.stdin.Err(); err != nil {
+			fmt.Fprintln(c.logger, err)
+		}
+		token <- strings.TrimSpace(c.stdin.Text())
+	}()
+	if c.IsTTY {
+		return <-token
 	}
-	if err := c.stdin.Err(); err != nil {
-		fmt.Fprintln(c.logger, err)
+	// Wait a few ms for input
+	var input string
+	select {
+	case input = <-token:
+	case <-time.After(time.Millisecond):
 	}
-	token := strings.TrimSpace(c.stdin.Text())
-	// Echo input to stderr for non-interactive terminals
-	if !c.IsTTY {
-		fmt.Fprintln(os.Stderr, token)
-	}
-	return token
+	// Echo to stderr for non-interactive terminals
+	fmt.Fprintln(os.Stderr, input)
+	return input
 }
