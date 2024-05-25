@@ -30,7 +30,7 @@ const (
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v12.0.1"
+	PostgrestImage   = "postgrest/postgrest:v12.1"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
