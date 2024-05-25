@@ -68,6 +68,7 @@ func (suite *LinkTestSuite) SetupTest() {
 
 	// init supabase
 	init, _, err := suite.cmd.Find([]string{"init"})
+	init.SetContext(context.Background())
 	require.NoError(suite.T(), err)
 	require.NoError(suite.T(), init.RunE(init, []string{}))
 

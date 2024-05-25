@@ -21,10 +21,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if empty, err := afero.IsEmpty(fsys, utils.MigrationsDir); err != nil {
 		return errors.Errorf("failed to read migrations: %w", err)
 	} else if !empty {
-		console := utils.NewConsole()
 		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(utils.MigrationsDir))
-		if !console.PromptYesNo(title, true) {
-			return context.Canceled
+		if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, title, true); err != nil {
+			return err
+		} else if !shouldOverwrite {
+			return errors.New(context.Canceled)
 		}
 	}
 	result, err := fetchMigrationHistory(ctx, config, options...)

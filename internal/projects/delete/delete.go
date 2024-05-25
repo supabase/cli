@@ -13,13 +13,15 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-func PreRun(ref string) error {
+func PreRun(ctx context.Context, ref string) error {
 	if err := utils.AssertProjectRefIsValid(ref); err != nil {
 		return err
 	}
 	title := fmt.Sprintf("Do you want to delete project %s? This action is irreversible.", utils.Aqua(ref))
-	if shouldDelete := utils.NewConsole().PromptYesNo(title, false); !shouldDelete {
-		return errors.New("Not deleting project: " + utils.Aqua(ref))
+	if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, title, false); err != nil {
+		return err
+	} else if !shouldDelete {
+		return errors.New(context.Canceled)
 	}
 	return nil
 }

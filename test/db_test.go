@@ -2,6 +2,7 @@ package integration
 
 // Basic imports
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -80,18 +81,13 @@ func (suite *DBTestSuite) SetupTest() {
 	// create supabase dir
 	suite.cmd = clicmd.GetRootCmd()
 	init, _, err := suite.cmd.Find([]string{"init"})
-	if err != nil {
-		suite.Fail("failed to find init command")
-	}
+	require.NoError(suite.T(), err)
+	init.SetContext(context.Background())
 	err = init.RunE(init, []string{})
-	if err != nil {
-		suite.Fail("failed to init supabase cli")
-	}
+	require.NoError(suite.T(), err)
 
 	err = os.Mkdir("supabase/.branches", os.FileMode(0755))
-	if err != nil {
-		suite.Fail("failed to create supabase/.branches directory")
-	}
+	require.NoError(suite.T(), err)
 }
 
 func (suite *DBTestSuite) TeardownTest() {
