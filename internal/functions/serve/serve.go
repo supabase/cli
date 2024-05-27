@@ -22,6 +22,9 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+type InspectMode string
+type Policy string
+
 const (
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
 	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
@@ -30,29 +33,59 @@ const (
 )
 
 var (
+	InspectModeRun     InspectMode = "run"
+	InspectModeBrk     InspectMode = "brk"
+	InspectModeWait    InspectMode = "wait"
+	InspectModeDefault InspectMode = InspectModeRun
+)
+
+func (i *InspectMode) flag() string {
+	switch *i {
+	case InspectModeRun:
+		return "inspect"
+	case InspectModeBrk:
+		return "inspect-brk"
+	case InspectModeWait:
+		return "inspect-wait"
+	default:
+		return "inspect"
+	}
+}
+
+var (
+	PolicyPerWorker Policy = "per_worker"
+	PolicyOneshot   Policy = "oneshot"
+	PolicyDefault   Policy = PolicyPerWorker
+)
+
+var (
 	//go:embed templates/main.ts
 	mainFuncEmbed string
 )
 
-type InspectorFlag struct {
-	Str      string
-	WithMain bool
+type RuntimeOption struct {
+	Policy            Policy
+	InspectMode       *InspectMode
+	WithInspectorMain bool
+	WallClockLimitSec *uint64
 }
 
-func (i *InspectorFlag) flags() []string {
+func (i *RuntimeOption) args() []string {
 	flags := []string{
 		"--policy",
-		"oneshot",
-		fmt.Sprintf("--%s=0.0.0.0:%d", i.Str, dockerInternalInspectorPort),
+		string(i.Policy),
 	}
-	if i.WithMain {
+	if i.InspectMode != nil {
+		flags = append(flags, fmt.Sprintf("--%s=0.0.0.0:%d", i.InspectMode.flag(), dockerInternalInspectorPort))
+	}
+	if i.InspectMode != nil && i.WithInspectorMain {
 		flags = append(flags, "--inspect-main")
 	}
 
 	return flags
 }
 
-func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, inspectorFlag *InspectorFlag, fsys afero.Fs) error {
+func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption *RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -68,7 +101,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	// Use network alias because Deno cannot resolve `_` in hostname
 	dbUrl := "postgresql://postgres:postgres@" + utils.DbAliases[0] + ":5432/postgres"
 	// 3. Serve and log to console
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, inspectorFlag, os.Stderr, fsys); err != nil {
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, os.Stderr, fsys); err != nil {
 		return err
 	}
 	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
@@ -78,7 +111,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, inspectorFlag *InspectorFlag, w io.Writer, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption *RuntimeOption, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -111,10 +144,12 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_DB_URL=" + dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
-		"SUPABASE_INTERNAL_FUNCTIONS_PATH=" + utils.DockerFuncDirPath,
 	}
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
+	}
+	if runtimeOption.WallClockLimitSec != nil {
+		env = append(env, fmt.Sprintf("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=%d", *runtimeOption.WallClockLimitSec))
 	}
 	// 3. Parse custom import map
 	binds := []string{
@@ -166,8 +201,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		if viper.GetBool("DEBUG") {
 			cmd = append(cmd, "--verbose")
 		}
-		if inspectorFlag != nil {
-			cmd = append(cmd, inspectorFlag.flags()...)
+		if runtimeOption != nil {
+			cmd = append(cmd, runtimeOption.args()...)
 		}
 		cmdString = strings.Join(cmd, " ")
 	}
@@ -179,7 +214,7 @@ EOF
 
 	exposedPorts := nat.PortSet{"8081/tcp": {}}
 	portBindings := nat.PortMap{}
-	if inspectorFlag != nil {
+	if runtimeOption.InspectMode != nil {
 		portStr := fmt.Sprintf("%d/tcp", dockerInternalInspectorPort)
 		hostPort := strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10)
 		exposedPorts[nat.Port(portStr)] = struct{}{}

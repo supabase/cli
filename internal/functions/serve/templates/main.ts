@@ -34,6 +34,8 @@ const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
 )!;
 
+const WALLCLOCK_LIMIT_SEC = parseInt(Deno.env.get("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC"));
+
 const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.InvalidWorkerCreation, SB_SPECIFIC_ERROR_CODE.BootError],
   [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
@@ -140,7 +142,7 @@ Deno.serve({
     console.error(`serving the request with ${servicePath}`);
 
     const memoryLimitMb = 150;
-    const workerTimeoutMs = 400 * 1000;
+    const workerTimeoutMs = !isNaN(WALLCLOCK_LIMIT_SEC) && isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
     const envVars = Object.entries(envVarsObj)

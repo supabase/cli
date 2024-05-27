@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/functions/list"
 	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -50,8 +51,17 @@ var (
 		},
 	}
 
+	policy = utils.EnumFlag{
+		Allowed: []string{string(serve.PolicyPerWorker), string(serve.PolicyOneshot)},
+		Value:   string(serve.PolicyDefault),
+	}
+	inspectMode = utils.EnumFlag{
+		Allowed: []string{string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
+		Value:   string(serve.InspectModeDefault),
+	}
+
 	noVerifyJWT     = new(bool)
-	inspectorFlag   = new(serve.InspectorFlag)
+	runtimeOption   = new(serve.RuntimeOption)
 	useLegacyBundle bool
 	importMapPath   string
 
@@ -96,25 +106,30 @@ var (
 				noVerifyJWT = nil
 			}
 
-			if value, err := cmd.Flags().GetBool("inspect"); err == nil && value {
-				inspectorFlag.Str = "inspect"
-			} else if value, err := cmd.Flags().GetBool("inspect-brk"); err == nil && value {
-				inspectorFlag.Str = "inspect-brk"
-			} else if value, err := cmd.Flags().GetBool("inspect-wait"); err == nil && value {
-				inspectorFlag.Str = "inspect-wait"
+			runtimeOption.Policy = serve.Policy(policy.Value)
+
+			if inspectMode.Value == string(serve.InspectModeDefault) {
+				if value, err := cmd.Flags().GetBool("inspect"); cmd.Flags().Changed("inspect-mode") || (err == nil && value) {
+					runtimeOption.InspectMode = &serve.InspectModeDefault
+				}
 			} else {
-				inspectorFlag = nil
+				value := serve.InspectMode(inspectMode.Value)
+				runtimeOption.InspectMode = &value
 			}
 
 			if value, err := cmd.Flags().GetBool("inspect-main"); err == nil && value {
-				if inspectorFlag == nil {
-					return fmt.Errorf("the following required one of the flags was not provided: [inspect inspect-brk inspect-wait]")
+				if runtimeOption.InspectMode == nil {
+					return fmt.Errorf("the following required one of the flags was not provided: [inspect inspect-mode]")
 				} else {
-					inspectorFlag.WithMain = true
+					runtimeOption.WithInspectorMain = true
 				}
 			}
 
-			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, inspectorFlag, afero.NewOsFs())
+			if value, err := cmd.Flags().GetUint64("wallclock-limit-sec"); err == nil {
+				runtimeOption.WallClockLimitSec = &value
+			}
+
+			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
 		},
 	}
 )
@@ -131,11 +146,12 @@ func init() {
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions")
-	functionsServeCmd.Flags().Bool("inspect", false, "Activate inspector")
-	functionsServeCmd.Flags().Bool("inspect-brk", false, "Activate inspector and wait for debugger to connect and break at the start of function")
-	functionsServeCmd.Flags().Bool("inspect-wait", false, "Activate inspector and wait for debugger to connect before running user code")
-	functionsServeCmd.Flags().Bool("inspect-main", false, "Allow creating inspector for main worker")
-	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-brk", "inspect-wait")
+	functionsServeCmd.Flags().Bool("inspect", false, "Alias of --inspect-mode run.")
+	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability.")
+	functionsServeCmd.Flags().Var(&policy, "policy", "Policy to the handling of incoming requests.")
+	functionsServeCmd.Flags().Bool("inspect-main", false, "Allow creating inspector for main worker.")
+	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
+	functionsServeCmd.Flags().Uint64("wallclock-limit-sec", uint64(400), "Worker's wall clock limit in seconds. If 0 is specified, unlimited.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
