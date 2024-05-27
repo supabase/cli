@@ -149,7 +149,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
 	}
-	if runtimeOption.WallClockLimitSec != nil {
+	if runtimeOption != nil && runtimeOption.WallClockLimitSec != nil {
 		env = append(env, fmt.Sprintf("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=%d", *runtimeOption.WallClockLimitSec))
 	}
 	// 3. Parse custom import map
@@ -215,7 +215,7 @@ EOF
 
 	exposedPorts := nat.PortSet{"8081/tcp": {}}
 	portBindings := nat.PortMap{}
-	if runtimeOption.InspectMode != nil {
+	if runtimeOption != nil && runtimeOption.InspectMode != nil {
 		portStr := fmt.Sprintf("%d/tcp", dockerInternalInspectorPort)
 		hostPort := strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10)
 		exposedPorts[nat.Port(portStr)] = struct{}{}
