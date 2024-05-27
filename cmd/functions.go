@@ -126,7 +126,12 @@ var (
 			}
 
 			if value, err := cmd.Flags().GetUint64("wallclock-limit-sec"); err == nil {
-				runtimeOption.WallClockLimitSec = &value
+				if runtimeOption.InspectMode != nil && !cmd.Flags().Changed("wallclock-limit-sec") {
+					zero := uint64(0)
+					runtimeOption.WallClockLimitSec = &zero
+				} else {
+					runtimeOption.WallClockLimitSec = &value
+				}
 			}
 
 			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
