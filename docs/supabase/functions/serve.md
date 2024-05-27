@@ -9,7 +9,7 @@ Serve all Functions locally.
 1. `--inspect`
    * Alias of `--inspect-mode run`.
 
-2. `--inspect-mode [ off | run | brk | wait ] (default off)`
+2. `--inspect-mode [ run | brk | wait ]`
    * Activates the inspector capability.
    * The port used to listen to the Inspector session can be overridden in `supabase/config.toml` via the `inspector_port` property in the `edge_runtime` section.
    * `run` mode simply allows a connection without additional behavior. It is not ideal for short scripts, but it can be useful for long-running scripts where you might occasionally want to set breakpoints.

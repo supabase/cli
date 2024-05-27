@@ -56,8 +56,7 @@ var (
 		Value:   string(serve.PolicyDefault),
 	}
 	inspectMode = utils.EnumFlag{
-		Allowed: []string{"off", string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
-		Value:   "off",
+		Allowed: []string{string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
 	}
 
 	noVerifyJWT     = new(bool)
@@ -108,7 +107,7 @@ var (
 
 			runtimeOption.Policy = serve.Policy(policy.Value)
 
-			if inspectMode.Value == "off" {
+			if inspectMode.Value == "" {
 				if value, err := cmd.Flags().GetBool("inspect"); err == nil && value {
 					runtimeOption.InspectMode = &serve.InspectModeDefault
 				}
