@@ -24,4 +24,4 @@ Serve all Functions locally.
 4. `--policy [ per_worker | oneshot ] (default per_worker)`
    * A value that indicates how the edge-runtime should forward incoming HTTP requests to the worker.
    * `per_worker` allows multiple HTTP requests to be forwarded to a worker that has already been created.
-   * `oneshot` will force the worker to process a single HTTP request and then exit. (Debugging purpose, This is especially useful if you want to reflect changes you've made immediately).
+   * `oneshot` will force the worker to process a single HTTP request and then exit. (Debugging purpose, This is especially useful if you want to reflect changes you've made immediately.)
