@@ -142,7 +142,7 @@ Deno.serve({
     console.error(`serving the request with ${servicePath}`);
 
     const memoryLimitMb = 150;
-    const workerTimeoutMs = !isNaN(WALLCLOCK_LIMIT_SEC) && isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
+    const workerTimeoutMs = isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
     const envVars = Object.entries(envVarsObj)
