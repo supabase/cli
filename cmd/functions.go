@@ -118,11 +118,6 @@ var (
 				return fmt.Errorf("--inspect-main must be used with one of the following flags: [inspect inspect-mode]")
 			}
 
-			// TODO: remove wall clock option from flags since it's an env var
-			if runtimeOption.InspectMode != nil {
-				runtimeOption.WallClockLimitSec = utils.Ptr(uint64(0))
-			}
-
 			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
 		},
 	}

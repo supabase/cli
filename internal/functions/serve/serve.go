@@ -53,7 +53,6 @@ type RuntimeOption struct {
 	Policy            Policy
 	InspectMode       *InspectMode
 	WithInspectorMain bool
-	WallClockLimitSec *uint64
 }
 
 func (i *RuntimeOption) toArgs() []string {
@@ -145,8 +144,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
 	}
-	if runtimeOption.WallClockLimitSec != nil {
-		env = append(env, fmt.Sprintf("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=%d", *runtimeOption.WallClockLimitSec))
+	if runtimeOption.InspectMode != nil {
+		env = append(env, "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0")
 	}
 	// 3. Parse custom import map
 	binds := []string{
@@ -188,7 +187,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
-
 	// 4. Parse entrypoint script
 	cmd := append([]string{
 		"edge-runtime",
@@ -205,7 +203,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 ` + mainFuncEmbed + `
 EOF
 `}
-
 	// 5. Parse exposed ports
 	ports := []string{fmt.Sprintf("::%d/tcp", dockerRuntimeServerPort)}
 	if runtimeOption.InspectMode != nil {
@@ -213,9 +210,8 @@ EOF
 	}
 	exposedPorts, portBindings, err := nat.ParsePortSpecs(ports)
 	if err != nil {
-		return errors.Errorf("failed to parse ports: %w", err)
+		return errors.Errorf("failed to expose ports: %w", err)
 	}
-
 	// 6. Start container
 	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
 	_, err = utils.DockerStart(
