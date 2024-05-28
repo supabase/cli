@@ -823,11 +823,11 @@ EOF
 	}
 
 	// Start pg-meta.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.PgmetaImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PgmetaImage,
+				Image: utils.Config.Studio.PgmetaImage,
 				Env: []string{
 					"PG_META_PORT=8080",
 					"PG_META_DB_HOST=" + dbConfig.Host,
@@ -861,11 +861,11 @@ EOF
 	}
 
 	// Start Studio.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.StudioImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.StudioImage,
+				Image: utils.Config.Studio.Image,
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,

@@ -219,6 +219,10 @@ var Config = config{
 		},
 		JwtSecret: defaultJwtSecret,
 	},
+	Studio: studio{
+		Image:       StudioImage,
+		PgmetaImage: PgmetaImage,
+	},
 	Analytics: analytics{
 		ApiKey: "api-key",
 		// Defaults to bigquery for backwards compatibility with existing config.toml
@@ -305,9 +309,11 @@ type (
 
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
+		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
+		PgmetaImage  string `toml:"-"`
 	}
 
 	inbucket struct {
@@ -619,6 +625,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Studio.Enabled {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
+			}
+			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
+			}
+			if version, err := afero.ReadFile(fsys, PgmetaVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.PgmetaImage = replaceImageTag(PgmetaImage, string(version))
 			}
 			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
