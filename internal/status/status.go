@@ -38,7 +38,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.ApiURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://%s:%d/graphql/v1", utils.Config.Hostname, utils.Config.Api.Port)
 	}
-	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
+	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
 	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {

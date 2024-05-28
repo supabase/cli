@@ -72,7 +72,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.PgmetaImage,
+			Image: utils.Config.Studio.PgmetaImage,
 			Env: []string{
 				"PG_META_DB_URL=" + escaped,
 				"PG_META_GENERATE_TYPES=typescript",
