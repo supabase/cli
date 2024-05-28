@@ -116,6 +116,8 @@ var (
 	}
 	// Initialised by postgres image and owned by postgres role
 	ManagedSchemas = append([]string{
+		"_analytics",
+		"_realtime",
 		"pgbouncer",
 		"pgsodium",
 		"pgtle",

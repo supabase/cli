@@ -35,6 +35,8 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
+	`\_analytics`,
+	`\_realtime`,
 	"pgbouncer",
 	"pgsodium",
 	"pgtle",
