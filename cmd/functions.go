@@ -51,16 +51,7 @@ var (
 		},
 	}
 
-	policy = utils.EnumFlag{
-		Allowed: []string{string(serve.PolicyPerWorker), string(serve.PolicyOneshot)},
-		Value:   string(serve.PolicyDefault),
-	}
-	inspectMode = utils.EnumFlag{
-		Allowed: []string{string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
-	}
-
 	noVerifyJWT     = new(bool)
-	runtimeOption   = new(serve.RuntimeOption)
 	useLegacyBundle bool
 	importMapPath   string
 
@@ -91,6 +82,16 @@ var (
 	}
 
 	envFilePath string
+	// TODO: move policy to config.toml
+	policy = utils.EnumFlag{
+		Allowed: []string{string(serve.PolicyPerWorker), string(serve.PolicyOneshot)},
+		Value:   string(serve.PolicyOneshot),
+	}
+	inspectMode = utils.EnumFlag{
+		Allowed: []string{string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
+	}
+	inspectRun    bool
+	runtimeOption serve.RuntimeOption
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve",
@@ -107,26 +108,19 @@ var (
 
 			runtimeOption.Policy = serve.Policy(policy.Value)
 
-			if inspectMode.Value == "" {
-				if value, err := cmd.Flags().GetBool("inspect"); err == nil && value {
-					runtimeOption.InspectMode = &serve.InspectModeDefault
-				}
-			} else {
-				value := serve.InspectMode(inspectMode.Value)
-				runtimeOption.InspectMode = &value
+			if len(inspectMode.Value) > 0 {
+				runtimeOption.InspectMode = utils.Ptr(serve.InspectMode(inspectMode.Value))
+			} else if inspectRun {
+				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeRun)
 			}
 
-			if value, err := cmd.Flags().GetBool("inspect-main"); err == nil && value {
-				if runtimeOption.InspectMode == nil {
-					return fmt.Errorf("the following required one of the flags was not provided: [inspect inspect-mode]")
-				} else {
-					runtimeOption.WithInspectorMain = true
-				}
+			if runtimeOption.InspectMode == nil && runtimeOption.WithInspectorMain {
+				return fmt.Errorf("--inspect-main must be used with one of the following flags: [inspect inspect-mode]")
 			}
 
+			// TODO: remove wall clock option from flags since it's an env var
 			if runtimeOption.InspectMode != nil {
-				zero := uint64(0)
-				runtimeOption.WallClockLimitSec = &zero
+				runtimeOption.WallClockLimitSec = utils.Ptr(uint64(0))
 			}
 
 			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
@@ -145,12 +139,12 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions")
-	functionsServeCmd.Flags().Bool("inspect", false, "Alias of --inspect-mode run.")
-	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability.")
-	functionsServeCmd.Flags().Var(&policy, "policy", "Policy to the handling of incoming requests.")
-	functionsServeCmd.Flags().Bool("inspect-main", false, "Allow creating inspector for main worker.")
+	functionsServeCmd.Flags().Var(&policy, "policy", "Policy for handling incoming requests.")
+	functionsServeCmd.Flags().BoolVar(&inspectRun, "inspect", false, "Alias of --inspect-mode run.")
+	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability for debugging.")
+	functionsServeCmd.Flags().BoolVar(&runtimeOption.WithInspectorMain, "inspect-main", false, "Allow inspecting the main worker.")
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
+	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")

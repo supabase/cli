@@ -816,7 +816,7 @@ EOF
 	// Start all functions.
 	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
-		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, nil, w, fsys); err != nil {
+		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, w, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.EdgeRuntimeId)

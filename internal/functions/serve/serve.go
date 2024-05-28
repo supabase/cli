@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -23,44 +22,31 @@ import (
 )
 
 type InspectMode string
-type Policy string
 
 const (
-	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
-	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
-	dockerInternalInspectorPort = 8083
+	InspectModeRun  InspectMode = "run"
+	InspectModeBrk  InspectMode = "brk"
+	InspectModeWait InspectMode = "wait"
 )
 
-var (
-	InspectModeRun     InspectMode = "run"
-	InspectModeBrk     InspectMode = "brk"
-	InspectModeWait    InspectMode = "wait"
-	InspectModeDefault InspectMode = InspectModeRun
-)
-
-func (i *InspectMode) flag() string {
-	switch *i {
-	case InspectModeRun:
-		return "inspect"
+func (mode InspectMode) toFlag() string {
+	switch mode {
 	case InspectModeBrk:
 		return "inspect-brk"
 	case InspectModeWait:
 		return "inspect-wait"
+	case InspectModeRun:
+		fallthrough
 	default:
 		return "inspect"
 	}
 }
 
-var (
+type Policy string
+
+const (
 	PolicyPerWorker Policy = "per_worker"
 	PolicyOneshot   Policy = "oneshot"
-	PolicyDefault   Policy = PolicyPerWorker
-)
-
-var (
-	//go:embed templates/main.ts
-	mainFuncEmbed string
 )
 
 type RuntimeOption struct {
@@ -70,22 +56,32 @@ type RuntimeOption struct {
 	WallClockLimitSec *uint64
 }
 
-func (i *RuntimeOption) args() []string {
-	flags := []string{
-		"--policy",
-		string(i.Policy),
-	}
+func (i *RuntimeOption) toArgs() []string {
+	flags := []string{fmt.Sprintf("--policy=%s", i.Policy)}
 	if i.InspectMode != nil {
-		flags = append(flags, fmt.Sprintf("--%s=0.0.0.0:%d", i.InspectMode.flag(), dockerInternalInspectorPort))
+		flags = append(flags, fmt.Sprintf("--%s=0.0.0.0:%d", i.InspectMode.toFlag(), dockerRuntimeInspectorPort))
+		if i.WithInspectorMain {
+			flags = append(flags, "--inspect-main")
+		}
 	}
-	if i.InspectMode != nil && i.WithInspectorMain {
-		flags = append(flags, "--inspect-main")
-	}
-
 	return flags
 }
 
-func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption *RuntimeOption, fsys afero.Fs) error {
+const (
+	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
+	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
+	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
+	dockerRuntimeMainPath       = utils.DockerDenoDir + "/main"
+	dockerRuntimeServerPort     = 8081
+	dockerRuntimeInspectorPort  = 8083
+)
+
+var (
+	//go:embed templates/main.ts
+	mainFuncEmbed string
+)
+
+func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -111,7 +107,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption *RuntimeOption, w io.Writer, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -149,7 +145,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
 	}
-	if runtimeOption != nil && runtimeOption.WallClockLimitSec != nil {
+	if runtimeOption.WallClockLimitSec != nil {
 		env = append(env, fmt.Sprintf("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=%d", *runtimeOption.WallClockLimitSec))
 	}
 	// 3. Parse custom import map
@@ -193,35 +189,35 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 
-	// 4. Start container
-	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
-
-	var cmdString string
-	{
-		cmd := []string{"edge-runtime", "start", "--main-service", "/home/deno/main", "-p", "8081"}
-		if viper.GetBool("DEBUG") {
-			cmd = append(cmd, "--verbose")
-		}
-		if runtimeOption != nil {
-			cmd = append(cmd, runtimeOption.args()...)
-		}
-		cmdString = strings.Join(cmd, " ")
+	// 4. Parse entrypoint script
+	cmd := append([]string{
+		"edge-runtime",
+		"start",
+		"--main-service=.",
+		fmt.Sprintf("--port=%d", dockerRuntimeServerPort),
+	}, runtimeOption.toArgs()...)
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
 	}
+	cmdString := strings.Join(cmd, " ")
 
-	entrypoint := []string{"sh", "-c", `mkdir -p /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
 EOF
 `}
 
-	exposedPorts := nat.PortSet{"8081/tcp": {}}
-	portBindings := nat.PortMap{}
-	if runtimeOption != nil && runtimeOption.InspectMode != nil {
-		portStr := fmt.Sprintf("%d/tcp", dockerInternalInspectorPort)
-		hostPort := strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10)
-		exposedPorts[nat.Port(portStr)] = struct{}{}
-		portBindings[nat.Port(portStr)] = []nat.PortBinding{{HostPort: hostPort}}
+	// 5. Parse exposed ports
+	ports := []string{fmt.Sprintf("::%d/tcp", dockerRuntimeServerPort)}
+	if runtimeOption.InspectMode != nil {
+		ports = append(ports, fmt.Sprintf(":%d:%d/tcp", utils.Config.EdgeRuntime.InspectorPort, dockerRuntimeInspectorPort))
+	}
+	exposedPorts, portBindings, err := nat.ParsePortSpecs(ports)
+	if err != nil {
+		return errors.Errorf("failed to parse ports: %w", err)
 	}
 
+	// 6. Start container
+	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
@@ -229,6 +225,7 @@ EOF
 			Env:          append(env, userEnv...),
 			Entrypoint:   entrypoint,
 			ExposedPorts: exposedPorts,
+			WorkingDir:   dockerRuntimeMainPath,
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		start.WithSyslogConfig(container.HostConfig{
@@ -300,7 +297,7 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 		if importMapPath != "" {
 			dockerImportMapPath = dockerFlagImportMapPath
 		} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
-			dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
+			dockerImportMapPath = utils.DockerDenoDir + "/import_maps/" + functionName + "/import_map.json"
 			hostImportMapPath := filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
 			modules, err := utils.BindImportMap(hostImportMapPath, dockerImportMapPath, fsys)
 			if err != nil {
