@@ -306,6 +306,8 @@ func TestRestartDatabase(t *testing.T) {
 var escapedSchemas = []string{
 	"extensions",
 	"public",
+	`\_analytics`,
+	`\_realtime`,
 	"pgbouncer",
 	"pgsodium",
 	"pgtle",
