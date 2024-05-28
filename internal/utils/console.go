@@ -28,14 +28,14 @@ func NewConsole() Console {
 		token:  make(chan string),
 	}
 	go func() {
-		// Scan a single line from input or file
-		if !c.stdin.Scan() {
-			fmt.Fprintln(c.logger, io.EOF)
+		// Scan line by line from input or file
+		for c.stdin.Scan() {
+			c.token <- strings.TrimSpace(c.stdin.Text())
 		}
 		if err := c.stdin.Err(); err != nil {
 			fmt.Fprintln(c.logger, err)
 		}
-		c.token <- strings.TrimSpace(c.stdin.Text())
+		close(c.token)
 	}()
 	return c
 }
