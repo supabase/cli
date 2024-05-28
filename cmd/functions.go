@@ -82,15 +82,14 @@ var (
 	}
 
 	envFilePath string
-	// TODO: move policy to config.toml
-	policy = utils.EnumFlag{
-		Allowed: []string{string(serve.PolicyPerWorker), string(serve.PolicyOneshot)},
-		Value:   string(serve.PolicyOneshot),
-	}
+	inspectRun  bool
 	inspectMode = utils.EnumFlag{
-		Allowed: []string{string(serve.InspectModeRun), string(serve.InspectModeBrk), string(serve.InspectModeWait)},
+		Allowed: []string{
+			string(serve.InspectModeRun),
+			string(serve.InspectModeBrk),
+			string(serve.InspectModeWait),
+		},
 	}
-	inspectRun    bool
 	runtimeOption serve.RuntimeOption
 
 	functionsServeCmd = &cobra.Command{
@@ -106,16 +105,13 @@ var (
 				noVerifyJWT = nil
 			}
 
-			runtimeOption.Policy = serve.Policy(policy.Value)
-
 			if len(inspectMode.Value) > 0 {
 				runtimeOption.InspectMode = utils.Ptr(serve.InspectMode(inspectMode.Value))
 			} else if inspectRun {
 				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeRun)
 			}
-
-			if runtimeOption.InspectMode == nil && runtimeOption.WithInspectorMain {
-				return fmt.Errorf("--inspect-main must be used with one of the following flags: [inspect inspect-mode]")
+			if runtimeOption.InspectMode == nil && runtimeOption.InspectMain {
+				return fmt.Errorf("--inspect-main must be used together with one of these flags: [inspect inspect-mode]")
 			}
 
 			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
@@ -134,10 +130,9 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().Var(&policy, "policy", "Policy for handling incoming requests.")
 	functionsServeCmd.Flags().BoolVar(&inspectRun, "inspect", false, "Alias of --inspect-mode run.")
 	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability for debugging.")
-	functionsServeCmd.Flags().BoolVar(&runtimeOption.WithInspectorMain, "inspect-main", false, "Allow inspecting the main worker.")
+	functionsServeCmd.Flags().BoolVar(&runtimeOption.InspectMain, "inspect-main", false, "Allow inspecting the main worker.")
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))

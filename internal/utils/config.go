@@ -159,6 +159,13 @@ func (c CustomClaims) NewToken() *jwt.Token {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
+type RequestPolicy string
+
+const (
+	PolicyPerWorker RequestPolicy = "per_worker"
+	PolicyOneshot   RequestPolicy = "oneshot"
+)
+
 var Config = config{
 	Api: api{
 		Image: PostgrestImage,
@@ -441,8 +448,9 @@ type (
 	}
 
 	edgeRuntime struct {
-		Enabled       bool   `toml:"enabled"`
-		InspectorPort uint16 `toml:"inspector_port"`
+		Enabled       bool          `toml:"enabled"`
+		Policy        RequestPolicy `toml:"policy"`
+		InspectorPort uint16        `toml:"inspector_port"`
 	}
 
 	function struct {
@@ -770,10 +778,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 	}
 	// Validate functions config
+	if Config.EdgeRuntime.Enabled {
+		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+		if !SliceContains(allowed, Config.EdgeRuntime.Policy) {
+			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
+		}
+	}
 	for name, functionConfig := range Config.Functions {
 		if functionConfig.VerifyJWT == nil {
-			verifyJWT := true
-			functionConfig.VerifyJWT = &verifyJWT
+			functionConfig.VerifyJWT = Ptr(true)
 			Config.Functions[name] = functionConfig
 		}
 	}

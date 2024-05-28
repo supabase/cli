@@ -150,7 +150,7 @@ Deno.serve({
         !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
       );
 
-    const forceCreate = true;
+    const forceCreate = false;
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;

@@ -42,24 +42,16 @@ func (mode InspectMode) toFlag() string {
 	}
 }
 
-type Policy string
-
-const (
-	PolicyPerWorker Policy = "per_worker"
-	PolicyOneshot   Policy = "oneshot"
-)
-
 type RuntimeOption struct {
-	Policy            Policy
-	InspectMode       *InspectMode
-	WithInspectorMain bool
+	InspectMode *InspectMode
+	InspectMain bool
 }
 
 func (i *RuntimeOption) toArgs() []string {
-	flags := []string{fmt.Sprintf("--policy=%s", i.Policy)}
+	flags := []string{}
 	if i.InspectMode != nil {
 		flags = append(flags, fmt.Sprintf("--%s=0.0.0.0:%d", i.InspectMode.toFlag(), dockerRuntimeInspectorPort))
-		if i.WithInspectorMain {
+		if i.InspectMain {
 			flags = append(flags, "--inspect-main")
 		}
 	}
@@ -193,6 +185,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"start",
 		"--main-service=.",
 		fmt.Sprintf("--port=%d", dockerRuntimeServerPort),
+		fmt.Sprintf("--policy=%s", utils.Config.EdgeRuntime.Policy),
 	}, runtimeOption.toArgs()...)
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
@@ -288,7 +281,6 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 		}
 
 		// CLI flags take priority over config.toml.
-
 		dockerImportMapPath := dockerFallbackImportMapPath
 		if importMapPath != "" {
 			dockerImportMapPath = dockerFlagImportMapPath
