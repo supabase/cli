@@ -155,7 +155,6 @@ func init() {
 	functionsServeCmd.Flags().Var(&policy, "policy", "Policy to the handling of incoming requests.")
 	functionsServeCmd.Flags().Bool("inspect-main", false, "Allow creating inspector for main worker.")
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
-	functionsServeCmd.Flags().Uint64("wallclock-limit-sec", uint64(400), "Worker's wall clock limit in seconds. If 0 is specified, unlimited.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
