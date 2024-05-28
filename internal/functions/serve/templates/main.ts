@@ -117,6 +117,12 @@ Deno.serve({
       return getResponse({ message: "ok" }, STATUS_CODE.OK);
     }
 
+    // handle metrics
+    if (pathname === '/_internal/metric') {
+      const metric = await EdgeRuntime.getRuntimeMetrics();
+      return Response.json(metric);
+    }
+
     const pathParts = pathname.split("/");
     const functionName = pathParts[1];
 
