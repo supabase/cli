@@ -106,7 +106,7 @@ paths:
         - bearer: []
   /v1/projects:
     get:
-      operationId: v1-get-all-projects
+      operationId: v1-list-all-projects
       summary: List all projects
       description: Returns a list of all projects you've previously created.
       parameters: []
@@ -1066,7 +1066,7 @@ paths:
       security:
         - bearer: []
     delete:
-      operationId: v1-deactive-vanity-subdomain-config
+      operationId: v1-deactivate-vanity-subdomain-config
       summary: '[Beta] Deletes a project''s vanity subdomain configuration'
       parameters:
         - name: ref
@@ -1401,7 +1401,7 @@ paths:
         - bearer: []
   /v1/projects/{ref}/config/database/postgres:
     get:
-      operationId: get-postgres-config
+      operationId: v1-get-postgres-config
       summary: Gets project's Postgres config
       parameters:
         - name: ref
@@ -1426,7 +1426,7 @@ paths:
       security:
         - bearer: []
     put:
-      operationId: update-postgres-config
+      operationId: v1-update-postgres-config
       summary: Updates project's Postgres config
       parameters:
         - name: ref
@@ -1480,6 +1480,67 @@ paths:
           description: Failed to retrieve project's pgbouncer config
       tags:
         - database
+  /v1/projects/{ref}/config/database/pooler:
+    get:
+      operationId: v1-get-supavisor-config
+      summary: Gets project's supavisor config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SupavisorConfigResponse'
+        '500':
+          description: Failed to retrieve project's supavisor config
+      tags:
+        - database
+      security:
+        - bearer: []
+    patch:
+      operationId: v1-update-supavisor-config
+      summary: Updates project's supavisor config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSupavisorConfigBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateSupavisorConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's supavisor config
+      tags:
+        - database
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/auth:
     get:
       operationId: v1-get-auth-service-config
@@ -3198,6 +3259,80 @@ components:
           type: number
         connection_string:
           type: string
+    SupavisorConfigResponse:
+      type: object
+      properties:
+        identifier:
+          type: string
+        database_type:
+          enum:
+            - PRIMARY
+            - READ_REPLICA
+          type: string
+        is_using_scram_auth:
+          type: boolean
+        db_user:
+          type: string
+        db_host:
+          type: string
+        db_port:
+          type: number
+        db_name:
+          type: string
+        connectionString:
+          type: string
+        default_pool_size:
+          type: number
+          nullable: true
+        max_client_conn:
+          type: number
+          nullable: true
+        pool_mode:
+          enum:
+            - transaction
+            - session
+          type: string
+      required:
+        - identifier
+        - database_type
+        - is_using_scram_auth
+        - db_user
+        - db_host
+        - db_port
+        - db_name
+        - connectionString
+        - default_pool_size
+        - max_client_conn
+        - pool_mode
+    UpdateSupavisorConfigBody:
+      type: object
+      properties:
+        default_pool_size:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 1000
+        pool_mode:
+          enum:
+            - transaction
+            - session
+          type: string
+          deprecated: true
+          description: This field is deprecated and is ignored in this request
+    UpdateSupavisorConfigResponse:
+      type: object
+      properties:
+        default_pool_size:
+          type: number
+          nullable: true
+        pool_mode:
+          enum:
+            - transaction
+            - session
+          type: string
+      required:
+        - default_pool_size
+        - pool_mode
     AuthConfigResponse:
       type: object
       properties:

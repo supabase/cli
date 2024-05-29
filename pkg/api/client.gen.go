@@ -125,8 +125,8 @@ type ClientInterface interface {
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1GetAllProjects request
-	V1GetAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1ListAllProjects request
+	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1CreateAProjectWithBody request with any body
 	V1CreateAProjectWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -180,13 +180,21 @@ type ClientInterface interface {
 	// V1GetProjectPgbouncerConfig request
 	V1GetProjectPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPostgresConfig request
-	GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetSupavisorConfig request
+	V1GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdatePostgresConfigWithBody request with any body
-	UpdatePostgresConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1UpdateSupavisorConfigWithBody request with any body
+	V1UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpdatePostgresConfig(ctx context.Context, ref string, body UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateSupavisorConfig(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetPostgresConfig request
+	V1GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdatePostgresConfigWithBody request with any body
+	V1UpdatePostgresConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteHostnameConfig request
 	V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -332,8 +340,8 @@ type ClientInterface interface {
 	// V1GetPostgrestUpgradeStatus request
 	V1GetPostgrestUpgradeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1DeactiveVanitySubdomainConfig request
-	V1DeactiveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1DeactivateVanitySubdomainConfig request
+	V1DeactivateVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetVanitySubdomainConfig request
 	V1GetVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -511,8 +519,8 @@ func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, req
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetAllProjectsRequest(c.Server)
+func (c *Client) V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListAllProjectsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -751,8 +759,8 @@ func (c *Client) V1GetProjectPgbouncerConfig(ctx context.Context, ref string, re
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPostgresConfigRequest(c.Server, ref)
+func (c *Client) V1GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetSupavisorConfigRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -763,8 +771,8 @@ func (c *Client) GetPostgresConfig(ctx context.Context, ref string, reqEditors .
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdatePostgresConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePostgresConfigRequestWithBody(c.Server, ref, contentType, body)
+func (c *Client) V1UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateSupavisorConfigRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -775,8 +783,44 @@ func (c *Client) UpdatePostgresConfigWithBody(ctx context.Context, ref string, c
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdatePostgresConfig(ctx context.Context, ref string, body UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdatePostgresConfigRequest(c.Server, ref, body)
+func (c *Client) V1UpdateSupavisorConfig(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateSupavisorConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPostgresConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdatePostgresConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePostgresConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePostgresConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1423,8 +1467,8 @@ func (c *Client) V1GetPostgrestUpgradeStatus(ctx context.Context, ref string, re
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1DeactiveVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeactiveVanitySubdomainConfigRequest(c.Server, ref)
+func (c *Client) V1DeactivateVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeactivateVanitySubdomainConfigRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1992,8 +2036,8 @@ func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Requ
 	return req, nil
 }
 
-// NewV1GetAllProjectsRequest generates requests for V1GetAllProjects
-func NewV1GetAllProjectsRequest(server string) (*http.Request, error) {
+// NewV1ListAllProjectsRequest generates requests for V1ListAllProjects
+func NewV1ListAllProjectsRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -2574,8 +2618,89 @@ func NewV1GetProjectPgbouncerConfigRequest(server string, ref string) (*http.Req
 	return req, nil
 }
 
-// NewGetPostgresConfigRequest generates requests for GetPostgresConfig
-func NewGetPostgresConfigRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetSupavisorConfigRequest generates requests for V1GetSupavisorConfig
+func NewV1GetSupavisorConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/database/pooler", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateSupavisorConfigRequest calls the generic V1UpdateSupavisorConfig builder with application/json body
+func NewV1UpdateSupavisorConfigRequest(server string, ref string, body V1UpdateSupavisorConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateSupavisorConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateSupavisorConfigRequestWithBody generates requests for V1UpdateSupavisorConfig with any type of body
+func NewV1UpdateSupavisorConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/database/pooler", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetPostgresConfigRequest generates requests for V1GetPostgresConfig
+func NewV1GetPostgresConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2608,19 +2733,19 @@ func NewGetPostgresConfigRequest(server string, ref string) (*http.Request, erro
 	return req, nil
 }
 
-// NewUpdatePostgresConfigRequest calls the generic UpdatePostgresConfig builder with application/json body
-func NewUpdatePostgresConfigRequest(server string, ref string, body UpdatePostgresConfigJSONRequestBody) (*http.Request, error) {
+// NewV1UpdatePostgresConfigRequest calls the generic V1UpdatePostgresConfig builder with application/json body
+func NewV1UpdatePostgresConfigRequest(server string, ref string, body V1UpdatePostgresConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpdatePostgresConfigRequestWithBody(server, ref, "application/json", bodyReader)
+	return NewV1UpdatePostgresConfigRequestWithBody(server, ref, "application/json", bodyReader)
 }
 
-// NewUpdatePostgresConfigRequestWithBody generates requests for UpdatePostgresConfig with any type of body
-func NewUpdatePostgresConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1UpdatePostgresConfigRequestWithBody generates requests for V1UpdatePostgresConfig with any type of body
+func NewV1UpdatePostgresConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4430,8 +4555,8 @@ func NewV1GetPostgrestUpgradeStatusRequest(server string, ref string) (*http.Req
 	return req, nil
 }
 
-// NewV1DeactiveVanitySubdomainConfigRequest generates requests for V1DeactiveVanitySubdomainConfig
-func NewV1DeactiveVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
+// NewV1DeactivateVanitySubdomainConfigRequest generates requests for V1DeactivateVanitySubdomainConfig
+func NewV1DeactivateVanitySubdomainConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4754,8 +4879,8 @@ type ClientWithResponsesInterface interface {
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
-	// V1GetAllProjectsWithResponse request
-	V1GetAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1GetAllProjectsResponse, error)
+	// V1ListAllProjectsWithResponse request
+	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
 
 	// V1CreateAProjectWithBodyWithResponse request with any body
 	V1CreateAProjectWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateAProjectResponse, error)
@@ -4809,13 +4934,21 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectPgbouncerConfigWithResponse request
 	V1GetProjectPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectPgbouncerConfigResponse, error)
 
-	// GetPostgresConfigWithResponse request
-	GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgresConfigResponse, error)
+	// V1GetSupavisorConfigWithResponse request
+	V1GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSupavisorConfigResponse, error)
 
-	// UpdatePostgresConfigWithBodyWithResponse request with any body
-	UpdatePostgresConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgresConfigResponse, error)
+	// V1UpdateSupavisorConfigWithBodyWithResponse request with any body
+	V1UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error)
 
-	UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgresConfigResponse, error)
+	V1UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error)
+
+	// V1GetPostgresConfigWithResponse request
+	V1GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresConfigResponse, error)
+
+	// V1UpdatePostgresConfigWithBodyWithResponse request with any body
+	V1UpdatePostgresConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
+
+	V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
 
 	// V1DeleteHostnameConfigWithResponse request
 	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
@@ -4961,8 +5094,8 @@ type ClientWithResponsesInterface interface {
 	// V1GetPostgrestUpgradeStatusWithResponse request
 	V1GetPostgrestUpgradeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgrestUpgradeStatusResponse, error)
 
-	// V1DeactiveVanitySubdomainConfigWithResponse request
-	V1DeactiveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeactiveVanitySubdomainConfigResponse, error)
+	// V1DeactivateVanitySubdomainConfigWithResponse request
+	V1DeactivateVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeactivateVanitySubdomainConfigResponse, error)
 
 	// V1GetVanitySubdomainConfigWithResponse request
 	V1GetVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetVanitySubdomainConfigResponse, error)
@@ -5203,14 +5336,14 @@ func (r V1ListOrganizationMembersResponse) StatusCode() int {
 	return 0
 }
 
-type V1GetAllProjectsResponse struct {
+type V1ListAllProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]V1ProjectResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1GetAllProjectsResponse) Status() string {
+func (r V1ListAllProjectsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -5218,7 +5351,7 @@ func (r V1GetAllProjectsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1GetAllProjectsResponse) StatusCode() int {
+func (r V1ListAllProjectsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5532,14 +5665,14 @@ func (r V1GetProjectPgbouncerConfigResponse) StatusCode() int {
 	return 0
 }
 
-type GetPostgresConfigResponse struct {
+type V1GetSupavisorConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgresConfigResponse
+	JSON200      *[]SupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetPostgresConfigResponse) Status() string {
+func (r V1GetSupavisorConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -5547,21 +5680,21 @@ func (r GetPostgresConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetPostgresConfigResponse) StatusCode() int {
+func (r V1GetSupavisorConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type UpdatePostgresConfigResponse struct {
+type V1UpdateSupavisorConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgresConfigResponse
+	JSON200      *UpdateSupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r UpdatePostgresConfigResponse) Status() string {
+func (r V1UpdateSupavisorConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -5569,7 +5702,51 @@ func (r UpdatePostgresConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r UpdatePostgresConfigResponse) StatusCode() int {
+func (r V1UpdateSupavisorConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetPostgresConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgresConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetPostgresConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetPostgresConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdatePostgresConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PostgresConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdatePostgresConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdatePostgresConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6402,13 +6579,13 @@ func (r V1GetPostgrestUpgradeStatusResponse) StatusCode() int {
 	return 0
 }
 
-type V1DeactiveVanitySubdomainConfigResponse struct {
+type V1DeactivateVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 }
 
 // Status returns HTTPResponse.Status
-func (r V1DeactiveVanitySubdomainConfigResponse) Status() string {
+func (r V1DeactivateVanitySubdomainConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -6416,7 +6593,7 @@ func (r V1DeactiveVanitySubdomainConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1DeactiveVanitySubdomainConfigResponse) StatusCode() int {
+func (r V1DeactivateVanitySubdomainConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6647,13 +6824,13 @@ func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.
 	return ParseV1ListOrganizationMembersResponse(rsp)
 }
 
-// V1GetAllProjectsWithResponse request returning *V1GetAllProjectsResponse
-func (c *ClientWithResponses) V1GetAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1GetAllProjectsResponse, error) {
-	rsp, err := c.V1GetAllProjects(ctx, reqEditors...)
+// V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
+func (c *ClientWithResponses) V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error) {
+	rsp, err := c.V1ListAllProjects(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1GetAllProjectsResponse(rsp)
+	return ParseV1ListAllProjectsResponse(rsp)
 }
 
 // V1CreateAProjectWithBodyWithResponse request with arbitrary body returning *V1CreateAProjectResponse
@@ -6822,30 +6999,56 @@ func (c *ClientWithResponses) V1GetProjectPgbouncerConfigWithResponse(ctx contex
 	return ParseV1GetProjectPgbouncerConfigResponse(rsp)
 }
 
-// GetPostgresConfigWithResponse request returning *GetPostgresConfigResponse
-func (c *ClientWithResponses) GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPostgresConfigResponse, error) {
-	rsp, err := c.GetPostgresConfig(ctx, ref, reqEditors...)
+// V1GetSupavisorConfigWithResponse request returning *V1GetSupavisorConfigResponse
+func (c *ClientWithResponses) V1GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSupavisorConfigResponse, error) {
+	rsp, err := c.V1GetSupavisorConfig(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetPostgresConfigResponse(rsp)
+	return ParseV1GetSupavisorConfigResponse(rsp)
 }
 
-// UpdatePostgresConfigWithBodyWithResponse request with arbitrary body returning *UpdatePostgresConfigResponse
-func (c *ClientWithResponses) UpdatePostgresConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdatePostgresConfigResponse, error) {
-	rsp, err := c.UpdatePostgresConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+// V1UpdateSupavisorConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateSupavisorConfigResponse
+func (c *ClientWithResponses) V1UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error) {
+	rsp, err := c.V1UpdateSupavisorConfigWithBody(ctx, ref, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdatePostgresConfigResponse(rsp)
+	return ParseV1UpdateSupavisorConfigResponse(rsp)
 }
 
-func (c *ClientWithResponses) UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdatePostgresConfigResponse, error) {
-	rsp, err := c.UpdatePostgresConfig(ctx, ref, body, reqEditors...)
+func (c *ClientWithResponses) V1UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error) {
+	rsp, err := c.V1UpdateSupavisorConfig(ctx, ref, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdatePostgresConfigResponse(rsp)
+	return ParseV1UpdateSupavisorConfigResponse(rsp)
+}
+
+// V1GetPostgresConfigWithResponse request returning *V1GetPostgresConfigResponse
+func (c *ClientWithResponses) V1GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresConfigResponse, error) {
+	rsp, err := c.V1GetPostgresConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetPostgresConfigResponse(rsp)
+}
+
+// V1UpdatePostgresConfigWithBodyWithResponse request with arbitrary body returning *V1UpdatePostgresConfigResponse
+func (c *ClientWithResponses) V1UpdatePostgresConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error) {
+	rsp, err := c.V1UpdatePostgresConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdatePostgresConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error) {
+	rsp, err := c.V1UpdatePostgresConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdatePostgresConfigResponse(rsp)
 }
 
 // V1DeleteHostnameConfigWithResponse request returning *V1DeleteHostnameConfigResponse
@@ -7310,13 +7513,13 @@ func (c *ClientWithResponses) V1GetPostgrestUpgradeStatusWithResponse(ctx contex
 	return ParseV1GetPostgrestUpgradeStatusResponse(rsp)
 }
 
-// V1DeactiveVanitySubdomainConfigWithResponse request returning *V1DeactiveVanitySubdomainConfigResponse
-func (c *ClientWithResponses) V1DeactiveVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeactiveVanitySubdomainConfigResponse, error) {
-	rsp, err := c.V1DeactiveVanitySubdomainConfig(ctx, ref, reqEditors...)
+// V1DeactivateVanitySubdomainConfigWithResponse request returning *V1DeactivateVanitySubdomainConfigResponse
+func (c *ClientWithResponses) V1DeactivateVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeactivateVanitySubdomainConfigResponse, error) {
+	rsp, err := c.V1DeactivateVanitySubdomainConfig(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1DeactiveVanitySubdomainConfigResponse(rsp)
+	return ParseV1DeactivateVanitySubdomainConfigResponse(rsp)
 }
 
 // V1GetVanitySubdomainConfigWithResponse request returning *V1GetVanitySubdomainConfigResponse
@@ -7630,15 +7833,15 @@ func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganiza
 	return response, nil
 }
 
-// ParseV1GetAllProjectsResponse parses an HTTP response from a V1GetAllProjectsWithResponse call
-func ParseV1GetAllProjectsResponse(rsp *http.Response) (*V1GetAllProjectsResponse, error) {
+// ParseV1ListAllProjectsResponse parses an HTTP response from a V1ListAllProjectsWithResponse call
+func ParseV1ListAllProjectsResponse(rsp *http.Response) (*V1ListAllProjectsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1GetAllProjectsResponse{
+	response := &V1ListAllProjectsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -8010,15 +8213,67 @@ func ParseV1GetProjectPgbouncerConfigResponse(rsp *http.Response) (*V1GetProject
 	return response, nil
 }
 
-// ParseGetPostgresConfigResponse parses an HTTP response from a GetPostgresConfigWithResponse call
-func ParseGetPostgresConfigResponse(rsp *http.Response) (*GetPostgresConfigResponse, error) {
+// ParseV1GetSupavisorConfigResponse parses an HTTP response from a V1GetSupavisorConfigWithResponse call
+func ParseV1GetSupavisorConfigResponse(rsp *http.Response) (*V1GetSupavisorConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetPostgresConfigResponse{
+	response := &V1GetSupavisorConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []SupavisorConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateSupavisorConfigResponse parses an HTTP response from a V1UpdateSupavisorConfigWithResponse call
+func ParseV1UpdateSupavisorConfigResponse(rsp *http.Response) (*V1UpdateSupavisorConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateSupavisorConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateSupavisorConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetPostgresConfigResponse parses an HTTP response from a V1GetPostgresConfigWithResponse call
+func ParseV1GetPostgresConfigResponse(rsp *http.Response) (*V1GetPostgresConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetPostgresConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -8036,15 +8291,15 @@ func ParseGetPostgresConfigResponse(rsp *http.Response) (*GetPostgresConfigRespo
 	return response, nil
 }
 
-// ParseUpdatePostgresConfigResponse parses an HTTP response from a UpdatePostgresConfigWithResponse call
-func ParseUpdatePostgresConfigResponse(rsp *http.Response) (*UpdatePostgresConfigResponse, error) {
+// ParseV1UpdatePostgresConfigResponse parses an HTTP response from a V1UpdatePostgresConfigWithResponse call
+func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &UpdatePostgresConfigResponse{
+	response := &V1UpdatePostgresConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -8950,15 +9205,15 @@ func ParseV1GetPostgrestUpgradeStatusResponse(rsp *http.Response) (*V1GetPostgre
 	return response, nil
 }
 
-// ParseV1DeactiveVanitySubdomainConfigResponse parses an HTTP response from a V1DeactiveVanitySubdomainConfigWithResponse call
-func ParseV1DeactiveVanitySubdomainConfigResponse(rsp *http.Response) (*V1DeactiveVanitySubdomainConfigResponse, error) {
+// ParseV1DeactivateVanitySubdomainConfigResponse parses an HTTP response from a V1DeactivateVanitySubdomainConfigWithResponse call
+func ParseV1DeactivateVanitySubdomainConfigResponse(rsp *http.Response) (*V1DeactivateVanitySubdomainConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1DeactiveVanitySubdomainConfigResponse{
+	response := &V1DeactivateVanitySubdomainConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

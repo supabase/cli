@@ -15,7 +15,7 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetAllProjectsWithResponse(ctx)
+	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return errors.Errorf("failed to list projects: %w", err)
 	}

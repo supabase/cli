@@ -53,7 +53,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 		if err != nil {
 			return errors.Errorf("failed to serialize config overrides: %w", err)
 		}
-		resp, err := utils.GetSupabase().UpdatePostgresConfigWithBodyWithResponse(ctx, projectRef, "application/json", bytes.NewReader(bts))
+		resp, err := utils.GetSupabase().V1UpdatePostgresConfigWithBodyWithResponse(ctx, projectRef, "application/json", bytes.NewReader(bts))
 		if err != nil {
 			return errors.Errorf("failed to update config overrides: %w", err)
 		}
