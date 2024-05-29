@@ -655,6 +655,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Auth.SiteUrl == "" {
 				return errors.New("Missing required field in config: auth.site_url")
 			}
+			var err error
+			if Config.Auth.SiteUrl, err = maybeLoadEnv(Config.Auth.SiteUrl); err != nil {
+				return err
+			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
 			}
@@ -667,7 +671,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			}
 			// Validate sms config
-			var err error
 			if Config.Auth.Sms.Twilio.Enabled {
 				if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 					return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
