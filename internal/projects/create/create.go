@@ -20,7 +20,7 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 		return err
 	}
 
-	resp, err := utils.GetSupabase().CreateProjectWithResponse(ctx, params)
+	resp, err := utils.GetSupabase().V1CreateAProjectWithResponse(ctx, params)
 	if err != nil {
 		return errors.Errorf("failed to create project: %w", err)
 	}
@@ -84,7 +84,7 @@ func promptProjectName(ctx context.Context) (string, error) {
 
 func promptOrgId(ctx context.Context) (string, error) {
 	title := "Which organisation do you want to create the project for?"
-	resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
+	resp, err := utils.GetSupabase().V1ListAllOrganizationsWithResponse(ctx)
 	if err != nil {
 		return "", err
 	}

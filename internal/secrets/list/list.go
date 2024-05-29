@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().GetSecretsWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1ListAllSecretsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to list secrets: %w", err)
 	}

@@ -14,7 +14,7 @@ func Run(ctx context.Context, projectRef string, args []string, fsys afero.Fs) e
 	// 1. Sanity checks.
 	// 2. Unset secret(s).
 	{
-		resp, err := utils.GetSupabase().DeleteSecretsWithResponse(ctx, projectRef, args)
+		resp, err := utils.GetSupabase().V1BulkDeleteSecretsWithResponse(ctx, projectRef, args)
 		if err != nil {
 			return errors.Errorf("failed to delete secrets: %w", err)
 		}

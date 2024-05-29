@@ -162,7 +162,7 @@ func init() {
 }
 
 func promptBranchId(ctx context.Context, ref string) error {
-	resp, err := utils.GetSupabase().GetBranchesWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1ListAllBranchesWithResponse(ctx, ref)
 	if err != nil {
 		return errors.Errorf("failed to list preview branches: %w", err)
 	}

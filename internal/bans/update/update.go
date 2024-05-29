@@ -32,7 +32,7 @@ func Run(ctx context.Context, projectRef string, dbIpsToUnban []string, fsys afe
 
 	// 2. remove bans
 	{
-		resp, err := utils.GetSupabase().RemoveNetworkBanWithResponse(ctx, projectRef, api.RemoveNetworkBanRequest{
+		resp, err := utils.GetSupabase().V1DeleteNetworkBansWithResponse(ctx, projectRef, api.RemoveNetworkBanRequest{
 			Ipv4Addresses: dbIpsToUnban,
 		})
 		if err != nil {

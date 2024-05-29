@@ -27,7 +27,7 @@ func TestSecretListCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(200).
-			JSON(api.CreateSecretsJSONBody{
+			JSON([]api.SecretResponse{
 				{
 					Name:  "Test Secret",
 					Value: "dummy-secret-value",

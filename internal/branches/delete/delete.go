@@ -10,7 +10,7 @@ import (
 )
 
 func Run(ctx context.Context, branchId string) error {
-	resp, err := utils.GetSupabase().DeleteBranchWithResponse(ctx, branchId)
+	resp, err := utils.GetSupabase().V1DeleteABranchWithResponse(ctx, branchId)
 	if err != nil {
 		return errors.Errorf("failed to delete preview branch: %w", err)
 	}

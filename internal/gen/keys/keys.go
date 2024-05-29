@@ -58,7 +58,7 @@ func Run(ctx context.Context, projectRef, format string, names CustomName, fsys 
 
 func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.Fs) error {
 	// Load JWT secret from api
-	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get postgrest config: %w", err)
 	}

@@ -160,7 +160,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 }
 
 func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
-	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to retrieve function: %w", err)
 	}
@@ -181,7 +181,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 			return errors.New("Failed to create a new Function on the Supabase project: " + string(resp.Body))
 		}
 	case http.StatusOK: // Function already exists, so do a PATCH
-		resp, err := utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
+		resp, err := utils.GetSupabase().V1UpdateAFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.V1UpdateAFunctionParams{
 			VerifyJwt:      &verifyJWT,
 			ImportMapPath:  &importMapUrl,
 			EntrypointPath: &entrypointUrl,
