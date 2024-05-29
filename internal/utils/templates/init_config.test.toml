@@ -152,6 +152,10 @@ skip_nonce_check = true
 
 [edge_runtime]
 enabled = true
+# Configure one of the supported request policies: `oneshot`, `per_worker`.
+# Use `oneshot` for hot reload, or `per_worker` for load testing.
+policy = "per_worker"
+inspector_port = 8083
 
 [analytics]
 enabled = false
