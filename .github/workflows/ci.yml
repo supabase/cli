@@ -21,9 +21,6 @@ jobs:
       - run: |
           go run gotest.tools/gotestsum -- ./... -race -v -count=1 \
           -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
-        env:
-          # Remove after go 1.22.3: https://github.com/golang/go/issues/65653
-          GOEXPERIMENT: nocoverageredesign
 
       - uses: shogo82148/actions-goveralls@v1
         with:
