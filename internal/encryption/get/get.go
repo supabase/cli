@@ -9,7 +9,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().GetPgsodiumConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPgsodiumConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to retrieve pgsodium config: %w", err)
 	}

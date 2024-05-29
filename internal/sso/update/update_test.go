@@ -86,7 +86,7 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 			}
 			observed += 1
 
-			var body api.UpdateProviderByIdJSONRequestBody
+			var body api.V1UpdateASsoProviderJSONRequestBody
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 			assert.NotNil(t, body.Domains)
@@ -137,7 +137,7 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 			}
 			observed += 1
 
-			var body api.UpdateProviderByIdJSONRequestBody
+			var body api.V1UpdateASsoProviderJSONRequestBody
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 			assert.NotNil(t, body.Domains)

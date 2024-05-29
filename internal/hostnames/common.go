@@ -11,8 +11,8 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func GetCustomHostnameConfig(ctx context.Context, projectRef string) (*api.GetCustomHostnameConfigResponse, error) {
-	resp, err := utils.GetSupabase().GetCustomHostnameConfigWithResponse(ctx, projectRef)
+func GetCustomHostnameConfig(ctx context.Context, projectRef string) (*api.V1GetHostnameConfigResponse, error) {
+	resp, err := utils.GetSupabase().V1GetHostnameConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return nil, errors.Errorf("failed to get custom hostname: %w", err)
 	}

@@ -13,7 +13,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	// 2. get vanity subdomain config
 	{
-		response, err := utils.GetSupabase().GetVanitySubdomainConfigWithResponse(ctx, projectRef)
+		response, err := utils.GetSupabase().V1GetVanitySubdomainConfigWithResponse(ctx, projectRef)
 		if err != nil {
 			return errors.Errorf("failed to get vanity subdomain: %w", err)
 		}

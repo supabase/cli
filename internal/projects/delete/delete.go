@@ -27,7 +27,7 @@ func PreRun(ctx context.Context, ref string) error {
 }
 
 func Run(ctx context.Context, ref string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().DeleteProjectWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1DeleteAProjectWithResponse(ctx, ref)
 	if err != nil {
 		return errors.Errorf("failed to delete project: %w", err)
 	}

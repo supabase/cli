@@ -31,7 +31,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			Reply(200)
 		// Run test
 		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
@@ -54,7 +54,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			Reply(200)
 		// Run test
 		err := Run(context.Background(), project, "/tmp/.env", []string{}, fsys)
@@ -104,7 +104,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
@@ -126,7 +126,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test

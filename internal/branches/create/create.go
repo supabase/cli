@@ -24,7 +24,7 @@ func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
 		name = gitBranch
 	}
 
-	resp, err := utils.GetSupabase().CreateBranchWithResponse(ctx, flags.ProjectRef, api.CreateBranchJSONRequestBody{
+	resp, err := utils.GetSupabase().V1CreateABranchWithResponse(ctx, flags.ProjectRef, api.V1CreateABranchJSONRequestBody{
 		BranchName: name,
 		GitBranch:  &gitBranch,
 		Region:     &region,

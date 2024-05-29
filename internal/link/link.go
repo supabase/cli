@@ -118,7 +118,7 @@ func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs
 }
 
 func linkPostgrest(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get postgrest config: %w", err)
 	}
@@ -214,7 +214,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetPgbouncerConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetProjectPgbouncerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}

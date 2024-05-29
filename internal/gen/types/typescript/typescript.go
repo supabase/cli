@@ -25,7 +25,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 	included := strings.Join(schemas, ",")
 
 	if projectId != "" {
-		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
+		resp, err := utils.GetSupabase().V1GenerateTypescriptTypesWithResponse(ctx, projectId, &api.V1GenerateTypescriptTypesParams{
 			IncludedSchemas: &included,
 		})
 		if err != nil {
