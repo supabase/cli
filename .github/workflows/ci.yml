@@ -71,7 +71,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - run: go generate tools/codegen/main.go
+      - run: go generate
       - run: |
           if ! git diff --ignore-space-at-eol --exit-code --quiet pkg; then
             echo "Detected uncommitted changes after codegen. See status below:"
