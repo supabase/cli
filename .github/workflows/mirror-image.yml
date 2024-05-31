@@ -40,7 +40,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: akhilerm/tag-push-action@v2.2.0
         with:
-          src: docker.io/${{ inputs.image }}
+          src: docker.io/postgrest/postgrest:devel
           dst: |
             public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
             ghcr.io/supabase/${{ steps.strip.outputs.image }}
