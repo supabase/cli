@@ -52,7 +52,7 @@ func GetServiceImages() []string {
 		utils.StudioImage,
 		utils.PgmetaImage,
 		utils.LogflareImage,
-		utils.PgbouncerImage,
+		utils.SupavisorImage,
 		utils.ImageProxyImage,
 	}
 }

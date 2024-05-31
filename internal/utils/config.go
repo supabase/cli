@@ -174,6 +174,11 @@ var Config = config{
 		Image:    Pg15Image,
 		Password: "postgres",
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+		Pooler: pooler{
+			TenantId:      "pooler-dev",
+			EncryptionKey: "12345678901234567890123456789032",
+			SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+		},
 	},
 	Realtime: realtime{
 		IpVersion:       AddressIPv4,
@@ -303,6 +308,9 @@ type (
 		DefaultPoolSize  uint     `toml:"default_pool_size"`
 		MaxClientConn    uint     `toml:"max_client_conn"`
 		ConnectionString string   `toml:"-"`
+		TenantId         string   `toml:"-"`
+		EncryptionKey    string   `toml:"-"`
+		SecretKeyBase    string   `toml:"-"`
 	}
 
 	realtime struct {
