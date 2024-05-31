@@ -188,6 +188,18 @@ const (
 	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
 )
 
+// Defines values for SupavisorConfigResponseDatabaseType.
+const (
+	PRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
+	READREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
+)
+
+// Defines values for SupavisorConfigResponsePoolMode.
+const (
+	SupavisorConfigResponsePoolModeSession     SupavisorConfigResponsePoolMode = "session"
+	SupavisorConfigResponsePoolModeTransaction SupavisorConfigResponsePoolMode = "transaction"
+)
+
 // Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
 const (
 	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
@@ -210,6 +222,18 @@ const (
 	UpdatePostgresConfigBodySessionReplicationRoleLocal   UpdatePostgresConfigBodySessionReplicationRole = "local"
 	UpdatePostgresConfigBodySessionReplicationRoleOrigin  UpdatePostgresConfigBodySessionReplicationRole = "origin"
 	UpdatePostgresConfigBodySessionReplicationRoleReplica UpdatePostgresConfigBodySessionReplicationRole = "replica"
+)
+
+// Defines values for UpdateSupavisorConfigBodyPoolMode.
+const (
+	UpdateSupavisorConfigBodyPoolModeSession     UpdateSupavisorConfigBodyPoolMode = "session"
+	UpdateSupavisorConfigBodyPoolModeTransaction UpdateSupavisorConfigBodyPoolMode = "transaction"
+)
+
+// Defines values for UpdateSupavisorConfigResponsePoolMode.
+const (
+	UpdateSupavisorConfigResponsePoolModeSession     UpdateSupavisorConfigResponsePoolMode = "session"
+	UpdateSupavisorConfigResponsePoolModeTransaction UpdateSupavisorConfigResponsePoolMode = "transaction"
 )
 
 // Defines values for V1BackupStatus.
@@ -253,9 +277,9 @@ const (
 
 // Defines values for V1PgbouncerConfigResponsePoolMode.
 const (
-	Session     V1PgbouncerConfigResponsePoolMode = "session"
-	Statement   V1PgbouncerConfigResponsePoolMode = "statement"
-	Transaction V1PgbouncerConfigResponsePoolMode = "transaction"
+	V1PgbouncerConfigResponsePoolModeSession     V1PgbouncerConfigResponsePoolMode = "session"
+	V1PgbouncerConfigResponsePoolModeStatement   V1PgbouncerConfigResponsePoolMode = "statement"
+	V1PgbouncerConfigResponsePoolModeTransaction V1PgbouncerConfigResponsePoolMode = "transaction"
 )
 
 // Defines values for V1ProjectResponseStatus.
@@ -969,6 +993,27 @@ type SubdomainAvailabilityResponse struct {
 	Available bool `json:"available"`
 }
 
+// SupavisorConfigResponse defines model for SupavisorConfigResponse.
+type SupavisorConfigResponse struct {
+	ConnectionString string                              `json:"connectionString"`
+	DatabaseType     SupavisorConfigResponseDatabaseType `json:"database_type"`
+	DbHost           string                              `json:"db_host"`
+	DbName           string                              `json:"db_name"`
+	DbPort           float32                             `json:"db_port"`
+	DbUser           string                              `json:"db_user"`
+	DefaultPoolSize  *float32                            `json:"default_pool_size"`
+	Identifier       string                              `json:"identifier"`
+	IsUsingScramAuth bool                                `json:"is_using_scram_auth"`
+	MaxClientConn    *float32                            `json:"max_client_conn"`
+	PoolMode         SupavisorConfigResponsePoolMode     `json:"pool_mode"`
+}
+
+// SupavisorConfigResponseDatabaseType defines model for SupavisorConfigResponse.DatabaseType.
+type SupavisorConfigResponseDatabaseType string
+
+// SupavisorConfigResponsePoolMode defines model for SupavisorConfigResponse.PoolMode.
+type SupavisorConfigResponsePoolMode string
+
 // TypescriptResponse defines model for TypescriptResponse.
 type TypescriptResponse struct {
 	Types string `json:"types"`
@@ -1209,6 +1254,27 @@ type UpdateProviderResponse struct {
 	Saml      *SamlDescriptor `json:"saml,omitempty"`
 	UpdatedAt *string         `json:"updated_at,omitempty"`
 }
+
+// UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.
+type UpdateSupavisorConfigBody struct {
+	DefaultPoolSize *int `json:"default_pool_size"`
+
+	// PoolMode This field is deprecated and is ignored in this request
+	// Deprecated:
+	PoolMode *UpdateSupavisorConfigBodyPoolMode `json:"pool_mode,omitempty"`
+}
+
+// UpdateSupavisorConfigBodyPoolMode This field is deprecated and is ignored in this request
+type UpdateSupavisorConfigBodyPoolMode string
+
+// UpdateSupavisorConfigResponse defines model for UpdateSupavisorConfigResponse.
+type UpdateSupavisorConfigResponse struct {
+	DefaultPoolSize *float32                              `json:"default_pool_size"`
+	PoolMode        UpdateSupavisorConfigResponsePoolMode `json:"pool_mode"`
+}
+
+// UpdateSupavisorConfigResponsePoolMode defines model for UpdateSupavisorConfigResponse.PoolMode.
+type UpdateSupavisorConfigResponsePoolMode string
 
 // UpgradeDatabaseBody defines model for UpgradeDatabaseBody.
 type UpgradeDatabaseBody struct {
@@ -1510,8 +1576,11 @@ type V1CreateASsoProviderJSONRequestBody = CreateProviderBody
 // V1UpdateASsoProviderJSONRequestBody defines body for V1UpdateASsoProvider for application/json ContentType.
 type V1UpdateASsoProviderJSONRequestBody = UpdateProviderBody
 
-// UpdatePostgresConfigJSONRequestBody defines body for UpdatePostgresConfig for application/json ContentType.
-type UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
+// V1UpdateSupavisorConfigJSONRequestBody defines body for V1UpdateSupavisorConfig for application/json ContentType.
+type V1UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
+
+// V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
+type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
 
 // V1UpdateHostnameConfigJSONRequestBody defines body for V1UpdateHostnameConfig for application/json ContentType.
 type V1UpdateHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
