@@ -10,7 +10,7 @@ import (
 var errDatabaseVersion = errors.New("Database version not found.")
 
 func GetDatabaseVersion(ctx context.Context, projectRef string) (string, error) {
-	resp, err := utils.GetSupabase().GetProjectsWithResponse(ctx)
+	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return "", errors.Errorf("failed to retrieve projects: %w", err)
 	}

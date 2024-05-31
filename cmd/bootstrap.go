@@ -28,12 +28,15 @@ var (
 		Short:   "Bootstrap a Supabase project from a starter template",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if !viper.IsSet("WORKDIR") {
 				title := fmt.Sprintf("Enter a directory to bootstrap your project (or leave blank to use %s): ", utils.Bold(utils.CurrentDirAbs))
-				workdir := utils.NewConsole().PromptText(title)
-				viper.Set("WORKDIR", workdir)
+				if workdir, err := utils.NewConsole().PromptText(ctx, title); err != nil {
+					return err
+				} else {
+					viper.Set("WORKDIR", workdir)
+				}
 			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			client := utils.GetGtihubClient(ctx)
 			templates, err := bootstrap.ListSamples(ctx, client)
 			if err != nil {

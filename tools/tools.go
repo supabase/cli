@@ -8,7 +8,7 @@ import (
 	// the library.
 	// This should be migrated directly to go.mod when the following is complete:
 	// https://github.com/golang/go/issues/48429
-	_ "github.com/deepmap/oapi-codegen/cmd/oapi-codegen"
+	_ "github.com/deepmap/oapi-codegen/v2/cmd/oapi-codegen"
 	_ "github.com/golangci/golangci-lint/cmd/golangci-lint"
 	_ "gotest.tools/gotestsum"
 )

@@ -45,8 +45,10 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return errors.Errorf("failed to read workdir: %w", err)
 	} else if !empty {
 		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(workdir))
-		if !utils.NewConsole().PromptYesNo(title, true) {
-			return context.Canceled
+		if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, title, true); err != nil {
+			return err
+		} else if !shouldOverwrite {
+			return errors.New(context.Canceled)
 		}
 	}
 	if err := utils.ChangeWorkDir(fsys); err != nil {
@@ -58,7 +60,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
-	} else if err := initBlank.Run(fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
+	} else if err := initBlank.Run(ctx, fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
 		return err
 	}
 	// 1. Login
@@ -148,12 +150,12 @@ func suggestAppStart(cwd, command string) string {
 }
 
 func checkProjectHealth(ctx context.Context) error {
-	params := api.CheckServiceHealthParams{
-		Services: []api.CheckServiceHealthParamsServices{
-			api.CheckServiceHealthParamsServicesDb,
+	params := api.V1GetServicesHealthParams{
+		Services: []api.V1GetServicesHealthParamsServices{
+			api.V1GetServicesHealthParamsServicesDb,
 		},
 	}
-	resp, err := utils.GetSupabase().CheckServiceHealthWithResponse(ctx, flags.ProjectRef, &params)
+	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
 	if err != nil {
 		return err
 	}

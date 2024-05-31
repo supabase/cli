@@ -11,7 +11,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"gopkg.in/h2non/gock.v1"
+	"github.com/h2non/gock"
 )
 
 const mockHost = "http://127.0.0.1"

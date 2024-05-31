@@ -1,6 +1,7 @@
 package init
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -30,9 +31,12 @@ var (
 	intelliJDeno string
 )
 
-func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
+func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
 	// 1. Write `config.toml`.
 	if err := utils.InitConfig(params, fsys); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			utils.CmdSuggestion = fmt.Sprintf("Run %s to overwrite existing config file.", utils.Aqua("supabase init --force"))
+		}
 		return err
 	}
 
@@ -59,10 +63,14 @@ func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, para
 		}
 	} else {
 		console := utils.NewConsole()
-		if isVscode := console.PromptYesNo("Generate VS Code settings for Deno?", false); isVscode {
+		if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", false); err != nil {
+			return err
+		} else if isVscode {
 			return writeVscodeConfig(fsys)
 		}
-		if isIntelliJ := console.PromptYesNo("Generate IntelliJ Settings for Deno?", false); isIntelliJ {
+		if isIntelliJ, err := console.PromptYesNo(ctx, "Generate IntelliJ Settings for Deno?", false); err != nil {
+			return err
+		} else if isIntelliJ {
 			return writeIntelliJConfig(fsys)
 		}
 	}

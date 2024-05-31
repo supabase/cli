@@ -41,7 +41,7 @@ func TestLogoutCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), os.Stdout, fsys)
 		// Check error
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 		saved, err := credentials.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
 		assert.Equal(t, token, saved)

@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, ref, providerId, format string) error {
-	resp, err := utils.GetSupabase().RemoveProviderByIdWithResponse(ctx, ref, providerId)
+	resp, err := utils.GetSupabase().V1DeleteASsoProviderWithResponse(ctx, ref, providerId)
 	if err != nil {
 		return errors.Errorf("failed to remove sso provider: %w", err)
 	}

@@ -36,7 +36,9 @@ func Run(ctx context.Context, config pgconn.Config, version []string, status str
 	repairAll := len(version) == 0
 	if repairAll {
 		msg := "Do you want to repair the entire migration history table to match local migration files?"
-		if shouldRepair := utils.NewConsole().PromptYesNo(msg, false); !shouldRepair {
+		if shouldRepair, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
+			return err
+		} else if !shouldRepair {
 			return errors.New(context.Canceled)
 		}
 		local, err := list.LoadLocalVersions(fsys)

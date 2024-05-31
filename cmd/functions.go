@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
@@ -9,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/functions/list"
 	new_ "github.com/supabase/cli/internal/functions/new"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -79,6 +82,15 @@ var (
 	}
 
 	envFilePath string
+	inspectRun  bool
+	inspectMode = utils.EnumFlag{
+		Allowed: []string{
+			string(serve.InspectModeRun),
+			string(serve.InspectModeBrk),
+			string(serve.InspectModeWait),
+		},
+	}
+	runtimeOption serve.RuntimeOption
 
 	functionsServeCmd = &cobra.Command{
 		Use:   "serve",
@@ -92,7 +104,17 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, afero.NewOsFs())
+
+			if len(inspectMode.Value) > 0 {
+				runtimeOption.InspectMode = utils.Ptr(serve.InspectMode(inspectMode.Value))
+			} else if inspectRun {
+				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeRun)
+			}
+			if runtimeOption.InspectMode == nil && runtimeOption.InspectMain {
+				return fmt.Errorf("--inspect-main must be used together with one of these flags: [inspect inspect-mode]")
+			}
+
+			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
 		},
 	}
 )
@@ -108,7 +130,11 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions")
+	functionsServeCmd.Flags().BoolVar(&inspectRun, "inspect", false, "Alias of --inspect-mode run.")
+	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability for debugging.")
+	functionsServeCmd.Flags().BoolVar(&runtimeOption.InspectMain, "inspect-main", false, "Allow inspecting the main worker.")
+	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
+	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")

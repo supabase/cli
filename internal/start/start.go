@@ -821,20 +821,20 @@ EOF
 	}
 
 	// Start all functions.
-	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
-		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
+		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, w, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.EdgeRuntimeId)
 	}
 
 	// Start pg-meta.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.PgmetaImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PgmetaImage,
+				Image: utils.Config.Studio.PgmetaImage,
 				Env: []string{
 					"PG_META_PORT=8080",
 					"PG_META_DB_HOST=" + dbConfig.Host,
@@ -868,11 +868,11 @@ EOF
 	}
 
 	// Start Studio.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.StudioImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.StudioImage,
+				Image: utils.Config.Studio.Image,
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,

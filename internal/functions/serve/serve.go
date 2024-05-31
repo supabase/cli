@@ -21,10 +21,50 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
+type InspectMode string
+
+const (
+	InspectModeRun  InspectMode = "run"
+	InspectModeBrk  InspectMode = "brk"
+	InspectModeWait InspectMode = "wait"
+)
+
+func (mode InspectMode) toFlag() string {
+	switch mode {
+	case InspectModeBrk:
+		return "inspect-brk"
+	case InspectModeWait:
+		return "inspect-wait"
+	case InspectModeRun:
+		fallthrough
+	default:
+		return "inspect"
+	}
+}
+
+type RuntimeOption struct {
+	InspectMode *InspectMode
+	InspectMain bool
+}
+
+func (i *RuntimeOption) toArgs() []string {
+	flags := []string{}
+	if i.InspectMode != nil {
+		flags = append(flags, fmt.Sprintf("--%s=0.0.0.0:%d", i.InspectMode.toFlag(), dockerRuntimeInspectorPort))
+		if i.InspectMain {
+			flags = append(flags, "--inspect-main")
+		}
+	}
+	return flags
+}
+
 const (
 	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
 	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
 	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
+	dockerRuntimeMainPath       = utils.DockerDenoDir + "/main"
+	dockerRuntimeServerPort     = 8081
+	dockerRuntimeInspectorPort  = 8083
 )
 
 var (
@@ -32,7 +72,7 @@ var (
 	mainFuncEmbed string
 )
 
-func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -48,7 +88,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	// Use network alias because Deno cannot resolve `_` in hostname
 	dbUrl := "postgresql://postgres:postgres@" + utils.DbAliases[0] + ":5432/postgres"
 	// 3. Serve and log to console
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, os.Stderr, fsys); err != nil {
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, os.Stderr, fsys); err != nil {
 		return err
 	}
 	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
@@ -58,7 +98,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	return nil
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, w io.Writer, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, w io.Writer, fsys afero.Fs) error {
 	// 1. Load default values
 	if envFilePath == "" {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
@@ -95,6 +135,9 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
+	}
+	if runtimeOption.InspectMode != nil {
+		env = append(env, "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0")
 	}
 	// 3. Parse custom import map
 	binds := []string{
@@ -136,35 +179,48 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
-
-	// 4. Start container
-	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
-
-	var cmdString string
-	{
-		cmd := []string{"edge-runtime", "start", "--main-service", "/home/deno/main", "-p", "8081"}
-		if viper.GetBool("DEBUG") {
-			cmd = append(cmd, "--verbose")
-		}
-		cmdString = strings.Join(cmd, " ")
+	// 4. Parse entrypoint script
+	cmd := append([]string{
+		"edge-runtime",
+		"start",
+		"--main-service=.",
+		fmt.Sprintf("--port=%d", dockerRuntimeServerPort),
+		fmt.Sprintf("--policy=%s", utils.Config.EdgeRuntime.Policy),
+	}, runtimeOption.toArgs()...)
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
 	}
+	cmdString := strings.Join(cmd, " ")
 
-	entrypoint := []string{"sh", "-c", `mkdir -p /home/deno/main && cat <<'EOF' > /home/deno/main/index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
 EOF
 `}
+	// 5. Parse exposed ports
+	ports := []string{fmt.Sprintf("::%d/tcp", dockerRuntimeServerPort)}
+	if runtimeOption.InspectMode != nil {
+		ports = append(ports, fmt.Sprintf(":%d:%d/tcp", utils.Config.EdgeRuntime.InspectorPort, dockerRuntimeInspectorPort))
+	}
+	exposedPorts, portBindings, err := nat.ParsePortSpecs(ports)
+	if err != nil {
+		return errors.Errorf("failed to expose ports: %w", err)
+	}
+	// 6. Start container
+	fmt.Fprintln(w, "Setting up Edge Functions runtime...")
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
 			Image:        utils.EdgeRuntimeImage,
 			Env:          append(env, userEnv...),
 			Entrypoint:   entrypoint,
-			ExposedPorts: nat.PortSet{"8081/tcp": {}},
+			ExposedPorts: exposedPorts,
+			WorkingDir:   dockerRuntimeMainPath,
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		start.WithSyslogConfig(container.HostConfig{
-			Binds:      binds,
-			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+			Binds:        binds,
+			PortBindings: portBindings,
+			ExtraHosts:   []string{"host.docker.internal:host-gateway"},
 		}),
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
@@ -225,12 +281,11 @@ func populatePerFunctionConfigs(binds []string, importMapPath string, noVerifyJW
 		}
 
 		// CLI flags take priority over config.toml.
-
 		dockerImportMapPath := dockerFallbackImportMapPath
 		if importMapPath != "" {
 			dockerImportMapPath = dockerFlagImportMapPath
 		} else if functionConfig, ok := utils.Config.Functions[functionName]; ok && functionConfig.ImportMap != "" {
-			dockerImportMapPath = "/home/deno/import_maps/" + functionName + "/import_map.json"
+			dockerImportMapPath = utils.DockerDenoDir + "/import_maps/" + functionName + "/import_map.json"
 			hostImportMapPath := filepath.Join(cwd, utils.SupabaseDirPath, functionConfig.ImportMap)
 			modules, err := utils.BindImportMap(hostImportMapPath, dockerImportMapPath, fsys)
 			if err != nil {

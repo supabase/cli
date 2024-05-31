@@ -201,7 +201,9 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 
 	if params.OpenBrowser {
 		fmt.Fprintf(stdout, "Hello from %s! Press %s to open browser and login automatically.\n", utils.Aqua("Supabase"), utils.Aqua("Enter"))
-		fmt.Scanln()
+		if _, err := fmt.Scanln(); err != nil {
+			return errors.Errorf("failed to scan line: %w", err)
+		}
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
 		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
 			fmt.Fprintln(os.Stderr, err)

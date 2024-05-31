@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().DisableBranchWithResponse(ctx, flags.ProjectRef)
+	resp, err := utils.GetSupabase().V1DisablePreviewBranchingWithResponse(ctx, flags.ProjectRef)
 	if err != nil {
 		return errors.Errorf("failed to disable preview branching: %w", err)
 	}

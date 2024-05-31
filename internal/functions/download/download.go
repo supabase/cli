@@ -51,7 +51,7 @@ func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.F
 }
 
 func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.FunctionSlugResponse, error) {
-	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return nil, errors.Errorf("failed to get function metadata: %w", err)
 	}
@@ -86,7 +86,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 		return err
 	}
 
-	resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionBodyWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to get function body: %w", err)
 	}
@@ -138,7 +138,7 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 
 func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {
 	fmt.Println("Downloading " + utils.Bold(slug))
-	resp, err := utils.GetSupabase().GetFunctionBody(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug)
 	if err != nil {
 		return "", errors.Errorf("failed to get function body: %w", err)
 	}

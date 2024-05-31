@@ -18,7 +18,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	// 1. Sanity checks.
 	// 2. Set secret(s).
 	{
-		var secrets api.CreateSecretsJSONBody
+		var secrets api.V1BulkCreateSecretsJSONBody
 		if envFilePath != "" {
 			envMap, err := ParseEnvFile(envFilePath, fsys)
 			if err != nil {
@@ -52,7 +52,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 			}
 		}
 
-		resp, err := utils.GetSupabase().CreateSecretsWithResponse(ctx, projectRef, secrets)
+		resp, err := utils.GetSupabase().V1BulkCreateSecretsWithResponse(ctx, projectRef, secrets)
 		if err != nil {
 			return errors.Errorf("failed to set secrets: %w", err)
 		}

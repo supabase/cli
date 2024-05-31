@@ -34,9 +34,9 @@ const (
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
 	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240514-6f5cabd"
+	StudioImage      = "supabase/studio:20240422-5cf8f30"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.53.1"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.53.3"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
 	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
 	PgProveImage     = "supabase/pg_prove:3.36"
@@ -116,6 +116,8 @@ var (
 	}
 	// Initialised by postgres image and owned by postgres role
 	ManagedSchemas = append([]string{
+		"_analytics",
+		"_realtime",
 		"pgbouncer",
 		"pgsodium",
 		"pgtle",
@@ -190,6 +192,8 @@ var (
 	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
+	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
+	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
 	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")

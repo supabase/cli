@@ -159,6 +159,13 @@ func (c CustomClaims) NewToken() *jwt.Token {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
+type RequestPolicy string
+
+const (
+	PolicyPerWorker RequestPolicy = "per_worker"
+	PolicyOneshot   RequestPolicy = "oneshot"
+)
+
 var Config = config{
 	Api: api{
 		Image: PostgrestImage,
@@ -219,6 +226,10 @@ var Config = config{
 		},
 		JwtSecret: defaultJwtSecret,
 	},
+	Studio: studio{
+		Image:       StudioImage,
+		PgmetaImage: PgmetaImage,
+	},
 	Analytics: analytics{
 		ApiKey: "api-key",
 		// Defaults to bigquery for backwards compatibility with existing config.toml
@@ -258,6 +269,7 @@ type (
 		Inbucket     inbucket            `toml:"inbucket"`
 		Storage      storage             `toml:"storage"`
 		Auth         auth                `toml:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime         `toml:"edge_runtime"`
 		Functions    map[string]function `toml:"functions"`
 		Analytics    analytics           `toml:"analytics"`
 		Experimental experimental        `toml:"experimental" mapstructure:"-"`
@@ -304,9 +316,11 @@ type (
 
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
+		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
+		PgmetaImage  string `toml:"-"`
 	}
 
 	inbucket struct {
@@ -431,6 +445,12 @@ type (
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+	}
+
+	edgeRuntime struct {
+		Enabled       bool          `toml:"enabled"`
+		Policy        RequestPolicy `toml:"policy"`
+		InspectorPort uint16        `toml:"inspector_port"`
 	}
 
 	function struct {
@@ -615,6 +635,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
+			}
+			if version, err := afero.ReadFile(fsys, PgmetaVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.PgmetaImage = replaceImageTag(PgmetaImage, string(version))
+			}
 			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
 		// Validate email config
@@ -629,6 +655,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Auth.SiteUrl == "" {
 				return errors.New("Missing required field in config: auth.site_url")
 			}
+			var err error
+			if Config.Auth.SiteUrl, err = maybeLoadEnv(Config.Auth.SiteUrl); err != nil {
+				return err
+			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
 			}
@@ -641,7 +671,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 				}
 			}
 			// Validate sms config
-			var err error
 			if Config.Auth.Sms.Twilio.Enabled {
 				if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 					return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
@@ -752,10 +781,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 	}
 	// Validate functions config
+	if Config.EdgeRuntime.Enabled {
+		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+		if !SliceContains(allowed, Config.EdgeRuntime.Policy) {
+			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
+		}
+	}
 	for name, functionConfig := range Config.Functions {
 		if functionConfig.VerifyJWT == nil {
-			verifyJWT := true
-			functionConfig.VerifyJWT = &verifyJWT
+			functionConfig.VerifyJWT = Ptr(true)
 			Config.Functions[name] = functionConfig
 		}
 	}
