@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/unlink"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
@@ -46,17 +47,8 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	if match, err := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
-		tmpFiles := []string{
-			utils.ProjectRefPath,
-			utils.PostgresVersionPath,
-			utils.GotrueVersionPath,
-			utils.RestVersionPath,
-			utils.StorageVersionPath,
-		}
-		for _, path := range tmpFiles {
-			if err := fsys.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				fmt.Fprintln(os.Stderr, err)
-			}
+		if err := unlink.Unlink(ref, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 		}
 	} else if err != nil {
 		logger := utils.GetDebugLogger()
