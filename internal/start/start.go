@@ -171,12 +171,9 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD",
-						"wget",
-						"--no-verbose",
-						"--tries=1",
-						"--spider",
-						"http://127.0.0.1:9001/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9001/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -267,7 +264,9 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"},
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"http://127.0.0.1:4000/health",
+					},
 					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
 					Retries:     3,
@@ -570,7 +569,9 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9999/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -663,8 +664,10 @@ EOF
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer " + utils.Config.Auth.AnonKey,
-						fmt.Sprintf("http://127.0.0.1:4000/api/tenants/%s/health", utils.Config.Realtime.TenantId),
+					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"-H", "Host:" + utils.Config.Realtime.TenantId,
+						"http://127.0.0.1:4000/api/ping",
 					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
@@ -752,8 +755,10 @@ EOF
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
-					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
+					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:5000/status",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -837,7 +842,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -882,7 +887,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:3000/api/profile", (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
