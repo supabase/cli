@@ -96,11 +96,12 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		"extensions",
 		"pgbouncer",
 		"realtime",
-		"_realtime",
 		// "storage",
-		"_analytics",
 		// "supabase_functions",
 		"supabase_migrations",
+		"_analytics",
+		"_realtime",
+		"_supavisor",
 	}
 	var env []string
 	if len(schema) > 0 {

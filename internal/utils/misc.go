@@ -118,6 +118,7 @@ var (
 	ManagedSchemas = append([]string{
 		"_analytics",
 		"_realtime",
+		"_supavisor",
 		"pgbouncer",
 		"pgsodium",
 		"pgtle",
@@ -125,13 +126,14 @@ var (
 		"vault",
 	}, PgSchemas...)
 	InternalSchemas = append([]string{
+		"_analytics",
+		"_realtime",
+		"_supavisor",
 		"auth",
 		"extensions",
 		"pgbouncer",
 		"realtime",
-		"_realtime",
 		"storage",
-		"_analytics",
 		"supabase_functions",
 		"supabase_migrations",
 		// Owned by extensions
