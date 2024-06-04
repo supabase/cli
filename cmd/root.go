@@ -241,6 +241,7 @@ func init() {
 	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
+	flags.String("network-id", "", "use the specified docker network instead of a generated one")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
 	cobra.CheckErr(viper.BindPFlags(flags))

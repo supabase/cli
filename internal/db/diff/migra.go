@@ -30,7 +30,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 			Cmd:   cmd,
 		},
 		container.HostConfig{
-			NetworkMode: container.NetworkMode("host"),
+			NetworkMode: network.NetworkHost,
 		},
 		network.NetworkingConfig{},
 		"",
