@@ -148,6 +148,23 @@ var (
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
 
+type poolerTenant struct {
+	DbHost            string
+	DbPort            uint16
+	DbDatabase        string
+	DbPassword        string
+	ExternalId        string
+	ModeType          utils.PoolMode
+	DefaultMaxClients uint
+	DefaultPoolSize   uint
+}
+
+var (
+	//go:embed templates/pooler.exs
+	poolerTenantEmbed    string
+	poolerTenantTemplate = template.Must(template.New("poolerTenant").Parse(poolerTenantEmbed))
+)
+
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excluded map[string]bool, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	// Start vector
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
@@ -178,12 +195,9 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excluded map[strin
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD",
-						"wget",
-						"--no-verbose",
-						"--tries=1",
-						"--spider",
-						"http://127.0.0.1:9001/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9001/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -274,7 +288,9 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"},
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"http://127.0.0.1:4000/health",
+					},
 					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
 					Retries:     3,
@@ -577,7 +593,9 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9999/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -670,8 +688,10 @@ EOF
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "-H", "Authorization: Bearer " + utils.Config.Auth.AnonKey,
-						fmt.Sprintf("http://127.0.0.1:4000/api/tenants/%s/health", utils.Config.Realtime.TenantId),
+					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"-H", "Host:" + utils.Config.Realtime.TenantId,
+						"http://127.0.0.1:4000/api/ping",
 					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
@@ -759,8 +779,10 @@ EOF
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
-					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
+					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:5000/status",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -844,7 +866,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -889,7 +911,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:3000/api/profile", (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -914,34 +936,64 @@ EOF
 	}
 
 	// Start pooler.
-	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.PgbouncerImage, excluded) {
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.SupavisorImage, excluded) {
+		portSession := uint16(5432)
+		portTransaction := uint16(6543)
+		dockerPort := portTransaction
+		if utils.Config.Db.Pooler.PoolMode == utils.SessionMode {
+			dockerPort = portSession
+		}
+		// Create pooler tenant
+		var poolerTenantBuf bytes.Buffer
+		if err := poolerTenantTemplate.Execute(&poolerTenantBuf, poolerTenant{
+			DbHost:            dbConfig.Host,
+			DbPort:            dbConfig.Port,
+			DbDatabase:        dbConfig.Database,
+			DbPassword:        dbConfig.Password,
+			ExternalId:        utils.Config.Db.Pooler.TenantId,
+			ModeType:          utils.Config.Db.Pooler.PoolMode,
+			DefaultMaxClients: utils.Config.Db.Pooler.MaxClientConn,
+			DefaultPoolSize:   utils.Config.Db.Pooler.DefaultPoolSize,
+		}); err != nil {
+			return errors.Errorf("failed to exec template: %w", err)
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PgbouncerImage,
+				Image: utils.SupavisorImage,
 				Env: []string{
-					"POSTGRESQL_HOST=" + dbConfig.Host,
-					fmt.Sprintf("POSTGRESQL_PORT=%d", dbConfig.Port),
-					"POSTGRESQL_USERNAME=pgbouncer",
-					"POSTGRESQL_PASSWORD=" + dbConfig.Password,
-					"POSTGRESQL_DATABASE=" + dbConfig.Database,
-					"PGBOUNCER_AUTH_USER=pgbouncer",
-					"PGBOUNCER_AUTH_QUERY=SELECT * FROM pgbouncer.get_auth($1)",
-					fmt.Sprintf("PGBOUNCER_POOL_MODE=%s", utils.Config.Db.Pooler.PoolMode),
-					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
-					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
-					// Default platform config: https://github.com/supabase/postgres/blob/develop/ansible/files/pgbouncer_config/pgbouncer.ini.j2
-					"PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits",
+					"PORT=4000",
+					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),
+					fmt.Sprintf("PROXY_PORT_TRANSACTION=%d", portTransaction),
+					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+					"CLUSTER_POSTGRES=true",
+					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
+					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
+					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"REGION=local",
+					"ERL_AFLAGS=-proto_dist inet_tcp",
+				},
+				Cmd: []string{
+					"/bin/sh", "-c",
+					fmt.Sprintf("/app/bin/migrate && /app/bin/supavisor eval '%s' && /app/bin/server", poolerTenantBuf.String()),
+				},
+				ExposedPorts: nat.PortSet{
+					"4000/tcp": {},
+					nat.Port(fmt.Sprintf("%d/tcp", portSession)):     {},
+					nat.Port(fmt.Sprintf("%d/tcp", portTransaction)): {},
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/6432"},
+					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
 				},
 			},
 			container.HostConfig{
-				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{

@@ -65,7 +65,7 @@ var (
 
 func init() {
 	bootstrapFlags := bootstrapCmd.Flags()
-	bootstrapFlags.StringP("password", "p", "", "Password to your remote Postgres database.")
+	bootstrapFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", bootstrapFlags.Lookup("password")))
 	rootCmd.AddCommand(bootstrapCmd)
 }

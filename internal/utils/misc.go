@@ -38,7 +38,7 @@ const (
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.53.3"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
-	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
+	SupavisorImage   = "supabase/supavisor:1.1.56"
 	PgProveImage     = "supabase/pg_prove:3.36"
 	GotrueImage      = "supabase/gotrue:v2.151.0"
 	RealtimeImage    = "supabase/realtime:v2.28.32"
@@ -61,7 +61,7 @@ var ServiceImages = []string{
 	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
-	PgbouncerImage,
+	SupavisorImage,
 }
 
 var JobImages = []string{
@@ -118,6 +118,7 @@ var (
 	ManagedSchemas = append([]string{
 		"_analytics",
 		"_realtime",
+		"_supavisor",
 		"pgbouncer",
 		"pgsodium",
 		"pgtle",
@@ -125,13 +126,14 @@ var (
 		"vault",
 	}, PgSchemas...)
 	InternalSchemas = append([]string{
+		"_analytics",
+		"_realtime",
+		"_supavisor",
 		"auth",
 		"extensions",
 		"pgbouncer",
 		"realtime",
-		"_realtime",
 		"storage",
-		"_analytics",
 		"supabase_functions",
 		"supabase_migrations",
 		// Owned by extensions

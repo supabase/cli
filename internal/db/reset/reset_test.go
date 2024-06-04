@@ -308,6 +308,7 @@ var escapedSchemas = []string{
 	"public",
 	`\_analytics`,
 	`\_realtime`,
+	`\_supavisor`,
 	"pgbouncer",
 	"pgsodium",
 	"pgtle",
