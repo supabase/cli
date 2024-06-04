@@ -74,7 +74,9 @@ func GetId(name string) string {
 }
 
 func UpdateDockerIds() {
-	NetId = GetId("network")
+	if NetId = viper.GetString("network-id"); len(NetId) == 0 {
+		NetId = GetId("network")
+	}
 	DbId = GetId(DbAliases[0])
 	ConfigId = GetId("config")
 	KongId = GetId(KongAliases[0])

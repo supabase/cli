@@ -15,7 +15,6 @@ func Run(ctx context.Context, backup bool, projectId string, fsys afero.Fs) erro
 	// Sanity checks.
 	if len(projectId) > 0 {
 		utils.Config.ProjectId = projectId
-		utils.UpdateDockerIds()
 	} else if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}

@@ -175,7 +175,7 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 			Cmd:   []string{"bash", "-c", script, "--"},
 		},
 		container.HostConfig{
-			NetworkMode: container.NetworkMode("host"),
+			NetworkMode: network.NetworkHost,
 		},
 		network.NetworkingConfig{},
 		"",

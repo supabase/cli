@@ -257,11 +257,13 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	}
 	config.Labels[CliProjectLabel] = Config.ProjectId
 	config.Labels[composeProjectLabel] = Config.ProjectId
-	if len(hostConfig.NetworkMode) == 0 {
+	if networkId := viper.GetString("network-id"); len(networkId) > 0 {
+		hostConfig.NetworkMode = container.NetworkMode(networkId)
+	} else if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
 	// Create network with name
-	if hostConfig.NetworkMode.IsUserDefined() && hostConfig.NetworkMode.UserDefined() != "host" {
+	if hostConfig.NetworkMode.IsUserDefined() && hostConfig.NetworkMode.UserDefined() != network.NetworkHost {
 		if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode.NetworkName()); err != nil {
 			return "", err
 		}
