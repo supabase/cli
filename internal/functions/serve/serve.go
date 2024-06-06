@@ -220,7 +220,6 @@ EOF
 		start.WithSyslogConfig(container.HostConfig{
 			Binds:        binds,
 			PortBindings: portBindings,
-			ExtraHosts:   []string{"host.docker.internal:host-gateway"},
 		}),
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
