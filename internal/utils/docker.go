@@ -54,18 +54,15 @@ const (
 	composeProjectLabel = "com.docker.compose.project"
 )
 
-func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
-	_, err := Docker.NetworkCreate(
-		ctx,
-		networkId,
-		types.NetworkCreate{
-			CheckDuplicate: true,
-			Labels: map[string]string{
-				CliProjectLabel:     Config.ProjectId,
-				composeProjectLabel: Config.ProjectId,
-			},
-		},
-	)
+func DockerNetworkCreateIfNotExists(ctx context.Context, mode container.NetworkMode, labels map[string]string) error {
+	// Non-user defined networks should already exist
+	if !isUserDefined(mode) {
+		return nil
+	}
+	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), types.NetworkCreate{
+		CheckDuplicate: true,
+		Labels:         labels,
+	})
 	// if error is network already exists, no need to propagate to user
 	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
@@ -253,21 +250,21 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	// Setup default config
 	config.Image = GetRegistryImageUrl(config.Image)
 	if config.Labels == nil {
-		config.Labels = map[string]string{}
+		config.Labels = make(map[string]string, 2)
 	}
 	config.Labels[CliProjectLabel] = Config.ProjectId
 	config.Labels[composeProjectLabel] = Config.ProjectId
+	// Configure container network
+	hostConfig.ExtraHosts = append(hostConfig.ExtraHosts, extraHosts...)
 	if networkId := viper.GetString("network-id"); len(networkId) > 0 {
 		hostConfig.NetworkMode = container.NetworkMode(networkId)
 	} else if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
-	// Create network with name
-	if hostConfig.NetworkMode.IsUserDefined() && hostConfig.NetworkMode.UserDefined() != network.NetworkHost {
-		if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode.NetworkName()); err != nil {
-			return "", err
-		}
+	if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode, config.Labels); err != nil {
+		return "", err
 	}
+	// Configure container volumes
 	var binds, sources []string
 	for _, bind := range hostConfig.Binds {
 		spec, err := loader.ParseVolume(bind)

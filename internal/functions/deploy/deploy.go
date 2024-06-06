@@ -129,8 +129,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 			Cmd:   cmd,
 		},
 		start.WithSyslogConfig(container.HostConfig{
-			Binds:      binds,
-			ExtraHosts: []string{"host.docker.internal:host-gateway"},
+			Binds: binds,
 		}),
 		network.NetworkingConfig{},
 		"",
