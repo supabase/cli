@@ -857,6 +857,7 @@ EOF
 					"PG_META_DB_USER=" + dbConfig.User,
 					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
