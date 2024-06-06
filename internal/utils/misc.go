@@ -286,6 +286,9 @@ func ChangeWorkDir(fsys afero.Fs) error {
 	if err := os.Chdir(workdir); err != nil {
 		return errors.Errorf("failed to change workdir: %w", err)
 	}
+	if cwd, err := os.Getwd(); err == nil && cwd != CurrentDirAbs {
+		fmt.Fprintln(os.Stderr, "Using workdir", Bold(workdir))
+	}
 	return nil
 }
 
