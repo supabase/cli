@@ -5,7 +5,7 @@ Serve all Functions locally.
 `supabase functions serve` command includes additional flags to assist developers in debugging using tools like `DevTools`.
 
 1. `--inspect`
-   * Alias of `--inspect-mode run`.
+   * Alias of `--inspect-mode brk`.
 
 2. `--inspect-mode [ run | brk | wait ]`
    * Activates the inspector capability.

@@ -82,7 +82,7 @@ var (
 	}
 
 	envFilePath string
-	inspectRun  bool
+	inspectBrk  bool
 	inspectMode = utils.EnumFlag{
 		Allowed: []string{
 			string(serve.InspectModeRun),
@@ -107,8 +107,8 @@ var (
 
 			if len(inspectMode.Value) > 0 {
 				runtimeOption.InspectMode = utils.Ptr(serve.InspectMode(inspectMode.Value))
-			} else if inspectRun {
-				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeRun)
+			} else if inspectBrk {
+				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeBrk)
 			}
 			if runtimeOption.InspectMode == nil && runtimeOption.InspectMain {
 				return fmt.Errorf("--inspect-main must be used together with one of these flags: [inspect inspect-mode]")
@@ -130,7 +130,7 @@ func init() {
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	functionsServeCmd.Flags().BoolVar(&inspectRun, "inspect", false, "Alias of --inspect-mode run.")
+	functionsServeCmd.Flags().BoolVar(&inspectBrk, "inspect", false, "Alias of --inspect-mode brk.")
 	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability for debugging.")
 	functionsServeCmd.Flags().BoolVar(&runtimeOption.InspectMain, "inspect-main", false, "Allow inspecting the main worker.")
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
