@@ -143,8 +143,8 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":rw,z",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":rw",
 	}
 	if importMapPath != "" {
 		modules, err := utils.BindImportMap(importMapPath, dockerFlagImportMapPath, fsys)

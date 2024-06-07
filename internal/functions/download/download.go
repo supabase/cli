@@ -176,9 +176,9 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		hostEszipPath + ":" + dockerEszipPath + ":ro,z",
-		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw,z",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
+		hostEszipPath + ":" + dockerEszipPath + ":ro",
+		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw",
 	}
 
 	return utils.DockerRunOnceWithConfig(

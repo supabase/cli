@@ -344,7 +344,7 @@ EOF
 				}
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
-			binds = append(binds, fmt.Sprintf("%s:%s:rw,z", hostPath, dockerPath))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
 		}
 
 		if _, err := utils.DockerStart(
