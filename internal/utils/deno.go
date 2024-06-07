@@ -259,14 +259,14 @@ func (m *ImportMap) BindModules(resolved ImportMap) []string {
 	for k, dockerPath := range resolved.Imports {
 		if strings.HasPrefix(dockerPath, DockerModsDir) {
 			hostPath := filepath.Join(cwd, FunctionsDir, m.Imports[k])
-			binds = append(binds, hostPath+":"+dockerPath+":ro,z")
+			binds = append(binds, hostPath+":"+dockerPath+":ro")
 		}
 	}
 	for module, mapping := range resolved.Scopes {
 		for k, dockerPath := range mapping {
 			if strings.HasPrefix(dockerPath, DockerModsDir) {
 				hostPath := filepath.Join(cwd, FunctionsDir, m.Scopes[module][k])
-				binds = append(binds, hostPath+":"+dockerPath+":ro,z")
+				binds = append(binds, hostPath+":"+dockerPath+":ro")
 			}
 		}
 	}
@@ -370,6 +370,6 @@ func BindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 			return nil, err
 		}
 	}
-	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro,z")
+	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro")
 	return binds, nil
 }

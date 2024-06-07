@@ -102,9 +102,9 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro,z",
-		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw,z",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
+		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro",
+		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw",
 	}
 
 	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath}
