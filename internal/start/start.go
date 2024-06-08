@@ -5,7 +5,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,7 +20,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/services"
@@ -79,10 +77,10 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
-		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
+		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+			if err := utils.DockerRemoveAll(context.Background()); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
 			return err
@@ -153,6 +151,8 @@ var (
 	poolerTenantTemplate = template.Must(template.New("poolerTenant").Parse(poolerTenantEmbed))
 )
 
+var serviceTimeout = 30 * time.Second
+
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
@@ -212,7 +212,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := reset.WaitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.VectorId); err != nil {
 			return err
 		}
 	}
@@ -307,7 +307,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := reset.WaitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.LogflareId); err != nil {
 			return err
 		}
 	}
@@ -1005,7 +1005,7 @@ EOF
 	}
 
 	p.Send(utils.StatusMsg("Waiting for health checks..."))
-	return reset.WaitForServiceReady(ctx, started)
+	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

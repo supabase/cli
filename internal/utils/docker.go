@@ -90,7 +90,7 @@ func WaitAll[T any](containers []T, exec func(container T) error) []error {
 // NoBackupVolume TODO: encapsulate this state in a class
 var NoBackupVolume = false
 
-func DockerRemoveAll(ctx context.Context, w io.Writer) error {
+func DockerRemoveAll(ctx context.Context) error {
 	args := CliProjectFilter()
 	containers, err := Docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -106,7 +106,6 @@ func DockerRemoveAll(ctx context.Context, w io.Writer) error {
 			ids = append(ids, c.ID)
 		}
 	}
-	fmt.Fprintln(w, "Stopping containers...")
 	result := WaitAll(ids, func(id string) error {
 		if err := Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
 			return errors.Errorf("failed to stop container: %w", err)
@@ -377,6 +376,21 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 	}
 	if resp.State.ExitCode > 0 {
 		return errors.Errorf("error running container: exit %d", resp.State.ExitCode)
+	}
+	return nil
+}
+
+func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
+	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	})
+	if err != nil {
+		return errors.Errorf("failed to read docker logs: %w", err)
+	}
+	defer logs.Close()
+	if _, err := stdcopy.StdCopy(stdout, stderr, logs); err != nil {
+		return errors.Errorf("failed to copy docker logs: %w", err)
 	}
 	return nil
 }

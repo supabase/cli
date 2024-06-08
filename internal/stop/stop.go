@@ -39,5 +39,6 @@ func Run(ctx context.Context, backup bool, projectId string, fsys afero.Fs) erro
 
 func stop(ctx context.Context, backup bool, w io.Writer) error {
 	utils.NoBackupVolume = !backup
-	return utils.DockerRemoveAll(ctx, w)
+	fmt.Fprintln(w, "Stopping containers...")
+	return utils.DockerRemoveAll(ctx)
 }

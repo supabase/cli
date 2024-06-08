@@ -87,7 +87,7 @@ func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
 		utils.CLI_REPO,
 		version,
 	)
-	log.Println(checkPath)
+	log.Println("Downloading checksum:", checkPath)
 	config := PackageConfig{Version: version}
 	resp, err := client.Send(ctx, http.MethodGet, checkPath, nil)
 	if err != nil {
