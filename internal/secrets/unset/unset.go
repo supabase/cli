@@ -9,19 +9,17 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/secrets/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, projectRef string, args []string, fsys afero.Fs) error {
 	if len(args) == 0 {
-		resp, err := utils.GetSupabase().V1ListAllSecretsWithResponse(ctx, projectRef)
+		secrets, err := list.GetSecretDigests(ctx, projectRef)
 		if err != nil {
-			return errors.Errorf("failed to list secrets: %w", err)
+			return err
 		}
-		if resp.JSON200 == nil {
-			return errors.New("Unexpected error retrieving project secrets: " + string(resp.Body))
-		}
-		for _, secret := range *resp.JSON200 {
+		for _, secret := range secrets {
 			if !strings.HasPrefix(secret.Name, "SUPABASE_") {
 				args = append(args, secret.Name)
 			}
