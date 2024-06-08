@@ -26,7 +26,7 @@ var (
 	}
 
 	secretsSetCmd = &cobra.Command{
-		Use:   "set [flags] <NAME=VALUE> ...",
+		Use:   "set <NAME=VALUE> ...",
 		Short: "Set a secret(s) on Supabase",
 		Long:  "Set a secret(s) to the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,7 +39,7 @@ var (
 	}
 
 	secretsUnsetCmd = &cobra.Command{
-		Use:   "unset <NAME> ...",
+		Use:   "unset [NAME] ...",
 		Short: "Unset a secret(s) on Supabase",
 		Long:  "Unset a secret(s) from the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
