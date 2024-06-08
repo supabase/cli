@@ -95,6 +95,24 @@ func UpdateDockerIds() {
 	PoolerId = GetId(PoolerAliases[0])
 }
 
+func GetDockerIds() []string {
+	return []string{
+		KongId,
+		GotrueId,
+		InbucketId,
+		RealtimeId,
+		RestId,
+		StorageId,
+		ImgProxyId,
+		PgmetaId,
+		StudioId,
+		EdgeRuntimeId,
+		LogflareId,
+		VectorId,
+		PoolerId,
+	}
+}
+
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
 type sizeInBytes int64
 
