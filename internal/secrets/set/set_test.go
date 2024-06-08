@@ -3,6 +3,7 @@ package set
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -32,7 +33,7 @@ func TestSecretSetCommand(t *testing.T) {
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
-			Reply(200)
+			Reply(http.StatusCreated)
 		// Run test
 		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
 		// Check error
@@ -55,7 +56,7 @@ func TestSecretSetCommand(t *testing.T) {
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
 			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
-			Reply(200)
+			Reply(http.StatusCreated)
 		// Run test
 		err := Run(context.Background(), project, "/tmp/.env", []string{}, fsys)
 		// Check error
