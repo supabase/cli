@@ -30,10 +30,6 @@ var (
 		Short: "Set a secret(s) on Supabase",
 		Long:  "Set a secret(s) to the linked Supabase project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			envFilePath, err := cmd.Flags().GetString("env-file")
-			if err != nil {
-				return err
-			}
 			return set.Run(cmd.Context(), flags.ProjectRef, envFilePath, args, afero.NewOsFs())
 		},
 	}
@@ -50,7 +46,7 @@ var (
 
 func init() {
 	secretsCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	secretsSetCmd.Flags().String("env-file", "", "Read secrets from a .env file.")
+	secretsSetCmd.Flags().StringVar(&envFilePath, "env-file", "", "Read secrets from a .env file.")
 	secretsCmd.AddCommand(secretsListCmd)
 	secretsCmd.AddCommand(secretsSetCmd)
 	secretsCmd.AddCommand(secretsUnsetCmd)
