@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
@@ -63,8 +62,8 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return errors.New(start.ErrDatabase)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+		return err
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
 		return err

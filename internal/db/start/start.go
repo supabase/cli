@@ -26,7 +26,6 @@ import (
 )
 
 var (
-	ErrDatabase   = errors.New("database is not healthy")
 	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
@@ -46,7 +45,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
-		if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+		if err := utils.DockerRemoveAll(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
@@ -137,8 +136,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
-		return errors.New(ErrDatabase)
+	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil {
+		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
 	if utils.NoBackupVolume {
@@ -149,15 +148,40 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	return initCurrentBranch(fsys)
 }
 
-func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
+func WaitForHealthyService(ctx context.Context, timeout time.Duration, started ...string) error {
 	probe := func() error {
-		return status.AssertContainerHealthy(ctx, container)
+		var errHealth []error
+		var unhealthy []string
+		for _, container := range started {
+			if err := status.IsServiceReady(ctx, container); err != nil {
+				unhealthy = append(unhealthy, container)
+				errHealth = append(errHealth, err)
+			}
+		}
+		started = unhealthy
+		return errors.Join(errHealth...)
 	}
 	policy := backoff.WithContext(backoff.WithMaxRetries(
 		backoff.NewConstantBackOff(time.Second),
 		uint64(timeout.Seconds()),
 	), ctx)
-	return backoff.Retry(probe, policy) == nil
+	err := backoff.Retry(probe, policy)
+	if err != nil {
+		// Print container logs for easier debugging
+		for _, containerId := range started {
+			fmt.Fprintln(os.Stderr, containerId, "container logs:")
+			if err := utils.DockerStreamLogsOnce(ctx, containerId, os.Stderr, os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+		}
+	}
+	return err
+}
+
+func IsUnhealthyError(err error) bool {
+	// Health check always returns a joinError
+	_, ok := err.(interface{ Unwrap() []error })
+	return ok
 }
 
 func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {

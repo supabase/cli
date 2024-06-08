@@ -43,8 +43,8 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 			return err
 		} else if len(container) > 0 {
 			defer utils.DockerRemove(container)
-			if !start.WaitForHealthyService(ctx, container, start.HealthTimeout) {
-				return errors.New(start.ErrDatabase)
+			if err := start.WaitForHealthyService(ctx, start.HealthTimeout, container); err != nil {
+				return err
 			}
 			if err := migrateBaseDatabase(ctx, container, fsys, options...); err != nil {
 				return err
@@ -206,8 +206,8 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return "", errors.New(start.ErrDatabase)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+		return "", err
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err

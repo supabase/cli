@@ -8,13 +8,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -24,14 +21,11 @@ import (
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/repair"
-	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
 var (
-	ErrUnhealthy   = errors.New("service not healthy")
-	serviceTimeout = 30 * time.Second
 	//go:embed templates/drop.sql
 	dropObjects string
 	//go:embed templates/list.sql
@@ -134,8 +128,8 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {
-		return errors.New(start.ErrDatabase)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+		return err
 	}
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
@@ -204,8 +198,8 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
 		return errors.Errorf("failed to restart container: %w", err)
 	}
-	if !start.WaitForHealthyService(ctx, utils.DbId, start.HealthTimeout) {
-		return errors.New(start.ErrDatabase)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+		return err
 	}
 	return restartServices(ctx)
 }
@@ -221,46 +215,6 @@ func restartServices(ctx context.Context) error {
 	})
 	// Do not wait for service healthy as those services may be excluded from starting
 	return errors.Join(result...)
-}
-
-func WaitForServiceReady(ctx context.Context, started []string) error {
-	probe := func() error {
-		var errHealth []error
-		var unhealthy []string
-		for _, container := range started {
-			if err := status.IsServiceReady(ctx, container); err != nil {
-				unhealthy = append(unhealthy, container)
-				errHealth = append(errHealth, err)
-			}
-		}
-		started = unhealthy
-		return errors.Join(errHealth...)
-	}
-	policy := backoff.WithContext(backoff.WithMaxRetries(
-		backoff.NewConstantBackOff(time.Second),
-		uint64(serviceTimeout.Seconds()),
-	), ctx)
-	err := backoff.Retry(probe, policy)
-	if err != nil {
-		// Print container logs for easier debugging
-		for _, containerId := range started {
-			logs, err := utils.Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-			})
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				continue
-			}
-			fmt.Fprintln(os.Stderr, containerId, "container logs:")
-			if _, err := stdcopy.StdCopy(os.Stderr, os.Stderr, logs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-			}
-			logs.Close()
-		}
-		return errors.Errorf("%w: %v", ErrUnhealthy, started)
-	}
-	return err
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

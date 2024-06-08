@@ -293,12 +293,24 @@ func TestRestartDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/restart").
 			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: false,
+					Status:  "exited",
+				},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/logs").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorIs(t, err, start.ErrDatabase)
+		assert.ErrorContains(t, err, "test-reset container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

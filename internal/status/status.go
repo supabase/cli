@@ -64,7 +64,7 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	if err := AssertContainerHealthy(ctx, utils.DbId); err != nil {
+	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
 		return err
 	}
 
@@ -105,7 +105,7 @@ func checkServiceHealth(ctx context.Context) ([]string, error) {
 	return stopped, nil
 }
 
-func AssertContainerHealthy(ctx context.Context, container string) error {
+func assertContainerHealthy(ctx context.Context, container string) error {
 	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
 		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
@@ -125,7 +125,7 @@ func IsServiceReady(ctx context.Context, container string) error {
 		// Native health check logs too much hyper::Error(IncompleteMessage)
 		return checkHTTPHead(ctx, "/functions/v1/_internal/health")
 	}
-	return AssertContainerHealthy(ctx, container)
+	return assertContainerHealthy(ctx, container)
 }
 
 func checkHTTPHead(ctx context.Context, path string) error {
