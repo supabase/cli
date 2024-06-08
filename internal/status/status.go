@@ -9,7 +9,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
@@ -61,28 +61,17 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := AssertContainerHealthy(ctx, utils.DbId); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	if err := AssertContainerHealthy(ctx, utils.DbId); err != nil {
+		return err
 	}
 
-	services := []string{
-		utils.KongId,
-		utils.GotrueId,
-		utils.InbucketId,
-		utils.RealtimeId,
-		utils.RestId,
-		utils.StorageId,
-		utils.ImgProxyId,
-		utils.PgmetaId,
-		utils.StudioId,
-		utils.LogflareId,
+	stopped, err := checkServiceHealth(ctx)
+	if err != nil {
+		return err
 	}
-	stopped := checkServiceHealth(ctx, services, os.Stderr)
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
 	}
@@ -94,23 +83,31 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	return printStatus(names, format, os.Stdout, stopped...)
 }
 
-func checkServiceHealth(ctx context.Context, services []string, w io.Writer) (stopped []string) {
-	for _, name := range services {
-		if err := AssertContainerHealthy(ctx, name); err != nil {
-			if client.IsErrNotFound(err) {
-				stopped = append(stopped, name)
-			} else {
-				// Log unhealthy containers instead of failing
-				fmt.Fprintln(w, err)
-			}
+func checkServiceHealth(ctx context.Context) ([]string, error) {
+	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
+		Filters: utils.CliProjectFilter(),
+	})
+	if err != nil {
+		return nil, errors.Errorf("failed to list running containers: %w", err)
+	}
+	running := make(map[string]struct{}, len(resp))
+	for _, c := range resp {
+		for _, n := range c.Names {
+			running[n] = struct{}{}
 		}
 	}
-	return stopped
+	var stopped []string
+	for _, n := range utils.GetDockerIds() {
+		if _, ok := running[n]; !ok {
+			stopped = append(stopped, n)
+		}
+	}
+	return stopped, nil
 }
 
 func AssertContainerHealthy(ctx context.Context, container string) error {
 	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
-		return err
+		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
 		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
 	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
