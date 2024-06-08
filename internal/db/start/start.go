@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -148,24 +149,15 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	return initCurrentBranch(fsys)
 }
 
-func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
-	now := time.Now()
-	expiry := now.Add(timeout)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for t := now; t.Before(expiry) && ctx.Err() == nil; t = <-ticker.C {
-		if callback() {
-			return true
-		}
-	}
-	return false
-}
-
 func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
-	probe := func() bool {
-		return status.AssertContainerHealthy(ctx, container) == nil
+	probe := func() error {
+		return status.AssertContainerHealthy(ctx, container)
 	}
-	return RetryEverySecond(ctx, probe, timeout)
+	policy := backoff.WithContext(backoff.WithMaxRetries(
+		backoff.NewConstantBackOff(time.Second),
+		uint64(timeout.Seconds()),
+	), ctx)
+	return backoff.Retry(probe, policy) == nil
 }
 
 func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
