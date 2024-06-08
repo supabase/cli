@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -223,17 +224,24 @@ func restartServices(ctx context.Context) error {
 }
 
 func WaitForServiceReady(ctx context.Context, started []string) error {
-	probe := func() bool {
+	probe := func() error {
+		var errHealth []error
 		var unhealthy []string
 		for _, container := range started {
-			if !status.IsServiceReady(ctx, container) {
+			if err := status.IsServiceReady(ctx, container); err != nil {
 				unhealthy = append(unhealthy, container)
+				errHealth = append(errHealth, err)
 			}
 		}
 		started = unhealthy
-		return len(started) == 0
+		return errors.Join(errHealth...)
 	}
-	if !start.RetryEverySecond(ctx, probe, serviceTimeout) {
+	policy := backoff.WithContext(backoff.WithMaxRetries(
+		backoff.NewConstantBackOff(time.Second),
+		uint64(serviceTimeout.Seconds()),
+	), ctx)
+	err := backoff.Retry(probe, policy)
+	if err != nil {
 		// Print container logs for easier debugging
 		for _, containerId := range started {
 			logs, err := utils.Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
@@ -252,7 +260,7 @@ func WaitForServiceReady(ctx context.Context, started []string) error {
 		}
 		return errors.Errorf("%w: %v", ErrUnhealthy, started)
 	}
-	return nil
+	return err
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

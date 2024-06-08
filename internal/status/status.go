@@ -13,6 +13,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type CustomName struct {
@@ -118,36 +119,25 @@ func AssertContainerHealthy(ctx context.Context, container string) error {
 	return nil
 }
 
-func IsServiceReady(ctx context.Context, container string) bool {
+func IsServiceReady(ctx context.Context, container string) error {
 	if container == utils.RestId {
-		return isPostgRESTHealthy(ctx)
+		// PostgREST does not support native health checks
+		return checkHTTPHead(ctx, "/rest-admin/v1/ready")
 	}
 	if container == utils.EdgeRuntimeId {
-		return isEdgeRuntimeHealthy(ctx)
+		// Native health check logs too much hyper::Error(IncompleteMessage)
+		return checkHTTPHead(ctx, "/functions/v1/_internal/health")
 	}
-	return AssertContainerHealthy(ctx, container) == nil
+	return AssertContainerHealthy(ctx, container)
 }
 
-func isPostgRESTHealthy(ctx context.Context) bool {
-	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://%s:%d/rest-admin/v1/ready", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
-
-func isEdgeRuntimeHealthy(ctx context.Context) bool {
-	// Native health check logs too much hyper::Error(IncompleteMessage)
-	restUrl := fmt.Sprintf("http://%s:%d/functions/v1/_internal/health", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
-
-func checkHTTPHead(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Add("apikey", utils.Config.Auth.AnonKey)
-	resp, err := http.DefaultClient.Do(req)
-	return err == nil && resp.StatusCode == http.StatusOK
+func checkHTTPHead(ctx context.Context, path string) error {
+	server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+	client := fetcher.NewFetcher(server, fetcher.WithRequestEditor(func(req *http.Request) {
+		req.Header.Add("apikey", utils.Config.Auth.AnonKey)
+	}))
+	_, err := client.Send(ctx, http.MethodHead, path, nil)
+	return err
 }
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {
