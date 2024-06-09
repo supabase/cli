@@ -90,9 +90,9 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+			return resp, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
 		}
-		return nil, errors.Errorf("Error status %d: %s", resp.StatusCode, data)
+		return resp, errors.Errorf("Error status %d: %s", resp.StatusCode, data)
 	}
 	return resp, nil
 }
