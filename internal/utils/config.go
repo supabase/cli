@@ -486,8 +486,8 @@ type (
 	}
 
 	function struct {
-		VerifyJWT *bool  `toml:"verify_jwt"`
-		ImportMap string `toml:"import_map"`
+		VerifyJWT *bool  `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap string `toml:"import_map" json:"importMapPath,omitempty"`
 	}
 
 	analytics struct {
