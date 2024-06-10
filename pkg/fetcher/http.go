@@ -14,6 +14,7 @@ type Fetcher struct {
 	server  string
 	client  *http.Client
 	editors []RequestEditor
+	status  []int
 }
 
 type FetcherOption func(*Fetcher)
@@ -32,6 +33,12 @@ func NewFetcher(server string, opts ...FetcherOption) *Fetcher {
 func WithHTTPClient(client *http.Client) FetcherOption {
 	return func(s *Fetcher) {
 		s.client = client
+	}
+}
+
+func WithExpectedStatus(statusCode ...int) FetcherOption {
+	return func(s *Fetcher) {
+		s.status = statusCode
 	}
 }
 
@@ -86,7 +93,13 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 	if err != nil {
 		return nil, errors.Errorf("failed to execute http request: %w", err)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	for _, expected := range s.status {
+		if resp.StatusCode == expected {
+			return resp, nil
+		}
+	}
+	// Reject unexpected status codes as error
+	if len(s.status) > 0 || resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
