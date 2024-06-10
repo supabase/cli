@@ -195,12 +195,14 @@ var Config = config{
 		Password: "postgres",
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 		Pooler: pooler{
+			Image:         SupavisorImage,
 			TenantId:      "pooler-dev",
 			EncryptionKey: "12345678901234567890123456789032",
 			SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 		},
 	},
 	Realtime: realtime{
+		Image:           RealtimeImage,
 		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
 		TenantId:        "realtime-dev",
@@ -323,6 +325,7 @@ type (
 
 	pooler struct {
 		Enabled          bool     `toml:"enabled"`
+		Image            string   `toml:"-"`
 		Port             uint16   `toml:"port"`
 		PoolMode         PoolMode `toml:"pool_mode"`
 		DefaultPoolSize  uint     `toml:"default_pool_size"`
@@ -335,6 +338,7 @@ type (
 
 	realtime struct {
 		Enabled         bool          `toml:"enabled"`
+		Image           string        `toml:"-"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
 		TenantId        string        `toml:"-"`
@@ -641,6 +645,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
 				return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 			}
+			if version, err := afero.ReadFile(fsys, PoolerVersionPath); err == nil && len(version) > 0 {
+				Config.Db.Pooler.Image = replaceImageTag(SupavisorImage, string(version))
+			}
 		}
 		if connString, err := afero.ReadFile(fsys, PoolerUrlPath); err == nil && len(connString) > 0 {
 			Config.Db.Pooler.ConnectionString = string(connString)
@@ -650,6 +657,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 			if !SliceContains(allowed, Config.Realtime.IpVersion) {
 				return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
+			}
+			if version, err := afero.ReadFile(fsys, RealtimeVersionPath); err == nil && len(version) > 0 {
+				Config.Realtime.Image = replaceImageTag(RealtimeImage, string(version))
 			}
 		}
 		// Validate storage config

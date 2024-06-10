@@ -223,7 +223,7 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	logger := utils.GetDebugLogger()
-	if err := utils.DockerRunOnceWithStream(ctx, utils.RealtimeImage, []string{
+	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Realtime.Image, []string{
 		"PORT=4000",
 		"DB_HOST=" + host,
 		"DB_PORT=5432",

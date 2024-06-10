@@ -46,13 +46,13 @@ func GetServiceImages() []string {
 		utils.Config.Db.Image,
 		utils.Config.Auth.Image,
 		utils.Config.Api.Image,
-		utils.RealtimeImage,
+		utils.Config.Realtime.Image,
 		utils.Config.Storage.Image,
 		utils.EdgeRuntimeImage,
-		utils.StudioImage,
-		utils.PgmetaImage,
+		utils.Config.Studio.Image,
+		utils.Config.Studio.PgmetaImage,
 		utils.LogflareImage,
-		utils.SupavisorImage,
+		utils.Config.Db.Pooler.Image,
 		utils.ImageProxyImage,
 	}
 }
