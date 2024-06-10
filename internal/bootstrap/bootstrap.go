@@ -368,7 +368,7 @@ type Downloader struct {
 
 func NewDownloader(concurrency uint, fsys afero.Fs) *Downloader {
 	return &Downloader{
-		api:   fetcher.NewFetcher(""),
+		api:   fetcher.NewFetcher("", fetcher.WithExpectedStatus(http.StatusOK)),
 		queue: utils.NewJobQueue(concurrency),
 		fsys:  fsys,
 	}

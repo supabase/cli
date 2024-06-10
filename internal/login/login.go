@@ -132,6 +132,9 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 	// TODO: Move to OpenAPI-generated http client once we reach v1 on API schema.
 	client := fetcher.NewFetcher(
 		utils.GetSupabaseAPIHost(),
+		fetcher.WithHTTPClient(&http.Client{
+			Timeout: 10 * time.Second,
+		}),
 		fetcher.WithExpectedStatus(http.StatusOK),
 	)
 	timeout := backoff.NewConstantBackOff(defaultRetryAfterSeconds)

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
@@ -128,12 +130,29 @@ func IsServiceReady(ctx context.Context, container string) error {
 	return assertContainerHealthy(ctx, container)
 }
 
+var (
+	healthClient *fetcher.Fetcher
+	healthOnce   sync.Once
+)
+
 func checkHTTPHead(ctx context.Context, path string) error {
-	server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
-	client := fetcher.NewFetcher(server, fetcher.WithRequestEditor(func(req *http.Request) {
-		req.Header.Add("apikey", utils.Config.Auth.AnonKey)
-	}))
-	_, err := client.Send(ctx, http.MethodHead, path, nil)
+	healthOnce.Do(func() {
+		server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+		header := func(req *http.Request) {
+			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
+		}
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		healthClient = fetcher.NewFetcher(
+			server,
+			fetcher.WithHTTPClient(client),
+			fetcher.WithRequestEditor(header),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+	})
+	// HEAD method does not return response body
+	_, err := healthClient.Send(ctx, http.MethodHead, path, nil)
 	return err
 }
 

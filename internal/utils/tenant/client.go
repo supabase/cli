@@ -70,6 +70,7 @@ func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
 		fetcher.WithHTTPClient(client),
 		fetcher.WithRequestEditor(header),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+		fetcher.WithExpectedStatus(http.StatusOK),
 	)}
 	return api
 }
