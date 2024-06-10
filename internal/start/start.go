@@ -650,11 +650,11 @@ EOF
 	}
 
 	// Start Realtime.
-	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.RealtimeImage, excluded) {
+	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.RealtimeImage,
+				Image: utils.Config.Realtime.Image,
 				Env: []string{
 					"PORT=4000",
 					"DB_HOST=" + dbConfig.Host,
@@ -930,7 +930,7 @@ EOF
 	}
 
 	// Start pooler.
-	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.SupavisorImage, excluded) {
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
 		portSession := uint16(5432)
 		portTransaction := uint16(6543)
 		dockerPort := portTransaction
@@ -954,7 +954,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.SupavisorImage,
+				Image: utils.Config.Db.Pooler.Image,
 				Env: []string{
 					"PORT=4000",
 					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),

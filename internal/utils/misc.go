@@ -196,6 +196,8 @@ var (
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
 	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
 	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
+	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
+	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
 	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
