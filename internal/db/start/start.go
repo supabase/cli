@@ -45,7 +45,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
-		if err := utils.DockerRemoveAll(context.Background()); err != nil {
+		if err := utils.DockerRemoveAll(context.Background(), os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
@@ -166,11 +166,11 @@ func WaitForHealthyService(ctx context.Context, timeout time.Duration, started .
 		uint64(timeout.Seconds()),
 	), ctx)
 	err := backoff.Retry(probe, policy)
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		// Print container logs for easier debugging
 		for _, containerId := range started {
 			fmt.Fprintln(os.Stderr, containerId, "container logs:")
-			if err := utils.DockerStreamLogsOnce(ctx, containerId, os.Stderr, os.Stderr); err != nil {
+			if err := utils.DockerStreamLogsOnce(context.Background(), containerId, os.Stderr, os.Stderr); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
 		}
