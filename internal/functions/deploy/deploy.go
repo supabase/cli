@@ -202,44 +202,15 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 }
 
 func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
-	// 1. Ensure noVerifyJWT is not nil.
-	if noVerifyJWT == nil {
-		x := false
-		if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
-			x = true
-		}
-		noVerifyJWT = &x
-	}
-	resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
-	if err != nil {
-		return err
-	}
-	// Upstream server expects import map to be always defined
-	if importMapPath == "" {
-		resolved, err = filepath.Abs(utils.FallbackImportMapPath)
-		if err != nil {
-			return errors.Errorf("failed to resolve absolute path: %w", err)
-		}
-	}
-	exists, err := afero.Exists(fsys, resolved)
-	if err != nil {
-		logger := utils.GetDebugLogger()
-		fmt.Fprintln(logger, err)
-	}
-	if exists {
-		importMapPath = resolved
-	} else {
-		importMapPath = ""
-	}
-
-	// 2. Bundle Function.
+	// 1. Bundle Function.
 	fmt.Println("Bundling " + utils.Bold(slug))
+	fc := utils.GetFunctionConfig(slug, importMapPath, noVerifyJWT, fsys)
 	dockerEntrypointPath := path.Join(utils.DockerFuncDirPath, slug, "index.ts")
-	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, importMapPath, fsys)
+	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, fc.ImportMap, fsys)
 	if err != nil {
 		return err
 	}
-	// 3. Deploy new Function.
+	// 2. Deploy new Function.
 	functionSize := units.HumanSize(float64(functionBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
@@ -250,7 +221,7 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			slug,
 			"file://"+dockerEntrypointPath,
 			"file://"+dockerImportMapPath,
-			!*noVerifyJWT,
+			*fc.VerifyJWT,
 			functionBody,
 		)
 	}, policy)

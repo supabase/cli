@@ -223,34 +223,11 @@ func populatePerFunctionConfigs(importMapPath string, noVerifyJWT *bool, fsys af
 		return nil, "", err
 	}
 
-	fallbackImportMapPath := ""
-	if f, err := fsys.Stat(utils.FallbackImportMapPath); err == nil && !f.IsDir() {
-		fallbackImportMapPath = utils.FallbackImportMapPath
-	}
-
 	binds := []string{}
 	functionsConfig := make(map[string]interface{}, len(slugs))
 	for _, functionName := range slugs {
-		fc := utils.Config.Functions[functionName]
-		if noVerifyJWT != nil {
-			value := !*noVerifyJWT
-			fc.VerifyJWT = &value
-		} else if fc.VerifyJWT == nil {
-			fc.VerifyJWT = utils.Ptr(true)
-		}
-		// Precedence order: CLI flags > config.toml > fallback value
-		hostImportMapPath := fallbackImportMapPath
-		if fc.ImportMap != "" {
-			if filepath.IsAbs(fc.ImportMap) {
-				hostImportMapPath = fc.ImportMap
-			} else {
-				hostImportMapPath = filepath.Join(utils.SupabaseDirPath, fc.ImportMap)
-			}
-		}
-		if importMapPath != "" {
-			hostImportMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
-		}
-		if hostImportMapPath != "" {
+		fc := utils.GetFunctionConfig(functionName, importMapPath, noVerifyJWT, fsys)
+		if hostImportMapPath := fc.ImportMap; hostImportMapPath != "" {
 			fc.ImportMap = path.Join(utils.DockerDenoDir, "import_maps", functionName, "import_map.json")
 			modules, err := utils.BindImportMap(hostImportMapPath, fc.ImportMap, fsys)
 			if err != nil {
