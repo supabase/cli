@@ -23,7 +23,7 @@ import (
 
 func TestStartCommand(t *testing.T) {
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs(), []string{}, false)
+		err := Run(context.Background(), afero.NewMemMapFs(), map[string]bool{}, false)
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -32,7 +32,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, map[string]bool{}, false)
 		// Check error
 		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
 	})
@@ -48,7 +48,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, map[string]bool{}, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -66,7 +66,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, map[string]bool{}, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -172,7 +172,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusOK)
 		// Run test
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
+			return run(p, context.Background(), fsys, map[string]bool{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -216,8 +216,11 @@ func TestDatabaseStart(t *testing.T) {
 				},
 			}})
 		// Run test
-		exclude := ExcludableContainers()
-		exclude = append(exclude, "invalid", exclude[0])
+		services := ExcludableContainers()
+		exclude := make(map[string]bool, len(services))
+		for _, c := range services {
+			exclude[c] = true
+		}
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
 			return run(p, context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId})
 		})
