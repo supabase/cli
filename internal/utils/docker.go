@@ -90,7 +90,8 @@ func WaitAll[T any](containers []T, exec func(container T) error) []error {
 // NoBackupVolume TODO: encapsulate this state in a class
 var NoBackupVolume = false
 
-func DockerRemoveAll(ctx context.Context) error {
+func DockerRemoveAll(ctx context.Context, w io.Writer) error {
+	fmt.Fprintln(w, "Stopping containers...")
 	args := CliProjectFilter()
 	containers, err := Docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
