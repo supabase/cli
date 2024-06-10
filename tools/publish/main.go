@@ -81,7 +81,7 @@ type PackageConfig struct {
 }
 
 func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
-	client := fetcher.NewFetcher("https://github.com")
+	client := fetcher.NewFetcher("https://github.com", fetcher.WithExpectedStatus(http.StatusOK))
 	checkPath := fmt.Sprintf("/%s/%s/releases/download/v%[3]s/supabase_%[3]s_checksums.txt",
 		utils.CLI_OWNER,
 		utils.CLI_REPO,
