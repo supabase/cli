@@ -24,11 +24,7 @@ func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := fetcher.ParseJSON[[]BucketResponse](resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return *data, nil
+	return fetcher.ParseJSON[[]BucketResponse](resp.Body)
 }
 
 type CreateBucketRequest struct {
@@ -43,11 +39,11 @@ type CreateBucketResponse struct {
 	Name string `json:"name"`
 }
 
-func (s *StorageAPI) CreateBucket(ctx context.Context, bucketName string) (*CreateBucketResponse, error) {
+func (s *StorageAPI) CreateBucket(ctx context.Context, bucketName string) (CreateBucketResponse, error) {
 	body := CreateBucketRequest{Name: bucketName}
 	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/bucket", body)
 	if err != nil {
-		return nil, err
+		return CreateBucketResponse{}, err
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[CreateBucketResponse](resp.Body)
@@ -57,10 +53,10 @@ type DeleteBucketResponse struct {
 	Message string `json:"message"`
 }
 
-func (s *StorageAPI) DeleteBucket(ctx context.Context, bucketId string) (*DeleteBucketResponse, error) {
+func (s *StorageAPI) DeleteBucket(ctx context.Context, bucketId string) (DeleteBucketResponse, error) {
 	resp, err := s.Send(ctx, http.MethodDelete, "/storage/v1/bucket/"+bucketId, nil)
 	if err != nil {
-		return nil, err
+		return DeleteBucketResponse{}, err
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[DeleteBucketResponse](resp.Body)

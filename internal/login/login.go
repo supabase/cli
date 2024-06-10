@@ -8,7 +8,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,31 +129,26 @@ func (enc LoginEncryption) decryptAccessToken(accessToken string, publicKey stri
 }
 
 func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, error) {
-	var accessTokenResponse AccessTokenResponse
 	// TODO: Move to OpenAPI-generated http client once we reach v1 on API schema.
 	client := fetcher.NewFetcher(
 		utils.GetSupabaseAPIHost(),
 		fetcher.WithExpectedStatus(http.StatusOK),
 	)
 	timeout := backoff.NewConstantBackOff(defaultRetryAfterSeconds)
-	probe := func() error {
+	probe := func() (AccessTokenResponse, error) {
 		resp, err := client.Send(ctx, http.MethodGet, url, nil)
 		if err == nil {
 			defer resp.Body.Close()
-			dec := json.NewDecoder(resp.Body)
-			if err := dec.Decode(&accessTokenResponse); err != nil {
-				return errors.Errorf("failed to decode access token response: %w", err)
-			}
+			return fetcher.ParseJSON[AccessTokenResponse](resp.Body)
 		} else if resp != nil {
 			if retryAfterSeconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
 				timeout.Interval = time.Duration(retryAfterSeconds) * time.Second
 			}
 		}
-		return err
+		return AccessTokenResponse{}, err
 	}
 	policy := backoff.WithContext(backoff.WithMaxRetries(timeout, defaultMaxRetries), ctx)
-	err := backoff.Retry(probe, policy)
-	return accessTokenResponse, err
+	return backoff.RetryWithData(probe, policy)
 }
 
 func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
