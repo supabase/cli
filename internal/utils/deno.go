@@ -287,14 +287,14 @@ func resolveHostPath(hostPath string, fsys afero.Fs) string {
 	if !exists {
 		return hostPath
 	}
-	if strings.HasPrefix(rel, FunctionsDir) {
-		suffix := strings.TrimPrefix(rel, FunctionsDir)
-		return path.Join(DockerFuncDirPath, filepath.ToSlash(suffix))
-	}
 	// Directory imports need to be suffixed with /
 	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
 	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
 		rel += string(filepath.Separator)
+	}
+	if strings.HasPrefix(rel, FunctionsDir) {
+		suffix := strings.TrimPrefix(rel, FunctionsDir)
+		return DockerFuncDirPath + filepath.ToSlash(suffix)
 	}
 	return getModulePath(rel)
 }

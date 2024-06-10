@@ -17,7 +17,7 @@ func TestResolveImports(t *testing.T) {
 				"abs/":    "/tmp/",
 				"root":    "../../common",
 				"parent":  "../tests",
-				"child":   "child",
+				"child":   "child/",
 				"missing": "../missing",
 			},
 		}
@@ -32,7 +32,7 @@ func TestResolveImports(t *testing.T) {
 		assert.Equal(t, "/home/deno/modules/ac351c7174c8f47a9a9056bd96bcd71cfb980c906daee74ab9bce8308c68b811/", resolved.Imports["abs/"])
 		assert.Equal(t, "/home/deno/modules/92a5dc04bd6f9fb8f29f8066fed8a5c1e81bc59ad48a11283b63736867e4f2a8", resolved.Imports["root"])
 		assert.Equal(t, "/home/deno/modules/faaed96206118cf98625ea8065b6b3864f8cf9484814c423b58ebaa9b2d1e47b", resolved.Imports["parent"])
-		assert.Equal(t, "/home/deno/functions/child", resolved.Imports["child"])
+		assert.Equal(t, "/home/deno/functions/child/", resolved.Imports["child"])
 		assert.Equal(t, "../missing", resolved.Imports["missing"])
 	})
 
