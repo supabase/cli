@@ -51,11 +51,7 @@ func (s *StorageAPI) ListObjects(ctx context.Context, bucket, prefix string, pag
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := fetcher.ParseJSON[[]ObjectResponse](resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return *data, nil
+	return fetcher.ParseJSON[[]ObjectResponse](resp.Body)
 }
 
 type FileOptions struct {
@@ -134,7 +130,7 @@ type MoveObjectRequest struct {
 
 type MoveObjectResponse = DeleteBucketResponse
 
-func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath string) (*MoveObjectResponse, error) {
+func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath string) (MoveObjectResponse, error) {
 	body := MoveObjectRequest{
 		BucketId:       bucketId,
 		SourceKey:      srcPath,
@@ -142,7 +138,7 @@ func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath 
 	}
 	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/move", body)
 	if err != nil {
-		return nil, err
+		return MoveObjectResponse{}, err
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[MoveObjectResponse](resp.Body)
@@ -154,7 +150,7 @@ type CopyObjectResponse struct {
 	Key string `json:"key"`
 }
 
-func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath string) (*CopyObjectResponse, error) {
+func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath string) (CopyObjectResponse, error) {
 	body := CopyObjectRequest{
 		BucketId:       bucketId,
 		SourceKey:      srcPath,
@@ -162,7 +158,7 @@ func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath 
 	}
 	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/copy", body)
 	if err != nil {
-		return nil, err
+		return CopyObjectResponse{}, err
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[CopyObjectResponse](resp.Body)
@@ -192,9 +188,5 @@ func (s *StorageAPI) DeleteObjects(ctx context.Context, bucket string, prefixes 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := fetcher.ParseJSON[[]DeleteObjectsResponse](resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return *data, nil
+	return fetcher.ParseJSON[[]DeleteObjectsResponse](resp.Body)
 }
