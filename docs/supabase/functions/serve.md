@@ -18,7 +18,7 @@ Serve all Functions locally.
    * By default, creating an inspector session for the main worker is not allowed, but this flag allows it.
    * Other behaviors follow the `inspect-mode` flag mentioned above.
 
-Additionally, the following properties can be customised via `supabase/config.toml` under `edge_runtime` section.
+Additionally, the following properties can be customized via `supabase/config.toml` under `edge_runtime` section.
 
 1. `inspector_port`
    * The port used to listen to the Inspector session, defaults to 8083.
