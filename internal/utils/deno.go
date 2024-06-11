@@ -359,13 +359,13 @@ func BindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 	if err != nil {
 		return nil, err
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, errors.Errorf("failed to get working directory: %w", err)
+	}
 	resolved := importMap.Resolve(fsys)
 	binds := importMap.BindModules(resolved)
 	if len(binds) > 0 {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, errors.Errorf("failed to get working directory: %w", err)
-		}
 		contents, err := json.MarshalIndent(resolved, "", "    ")
 		if err != nil {
 			return nil, errors.Errorf("failed to encode json: %w", err)
@@ -375,6 +375,8 @@ func BindImportMap(hostImportMapPath, dockerImportMapPath string, fsys afero.Fs)
 		if err := WriteFile(hostImportMapPath, contents, fsys); err != nil {
 			return nil, err
 		}
+	} else if !filepath.IsAbs(hostImportMapPath) {
+		hostImportMapPath = filepath.Join(cwd, hostImportMapPath)
 	}
 	binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro")
 	return binds, nil
