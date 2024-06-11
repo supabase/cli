@@ -2,7 +2,7 @@
 
 Serve all Functions locally.
 
-`supabase functions serve` command includes additional flags to assist developers in debugging using tools like `DevTools`.
+`supabase functions serve` command includes additional flags to assist developers in debugging Edge Functions via the v8 inspector protocol, allowing for debugging via Chrome DevTools, VS Code, and IntelliJ IDEA for example. Refer to the [docs guide](/docs/guides/functions/debugging-tools) for setup instructions.
 
 1. `--inspect`
    * Alias of `--inspect-mode brk`.
