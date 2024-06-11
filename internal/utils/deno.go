@@ -255,7 +255,7 @@ func (m *ImportMap) BindModules(resolved ImportMap) []string {
 	if err != nil {
 		return nil
 	}
-	var binds []string
+	binds := []string{}
 	for k, dockerPath := range resolved.Imports {
 		if strings.HasPrefix(dockerPath, DockerModsDir) {
 			hostPath := filepath.Join(cwd, FunctionsDir, m.Imports[k])
@@ -314,33 +314,39 @@ func GetPathHash(path string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func AbsImportMapPath(importMapPath, slug string, fsys afero.Fs) (string, error) {
-	if importMapPath == "" {
-		if functionConfig, ok := Config.Functions[slug]; ok && functionConfig.ImportMap != "" {
-			importMapPath = functionConfig.ImportMap
-			if !filepath.IsAbs(importMapPath) {
-				importMapPath = filepath.Join(SupabaseDirPath, importMapPath)
-			}
-		} else if exists, err := afero.Exists(fsys, FallbackImportMapPath); exists {
-			importMapPath = FallbackImportMapPath
-		} else {
-			if err != nil {
-				logger := GetDebugLogger()
-				fmt.Fprintln(logger, err)
-			}
-			return importMapPath, nil
-		}
+func GetFunctionConfig(slug, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) function {
+	fc := Config.Functions[slug]
+	// Precedence order: CLI flags > config.toml > fallback value
+	if noVerifyJWT != nil {
+		value := !*noVerifyJWT
+		fc.VerifyJWT = &value
+	} else if fc.VerifyJWT == nil {
+		fc.VerifyJWT = Ptr(true)
 	}
-	resolved, err := filepath.Abs(importMapPath)
-	if err != nil {
-		return "", err
+	fc.ImportMap = getImportMapPath(importMapPath, fc.ImportMap, fsys)
+	return fc
+}
+
+func getImportMapPath(flagImportMap, slugImportMap string, fsys afero.Fs) string {
+	// Precedence order: CLI flags > config.toml > fallback value
+	if filepath.IsAbs(flagImportMap) {
+		return flagImportMap
 	}
-	if f, err := fsys.Stat(resolved); err != nil {
-		return "", errors.Errorf("Failed to read import map: %w", err)
-	} else if f.IsDir() {
-		return "", errors.New("Importing directory is unsupported: " + resolved)
+	if flagImportMap != "" {
+		return filepath.Join(CurrentDirAbs, flagImportMap)
 	}
-	return resolved, nil
+	if filepath.IsAbs(slugImportMap) {
+		return slugImportMap
+	}
+	if slugImportMap != "" {
+		return filepath.Join(SupabaseDirPath, slugImportMap)
+	}
+	if exists, err := afero.Exists(fsys, FallbackImportMapPath); err != nil {
+		fmt.Fprintln(GetDebugLogger(), "failed to fallback import map:", err)
+	} else if exists {
+		return FallbackImportMapPath
+	}
+	return ""
 }
 
 func AbsTempImportMapPath(cwd, hostPath string) string {

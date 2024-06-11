@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -19,6 +20,9 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	// 1. Sanity checks.
 	envMap := make(map[string]string, len(args))
 	if len(envFilePath) > 0 {
+		if !filepath.IsAbs(envFilePath) {
+			envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
+		}
 		parsed, err := ParseEnvFile(envFilePath, fsys)
 		if err != nil {
 			return err
