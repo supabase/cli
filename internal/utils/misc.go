@@ -43,7 +43,7 @@ const (
 	GotrueImage      = "supabase/gotrue:v2.151.0"
 	RealtimeImage    = "supabase/realtime:v2.28.32"
 	StorageImage     = "supabase/storage-api:v1.0.6"
-	LogflareImage    = "supabase/logflare:1.4.0"
+	LogflareImage    = "supabase/logflare:1.7.2"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
 )
