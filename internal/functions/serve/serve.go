@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -61,12 +60,9 @@ func (i *RuntimeOption) toArgs() []string {
 }
 
 const (
-	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerFlagImportMapPath     = utils.DockerDenoDir + "/flag_import_map.json"
-	dockerFallbackImportMapPath = utils.DockerDenoDir + "/fallback_import_map.json"
-	dockerRuntimeMainPath       = utils.DockerDenoDir + "/main"
-	dockerRuntimeServerPort     = 8081
-	dockerRuntimeInspectorPort  = 8083
+	dockerRuntimeMainPath      = utils.DockerDenoDir + "/main"
+	dockerRuntimeServerPort    = 8081
+	dockerRuntimeInspectorPort = 8083
 )
 
 var (
@@ -143,6 +139,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId+":/root/.cache/deno:rw",
 		filepath.Join(cwd, utils.FunctionsDir)+":"+utils.DockerFuncDirPath+":rw",
+		filepath.Join(cwd, utils.ImportMapsDir)+":"+utils.DockerImportMapDir+":ro",
 	)
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 	// 4. Parse entrypoint script
@@ -223,17 +220,21 @@ func populatePerFunctionConfigs(importMapPath string, noVerifyJWT *bool, fsys af
 		return nil, "", err
 	}
 
+	if err := fsys.RemoveAll(utils.ImportMapsDir); err != nil {
+		return nil, "", errors.Errorf("failed to purge import maps: %w", err)
+	}
+
 	binds := []string{}
 	functionsConfig := make(map[string]interface{}, len(slugs))
 	for _, functionName := range slugs {
 		fc := utils.GetFunctionConfig(functionName, importMapPath, noVerifyJWT, fsys)
 		if hostImportMapPath := fc.ImportMap; hostImportMapPath != "" {
-			fc.ImportMap = path.Join(utils.DockerDenoDir, "import_maps", functionName, "import_map.json")
-			modules, err := utils.BindImportMap(hostImportMapPath, fc.ImportMap, fsys)
+			modules, dockerImportMapPath, err := utils.BindImportMap(hostImportMapPath, fsys)
 			if err != nil {
 				return nil, "", err
 			}
 			binds = append(binds, modules...)
+			fc.ImportMap = dockerImportMapPath
 		}
 		functionsConfig[functionName] = fc
 	}

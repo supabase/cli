@@ -26,10 +26,7 @@ import (
 const (
 	eszipContentType       = "application/vnd.denoland.eszip"
 	compressedEszipMagicId = "EZBR"
-
-	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerImportMapPath = utils.DockerDenoDir + "/import_map.json"
-	dockerOutputDir     = "/root/eszips"
+	dockerOutputDir        = "/root/eszips"
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
@@ -80,7 +77,13 @@ func GetFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	return slugs, nil
 }
 
-func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
+type eszipFunction struct {
+	compressedBody *bytes.Buffer
+	entrypointPath string
+	importMapPath  string
+}
+
+func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys afero.Fs) (*eszipFunction, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, errors.Errorf("failed to get working directory: %w", err)
@@ -104,21 +107,27 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
 		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro",
+		filepath.Join(cwd, utils.ImportMapsDir) + ":" + utils.DockerImportMapDir + ":ro",
 		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw",
 	}
 
-	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath}
+	result := eszipFunction{
+		entrypointPath: path.Join(utils.DockerFuncDirPath, slug, "index.ts"),
+		importMapPath:  utils.DockerFallbackImportMapPath,
+	}
+	cmd := []string{"bundle", "--entrypoint", result.entrypointPath, "--output", outputPath}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
 
-	if importMapPath != "" {
-		modules, err := utils.BindImportMap(importMapPath, dockerImportMapPath, fsys)
+	if hostImportMapPath != "" {
+		modules, dockerImportMapPath, err := utils.BindImportMap(hostImportMapPath, fsys)
 		if err != nil {
 			return nil, err
 		}
 		binds = append(binds, modules...)
-		cmd = append(cmd, "--import-map", dockerImportMapPath)
+		result.importMapPath = dockerImportMapPath
+		cmd = append(cmd, "--import-map", result.importMapPath)
 	}
 
 	err = utils.DockerRunOnceWithConfig(
@@ -146,8 +155,8 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 	}
 	defer eszipBytes.Close()
 
-	compressedBuf := bytes.NewBufferString(compressedEszipMagicId)
-	brw := brotli.NewWriter(compressedBuf)
+	result.compressedBody = bytes.NewBufferString(compressedEszipMagicId)
+	brw := brotli.NewWriter(result.compressedBody)
 	defer brw.Close()
 
 	_, err = io.Copy(brw, eszipBytes)
@@ -155,7 +164,7 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		return nil, errors.Errorf("failed to compress brotli: %w", err)
 	}
 
-	return compressedBuf, nil
+	return &result, nil
 }
 
 func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
@@ -205,13 +214,12 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 	// 1. Bundle Function.
 	fmt.Println("Bundling " + utils.Bold(slug))
 	fc := utils.GetFunctionConfig(slug, importMapPath, noVerifyJWT, fsys)
-	dockerEntrypointPath := path.Join(utils.DockerFuncDirPath, slug, "index.ts")
-	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, fc.ImportMap, fsys)
+	eszip, err := bundleFunction(ctx, slug, fc.ImportMap, fsys)
 	if err != nil {
 		return err
 	}
 	// 2. Deploy new Function.
-	functionSize := units.HumanSize(float64(functionBody.Len()))
+	functionSize := units.HumanSize(float64(eszip.compressedBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
 	return backoff.Retry(func() error {
@@ -219,10 +227,10 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			ctx,
 			projectRef,
 			slug,
-			"file://"+dockerEntrypointPath,
-			"file://"+dockerImportMapPath,
+			"file://"+eszip.entrypointPath,
+			"file://"+eszip.importMapPath,
 			*fc.VerifyJWT,
-			functionBody,
+			eszip.compressedBody,
 		)
 	}, policy)
 }
