@@ -268,7 +268,7 @@ func (m *ImportMap) BindHostModules() []string {
 		if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
 			continue
 		}
-		dockerPath := filepath.ToSlash(hostPath)
+		dockerPath := ToDockerPath(hostPath)
 		binds = append(binds, hostPath+":"+dockerPath+":ro")
 	}
 	for _, mapping := range m.Scopes {
@@ -276,7 +276,7 @@ func (m *ImportMap) BindHostModules() []string {
 			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
 				continue
 			}
-			dockerPath := filepath.ToSlash(hostPath)
+			dockerPath := ToDockerPath(hostPath)
 			binds = append(binds, hostPath+":"+dockerPath+":ro")
 		}
 	}
@@ -329,7 +329,7 @@ func BindImportMap(importMapPath string, fsys afero.Fs) ([]string, string, error
 	if err != nil {
 		return nil, "", errors.Errorf("failed to resolve host import map: %w", err)
 	}
-	dockerImportMapPath := filepath.ToSlash(hostImportMapPath)
+	dockerImportMapPath := ToDockerPath(hostImportMapPath)
 	importMap, err := NewImportMap(hostImportMapPath, fsys)
 	if err != nil {
 		return nil, "", err
@@ -339,4 +339,10 @@ func BindImportMap(importMapPath string, fsys afero.Fs) ([]string, string, error
 		binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro")
 	}
 	return binds, dockerImportMapPath, nil
+}
+
+func ToDockerPath(absHostPath string) string {
+	prefix := filepath.VolumeName(absHostPath)
+	dockerPath := filepath.ToSlash(absHostPath)
+	return strings.TrimPrefix(dockerPath, prefix)
 }
