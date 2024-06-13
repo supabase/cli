@@ -85,7 +85,7 @@ func TestServiceHealth(t *testing.T) {
 		var running []types.Container
 		for _, name := range utils.GetDockerIds() {
 			running = append(running, types.Container{
-				Names: []string{name},
+				Names: []string{"/" + name},
 			})
 		}
 		// Setup mock docker

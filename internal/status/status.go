@@ -99,9 +99,9 @@ func checkServiceHealth(ctx context.Context) ([]string, error) {
 		}
 	}
 	var stopped []string
-	for _, n := range utils.GetDockerIds() {
-		if _, ok := running[n]; !ok {
-			stopped = append(stopped, n)
+	for _, containerId := range utils.GetDockerIds() {
+		if _, ok := running["/"+containerId]; !ok {
+			stopped = append(stopped, containerId)
 		}
 	}
 	return stopped, nil
