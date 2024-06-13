@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-errors/errors"
@@ -18,30 +19,50 @@ type Console struct {
 	stdin  *bufio.Scanner
 	logger io.Writer
 	token  chan string
+	mu     sync.Mutex
 }
 
-func NewConsole() Console {
-	c := Console{
+func NewConsole() *Console {
+	return &Console{
 		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
 		stdin:  bufio.NewScanner(os.Stdin),
 		logger: GetDebugLogger(),
 		token:  make(chan string),
+		mu:     sync.Mutex{},
 	}
+}
+
+// Prevent interactive terminals from hanging more than 10 minutes
+const ttyTimeout = time.Minute * 10
+
+func (c *Console) ReadLine(ctx context.Context) string {
+	// Wait a few ms for input
+	timeout := time.Millisecond
+	if c.IsTTY {
+		timeout = ttyTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	// Read from stdin in background
 	go func() {
-		// Scan line by line from input or file
-		for c.stdin.Scan() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		// Scan one line from input or file
+		if c.stdin.Scan() {
 			c.token <- strings.TrimSpace(c.stdin.Text())
 		}
-		if err := c.stdin.Err(); err != nil {
-			fmt.Fprintln(c.logger, err)
-		}
-		close(c.token)
 	}()
-	return c
+	var input string
+	select {
+	case input = <-c.token:
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return input
 }
 
 // PromptYesNo asks yes/no questions using the label.
-func (c Console) PromptYesNo(ctx context.Context, label string, def bool) (bool, error) {
+func (c *Console) PromptYesNo(ctx context.Context, label string, def bool) (bool, error) {
 	choices := "Y/n"
 	if !def {
 		choices = "y/N"
@@ -68,26 +89,10 @@ func parseYesNo(s string) *bool {
 	return nil
 }
 
-// Prevent interactive terminals from hanging more than 10 minutes
-const ttyTimeout = time.Minute * 10
-
 // PromptText asks for input using the label.
-func (c Console) PromptText(ctx context.Context, label string) (string, error) {
+func (c *Console) PromptText(ctx context.Context, label string) (string, error) {
 	fmt.Fprint(os.Stderr, label)
-	// Wait a few ms for input
-	timeout := time.Millisecond
-	if c.IsTTY {
-		timeout = ttyTimeout
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	// Read from stdin
-	var input string
-	select {
-	case input = <-c.token:
-	case <-ctx.Done():
-	case <-timer.C:
-	}
+	input := c.ReadLine(ctx)
 	// Echo to stderr for non-interactive terminals
 	if !c.IsTTY {
 		fmt.Fprintln(os.Stderr, input)
