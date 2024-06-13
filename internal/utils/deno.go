@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,11 +29,8 @@ var (
 )
 
 const (
-	DockerDenoDir               = "/home/deno"
-	DockerModsDir               = DockerDenoDir + "/modules"
-	DockerFuncDirPath           = DockerDenoDir + "/functions"
-	DockerImportMapDir          = DockerDenoDir + "/import_maps"
-	DockerFallbackImportMapPath = DockerFuncDirPath + "/import_map.json"
+	DockerDenoDir  = "/home/deno"
+	DockerEszipDir = "/root/eszips"
 )
 
 func GetDenoPath() (string, error) {
@@ -262,69 +257,30 @@ func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
 	return resolved
 }
 
-// Converts host import map to docker import map and returns any bind mounts.
-func (m *ImportMap) BindModules() ([]string, ImportMap) {
-	binds := []string{}
-	resolved := ImportMap{
-		Imports: make(map[string]string, len(m.Imports)),
-		Scopes:  make(map[string]map[string]string, len(m.Scopes)),
-	}
-	for k, hostPath := range m.Imports {
-		dockerPath := toDockerPath(hostPath)
-		resolved.Imports[k] = dockerPath
-		if strings.HasPrefix(dockerPath, DockerModsDir) {
-			binds = append(binds, hostPath+":"+dockerPath+":ro")
-		}
-	}
-	for module, mapping := range m.Scopes {
-		resolved.Scopes[module] = map[string]string{}
-		for k, hostPath := range mapping {
-			dockerPath := toDockerPath(hostPath)
-			resolved.Scopes[module][k] = dockerPath
-			if strings.HasPrefix(dockerPath, DockerModsDir) {
-				binds = append(binds, hostPath+":"+dockerPath+":ro")
-			}
-		}
-	}
-	return binds, resolved
-}
-
-func toDockerPath(hostPath string) string {
-	// Leave URL unchanged
-	if !filepath.IsAbs(hostPath) {
-		return hostPath
-	}
+func (m *ImportMap) BindHostModules() []string {
 	hostFuncDir, err := filepath.Abs(FunctionsDir)
 	if err != nil {
 		logger := GetDebugLogger()
 		fmt.Fprintln(logger, err)
 	}
-	return absDockerPath(hostPath, hostFuncDir)
-}
-
-func absDockerPath(hostPath, hostFuncDir string) string {
-	// Maps supabase/functions directory to /home/deno/functions
-	if strings.HasPrefix(hostPath, hostFuncDir) {
-		suffix := strings.TrimPrefix(hostPath, hostFuncDir)
-		return DockerFuncDirPath + filepath.ToSlash(suffix)
+	binds := []string{}
+	for _, hostPath := range m.Imports {
+		if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
+			continue
+		}
+		dockerPath := filepath.ToSlash(hostPath)
+		binds = append(binds, hostPath+":"+dockerPath+":ro")
 	}
-	// Other local fs imports will be mounted to /home/deno/modules
-	return absModulePath(hostPath)
-}
-
-func absModulePath(hostPath string) string {
-	mod := path.Join(DockerModsDir, GetPathHash(hostPath))
-	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
-		mod += "/"
-	} else if ext := filepath.Ext(hostPath); len(ext) > 0 {
-		mod += ext
+	for _, mapping := range m.Scopes {
+		for _, hostPath := range mapping {
+			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
+				continue
+			}
+			dockerPath := filepath.ToSlash(hostPath)
+			binds = append(binds, hostPath+":"+dockerPath+":ro")
+		}
 	}
-	return mod
-}
-
-func GetPathHash(path string) string {
-	digest := sha256.Sum256([]byte(path))
-	return hex.EncodeToString(digest[:])
+	return binds
 }
 
 func GetFunctionConfig(slug, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) function {
@@ -365,30 +321,22 @@ func getImportMapPath(flagImportMap, slugImportMap string, fsys afero.Fs) string
 }
 
 func BindImportMap(importMapPath string, fsys afero.Fs) ([]string, string, error) {
-	hostImportMapPath, err := filepath.Abs(importMapPath)
-	if err != nil {
-		return nil, "", errors.Errorf("failed to resolve json path: %w", err)
-	}
 	fallback, err := filepath.Abs(FallbackImportMapPath)
 	if err != nil {
-		return nil, "", errors.Errorf("failed to resolve fallback path: %w", err)
+		return nil, "", errors.Errorf("failed to resolve fallback import map: %w", err)
 	}
+	hostImportMapPath, err := filepath.Abs(importMapPath)
+	if err != nil {
+		return nil, "", errors.Errorf("failed to resolve host import map: %w", err)
+	}
+	dockerImportMapPath := filepath.ToSlash(hostImportMapPath)
 	importMap, err := NewImportMap(hostImportMapPath, fsys)
 	if err != nil {
 		return nil, "", err
 	}
-	if mods, resolved := importMap.BindModules(); len(mods) > 0 || hostImportMapPath != fallback {
-		contents, err := json.MarshalIndent(resolved, "", "    ")
-		if err != nil {
-			return nil, "", errors.Errorf("failed to encode json: %w", err)
-		}
-		// Rewrite import map to temporary host path
-		name := GetPathHash(hostImportMapPath) + ".json"
-		tmpImportMapPath := filepath.Join(ImportMapsDir, name)
-		if err := WriteFile(tmpImportMapPath, contents, fsys); err != nil {
-			return nil, "", err
-		}
-		return mods, path.Join(DockerImportMapDir, name), nil
+	binds := importMap.BindHostModules()
+	if hostImportMapPath != fallback {
+		binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro")
 	}
-	return nil, DockerFallbackImportMapPath, nil
+	return binds, dockerImportMapPath, nil
 }

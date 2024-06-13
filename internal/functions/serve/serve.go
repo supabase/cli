@@ -60,7 +60,6 @@ func (i *RuntimeOption) toArgs() []string {
 }
 
 const (
-	dockerRuntimeMainPath      = utils.DockerDenoDir + "/main"
 	dockerRuntimeServerPort    = 8081
 	dockerRuntimeInspectorPort = 8083
 )
@@ -110,6 +109,11 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return err
 	}
+	hostFuncDir, err := filepath.Abs(utils.FunctionsDir)
+	if err != nil {
+		return errors.Errorf("failed to resolve functions dir: %w", err)
+	}
+	dockerFuncDir := filepath.ToSlash(hostFuncDir)
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey,
@@ -117,7 +121,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_DB_URL="+dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
-		"SUPABASE_INTERNAL_FUNCTIONS_PATH="+utils.DockerFuncDirPath,
+		"SUPABASE_INTERNAL_FUNCTIONS_PATH="+dockerFuncDir,
 	)
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
@@ -130,16 +134,11 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return errors.Errorf("failed to get working directory: %w", err)
-	}
 	binds = append(binds,
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId+":/root/.cache/deno:rw",
-		filepath.Join(cwd, utils.FunctionsDir)+":"+utils.DockerFuncDirPath+":rw",
-		filepath.Join(cwd, utils.ImportMapsDir)+":"+utils.DockerImportMapDir+":ro",
+		hostFuncDir+":"+dockerFuncDir+":rw",
 	)
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 	// 4. Parse entrypoint script
@@ -176,7 +175,7 @@ EOF
 			Env:          env,
 			Entrypoint:   entrypoint,
 			ExposedPorts: exposedPorts,
-			WorkingDir:   dockerRuntimeMainPath,
+			WorkingDir:   utils.DockerDenoDir,
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		start.WithSyslogConfig(container.HostConfig{
@@ -220,16 +219,12 @@ func populatePerFunctionConfigs(importMapPath string, noVerifyJWT *bool, fsys af
 		return nil, "", err
 	}
 
-	if err := fsys.RemoveAll(utils.ImportMapsDir); err != nil {
-		return nil, "", errors.Errorf("failed to purge import maps: %w", err)
-	}
-
 	binds := []string{}
 	functionsConfig := make(map[string]interface{}, len(slugs))
 	for _, functionName := range slugs {
 		fc := utils.GetFunctionConfig(functionName, importMapPath, noVerifyJWT, fsys)
-		if hostImportMapPath := fc.ImportMap; hostImportMapPath != "" {
-			modules, dockerImportMapPath, err := utils.BindImportMap(hostImportMapPath, fsys)
+		if fc.ImportMap != "" {
+			modules, dockerImportMapPath, err := utils.BindImportMap(fc.ImportMap, fsys)
 			if err != nil {
 				return nil, "", err
 			}

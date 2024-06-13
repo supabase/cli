@@ -26,7 +26,6 @@ import (
 const (
 	eszipContentType       = "application/vnd.denoland.eszip"
 	compressedEszipMagicId = "EZBR"
-	dockerOutputDir        = "/root/eszips"
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
@@ -101,19 +100,21 @@ func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys af
 		}
 	}()
 
-	outputPath := dockerOutputDir + "/output.eszip"
+	hostFuncDir := filepath.Join(cwd, utils.FunctionsDir)
+	dockerFuncDir := filepath.ToSlash(hostFuncDir)
+
+	outputPath := utils.DockerEszipDir + "/output.eszip"
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro",
-		filepath.Join(cwd, utils.ImportMapsDir) + ":" + utils.DockerImportMapDir + ":ro",
-		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw",
+		hostFuncDir + ":" + dockerFuncDir + ":ro",
+		filepath.Join(cwd, hostOutputDir) + ":" + utils.DockerEszipDir + ":rw",
 	}
 
 	result := eszipFunction{
-		entrypointPath: path.Join(utils.DockerFuncDirPath, slug, "index.ts"),
-		importMapPath:  utils.DockerFallbackImportMapPath,
+		entrypointPath: path.Join(dockerFuncDir, slug, "index.ts"),
+		importMapPath:  path.Join(dockerFuncDir, "import_map.json"),
 	}
 	cmd := []string{"bundle", "--entrypoint", result.entrypointPath, "--output", outputPath}
 	if viper.GetBool("DEBUG") {

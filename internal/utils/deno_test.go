@@ -3,7 +3,6 @@ package utils
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -74,13 +73,13 @@ func TestBindModules(t *testing.T) {
 			},
 		}
 		// Run test
-		mods, resolved := importMap.BindModules()
+		mods := importMap.BindHostModules()
 		// Check error
-		assert.Len(t, mods, 3)
-		assert.True(t, strings.HasPrefix(resolved.Imports["abs/"], "/home/deno/modules/"))
-		assert.True(t, strings.HasPrefix(resolved.Imports["root"], "/home/deno/modules/"))
-		assert.True(t, strings.HasPrefix(resolved.Imports["parent"], "/home/deno/modules/"))
-		assert.Equal(t, "/home/deno/functions/child/", resolved.Imports["child"])
+		assert.ElementsMatch(t, mods, []string{
+			"/tmp/:/tmp/:ro",
+			cwd + "/common:" + cwd + "/common:ro",
+			cwd + "/supabase/tests:" + cwd + "/supabase/tests:ro",
+		})
 	})
 
 	t.Run("binds docker scopes", func(t *testing.T) {
@@ -92,10 +91,9 @@ func TestBindModules(t *testing.T) {
 			},
 		}
 		// Run test
-		mods, resolved := importMap.BindModules()
+		mods := importMap.BindHostModules()
 		// Check error
 		assert.Empty(t, mods)
-		assert.Equal(t, "https://deno.land", resolved.Scopes["my-scope"]["my-mod"])
 	})
 }
 
