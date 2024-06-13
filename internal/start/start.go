@@ -422,9 +422,27 @@ EOF
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
-			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
-			"GOTRUE_SMTP_PORT=2500",
-			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
+			"GOTRUE_SMTP_HOST=" + func() string {
+				if utils.Config.Auth.Email.SmtpHost != "" {
+					return utils.Config.Auth.Email.SmtpHost
+				}
+				return utils.InbucketId
+			}(),
+			"GOTRUE_SMTP_PORT=" + func() string {
+				if utils.Config.Auth.Email.SmtpPort != "2500" {
+					return utils.Config.Auth.Email.SmtpPort
+				}
+				return strconv.Itoa(2500)
+			}(),
+			"GOTRUE_SMTP_ADMIN_EMAIL=" + func() string {
+				if utils.Config.Auth.Email.SmtpAdminEmail != "admin@email.com" {
+					return utils.Config.Auth.Email.SmtpAdminEmail
+				}
+				return "admin@email.com"
+			}(),
+			"GOTRUE_SMTP_USER=" + utils.Config.Auth.Email.SmtpUser,
+			"GOTRUE_SMTP_PASS=" + utils.Config.Auth.Email.SmtpPass,
+			"GOTRUE_SMTP_SENDER_NAME=" + utils.Config.Auth.Email.SmtpSenderName,
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100

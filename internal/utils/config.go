@@ -409,6 +409,12 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
+		SmtpAdminEmail       string                   `toml:"smtp_admin_email"`
+		SmtpHost             string                   `toml:"smtp_host"`
+		SmtpPort             string                   `toml:"smtp_port"`
+		SmtpUser             string                   `toml:"smtp_user"`
+		SmtpPass             string                   `toml:"smtp_pass"`
+		SmtpSenderName       string                   `toml:"smtp_sender_name"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 	}
 
