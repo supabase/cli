@@ -108,8 +108,6 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-const dockerEszipDir = "/root/eszips"
-
 func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
 	if useLegacyBundle {
 		return RunLegacy(ctx, slug, projectRef, fsys)
@@ -171,7 +169,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 	if err != nil {
 		return errors.Errorf("failed to resolve eszip path: %w", err)
 	}
-	dockerEszipPath := path.Join(dockerEszipDir, filepath.Base(hostEszipPath))
+	dockerEszipPath := path.Join(utils.DockerEszipDir, filepath.Base(hostEszipPath))
 
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
