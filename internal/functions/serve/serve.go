@@ -113,7 +113,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return errors.Errorf("failed to resolve functions dir: %w", err)
 	}
-	dockerFuncDir := filepath.ToSlash(hostFuncDir)
+	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey,
