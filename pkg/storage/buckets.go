@@ -39,8 +39,7 @@ type CreateBucketResponse struct {
 	Name string `json:"name"`
 }
 
-func (s *StorageAPI) CreateBucket(ctx context.Context, bucketName string) (CreateBucketResponse, error) {
-	body := CreateBucketRequest{Name: bucketName}
+func (s *StorageAPI) CreateBucket(ctx context.Context, body CreateBucketRequest) (CreateBucketResponse, error) {
 	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/bucket", body)
 	if err != nil {
 		return CreateBucketResponse{}, err

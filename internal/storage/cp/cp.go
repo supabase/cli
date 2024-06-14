@@ -137,7 +137,11 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 			if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 				// Retry after creating bucket
 				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
-					if _, err := api.CreateBucket(ctx, bucket); err != nil {
+					body := storage.CreateBucketRequest{Name: bucket}
+					if config, ok := utils.Config.Storage.Buckets[bucket]; ok {
+						body.Public = config.Public
+					}
+					if _, err := api.CreateBucket(ctx, body); err != nil {
 						return err
 					}
 					err = api.UploadObject(ctx, dstPath, filePath, fsys, opts...)
