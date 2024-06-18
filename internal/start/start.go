@@ -466,6 +466,14 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
 		}
 
+		if utils.Config.Auth.Sessions.Timebox > 0 {
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_TIMEBOX=%v", utils.Config.Auth.Sessions.Timebox))
+		}
+
+		if utils.Config.Auth.Sessions.InactivityTimeout > 0 {
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
+		}
+
 		for id, tmpl := range utils.Config.Auth.Email.Template {
 			if len(tmpl.ContentPath) > 0 {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",

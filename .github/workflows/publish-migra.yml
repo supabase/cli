@@ -10,7 +10,7 @@ jobs:
       image_tag: supabase/migra:${{ steps.version.outputs.migra }}
     steps:
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           load: true
           context: https://github.com/djrobstep/migra.git
@@ -48,7 +48,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           push: true
           context: https://github.com/djrobstep/migra.git

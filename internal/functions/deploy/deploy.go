@@ -101,7 +101,7 @@ func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys af
 	}()
 
 	hostFuncDir := filepath.Join(cwd, utils.FunctionsDir)
-	dockerFuncDir := filepath.ToSlash(hostFuncDir)
+	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
 
 	outputPath := utils.DockerEszipDir + "/output.eszip"
 	binds := []string{
