@@ -417,7 +417,7 @@ type (
 
 	smtp struct {
 		Host       string `toml:"host"`
-		Port       string `toml:"port"`
+		Port       uint16 `toml:"port"`
 		User       string `toml:"user"`
 		Pass       string `toml:"pass"`
 		AdminEmail string `toml:"admin_email"`
