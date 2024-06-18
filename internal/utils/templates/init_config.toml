@@ -108,7 +108,7 @@ max_frequency = "1s"
 # smtp_host = "smtp.sendgrid.net"
 # smtp_port = "587"
 # smtp_user = "apikey"
-# smtp_pass = "env(SENDGRID_API_KEY)"
+# smtp_pass = "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"
 # smtp_sender_name = "John Doe"
 
 # Uncomment to customize email template

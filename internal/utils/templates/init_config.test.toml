@@ -101,13 +101,13 @@ enable_confirmations = false
 max_frequency = "1s"
 
 # Uncomment to use a production-ready SMTP server
-[auth.email.smtp]
-host = "smtp.sendgrid.net"
-port = 587
-user = "apikey"
-pass = "env(SENDGRID_API_KEY)"
-admin_email = "3ilbi6ee8c@gmail.com"
-sender_name = "John Doe"
+# [auth.email.smtp]
+# smtp_admin_email = "3ilbi6ee8c@gmail.com"
+# smtp_host = "smtp.sendgrid.net"
+# smtp_port = "587"
+# smtp_user = "apikey"
+# smtp_pass = "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"
+# smtp_sender_name = "John Doe"
 
 # Uncomment to customize email template
 [auth.email.template.invite]
