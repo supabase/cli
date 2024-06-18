@@ -411,13 +411,17 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
-		SmtpAdminEmail       string                   `toml:"smtp_admin_email"`
-		SmtpHost             string                   `toml:"smtp_host"`
-		SmtpPort             string                   `toml:"smtp_port"`
-		SmtpUser             string                   `toml:"smtp_user"`
-		SmtpPass             string                   `toml:"smtp_pass"`
-		SmtpSenderName       string                   `toml:"smtp_sender_name"`
+		Smtp                 smtp                     `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
+	}
+
+	smtp struct {
+		Host       string `toml:"host"`
+		Port       string `toml:"port"`
+		User       string `toml:"user"`
+		Pass       string `toml:"pass"`
+		AdminEmail string `toml:"admin_email"`
+		SenderName string `toml:"sender_name"`
 	}
 
 	emailTemplate struct {

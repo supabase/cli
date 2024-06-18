@@ -99,15 +99,17 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
-# Use a production-ready SMTP server
+# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
+max_frequency = "1s"
+
+# Uncomment to use a production-ready SMTP server
+# [auth.email.smtp]
 # smtp_admin_email = "3ilbi6ee8c@gmail.com"
 # smtp_host = "smtp.sendgrid.net"
 # smtp_port = "587"
 # smtp_user = "apikey"
 # smtp_pass = "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"
 # smtp_sender_name = "John Doe"
-# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
