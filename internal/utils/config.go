@@ -390,7 +390,9 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
-		Hook                       hook `toml:"hook"`
+
+		Hook     hook     `toml:"hook"`
+		Sessions sessions `toml:"sessions"`
 
 		EnableSignup           bool  `toml:"enable_signup"`
 		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
@@ -402,8 +404,6 @@ type (
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key"`
 		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
-
-		Sessions sessions `toml:"sessions"`
 	}
 
 	email struct {
@@ -444,6 +444,11 @@ type (
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
 		Secrets string `toml:"secrets"`
+	}
+
+	sessions struct {
+		Timebox           time.Duration `toml:"timebox"`
+		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
 	}
 
 	twilioConfig struct {
@@ -509,11 +514,6 @@ type (
 		S3Region        string `toml:"s3_region"`
 		S3AccessKey     string `toml:"s3_access_key"`
 		S3SecretKey     string `toml:"s3_secret_key"`
-	}
-
-	sessions struct {
-		Timebox           float64 `toml:"timebox"`
-		InactivityTimeout float64 `toml:"inactivity_timeout"`
 	}
 
 	// TODO

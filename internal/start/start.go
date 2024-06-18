@@ -449,11 +449,11 @@ EOF
 		}
 
 		if utils.Config.Auth.Sessions.Timebox > 0 {
-			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_TIMEBOX=%vh", utils.Config.Auth.Sessions.Timebox))
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_TIMEBOX=%v", utils.Config.Auth.Sessions.Timebox))
 		}
 
 		if utils.Config.Auth.Sessions.InactivityTimeout > 0 {
-			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%vh", utils.Config.Auth.Sessions.InactivityTimeout))
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Template {
