@@ -42,6 +42,7 @@ func TestConfigParsing(t *testing.T) {
 		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AZURE_SECRET", "this is cool")
 		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		t.Setenv("SENDGRID_API_KEY", "sendgrid")
 		assert.NoError(t, LoadConfigFS(fsys))
 		// Check error
 		assert.Equal(t, "hello", Config.Auth.External["azure"].ClientId)

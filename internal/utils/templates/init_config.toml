@@ -102,6 +102,15 @@ enable_confirmations = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 
+# Use a production-ready SMTP server
+# [auth.email.smtp]
+# host = "smtp.sendgrid.net"
+# port = 587
+# user = "apikey"
+# pass = "env(SENDGRID_API_KEY)"
+# admin_email = "admin@email.com"
+# sender_name = "Admin"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"
