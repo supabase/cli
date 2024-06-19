@@ -230,6 +230,11 @@ var Config = config{
 				"magic_link":   {},
 				"email_change": {},
 			},
+			Smtp: smtp{
+				Host:       InbucketAliases[0],
+				Port:       2500,
+				AdminEmail: "admin@email.com",
+			},
 		},
 		External: map[string]provider{
 			"apple":         {},
@@ -417,7 +422,7 @@ type (
 
 	smtp struct {
 		Host       string `toml:"host"`
-		Port       string `toml:"port"`
+		Port       uint16 `toml:"port"`
 		User       string `toml:"user"`
 		Pass       string `toml:"pass"`
 		AdminEmail string `toml:"admin_email"`
@@ -724,6 +729,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 						return errors.Errorf("failed to read file info: %w", err)
 					}
 				}
+			}
+			if Config.Auth.Email.Smtp.Pass, err = maybeLoadEnv(Config.Auth.Email.Smtp.Pass); err != nil {
+				return err
 			}
 			// Validate sms config
 			if Config.Auth.Sms.Twilio.Enabled {
