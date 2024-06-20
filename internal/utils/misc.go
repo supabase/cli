@@ -230,14 +230,18 @@ func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
 }
 
 func AssertSupabaseDbIsRunning() error {
-	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
+	return AssertServiceIsRunning(context.Background(), DbId)
+}
+
+func AssertServiceIsRunning(ctx context.Context, containerId string) error {
+	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
 		if client.IsErrNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
 		if client.IsErrConnectionFailed(err) {
 			CmdSuggestion = suggestDockerInstall
 		}
-		return errors.Errorf("failed to inspect database container: %w", err)
+		return errors.Errorf("failed to inspect service: %w", err)
 	}
 	return nil
 }
