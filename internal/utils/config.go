@@ -897,7 +897,7 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
-function checkAndWarnProjectIdLength(projectId string) {
+func checkAndWarnProjectIdLength(projectId string) {
 	if len(projectId) > maxProjectIdLength {
 		fmt.Fprintln(os.Stderr, "WARNING: Derived Project ID (from folder name) is too long, truncating to 40 characters.")
 	}
