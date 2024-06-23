@@ -67,6 +67,7 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 	invalidProjectId   = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
 	envPattern         = regexp.MustCompile(`^env\((.*)\)$`)
+	maxProjectIdLength = 40
 )
 
 func GetId(name string) string {
@@ -608,6 +609,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
 		}
+
+		checkAndWarnProjectIdLength(Config.ProjectId)
+
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
@@ -893,11 +897,30 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
+function checkAndWarnProjectIdLength(projectId string) {
+	if len(projectId) > maxProjectIdLength {
+		fmt.Fprintln(os.Stderr, "WARNING: Derived Project ID (from folder name) is too long, truncating to 40 characters.")
+	}
+}
+
+func fixProjectIdLength(projectId string) string {
+	checkAndWarnProjectIdLength(projectId)
+
+	if len(projectId) > maxProjectIdLength {
+		return projectId[:40]
+	}
+	return projectId
+}
+
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	return strings.TrimLeft(sanitized, "_.-")
+	sanitized := strings.TrimLeft(sanitized, "_.-")
+	// also it cannot be longer than 40 characters
+	// because the total for hostnames is 63 characters
+	// and we need to have space for the prefix
+	return fixProjectIdLength(sanitized)
 }
 
 type InitParams struct {
