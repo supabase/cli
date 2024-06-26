@@ -607,7 +607,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
+		} else if sanitized := sanitizeProjectId(Config.ProjectId); sanitized != Config.ProjectId {
+			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
+			Config.ProjectId = sanitized
 		}
+
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
@@ -893,11 +897,23 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
+func truncateText(text string, maxLen int) string {
+	if len(text) > maxLen {
+		return text[:maxLen]
+	}
+	return text
+}
+
+const maxProjectIdLength = 40
+
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	return strings.TrimLeft(sanitized, "_.-")
+	sanitized = strings.TrimLeft(sanitized, "_.-")
+	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
+	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
+	return truncateText(sanitized, maxProjectIdLength)
 }
 
 type InitParams struct {
