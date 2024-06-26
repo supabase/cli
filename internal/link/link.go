@@ -64,7 +64,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	if updatedConfig.IsEmpty() {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, utils.Yellow("Warning:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
+	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 	enc := toml.NewEncoder(stdout)
 	enc.Indent = ""
 	if err := enc.Encode(updatedConfig); err != nil {

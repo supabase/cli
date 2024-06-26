@@ -67,7 +67,6 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 	invalidProjectId   = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
 	envPattern         = regexp.MustCompile(`^env\((.*)\)$`)
-	maxProjectIdLength = 40
 )
 
 func GetId(name string) string {
@@ -608,9 +607,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
+		} else if sanitized := sanitizeProjectId(Config.ProjectId); sanitized != Config.ProjectId {
+			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
+			Config.ProjectId = sanitized
 		}
-
-		checkAndWarnProjectIdLength(Config.ProjectId)
 
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
@@ -897,30 +897,23 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
-func checkAndWarnProjectIdLength(projectId string) {
-	if len(projectId) > maxProjectIdLength {
-		fmt.Fprintln(os.Stderr, "WARNING: Derived Project ID (from folder name) is too long, truncating to 40 characters.")
+func truncateText(text string, maxLen int) string {
+	if len(text) > maxLen {
+		return text[:maxLen]
 	}
+	return text
 }
 
-func fixProjectIdLength(projectId string) string {
-	checkAndWarnProjectIdLength(projectId)
-
-	if len(projectId) > maxProjectIdLength {
-		return projectId[:40]
-	}
-	return projectId
-}
+const maxProjectIdLength = 40
 
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	sanitized := strings.TrimLeft(sanitized, "_.-")
-	// also it cannot be longer than 40 characters
-	// because the total for hostnames is 63 characters
-	// and we need to have space for the prefix
-	return fixProjectIdLength(sanitized)
+	sanitized = strings.TrimLeft(sanitized, "_.-")
+	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
+	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
+	return truncateText(sanitized, maxProjectIdLength)
 }
 
 type InitParams struct {
