@@ -678,18 +678,14 @@ EOF
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"FLY_APP_NAME=realtime",
+					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
-					"RLIMIT_NOFILE=",
+					"RLIMIT_NOFILE=10000",
+					"SEED_SELF_HOST=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-				},
-				// TODO: remove this after deprecating PG14
-				Cmd: []string{
-					"/bin/sh", "-c",
-					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{

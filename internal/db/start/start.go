@@ -234,17 +234,16 @@ func initSchema15(ctx context.Context, host string) error {
 		"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 		"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		"FLY_APP_NAME=realtime",
+		"APP_NAME=realtime",
 		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 		"ENABLE_TAILSCALE=false",
 		"DNS_NODES=''",
-		"RLIMIT_NOFILE=",
+		"RLIMIT_NOFILE=10000",
+		"SEED_SELF_HOST=true",
 		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-	}, []string{"/bin/sh", "-c", fmt.Sprintf(
-		`/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo); Application.ensure_all_started(:realtime); Realtime.Tenants.health_check("%s")'`,
-		utils.Config.Realtime.TenantId,
-	)}, io.Discard, logger); err != nil {
+	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
+{:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)}, io.Discard, logger); err != nil {
 		return err
 	}
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
