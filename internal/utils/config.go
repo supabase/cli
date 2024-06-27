@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
@@ -864,9 +863,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	// Validate logflare config
 	if Config.Analytics.Enabled {
-		if Docker.DaemonHost() != client.DefaultDockerHost {
-			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "running analytics in docker rootless mode is unsupported.")
-		}
 		switch Config.Analytics.Backend {
 		case LogflareBigQuery:
 			if len(Config.Analytics.GcpProjectId) == 0 {

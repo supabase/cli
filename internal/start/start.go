@@ -183,14 +183,15 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		env := []string{
 			"VECTOR_CONFIG=/etc/vector/vector.yaml",
 		}
+		// Special case for GitLab pipeline
 		host := utils.Docker.DaemonHost()
-		if parsed, err := client.ParseHostURL(host); err == nil {
-			if parsed.Scheme == "tcp" {
-				// Special case for GitLab pipeline
-				env = append(env, "DOCKER_HOST="+host)
-			} else {
-				binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
+			env = append(env, "DOCKER_HOST="+host)
+		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
+			if host != client.DefaultDockerHost {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
 			}
+			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
 		}
 		if _, err := utils.DockerStart(
 			ctx,
