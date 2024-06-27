@@ -242,10 +242,8 @@ func initSchema15(ctx context.Context, host string) error {
 		"RLIMIT_NOFILE=10000",
 		"SEED_SELF_HOST=true",
 		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(
-		`'Application.load(:realtime); Realtime.Tenants.health_check("%s")'`,
-		utils.Config.Realtime.TenantId,
-	)}, io.Discard, logger); err != nil {
+	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
+{:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)}, io.Discard, logger); err != nil {
 		return err
 	}
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
