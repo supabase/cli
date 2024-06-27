@@ -174,7 +174,7 @@ policy = "oneshot"
 inspector_port = 8083
 
 [analytics]
-enabled = false
+enabled = true
 port = 54327
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
