@@ -161,76 +161,6 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	// Start vector
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
-		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:        utils.Config.Analytics.ApiKey,
-			VectorId:      utils.VectorId,
-			LogflareId:    utils.LogflareId,
-			KongId:        utils.KongId,
-			GotrueId:      utils.GotrueId,
-			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
-			StorageId:     utils.StorageId,
-			EdgeRuntimeId: utils.EdgeRuntimeId,
-			DbId:          utils.DbId,
-		}); err != nil {
-			return errors.Errorf("failed to exec template: %w", err)
-		}
-		p.Send(utils.StatusMsg("Starting vector..."))
-		var binds []string
-		env := []string{
-			"VECTOR_CONFIG=/etc/vector/vector.yaml",
-		}
-		// Special case for GitLab pipeline
-		host := utils.Docker.DaemonHost()
-		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
-			env = append(env, "DOCKER_HOST="+host)
-		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
-			if host != client.DefaultDockerHost {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
-			}
-			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
-		}
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image: utils.VectorImage,
-				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
-` + vectorConfigBuf.String() + `
-EOF
-`},
-				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
-						"http://127.0.0.1:9001/health",
-					},
-					Interval: 10 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  3,
-				},
-			},
-			container.HostConfig{
-				Binds:         binds,
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					utils.NetId: {
-						Aliases: utils.VectorAliases,
-					},
-				},
-			},
-			utils.VectorId,
-		); err != nil {
-			return err
-		}
-		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.VectorId); err != nil {
-			return err
-		}
-	}
-
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
@@ -240,6 +170,8 @@ EOF
 	}
 
 	var started []string
+	p.Send(utils.StatusMsg("Starting containers..."))
+
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
 		env := []string{
@@ -321,13 +253,77 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.LogflareId); err != nil {
+		started = append(started, utils.LogflareId)
+	}
+
+	// Start vector
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+		var vectorConfigBuf bytes.Buffer
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+			ApiKey:        utils.Config.Analytics.ApiKey,
+			VectorId:      utils.VectorId,
+			LogflareId:    utils.LogflareId,
+			KongId:        utils.KongId,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			DbId:          utils.DbId,
+		}); err != nil {
+			return errors.Errorf("failed to exec template: %w", err)
+		}
+		var binds []string
+		env := []string{
+			"VECTOR_CONFIG=/etc/vector/vector.yaml",
+		}
+		// Special case for GitLab pipeline
+		host := utils.Docker.DaemonHost()
+		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
+			env = append(env, "DOCKER_HOST="+host)
+		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
+			if host != client.DefaultDockerHost {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
+			}
+			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+		}
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.VectorImage,
+				Env:   env,
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+` + vectorConfigBuf.String() + `
+EOF
+`},
+				Healthcheck: &container.HealthConfig{
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9001/health",
+					},
+					Interval: 10 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  3,
+				},
+			},
+			container.HostConfig{
+				Binds:         binds,
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.VectorAliases,
+					},
+				},
+			},
+			utils.VectorId,
+		); err != nil {
 			return err
 		}
+		started = append(started, utils.VectorId)
 	}
 
 	// Start Kong.
-	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
@@ -695,7 +691,6 @@ EOF
 					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
 					"RLIMIT_NOFILE=10000",
 					"SEED_SELF_HOST=true",
