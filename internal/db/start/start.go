@@ -184,17 +184,6 @@ func IsUnhealthyError(err error) bool {
 	return ok
 }
 
-func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
-	if utils.Config.Analytics.Enabled {
-		hostConfig.LogConfig.Type = "syslog"
-		hostConfig.LogConfig.Config = map[string]string{
-			"syslog-address": fmt.Sprintf("tcp://%s:%d", utils.Config.Hostname, utils.Config.Analytics.VectorPort),
-			"tag":            "{{.Name}}",
-		}
-	}
-	return hostConfig
-}
-
 func initCurrentBranch(fsys afero.Fs) error {
 	// Create _current_branch file to avoid breaking db branch commands
 	if _, err := fsys.Stat(utils.CurrBranchPath); err == nil {
