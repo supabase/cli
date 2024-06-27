@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,8 +15,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/go-errors/errors"
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/tools/shared"
 )
 
@@ -66,7 +66,7 @@ func publishPackages(ctx context.Context, version string, beta bool) error {
 		config.Description += " (Beta)"
 		filename += "-beta"
 	}
-	client := shared.NewGtihubClient(ctx)
+	client := utils.GetGtihubClient(ctx)
 	if err := updatePackage(ctx, client, HOMEBREW_REPO, filename+".rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}
@@ -81,21 +81,19 @@ type PackageConfig struct {
 }
 
 func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
+	client := fetcher.NewFetcher("https://github.com", fetcher.WithExpectedStatus(http.StatusOK))
+	checkPath := fmt.Sprintf("/%s/%s/releases/download/v%[3]s/supabase_%[3]s_checksums.txt",
+		utils.CLI_OWNER,
+		utils.CLI_REPO,
+		version,
+	)
+	log.Println("Downloading checksum:", checkPath)
 	config := PackageConfig{Version: version}
-	url := fmt.Sprintf("https://github.com/supabase/cli/releases/download/v%[1]v/supabase_%[1]v_checksums.txt", config.Version)
-	log.Println(url)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return config, err
-	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Send(ctx, http.MethodGet, checkPath, nil)
 	if err != nil {
 		return config, err
 	}
 	defer resp.Body.Close()
-	if err := checkStatus(resp, http.StatusOK); err != nil {
-		return config, err
-	}
 	// Read checksums into map: filename -> sha256
 	config.Checksum = make(map[string]string)
 	scanner := bufio.NewScanner(resp.Body)
@@ -108,17 +106,6 @@ func fetchConfig(ctx context.Context, version string) (PackageConfig, error) {
 		return config, err
 	}
 	return config, nil
-}
-
-func checkStatus(resp *http.Response, status int) error {
-	if resp.StatusCode == status {
-		return nil
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return errors.Errorf("status %d: %w", resp.StatusCode, err)
-	}
-	return errors.Errorf("status %d: %s", resp.StatusCode, string(data))
 }
 
 func updatePackage(ctx context.Context, client *github.Client, repo, path string, tmpl *template.Template, config PackageConfig) error {

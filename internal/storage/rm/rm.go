@@ -8,12 +8,12 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var (
@@ -31,11 +31,11 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 	// Group paths by buckets
 	groups := map[string][]string{}
 	for _, objectPath := range paths {
-		remotePath, err := storage.ParseStorageURL(objectPath)
+		remotePath, err := client.ParseStorageURL(objectPath)
 		if err != nil {
 			return err
 		}
-		bucket, prefix := storage.SplitBucketPrefix(remotePath)
+		bucket, prefix := client.SplitBucketPrefix(remotePath)
 		// Ignore attempts to delete all buckets
 		if len(bucket) == 0 {
 			return errors.New(errMissingBucket)
@@ -45,18 +45,20 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		}
 		groups[bucket] = append(groups[bucket], prefix)
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	}
 	for bucket, prefixes := range groups {
 		confirm := fmt.Sprintf("Confirm deleting files in bucket %v?", utils.Bold(bucket))
-		if shouldDelete := utils.PromptYesNo(confirm, true, os.Stdin); !shouldDelete {
+		if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, confirm, false); err != nil {
+			return err
+		} else if !shouldDelete {
 			continue
 		}
 		// Always try deleting first in case the paths resolve to extensionless files
 		fmt.Fprintln(os.Stderr, "Deleting objects:", prefixes)
-		removed, err := client.DeleteStorageObjects(ctx, projectRef, bucket, prefixes)
+		removed, err := api.DeleteObjects(ctx, bucket, prefixes)
 		if err != nil {
 			return err
 		}
@@ -75,7 +77,7 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 			if len(prefix) > 0 {
 				prefix += "/"
 			}
-			if err := RemoveStoragePathAll(ctx, projectRef, bucket, prefix); err != nil {
+			if err := RemoveStoragePathAll(ctx, api, bucket, prefix); err != nil {
 				return err
 			}
 		}
@@ -84,14 +86,14 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 }
 
 // Expects prefix to be terminated by "/" or ""
-func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string) error {
+func RemoveStoragePathAll(ctx context.Context, api storage.StorageAPI, bucket, prefix string) error {
 	// We must remove one directory at a time to avoid breaking pagination result
 	queue := make([]string, 0)
 	queue = append(queue, prefix)
 	for len(queue) > 0 {
 		dirPrefix := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		paths, err := ls.ListStoragePaths(ctx, projectRef, fmt.Sprintf("/%s/%s", bucket, dirPrefix))
+		paths, err := ls.ListStoragePaths(ctx, api, fmt.Sprintf("/%s/%s", bucket, dirPrefix))
 		if err != nil {
 			return err
 		}
@@ -109,14 +111,14 @@ func RemoveStoragePathAll(ctx context.Context, projectRef, bucket, prefix string
 		}
 		if len(files) > 0 {
 			fmt.Fprintln(os.Stderr, "Deleting objects:", files)
-			if _, err := client.DeleteStorageObjects(ctx, projectRef, bucket, files); err != nil {
+			if _, err := api.DeleteObjects(ctx, bucket, files); err != nil {
 				return err
 			}
 		}
 	}
 	if len(prefix) == 0 {
 		fmt.Fprintln(os.Stderr, "Deleting bucket:", bucket)
-		if data, err := client.DeleteStorageBucket(ctx, projectRef, bucket); err == nil {
+		if data, err := api.DeleteBucket(ctx, bucket); err == nil {
 			fmt.Fprintln(os.Stderr, data.Message)
 		} else if strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 			fmt.Fprintln(os.Stderr, "Bucket not found:", bucket)

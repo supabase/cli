@@ -8,22 +8,29 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sync"
+	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type CustomName struct {
-	ApiURL         string `env:"api.url,default=API_URL"`
-	GraphqlURL     string `env:"api.graphql_url,default=GRAPHQL_URL"`
-	DbURL          string `env:"db.url,default=DB_URL"`
-	StudioURL      string `env:"studio.url,default=STUDIO_URL"`
-	InbucketURL    string `env:"inbucket.url,default=INBUCKET_URL"`
-	JWTSecret      string `env:"auth.jwt_secret,default=JWT_SECRET"`
-	AnonKey        string `env:"auth.anon_key,default=ANON_KEY"`
-	ServiceRoleKey string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
+	ApiURL                   string `env:"api.url,default=API_URL"`
+	GraphqlURL               string `env:"api.graphql_url,default=GRAPHQL_URL"`
+	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
+	DbURL                    string `env:"db.url,default=DB_URL"`
+	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
+	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL"`
+	JWTSecret                string `env:"auth.jwt_secret,default=JWT_SECRET"`
+	AnonKey                  string `env:"auth.anon_key,default=ANON_KEY"`
+	ServiceRoleKey           string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
+	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
+	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
+	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -34,10 +41,10 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.ApiURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://%s:%d/graphql/v1", utils.Config.Hostname, utils.Config.Api.Port)
 	}
-	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
+	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
-	if !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
@@ -45,33 +52,28 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
+	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
+		values[c.StorageS3URL] = fmt.Sprintf("http://%s:%d/storage/v1/s3", utils.Config.Hostname, utils.Config.Api.Port)
+		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
+		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
+		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
+	}
 	return values
 }
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := AssertContainerHealthy(ctx, utils.DbId); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
+		return err
 	}
 
-	services := []string{
-		utils.KongId,
-		utils.GotrueId,
-		utils.InbucketId,
-		utils.RealtimeId,
-		utils.RestId,
-		utils.StorageId,
-		utils.ImgProxyId,
-		utils.PgmetaId,
-		utils.StudioId,
-		utils.LogflareId,
+	stopped, err := checkServiceHealth(ctx)
+	if err != nil {
+		return err
 	}
-	stopped := checkServiceHealth(ctx, services, os.Stderr)
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
 	}
@@ -83,23 +85,31 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	return printStatus(names, format, os.Stdout, stopped...)
 }
 
-func checkServiceHealth(ctx context.Context, services []string, w io.Writer) (stopped []string) {
-	for _, name := range services {
-		if err := AssertContainerHealthy(ctx, name); err != nil {
-			if client.IsErrNotFound(err) {
-				stopped = append(stopped, name)
-			} else {
-				// Log unhealthy containers instead of failing
-				fmt.Fprintln(w, err)
-			}
+func checkServiceHealth(ctx context.Context) ([]string, error) {
+	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
+		Filters: utils.CliProjectFilter(),
+	})
+	if err != nil {
+		return nil, errors.Errorf("failed to list running containers: %w", err)
+	}
+	running := make(map[string]struct{}, len(resp))
+	for _, c := range resp {
+		for _, n := range c.Names {
+			running[n] = struct{}{}
 		}
 	}
-	return stopped
+	var stopped []string
+	for _, containerId := range utils.GetDockerIds() {
+		if _, ok := running["/"+containerId]; !ok {
+			stopped = append(stopped, containerId)
+		}
+	}
+	return stopped, nil
 }
 
-func AssertContainerHealthy(ctx context.Context, container string) error {
+func assertContainerHealthy(ctx context.Context, container string) error {
 	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
-		return err
+		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
 		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
 	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
@@ -108,36 +118,42 @@ func AssertContainerHealthy(ctx context.Context, container string) error {
 	return nil
 }
 
-func IsServiceReady(ctx context.Context, container string) bool {
+func IsServiceReady(ctx context.Context, container string) error {
 	if container == utils.RestId {
-		return isPostgRESTHealthy(ctx)
+		// PostgREST does not support native health checks
+		return checkHTTPHead(ctx, "/rest-admin/v1/ready")
 	}
 	if container == utils.EdgeRuntimeId {
-		return isEdgeRuntimeHealthy(ctx)
+		// Native health check logs too much hyper::Error(IncompleteMessage)
+		return checkHTTPHead(ctx, "/functions/v1/_internal/health")
 	}
-	return AssertContainerHealthy(ctx, container) == nil
+	return assertContainerHealthy(ctx, container)
 }
 
-func isPostgRESTHealthy(ctx context.Context) bool {
-	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://%s:%d/rest-admin/v1/ready", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
+var (
+	healthClient *fetcher.Fetcher
+	healthOnce   sync.Once
+)
 
-func isEdgeRuntimeHealthy(ctx context.Context) bool {
-	// Native health check logs too much hyper::Error(IncompleteMessage)
-	restUrl := fmt.Sprintf("http://%s:%d/functions/v1/_internal/health", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
-
-func checkHTTPHead(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Add("apikey", utils.Config.Auth.AnonKey)
-	resp, err := http.DefaultClient.Do(req)
-	return err == nil && resp.StatusCode == http.StatusOK
+func checkHTTPHead(ctx context.Context, path string) error {
+	healthOnce.Do(func() {
+		server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+		header := func(req *http.Request) {
+			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
+		}
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		healthClient = fetcher.NewFetcher(
+			server,
+			fetcher.WithHTTPClient(client),
+			fetcher.WithRequestEditor(header),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+	})
+	// HEAD method does not return response body
+	_, err := healthClient.Send(ctx, http.MethodHead, path, nil)
+	return err
 }
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {
@@ -147,14 +163,18 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 
 func PrettyPrint(w io.Writer, exclude ...string) {
 	names := CustomName{
-		ApiURL:         "         " + utils.Aqua("API URL"),
-		GraphqlURL:     "     " + utils.Aqua("GraphQL URL"),
-		DbURL:          "          " + utils.Aqua("DB URL"),
-		StudioURL:      "      " + utils.Aqua("Studio URL"),
-		InbucketURL:    "    " + utils.Aqua("Inbucket URL"),
-		JWTSecret:      "      " + utils.Aqua("JWT secret"),
-		AnonKey:        "        " + utils.Aqua("anon key"),
-		ServiceRoleKey: "" + utils.Aqua("service_role key"),
+		ApiURL:                   "         " + utils.Aqua("API URL"),
+		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
+		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
+		DbURL:                    "          " + utils.Aqua("DB URL"),
+		StudioURL:                "      " + utils.Aqua("Studio URL"),
+		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
+		JWTSecret:                "      " + utils.Aqua("JWT secret"),
+		AnonKey:                  "        " + utils.Aqua("anon key"),
+		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
+		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
+		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
+		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields

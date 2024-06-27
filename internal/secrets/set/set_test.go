@@ -3,16 +3,16 @@ package set
 import (
 	"context"
 	"errors"
-	"os"
+	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestSecretSetCommand(t *testing.T) {
@@ -32,8 +32,8 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
-			Reply(200)
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
+			Reply(http.StatusCreated)
 		// Run test
 		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
 		// Check error
@@ -44,26 +44,21 @@ func TestSecretSetCommand(t *testing.T) {
 	t.Run("Sets secret value via env file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, "/tmp/.env", []byte(dummyEnv), 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Setup dotenv file
-		tmpfile, err := os.CreateTemp("", "secret")
-		require.NoError(t, err)
-		defer os.Remove(tmpfile.Name())
-		_, err = tmpfile.Write([]byte(dummyEnv))
-		require.NoError(t, err)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
-			Reply(200)
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
+			Reply(http.StatusCreated)
 		// Run test
-		err = Run(context.Background(), project, tmpfile.Name(), []string{}, fsys)
+		err := Run(context.Background(), project, "/tmp/.env", []string{}, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -110,7 +105,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, "", []string{dummyEnv}, fsys)
@@ -132,7 +127,7 @@ func TestSecretSetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.CreateSecretsJSONBody{dummy}).
+			JSON(api.V1BulkCreateSecretsJSONRequestBody{dummy}).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test

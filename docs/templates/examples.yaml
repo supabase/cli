@@ -222,6 +222,39 @@ supabase-db-lint:
           ]
         }
       ]
+supabase-db-pull:
+  - id: basic-usage
+    name: Basic usage
+    code: supabase db pull
+    response: |
+      Connecting to remote database...
+      Schema written to supabase/migrations/20240414044403_remote_schema.sql
+      Update remote migration history table? [Y/n]
+      Repaired migration history: [20240414044403] => applied
+      Finished supabase db pull.
+      The auth and storage schemas are excluded. Run supabase db pull --schema auth,storage again to diff them.
+  - id: local-studio
+    name: Local studio
+    code: supabase db pull --local
+    response: |
+      Connecting to local database...
+      Setting up initial schema....
+      Creating custom roles supabase/roles.sql...
+      Applying migration 20240414044403_remote_schema.sql...
+      No schema changes found
+      The auth and storage schemas are excluded. Run supabase db pull --schema auth,storage again to diff them.
+      exit status 1
+  - id: custom-schemas
+    name: Custom schemas
+    code: supabase db pull --schema auth,storage
+    response: |
+      Connecting to remote database...
+      Setting up initial schema....
+      Creating custom roles supabase/roles.sql...
+      Applying migration 20240414044403_remote_schema.sql...
+      No schema changes found
+      Try rerunning the command with --debug to troubleshoot the error.
+      exit status 1
 supabase-db-push:
   - id: basic-usage
     name: Basic usage

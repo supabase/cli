@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"gopkg.in/h2non/gock.v1"
+	"github.com/supabase/cli/internal/utils/cloudflare"
 )
 
 const host = "api.supabase.io"
@@ -24,8 +25,8 @@ func TestLookupIP(t *testing.T) {
 			MatchParam("name", host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		// Run test
 		ip, err := FallbackLookupIP(context.Background(), host)
@@ -43,9 +44,9 @@ func TestLookupIP(t *testing.T) {
 			MatchParam("name", "api.supabase.com").
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: 5, Data: "supabase-api.fly.dev."},
-				{Type: dnsIPv6Type, Data: "2606:2800:220:1:248:1893:25c8:1946"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeCNAME, Data: "supabase-api.fly.dev."},
+				{Type: cloudflare.TypeAAAA, Data: "2606:2800:220:1:248:1893:25c8:1946"},
 			}})
 		// Run test
 		ip, err := FallbackLookupIP(context.Background(), "api.supabase.com")
@@ -121,11 +122,11 @@ func TestLookupIP(t *testing.T) {
 			MatchParam("name", host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{})
+			JSON(&cloudflare.DNSResponse{})
 		// Run test
 		ip, err := FallbackLookupIP(context.Background(), host)
 		// Validate output
-		assert.ErrorContains(t, err, "failed to locate valid IP for api.supabase.io; resolves to []utils.dnsAnswer(nil)")
+		assert.ErrorContains(t, err, "failed to locate valid IP for api.supabase.io; resolves to []cloudflare.DNSAnswer(nil)")
 		assert.Empty(t, ip)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -137,11 +138,11 @@ func TestResolveCNAME(t *testing.T) {
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
 			MatchParam("name", host).
-			MatchParam("type", "CNAME").
+			MatchParam("type", "5").
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: cnameType, Data: "foobarbaz.supabase.co"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeCNAME, Data: "foobarbaz.supabase.co"},
 			}})
 		// Run test
 		cname, err := ResolveCNAME(context.Background(), host)
@@ -156,10 +157,10 @@ func TestResolveCNAME(t *testing.T) {
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
 			MatchParam("name", host).
-			MatchParam("type", "CNAME").
+			MatchParam("type", "5").
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{}})
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{}})
 		// Run test
 		cname, err := ResolveCNAME(context.Background(), host)
 		// Validate output
@@ -173,11 +174,11 @@ func TestResolveCNAME(t *testing.T) {
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
 			MatchParam("name", host).
-			MatchParam("type", "CNAME").
+			MatchParam("type", "5").
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		// Run test
 		cname, err := ResolveCNAME(context.Background(), host)
@@ -220,8 +221,8 @@ func TestFallbackDNS(t *testing.T) {
 			MatchParam("name", host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		// Run test
 		conn, err := wrapped(context.Background(), "udp", host+":80")
@@ -248,8 +249,8 @@ func TestFallbackDNS(t *testing.T) {
 			MatchParam("name", host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		// Run test
 		conn, err := wrapped(context.Background(), "udp", host+":80")

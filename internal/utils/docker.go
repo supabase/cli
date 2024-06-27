@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
@@ -48,34 +49,20 @@ func NewDocker() *client.Client {
 	return cli.Client().(*client.Client)
 }
 
-func AssertDockerIsRunning(ctx context.Context) error {
-	if _, err := Docker.Ping(ctx); err != nil {
-		if client.IsErrConnectionFailed(err) {
-			CmdSuggestion = suggestDockerInstall
-		}
-		return errors.Errorf("failed to ping docker daemon: %w", err)
-	}
-
-	return nil
-}
-
 const (
 	CliProjectLabel     = "com.supabase.cli.project"
 	composeProjectLabel = "com.docker.compose.project"
 )
 
-func DockerNetworkCreateIfNotExists(ctx context.Context, networkId string) error {
-	_, err := Docker.NetworkCreate(
-		ctx,
-		networkId,
-		types.NetworkCreate{
-			CheckDuplicate: true,
-			Labels: map[string]string{
-				CliProjectLabel:     Config.ProjectId,
-				composeProjectLabel: Config.ProjectId,
-			},
-		},
-	)
+func DockerNetworkCreateIfNotExists(ctx context.Context, mode container.NetworkMode, labels map[string]string) error {
+	// Non-user defined networks should already exist
+	if !isUserDefined(mode) {
+		return nil
+	}
+	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), types.NetworkCreate{
+		CheckDuplicate: true,
+		Labels:         labels,
+	})
 	// if error is network already exists, no need to propagate to user
 	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
@@ -104,6 +91,7 @@ func WaitAll[T any](containers []T, exec func(container T) error) []error {
 var NoBackupVolume = false
 
 func DockerRemoveAll(ctx context.Context, w io.Writer) error {
+	fmt.Fprintln(w, "Stopping containers...")
 	args := CliProjectFilter()
 	containers, err := Docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -119,7 +107,6 @@ func DockerRemoveAll(ctx context.Context, w io.Writer) error {
 			ids = append(ids, c.ID)
 		}
 	}
-	fmt.Fprintln(w, "Stopping containers...")
 	result := WaitAll(ids, func(id string) error {
 		if err := Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
 			return errors.Errorf("failed to stop container: %w", err)
@@ -208,8 +195,8 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
-func DockerImagePull(ctx context.Context, image string, w io.Writer) error {
-	out, err := Docker.ImagePull(ctx, image, types.ImagePullOptions{
+func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
+	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
 		RegistryAuth: GetRegistryAuth(),
 	})
 	if err != nil {
@@ -263,19 +250,21 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	// Setup default config
 	config.Image = GetRegistryImageUrl(config.Image)
 	if config.Labels == nil {
-		config.Labels = map[string]string{}
+		config.Labels = make(map[string]string, 2)
 	}
 	config.Labels[CliProjectLabel] = Config.ProjectId
 	config.Labels[composeProjectLabel] = Config.ProjectId
-	if len(hostConfig.NetworkMode) == 0 {
+	// Configure container network
+	hostConfig.ExtraHosts = append(hostConfig.ExtraHosts, extraHosts...)
+	if networkId := viper.GetString("network-id"); len(networkId) > 0 {
+		hostConfig.NetworkMode = container.NetworkMode(networkId)
+	} else if len(hostConfig.NetworkMode) == 0 {
 		hostConfig.NetworkMode = container.NetworkMode(NetId)
 	}
-	// Create network with name
-	if hostConfig.NetworkMode.IsUserDefined() && hostConfig.NetworkMode.UserDefined() != "host" {
-		if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode.NetworkName()); err != nil {
-			return "", err
-		}
+	if err := DockerNetworkCreateIfNotExists(ctx, hostConfig.NetworkMode, config.Labels); err != nil {
+		return "", err
 	}
+	// Configure container volumes
 	var binds, sources []string
 	for _, bind := range hostConfig.Binds {
 		spec, err := loader.ParseVolume(bind)
@@ -388,6 +377,21 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 	}
 	if resp.State.ExitCode > 0 {
 		return errors.Errorf("error running container: exit %d", resp.State.ExitCode)
+	}
+	return nil
+}
+
+func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
+	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	})
+	if err != nil {
+		return errors.Errorf("failed to read docker logs: %w", err)
+	}
+	defer logs.Close()
+	if _, err := stdcopy.StdCopy(stdout, stderr, logs); err != nil {
+		return errors.Errorf("failed to copy docker logs: %w", err)
 	}
 	return nil
 }

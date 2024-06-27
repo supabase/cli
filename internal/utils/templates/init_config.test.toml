@@ -8,7 +8,7 @@ enabled = true
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
 # endpoints. public and storage are always included.
-schemas = ["public", "storage", "graphql_public"]
+schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request. public is always included.
 extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
@@ -67,6 +67,9 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
+[storage.image_transformation]
+enabled = false
+
 [auth]
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
@@ -94,6 +97,17 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
+# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
+max_frequency = "1s"
+
+# Use a production-ready SMTP server
+[auth.email.smtp]
+host = "smtp.sendgrid.net"
+port = 587
+user = "apikey"
+pass = "env(SENDGRID_API_KEY)"
+admin_email = "admin@email.com"
+sender_name = "Admin"
 
 # Uncomment to customize email template
 [auth.email.template.invite]
@@ -107,14 +121,28 @@ enable_signup = true
 enable_confirmations = false
 # Template for sending OTP to users
 template = "Your code is {{ `{{ .Code }}` }} ."
+# Controls the minimum amount of time that must pass before sending another sms otp.
+max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
 [auth.sms.test_otp]
 4152127777 = "123456"
 
+# Configure logged in session timeouts.
+[auth.sessions]
+# Force log out after the specified duration.
+timebox = "24h"
+# Force log out if the user has been inactive longer than the specified duration.
+inactivity_timeout = "8h"
+
 [auth.hook.custom_access_token]
 enabled = true
 uri = "pg-functions://postgres/auth/custom-access-token-hook"
+
+[auth.hook.send_sms]
+enabled = true
+uri = "http://host.docker.internal/functions/v1/send_sms"
+secrets = "env(AUTH_SEND_SMS_SECRETS)"
 
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
@@ -135,6 +163,15 @@ secret = "env(AZURE_SECRET)"
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
 # or any other third-party OIDC providers.
 url = "https://login.microsoftonline.com/tenant"
+# If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
+skip_nonce_check = true
+
+[edge_runtime]
+enabled = true
+# Configure one of the supported request policies: `oneshot`, `per_worker`.
+# Use `oneshot` for hot reload, or `per_worker` for load testing.
+policy = "per_worker"
+inspector_port = 8083
 
 [analytics]
 enabled = false

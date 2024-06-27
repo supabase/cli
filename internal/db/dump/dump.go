@@ -42,28 +42,28 @@ func Run(ctx context.Context, path string, config pgconn.Config, schema, exclude
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
 	}
+	db := "remote"
+	if utils.IsLocalDatabase(config) {
+		db = "local"
+	}
 	if dataOnly {
-		fmt.Fprintln(os.Stderr, "Dumping data from remote database...")
+		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
 		return dumpData(ctx, config, schema, excludeTable, useCopy, dryRun, outStream)
 	} else if roleOnly {
-		fmt.Fprintln(os.Stderr, "Dumping roles from remote database...")
+		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
 		return dumpRole(ctx, config, keepComments, dryRun, outStream)
 	}
-	fmt.Fprintln(os.Stderr, "Dumping schemas from remote database...")
+	fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
 	return DumpSchema(ctx, config, schema, keepComments, dryRun, outStream)
 }
 
 func DumpSchema(ctx context.Context, config pgconn.Config, schema []string, keepComments, dryRun bool, stdout io.Writer) error {
 	var env []string
 	if len(schema) > 0 {
-		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, "|"))
+		// Must append flag because empty string results in error
+		env = append(env, "EXTRA_FLAGS=--schema="+strings.Join(schema, "|"))
 	} else {
-		env = append(env,
-			"EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"),
-			"INCLUDED_SCHEMAS=*",
-			// Must append flag because empty string results in error
-			"EXTRA_FLAGS=--extension=*",
-		)
+		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(utils.InternalSchemas, "|"))
 	}
 	if !keepComments {
 		env = append(env, "EXTRA_SED=/^--/d")
@@ -96,11 +96,12 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		"extensions",
 		"pgbouncer",
 		"realtime",
-		"_realtime",
 		// "storage",
-		"_analytics",
 		// "supabase_functions",
 		"supabase_migrations",
+		"_analytics",
+		"_realtime",
+		"_supavisor",
 	}
 	var env []string
 	if len(schema) > 0 {
@@ -113,12 +114,19 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		extraFlags = append(extraFlags, "--column-inserts", "--rows-per-insert 100000")
 	}
 	for _, table := range excludeTable {
-		extraFlags = append(extraFlags, "--exclude-table "+table)
+		escaped := quoteUpperCase(table)
+		// Use separate flags to avoid error: too many dotted names
+		extraFlags = append(extraFlags, "--exclude-table "+escaped)
 	}
 	if len(extraFlags) > 0 {
 		env = append(env, "EXTRA_FLAGS="+strings.Join(extraFlags, " "))
 	}
 	return dump(ctx, config, dumpDataScript, env, dryRun, stdout)
+}
+
+func quoteUpperCase(table string) string {
+	escaped := strings.ReplaceAll(table, ".", `"."`)
+	return fmt.Sprintf(`"%s"`, escaped)
 }
 
 func dumpRole(ctx context.Context, config pgconn.Config, keepComments, dryRun bool, stdout io.Writer) error {
@@ -152,7 +160,9 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 			// Bash variable expansion is unsupported:
 			// https://github.com/golang/go/issues/47187
 			parts := strings.Split(key, ":")
-			return envMap[parts[0]]
+			value := envMap[parts[0]]
+			// Escape double quotes in env vars
+			return strings.ReplaceAll(value, `"`, `\"`)
 		})
 		fmt.Println(expanded)
 		return nil
@@ -165,7 +175,7 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 			Cmd:   []string{"bash", "-c", script, "--"},
 		},
 		container.HostConfig{
-			NetworkMode: container.NetworkMode("host"),
+			NetworkMode: network.NetworkHost,
 		},
 		network.NetworkingConfig{},
 		"",

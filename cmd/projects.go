@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -36,8 +33,8 @@ var (
 		Allowed: make([]string, len(utils.RegionMap)),
 	}
 	plan = utils.EnumFlag{
-		Allowed: []string{string(api.CreateProjectBodyPlanFree), string(api.CreateProjectBodyPlanPro)},
-		Value:   string(api.CreateProjectBodyPlanFree),
+		Allowed: []string{string(api.V1CreateProjectBodyPlanFree), string(api.V1CreateProjectBodyPlanPro)},
+		Value:   string(api.V1CreateProjectBodyPlanFree),
 	}
 
 	projectsCreateCmd = &cobra.Command{
@@ -58,14 +55,11 @@ var (
 			if len(args) > 0 {
 				projectName = args[0]
 			}
-			if interactive {
-				cobra.CheckErr(PromptCreateFlags(cmd))
-			}
-			return create.Run(cmd.Context(), api.CreateProjectBody{
+			return create.Run(cmd.Context(), api.V1CreateProjectBody{
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
-				Region:         api.CreateProjectBodyRegion(region.Value),
+				Region:         api.V1CreateProjectBodyRegion(region.Value),
 			}, afero.NewOsFs())
 		},
 	}
@@ -87,8 +81,6 @@ var (
 		},
 	}
 
-	projectRef string
-
 	projectsDeleteCmd = &cobra.Command{
 		Use:   "delete <ref>",
 		Short: "Delete a Supabase project",
@@ -100,16 +92,17 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			if len(args) == 0 {
 				title := "Which project do you want to delete?"
-				cobra.CheckErr(flags.PromptProjectRef(cmd.Context(), title))
+				cobra.CheckErr(flags.PromptProjectRef(ctx, title))
 			} else {
-				projectRef = args[0]
+				flags.ProjectRef = args[0]
 			}
-			if err := delete.PreRun(projectRef); err != nil {
+			if err := delete.PreRun(ctx, flags.ProjectRef); err != nil {
 				return err
 			}
-			return delete.Run(cmd.Context(), projectRef, afero.NewOsFs())
+			return delete.Run(ctx, flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 )
@@ -142,65 +135,4 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)
-}
-
-func PromptCreateFlags(cmd *cobra.Command) error {
-	ctx := cmd.Context()
-	if len(projectName) > 0 {
-		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", projectName))
-	} else {
-		name, err := utils.PromptText("Enter your project name: ", os.Stdin)
-		if err != nil {
-			return err
-		}
-		if len(name) == 0 {
-			return errors.New("project name cannot be empty")
-		}
-		projectName = name
-	}
-	if !cmd.Flags().Changed("org-id") {
-		title := "Which organisation do you want to create the project for?"
-		resp, err := utils.GetSupabase().GetOrganizationsWithResponse(ctx)
-		if err != nil {
-			return err
-		}
-		if resp.JSON200 == nil {
-			return errors.New("Unexpected error retrieving organizations: " + string(resp.Body))
-		}
-		items := make([]utils.PromptItem, len(*resp.JSON200))
-		for i, org := range *resp.JSON200 {
-			items[i] = utils.PromptItem{Summary: org.Name, Details: org.Id}
-		}
-		choice, err := utils.PromptChoice(ctx, title, items)
-		if err != nil {
-			return err
-		}
-		orgId = choice.Details
-	}
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", orgId))
-	if !cmd.Flags().Changed("region") {
-		title := "Which region do you want to host the project in?"
-		items := make([]utils.PromptItem, len(utils.RegionMap))
-		i := 0
-		for k, v := range utils.RegionMap {
-			items[i] = utils.PromptItem{Summary: k, Details: v}
-			i++
-		}
-		choice, err := utils.PromptChoice(ctx, title, items)
-		if err != nil {
-			return err
-		}
-		region.Value = choice.Summary
-	}
-	fmt.Fprintln(os.Stderr, printKeyValue("Selected region", region.Value))
-	if dbPassword == "" {
-		dbPassword = flags.PromptPassword(os.Stdin)
-	}
-	return nil
-}
-
-func printKeyValue(key, value string) string {
-	indent := 20 - len(key)
-	spaces := strings.Repeat(" ", indent)
-	return key + ":" + spaces + value
 }

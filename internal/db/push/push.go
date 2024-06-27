@@ -25,12 +25,6 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		return err
 	}
 	defer conn.Close(context.Background())
-	// Create roles
-	if !dryRun && includeRoles {
-		if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
-			return err
-		}
-	}
 	pending, err := up.GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys)
 	if err != nil {
 		return err
@@ -41,14 +35,26 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	// Push pending migrations
 	if dryRun {
+		if includeRoles {
+			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
+		}
 		for _, filename := range pending {
 			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
 		}
+		if includeSeed {
+			fmt.Fprintln(os.Stderr, "Would seed data "+utils.Bold(utils.SeedDataPath)+"...")
+		}
 	} else {
 		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n • %s\n\n", strings.Join(pending, "\n • "))
-		if shouldPush := utils.PromptYesNo(msg, true, os.Stdin); !shouldPush {
-			utils.CmdSuggestion = ""
+		if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+			return err
+		} else if !shouldPush {
 			return errors.New(context.Canceled)
+		}
+		if includeRoles {
+			if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
+				return err
+			}
 		}
 		if err := apply.MigrateUp(ctx, conn, pending, fsys); err != nil {
 			return err

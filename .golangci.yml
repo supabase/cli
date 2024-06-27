@@ -21,7 +21,3 @@ issues:
     - linters:
         - stylecheck
       text: "ST1003:"
-    - linters:
-        - staticcheck
-        - stylecheck
-      text: "ST1005:"

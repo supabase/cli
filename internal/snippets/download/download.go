@@ -10,7 +10,7 @@ import (
 )
 
 func Run(ctx context.Context, snippetId string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().GetSnippetWithResponse(ctx, snippetId)
+	resp, err := utils.GetSupabase().V1GetASnippetWithResponse(ctx, snippetId)
 	if err != nil {
 		return errors.Errorf("failed to download snippet: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/zalando/go-keyring"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestDeleteCommand(t *testing.T) {
@@ -33,7 +33,7 @@ func TestDeleteCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(api.ProjectRefResponse{
+			JSON(api.V1ProjectRefResponse{
 				Ref:  ref,
 				Name: "test-project",
 			})

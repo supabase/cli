@@ -44,7 +44,12 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// 2. Update migration history
-	if utils.IsLocalDatabase(config) || !utils.PromptYesNo("Update remote migration history table?", true, os.Stdin) {
+	if utils.IsLocalDatabase(config) {
+		return nil
+	}
+	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
+		return err
+	} else if !shouldUpdate {
 		return nil
 	}
 	return baselineMigrations(ctx, config, version, fsys, options...)
@@ -80,11 +85,14 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 
 func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Start shadow database
-	shadow, err := diff.CreateShadowDatabase(ctx)
+	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return err
 	}
 	defer utils.DockerRemove(shadow)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+		return err
+	}
 	conn, err := diff.ConnectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
@@ -97,7 +105,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	schemas := []string{"auth", "storage"}
 	config := pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.ShadowPort),
+		Port:     utils.Config.Db.ShadowPort,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
@@ -156,10 +164,13 @@ func lineByLineDiff(before, after io.Reader, f io.Writer) error {
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) == 0 {
 		// Expecting no errors here because the caller should have handled them
-		if migrations, _ := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
+		if migrations, err := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
 			if matches := utils.MigrateFilePattern.FindStringSubmatch(migrations[0]); len(matches) > 1 {
 				version = matches[1]
 			}
+		} else if err != nil {
+			logger := utils.GetDebugLogger()
+			fmt.Fprintln(logger, err)
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Baselining migration history to", version)

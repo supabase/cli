@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestProjectListCommand(t *testing.T) {
@@ -25,7 +25,7 @@ func TestProjectListCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(200).
-			JSON([]api.ProjectResponse{
+			JSON([]api.V1ProjectResponse{
 				{
 					Id:             apitest.RandomProjectRef(),
 					OrganizationId: "combined-fuchsia-lion",

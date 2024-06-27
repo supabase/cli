@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -36,7 +38,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), true, false, true, true, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -102,5 +104,78 @@ func TestMigrationPush(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
 		assert.ErrorContains(t, err, "At statement 0: "+history.INSERT_MIGRATION_VERSION)
+	})
+}
+
+func TestPushAll(t *testing.T) {
+	t.Run("ignores missing roles and seed", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(list.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
+			Reply("INSERT 0 1")
+		// Run test
+		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on cancel", func(t *testing.T) {
+		defer fstest.MockStdin(t, "n")()
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(list.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		// Run test
+		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("throws error on roles failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(list.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		// Run test
+		err := Run(context.Background(), false, false, true, false, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
+	t.Run("throws error on seed failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.SeedDataPath}
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(list.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		pgtest.MockMigrationHistory(conn)
+		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
+			Reply("INSERT 0 1")
+		// Run test
+		err := Run(context.Background(), false, false, false, true, dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 }

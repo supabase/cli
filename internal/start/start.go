@@ -5,7 +5,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -22,7 +21,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/services"
@@ -80,10 +78,10 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 		return run(p, ctx, fsys, excludedContainers, dbConfig)
 	}); err != nil {
-		if ignoreHealthCheck && errors.Is(err, reset.ErrUnhealthy) {
+		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+			if err := utils.DockerRemoveAll(context.Background(), os.Stderr); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
 			return err
@@ -104,7 +102,7 @@ type kongConfig struct {
 	EdgeRuntimeId string
 	LogflareId    string
 	ApiHost       string
-	ApiPort       uint
+	ApiPort       uint16
 }
 
 var (
@@ -137,6 +135,25 @@ var (
 	vectorConfigEmbed    string
 	vectorConfigTemplate = template.Must(template.New("vectorConfig").Parse(vectorConfigEmbed))
 )
+
+type poolerTenant struct {
+	DbHost            string
+	DbPort            uint16
+	DbDatabase        string
+	DbPassword        string
+	ExternalId        string
+	ModeType          utils.PoolMode
+	DefaultMaxClients uint
+	DefaultPoolSize   uint
+}
+
+var (
+	//go:embed templates/pooler.exs
+	poolerTenantEmbed    string
+	poolerTenantTemplate = template.Must(template.New("poolerTenant").Parse(poolerTenantEmbed))
+)
+
+var serviceTimeout = 30 * time.Second
 
 func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
@@ -187,12 +204,9 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD",
-						"wget",
-						"--no-verbose",
-						"--tries=1",
-						"--spider",
-						"http://127.0.0.1:9001/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9001/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -213,7 +227,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := reset.WaitForServiceReady(ctx, []string{utils.VectorId}); err != nil {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.VectorId); err != nil {
 			return err
 		}
 	}
@@ -282,7 +296,9 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test:        []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"},
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"http://127.0.0.1:4000/health",
+					},
 					Interval:    10 * time.Second,
 					Timeout:     2 * time.Second,
 					Retries:     3,
@@ -306,7 +322,7 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := reset.WaitForServiceReady(ctx, []string{utils.LogflareId}); err != nil {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.LogflareId); err != nil {
 			return err
 		}
 	}
@@ -318,7 +334,7 @@ EOF
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
+			RealtimeId:    utils.Config.Realtime.TenantId,
 			StorageId:     utils.StorageId,
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
@@ -343,7 +359,7 @@ EOF
 				}
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
-			binds = append(binds, fmt.Sprintf("%s:%s:rw,z", hostPath, dockerPath))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
 		}
 
 		if _, err := utils.DockerStart(
@@ -419,10 +435,16 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 
-			"GOTRUE_SMTP_HOST=" + utils.InbucketId,
-			"GOTRUE_SMTP_PORT=2500",
-			"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
-			"GOTRUE_SMTP_MAX_FREQUENCY=1s",
+			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
+
+			fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
+			fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
+			fmt.Sprintf("GOTRUE_SMTP_USER=%s", utils.Config.Auth.Email.Smtp.User),
+			fmt.Sprintf("GOTRUE_SMTP_PASS=%s", utils.Config.Auth.Email.Smtp.Pass),
+			fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Auth.Email.Smtp.AdminEmail),
+			fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
+			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
+
 			// TODO: To be reverted to `/auth/v1/verify` once
 			// https://github.com/supabase/supabase/issues/16100
 			// is fixed on upstream GoTrue.
@@ -434,7 +456,7 @@ EOF
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
 			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
-			"GOTRUE_SMS_MAX_FREQUENCY=5s",
+			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
@@ -443,6 +465,14 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+		}
+
+		if utils.Config.Auth.Sessions.Timebox > 0 {
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_TIMEBOX=%v", utils.Config.Auth.Sessions.Timebox))
+		}
+
+		if utils.Config.Auth.Sessions.InactivityTimeout > 0 {
+			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Template {
@@ -510,6 +540,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets,
 			)
 		}
 
@@ -518,6 +549,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets,
 			)
 		}
 
@@ -526,6 +558,25 @@ EOF
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+utils.Config.Auth.Hook.CustomAccessToken.Secrets,
+			)
+		}
+
+		if utils.Config.Auth.Hook.SendSMS.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
+				"GOTRUE_HOOK_SEND_SMS_URI="+utils.Config.Auth.Hook.SendSMS.URI,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+utils.Config.Auth.Hook.SendSMS.Secrets,
+			)
+		}
+
+		if utils.Config.Auth.Hook.SendEmail.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
+				"GOTRUE_HOOK_SEND_EMAIL_URI="+utils.Config.Auth.Hook.SendEmail.URI,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
 
@@ -535,6 +586,7 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
 			)
 
 			if config.RedirectUri != "" {
@@ -561,7 +613,9 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"},
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9999/health",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -623,11 +677,11 @@ EOF
 	}
 
 	// Start Realtime.
-	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.RealtimeImage, excluded) {
+	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.RealtimeImage,
+				Image: utils.Config.Realtime.Image,
 				Env: []string{
 					"PORT=4000",
 					"DB_HOST=" + dbConfig.Host,
@@ -636,25 +690,25 @@ EOF
 					"DB_PASSWORD=" + dbConfig.Password,
 					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-					"DB_ENC_KEY=supabaserealtime",
+					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"FLY_ALLOC_ID=abc123",
-					"FLY_APP_NAME=realtime",
-					"SECRET_KEY_BASE=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-					"ERL_AFLAGS=-proto_dist inet_tcp",
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"APP_NAME=realtime",
+					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
-					"RLIMIT_NOFILE=",
-					"REALTIME_IP_VERSION=" + string(utils.Config.Realtime.IpVersion),
+					"RLIMIT_NOFILE=10000",
+					"SEED_SELF_HOST=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-				},
-				Cmd: []string{
-					"/bin/sh", "-c",
-					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/4000"},
+					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
+					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+						"-H", "Host:" + utils.Config.Realtime.TenantId,
+						"http://127.0.0.1:4000/api/ping",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -721,22 +775,30 @@ EOF
 				Env: []string{
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"POSTGREST_URL=http://" + utils.RestId + ":3000",
-					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
 					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
 					"TENANT_ID=stub",
 					// TODO: https://github.com/supabase/storage-api/issues/55
-					"REGION=stub",
+					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					"ENABLE_IMAGE_TRANSFORMATION=true",
-					"IMGPROXY_URL=http://" + utils.ImgProxyId + ":5001",
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
+					"TUS_URL_PATH=/storage/v1/upload/resumable",
+					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
+					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
+					"S3_PROTOCOL_PREFIX=/storage/v1",
+					"S3_ALLOW_FORWARDED_HEADER=true",
+					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
+					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
 				Healthcheck: &container.HealthConfig{
-					// For some reason, 127.0.0.1 resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test:     []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"},
+					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:5000/status",
+					},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -761,7 +823,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -797,20 +859,20 @@ EOF
 	}
 
 	// Start all functions.
-	if !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
-		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, w, fsys); err != nil {
+		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.EdgeRuntimeId)
 	}
 
 	// Start pg-meta.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.PgmetaImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PgmetaImage,
+				Image: utils.Config.Studio.PgmetaImage,
 				Env: []string{
 					"PG_META_PORT=8080",
 					"PG_META_DB_HOST=" + dbConfig.Host,
@@ -818,9 +880,10 @@ EOF
 					"PG_META_DB_USER=" + dbConfig.User,
 					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -844,11 +907,11 @@ EOF
 	}
 
 	// Start Studio.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.StudioImage, excluded) {
+	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.StudioImage,
+				Image: utils.Config.Studio.Image,
 				Env: []string{
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
@@ -865,7 +928,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/profile', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"},
+					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:3000/api/profile", (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})'`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -890,34 +953,64 @@ EOF
 	}
 
 	// Start pooler.
-	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.PgbouncerImage, excluded) {
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
+		portSession := uint16(5432)
+		portTransaction := uint16(6543)
+		dockerPort := portTransaction
+		if utils.Config.Db.Pooler.PoolMode == utils.SessionMode {
+			dockerPort = portSession
+		}
+		// Create pooler tenant
+		var poolerTenantBuf bytes.Buffer
+		if err := poolerTenantTemplate.Execute(&poolerTenantBuf, poolerTenant{
+			DbHost:            dbConfig.Host,
+			DbPort:            dbConfig.Port,
+			DbDatabase:        dbConfig.Database,
+			DbPassword:        dbConfig.Password,
+			ExternalId:        utils.Config.Db.Pooler.TenantId,
+			ModeType:          utils.Config.Db.Pooler.PoolMode,
+			DefaultMaxClients: utils.Config.Db.Pooler.MaxClientConn,
+			DefaultPoolSize:   utils.Config.Db.Pooler.DefaultPoolSize,
+		}); err != nil {
+			return errors.Errorf("failed to exec template: %w", err)
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.PgbouncerImage,
+				Image: utils.Config.Db.Pooler.Image,
 				Env: []string{
-					"POSTGRESQL_HOST=" + dbConfig.Host,
-					fmt.Sprintf("POSTGRESQL_PORT=%d", dbConfig.Port),
-					"POSTGRESQL_USERNAME=pgbouncer",
-					"POSTGRESQL_PASSWORD=" + dbConfig.Password,
-					"POSTGRESQL_DATABASE=" + dbConfig.Database,
-					"PGBOUNCER_AUTH_USER=pgbouncer",
-					"PGBOUNCER_AUTH_QUERY=SELECT * FROM pgbouncer.get_auth($1)",
-					fmt.Sprintf("PGBOUNCER_POOL_MODE=%s", utils.Config.Db.Pooler.PoolMode),
-					fmt.Sprintf("PGBOUNCER_DEFAULT_POOL_SIZE=%d", utils.Config.Db.Pooler.DefaultPoolSize),
-					fmt.Sprintf("PGBOUNCER_MAX_CLIENT_CONN=%d", utils.Config.Db.Pooler.MaxClientConn),
-					// Default platform config: https://github.com/supabase/postgres/blob/develop/ansible/files/pgbouncer_config/pgbouncer.ini.j2
-					"PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits",
+					"PORT=4000",
+					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),
+					fmt.Sprintf("PROXY_PORT_TRANSACTION=%d", portTransaction),
+					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+					"CLUSTER_POSTGRES=true",
+					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
+					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
+					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"REGION=local",
+					"ERL_AFLAGS=-proto_dist inet_tcp",
+				},
+				Cmd: []string{
+					"/bin/sh", "-c",
+					fmt.Sprintf("/app/bin/migrate && /app/bin/supavisor eval '%s' && /app/bin/server", poolerTenantBuf.String()),
+				},
+				ExposedPorts: nat.PortSet{
+					"4000/tcp": {},
+					nat.Port(fmt.Sprintf("%d/tcp", portSession)):     {},
+					nat.Port(fmt.Sprintf("%d/tcp", portTransaction)): {},
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "bash", "-c", "printf \\0 > /dev/tcp/127.0.0.1/6432"},
+					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
 				},
 			},
 			container.HostConfig{
-				PortBindings:  nat.PortMap{"6432/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}}},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -935,15 +1028,13 @@ EOF
 	}
 
 	p.Send(utils.StatusMsg("Waiting for health checks..."))
-	return reset.WaitForServiceReady(ctx, started)
+	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 	short := utils.ShortContainerImageName(imageName)
-	if val, ok := excluded[short]; ok && val {
-		return true
-	}
-	return false
+	val, ok := excluded[short]
+	return ok && val
 }
 
 func ExcludableContainers() []string {

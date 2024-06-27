@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestVerifyCNAME(t *testing.T) {
@@ -14,7 +14,7 @@ func TestVerifyCNAME(t *testing.T) {
 	gock.New("https://1.1.1.1").
 		Get("/dns-query").
 		MatchParam("name", "hello.custom-domain.com").
-		MatchParam("type", "CNAME").
+		MatchParam("type", "5").
 		MatchHeader("accept", "application/dns-json").
 		Reply(http.StatusOK).
 		JSON(&map[string]interface{}{"Answer": []map[string]interface{}{
@@ -31,7 +31,7 @@ func TestVerifyCNAMEFailures(t *testing.T) {
 	gock.New("https://1.1.1.1").
 		Get("/dns-query").
 		MatchParam("name", "hello.custom-domain.com").
-		MatchParam("type", "CNAME").
+		MatchParam("type", "5").
 		MatchHeader("accept", "application/dns-json").
 		Reply(http.StatusOK).
 		JSON(&map[string]interface{}{"Answer": []map[string]interface{}{

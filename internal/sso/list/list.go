@@ -11,7 +11,7 @@ import (
 )
 
 func Run(ctx context.Context, ref, format string) error {
-	resp, err := utils.GetSupabase().ListAllProvidersWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1ListAllSsoProviderWithResponse(ctx, ref)
 	if err != nil {
 		return errors.Errorf("failed to list sso providers: %w", err)
 	}

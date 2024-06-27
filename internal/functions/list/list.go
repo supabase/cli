@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().GetFunctionsWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to list functions: %w", err)
 	}

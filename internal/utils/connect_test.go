@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/go-errors/errors"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
-	"gopkg.in/h2non/gock.v1"
+	"github.com/supabase/cli/internal/utils/cloudflare"
 )
 
 var dbConfig = pgconn.Config{
@@ -41,16 +42,16 @@ func TestConnectByConfig(t *testing.T) {
 			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		gock.New("https://1.1.1.1").
 			Get("/dns-query").
 			MatchParam("name", dbConfig.Host).
 			MatchHeader("accept", "application/dns-json").
 			Reply(http.StatusOK).
-			JSON(&dnsResponse{Answer: []dnsAnswer{
-				{Type: dnsIPv4Type, Data: "127.0.0.1"},
+			JSON(&cloudflare.DNSResponse{Answer: []cloudflare.DNSAnswer{
+				{Type: cloudflare.TypeA, Data: "127.0.0.1"},
 			}})
 		// Setup mock postgres
 		conn := pgtest.NewConn()

@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/storage"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var (
@@ -21,39 +21,39 @@ var (
 )
 
 func Run(ctx context.Context, src, dst string, recursive bool, fsys afero.Fs) error {
-	srcParsed, err := storage.ParseStorageURL(src)
+	srcParsed, err := client.ParseStorageURL(src)
 	if err != nil {
 		return err
 	}
-	dstParsed, err := storage.ParseStorageURL(dst)
+	dstParsed, err := client.ParseStorageURL(dst)
 	if err != nil {
 		return err
 	}
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	srcBucket, srcPrefix := storage.SplitBucketPrefix(srcParsed)
-	dstBucket, dstPrefix := storage.SplitBucketPrefix(dstParsed)
+	srcBucket, srcPrefix := client.SplitBucketPrefix(srcParsed)
+	dstBucket, dstPrefix := client.SplitBucketPrefix(dstParsed)
 	if len(srcPrefix) == 0 && len(dstPrefix) == 0 {
 		return errors.New(errMissingPath)
 	}
 	if srcBucket != dstBucket {
 		return errors.New(errUnsupportedMove)
 	}
+	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(os.Stderr, "Moving object:", srcParsed, "=>", dstParsed)
-	data, err := client.MoveStorageObject(ctx, projectRef, srcBucket, srcPrefix, dstPrefix)
+	data, err := api.MoveObject(ctx, srcBucket, srcPrefix, dstPrefix)
 	if err == nil {
 		fmt.Fprintln(os.Stderr, data.Message)
 	} else if strings.Contains(err.Error(), `"error":"not_found"`) && recursive {
-		return MoveStorageObjectAll(ctx, projectRef, srcParsed+"/", dstParsed)
+		return MoveStorageObjectAll(ctx, api, srcParsed+"/", dstParsed)
 	}
 	return err
 }
 
 // Expects srcPath to be terminated by "/"
-func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath string) error {
-	_, dstPrefix := storage.SplitBucketPrefix(dstPath)
+func MoveStorageObjectAll(ctx context.Context, api storage.StorageAPI, srcPath, dstPath string) error {
+	_, dstPrefix := client.SplitBucketPrefix(dstPath)
 	// Cannot iterate because pagination result may be updated during move
 	count := 0
 	queue := make([]string, 0)
@@ -61,7 +61,7 @@ func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath stri
 	for len(queue) > 0 {
 		dirPath := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		paths, err := ls.ListStoragePaths(ctx, projectRef, dirPath)
+		paths, err := ls.ListStoragePaths(ctx, api, dirPath)
 		if err != nil {
 			return err
 		}
@@ -73,10 +73,10 @@ func MoveStorageObjectAll(ctx context.Context, projectRef, srcPath, dstPath stri
 			}
 			count++
 			relPath := strings.TrimPrefix(objectPath, srcPath)
-			srcBucket, srcPrefix := storage.SplitBucketPrefix(objectPath)
+			srcBucket, srcPrefix := client.SplitBucketPrefix(objectPath)
 			absPath := path.Join(dstPrefix, relPath)
 			fmt.Fprintln(os.Stderr, "Moving object:", objectPath, "=>", path.Join(dstPath, relPath))
-			if _, err := client.MoveStorageObject(ctx, projectRef, srcBucket, srcPrefix, absPath); err != nil {
+			if _, err := api.MoveObject(ctx, srcBucket, srcPrefix, absPath); err != nil {
 				return err
 			}
 		}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/go-errors/errors"
@@ -65,19 +64,6 @@ func listMigrationVersions(ctx context.Context, conn *pgx.Conn) ([]string, error
 	return pgxv5.CollectStrings(rows)
 }
 
-const (
-	layoutVersion = "20060102150405"
-	layoutHuman   = "2006-01-02 15:04:05"
-)
-
-func formatTimestamp(version string) string {
-	timestamp, err := time.Parse(layoutVersion, version)
-	if err != nil {
-		return version
-	}
-	return timestamp.Format(layoutHuman)
-}
-
 func makeTable(remoteMigrations, localMigrations []string) string {
 	var err error
 	table := "|Local|Remote|Time (UTC)|\n|-|-|-|\n"
@@ -98,13 +84,13 @@ func makeTable(remoteMigrations, localMigrations []string) string {
 		}
 		// Top to bottom chronological order
 		if localTimestamp < remoteTimestamp {
-			table += fmt.Sprintf("|`%s`|` `|`%s`|\n", localMigrations[j], formatTimestamp(localMigrations[j]))
+			table += fmt.Sprintf("|`%s`|` `|`%s`|\n", localMigrations[j], utils.FormatTimestampVersion(localMigrations[j]))
 			j++
 		} else if remoteTimestamp < localTimestamp {
-			table += fmt.Sprintf("|` `|`%s`|`%s`|\n", remoteMigrations[i], formatTimestamp(remoteMigrations[i]))
+			table += fmt.Sprintf("|` `|`%s`|`%s`|\n", remoteMigrations[i], utils.FormatTimestampVersion(remoteMigrations[i]))
 			i++
 		} else {
-			table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", localMigrations[j], remoteMigrations[i], formatTimestamp(remoteMigrations[i]))
+			table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", localMigrations[j], remoteMigrations[i], utils.FormatTimestampVersion(remoteMigrations[i]))
 			i++
 			j++
 		}
@@ -136,8 +122,8 @@ func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 	var versions []string
 	for _, filename := range names {
 		// LoadLocalMigrations guarantees we always have a match
-		verion := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		versions = append(versions, verion)
+		version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		versions = append(versions, version)
 	}
 	return versions, nil
 }

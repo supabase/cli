@@ -18,6 +18,9 @@ alter schema _realtime owner to postgres;
 create schema if not exists _analytics;
 alter schema _analytics owner to postgres;
 
+create schema if not exists _supavisor;
+alter schema _supavisor owner to postgres;
+
 BEGIN;
 
 -- Create pg_net extension

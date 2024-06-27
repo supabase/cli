@@ -3,8 +3,9 @@
 package utils
 
 import (
-	"errors"
 	"runtime"
+
+	"github.com/go-errors/errors"
 )
 
 func getDenoAssetFileName() (string, error) {

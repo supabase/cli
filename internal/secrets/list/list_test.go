@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestSecretListCommand(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSecretListCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
 			Reply(200).
-			JSON(api.CreateSecretsJSONBody{
+			JSON([]api.SecretResponse{
 				{
 					Name:  "Test Secret",
 					Value: "dummy-secret-value",

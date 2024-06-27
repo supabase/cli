@@ -50,7 +50,7 @@ func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.F
 }
 
 func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.FunctionSlugResponse, error) {
-	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return nil, errors.Errorf("failed to get function metadata: %w", err)
 	}
@@ -85,7 +85,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 		return err
 	}
 
-	resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionBodyWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to get function body: %w", err)
 	}
@@ -107,8 +107,6 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-const dockerEszipDir = "/root/eszips"
-
 func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
 	if useLegacyBundle {
 		return RunLegacy(ctx, slug, projectRef, fsys)
@@ -128,50 +126,56 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 		}
 	}()
 	// Extract eszip to functions directory
-	err = extractOne(ctx, eszipPath)
+	err = extractOne(ctx, slug, eszipPath)
 	if err != nil {
 		utils.CmdSuggestion += suggestLegacyBundle(slug)
 	}
 	return err
 }
 
-func downloadOne(ctx context.Context, slug string, projectRef string, fsys afero.Fs) (string, error) {
+func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {
 	fmt.Println("Downloading " + utils.Bold(slug))
-	resp, err := utils.GetSupabase().GetFunctionBodyWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug)
 	if err != nil {
 		return "", errors.Errorf("failed to get function body: %w", err)
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return "", errors.New("Unexpected error downloading Function: " + string(resp.Body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", errors.Errorf("Error status %d: unexpected error downloading Function", resp.StatusCode)
+		}
+		return "", errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
 	}
-
 	// Create temp file to store downloaded eszip
-	eszipFile, err := afero.TempFile(fsys, "", slug)
-	if err != nil {
-		return "", errors.Errorf("failed to create temporary file: %w", err)
+	eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slug))
+	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
+		return "", err
 	}
-	defer eszipFile.Close()
-
-	body := bytes.NewReader(resp.Body)
-	if _, err = io.Copy(eszipFile, body); err != nil {
+	if err := afero.WriteReader(fsys, eszipPath, resp.Body); err != nil {
 		return "", errors.Errorf("failed to download file: %w", err)
 	}
-	return eszipFile.Name(), nil
+	return eszipPath, nil
 }
 
-func extractOne(ctx context.Context, hostEszipPath string) error {
-	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
+func extractOne(ctx context.Context, slug, eszipPath string) error {
+	hostFuncDirPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug))
 	if err != nil {
 		return errors.Errorf("failed to resolve absolute path: %w", err)
 	}
 
-	dockerEszipPath := path.Join(dockerEszipDir, filepath.Base(hostEszipPath))
+	hostEszipPath, err := filepath.Abs(eszipPath)
+	if err != nil {
+		return errors.Errorf("failed to resolve eszip path: %w", err)
+	}
+	dockerEszipPath := path.Join(utils.DockerEszipDir, filepath.Base(hostEszipPath))
+
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		hostEszipPath + ":" + dockerEszipPath + ":ro,z",
-		hostFuncDirPath + ":" + utils.DockerFuncDirPath + ":rw,z",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
+		hostEszipPath + ":" + dockerEszipPath + ":ro",
+		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw",
 	}
 
 	return utils.DockerRunOnceWithConfig(
@@ -182,7 +186,6 @@ func extractOne(ctx context.Context, hostEszipPath string) error {
 		},
 		container.HostConfig{
 			Binds:      binds,
-			ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		},
 		network.NetworkingConfig{},
 		"",

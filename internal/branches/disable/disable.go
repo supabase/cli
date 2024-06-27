@@ -12,17 +12,13 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	ref, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	resp, err := utils.GetSupabase().DisableBranchWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1DisablePreviewBranchingWithResponse(ctx, flags.ProjectRef)
 	if err != nil {
 		return errors.Errorf("failed to disable preview branching: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK {
 		return errors.New("Unexpected error disabling preview branching: " + string(resp.Body))
 	}
-	fmt.Println("Disabled preview branching for project:", ref)
+	fmt.Println("Disabled preview branching for project:", flags.ProjectRef)
 	return nil
 }

@@ -2,6 +2,7 @@ package role_connections
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
@@ -13,23 +14,8 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-select
-  rolname,
-  (
-    select
-      count(*)
-    from
-      pg_stat_activity
-    where
-      pg_roles.rolname = pg_stat_activity.usename
-  ) as active_connections,
-  case when rolconnlimit = -1 then current_setting('max_connections') :: int8
-       else rolconnlimit
-  end as connection_limit
-from
-  pg_roles
-order by 2 desc`
+//go:embed role_connections.sql
+var RoleConnectionsQuery string
 
 type Result struct {
 	Rolname            string
@@ -42,7 +28,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, RoleConnectionsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

@@ -13,11 +13,7 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	ref, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	resp, err := utils.GetSupabase().GetBranchesWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1ListAllBranchesWithResponse(ctx, flags.ProjectRef)
 	if err != nil {
 		return errors.Errorf("failed to list preview branches: %w", err)
 	}
@@ -27,7 +23,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	table := `|ID|NAME|DEFAULT|GIT BRANCH|RESET ON PUSH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
-|-|-|-|-|-|-|-|
+|-|-|-|-|-|-|-|-|
 `
 	for _, branch := range *resp.JSON200 {
 		gitBranch := " "

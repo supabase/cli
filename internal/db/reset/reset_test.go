@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -17,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestResetCommand(t *testing.T) {
@@ -28,13 +29,23 @@ func TestResetCommand(t *testing.T) {
 
 	var dbConfig = pgconn.Config{
 		Host:     utils.Config.Hostname,
-		Port:     uint16(utils.Config.Db.Port),
+		Port:     utils.Config.Db.Port,
 		User:     "admin",
 		Password: "password",
 		Database: "postgres",
 	}
 
 	t.Run("throws error on context canceled", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		// Check error
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("throws error on invalid port", func(t *testing.T) {
+		defer fstest.MockStdin(t, "y")()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -282,42 +293,41 @@ func TestRestartDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/restart").
 			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: false,
+					Status:  "exited",
+				},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/logs").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorIs(t, err, start.ErrDatabase)
+		assert.ErrorContains(t, err, "test-reset container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 var escapedSchemas = []string{
-	"public",
-	"auth",
 	"extensions",
-	"pgbouncer",
-	"realtime",
-	`\_realtime`,
-	"storage",
+	"public",
 	`\_analytics`,
-	`supabase\_functions`,
+	`\_realtime`,
+	`\_supavisor`,
+	"pgbouncer",
+	"pgsodium",
+	"pgtle",
+	`supabase\_migrations`,
+	"vault",
 	`information\_schema`,
 	`pg\_%`,
-	"cron",
-	"graphql",
-	`graphql\_public`,
-	"net",
-	"pgsodium",
-	`pgsodium\_masks`,
-	"pgtle",
-	"repack",
-	"tiger",
-	`tiger\_data`,
-	`timescaledb\_%`,
-	`\_timescaledb\_%`,
-	"topology",
-	"vault",
 }
 
 func TestResetRemote(t *testing.T) {
@@ -335,7 +345,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_SCHEMAS, escapedSchemas).
+		conn.Query(ListSchemas, escapedSchemas).
 			Reply("SELECT 1", []interface{}{"private"}).
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
@@ -362,7 +372,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_SCHEMAS, escapedSchemas).
+		conn.Query(ListSchemas, escapedSchemas).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
@@ -376,7 +386,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_SCHEMAS, escapedSchemas).
+		conn.Query(ListSchemas, escapedSchemas).
 			Reply("SELECT 0").
 			Query(dropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")

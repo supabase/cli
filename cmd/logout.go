@@ -14,11 +14,7 @@ var (
 		Use:     "logout",
 		Short:   "Log out and delete access tokens locally",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params := logout.RunParams{
-				Fsys:          afero.NewOsFs(),
-				DefaultAnswer: false,
-			}
-			return logout.Run(cmd.Context(), os.Stdout, params)
+			return logout.Run(cmd.Context(), os.Stdout, afero.NewOsFs())
 		},
 	}
 )

@@ -3,11 +3,11 @@ package pull
 import (
 	"context"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -19,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 var dbConfig = pgconn.Config{
@@ -31,68 +30,22 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
-	"auth",
-	"pgbouncer",
-	"realtime",
-	`\_realtime`,
-	"storage",
 	`\_analytics`,
-	`supabase\_functions`,
+	`\_realtime`,
+	`\_supavisor`,
+	"pgbouncer",
+	"pgsodium",
+	"pgtle",
 	`supabase\_migrations`,
+	"vault",
 	`information\_schema`,
 	`pg\_%`,
-	"cron",
-	"graphql",
-	`graphql\_public`,
-	"net",
-	"pgsodium",
-	`pgsodium\_masks`,
-	"pgtle",
-	"repack",
-	"tiger",
-	`tiger\_data`,
-	`timescaledb\_%`,
-	`\_timescaledb\_%`,
-	"topology",
-	"vault",
 }
 
 func TestPullCommand(t *testing.T) {
-	t.Run("throws error on missing docker", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			ReplyError(errors.New("network error"))
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			ReplyError(errors.New("network error"))
-		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
 	t.Run("throws error on missing config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		// Run test
 		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
@@ -104,19 +57,6 @@ func TestPullCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		// Run test
 		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
@@ -128,19 +68,6 @@ func TestPullCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -195,7 +122,7 @@ func TestPullSchema(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(list.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(reset.LIST_SCHEMAS, escapedSchemas).
+			Query(reset.ListSchemas, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Connect to mock
 		ctx := context.Background()

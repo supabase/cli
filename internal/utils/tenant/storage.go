@@ -2,26 +2,26 @@ package tenant
 
 import (
 	"context"
-	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/utils"
 )
 
 var errStorageVersion = errors.New("Storage version not found.")
 
-func GetStorageVersion(ctx context.Context, projectRef string) (string, error) {
-	apiKey, err := GetApiKeys(ctx, projectRef)
+func (t *TenantAPI) GetStorageVersion(ctx context.Context) (string, error) {
+	resp, err := t.Send(ctx, http.MethodGet, "/storage/v1/version", nil)
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("https://%s/storage/v1/version", utils.GetSupabaseHost(projectRef))
-	data, err := GetTextResponse(ctx, url, apiKey.Anon)
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", errors.Errorf("failed to read response body: %w", err)
 	}
-	if len(data) == 0 || data == "0.0.0" {
+	if len(data) == 0 || string(data) == "0.0.0" {
 		return "", errors.New(errStorageVersion)
 	}
-	return "v" + data, nil
+	return "v" + string(data), nil
 }

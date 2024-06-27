@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func response(providerId string, domains []string) map[string]any {
@@ -86,7 +86,7 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 			}
 			observed += 1
 
-			var body api.UpdateProviderByIdJSONRequestBody
+			var body api.V1UpdateASsoProviderJSONRequestBody
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 			assert.NotNil(t, body.Domains)
@@ -137,7 +137,7 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 			}
 			observed += 1
 
-			var body api.UpdateProviderByIdJSONRequestBody
+			var body api.V1UpdateASsoProviderJSONRequestBody
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 			assert.NotNil(t, body.Domains)

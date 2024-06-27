@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestStartCommand(t *testing.T) {
@@ -61,16 +61,6 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
@@ -117,12 +107,14 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
 			Reply(http.StatusNotFound)
 		apitest.MockDockerStart(utils.Docker, imageUrl, utils.DbId)
-		utils.Config.Auth.Image = utils.GotrueImage
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
 		utils.Config.Storage.Image = utils.StorageImage
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
+		utils.Config.Auth.Image = utils.GotrueImage
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		// Start services
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.KongImage), utils.KongId)

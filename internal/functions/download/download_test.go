@@ -1,8 +1,6 @@
 package download
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,13 +9,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestMain(m *testing.M) {
@@ -172,13 +170,6 @@ func TestDownloadFunction(t *testing.T) {
 	t.Run("throws error on extract failure", func(t *testing.T) {
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "extract failed")
-		var body bytes.Buffer
-		archive := zip.NewWriter(&body)
-		w, err := archive.Create("deno")
-		require.NoError(t, err)
-		_, err = w.Write([]byte("binary"))
-		require.NoError(t, err)
-		require.NoError(t, archive.Close())
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -189,7 +180,7 @@ func TestDownloadFunction(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
 		// Run test
-		err = downloadFunction(context.Background(), project, slug, "")
+		err := downloadFunction(context.Background(), project, slug, "")
 		// Check error
 		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

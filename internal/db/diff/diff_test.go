@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -23,7 +24,6 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 var dbConfig = pgconn.Config{
@@ -35,30 +35,16 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
-	"auth",
-	"pgbouncer",
-	"realtime",
-	`\_realtime`,
-	"storage",
 	`\_analytics`,
-	`supabase\_functions`,
+	`\_realtime`,
+	`\_supavisor`,
+	"pgbouncer",
+	"pgsodium",
+	"pgtle",
 	`supabase\_migrations`,
+	"vault",
 	`information\_schema`,
 	`pg\_%`,
-	"cron",
-	"graphql",
-	`graphql\_public`,
-	"net",
-	"pgsodium",
-	`pgsodium\_masks`,
-	"pgtle",
-	"repack",
-	"tiger",
-	`tiger\_data`,
-	`timescaledb\_%`,
-	`\_timescaledb\_%`,
-	"topology",
-	"vault",
 }
 
 func TestRun(t *testing.T) {
@@ -84,10 +70,12 @@ func TestRun(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-shadow-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-shadow-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-shadow-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.MigraImage), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
@@ -127,7 +115,7 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
+		conn.Query(reset.ListSchemas, escapedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := Run(context.Background(), []string{}, "", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
@@ -258,6 +246,15 @@ func TestDiffDatabase(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: false,
+					Status:  "exited",
+				},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/logs").
 			Reply(http.StatusServiceUnavailable)
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
@@ -266,7 +263,7 @@ func TestDiffDatabase(t *testing.T) {
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, diff)
-		assert.ErrorIs(t, err, start.ErrDatabase)
+		assert.ErrorContains(t, err, "test-shadow-db container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -351,24 +348,6 @@ At statement 0: create schema public`)
 		assert.ErrorContains(t, err, "error diffing schema")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
-}
-
-func TestUserSchema(t *testing.T) {
-	// Setup mock postgres
-	conn := pgtest.NewConn()
-	defer conn.Close(t)
-	conn.Query(reset.LIST_SCHEMAS, escapedSchemas).
-		Reply("SELECT 1", []interface{}{"test"})
-	// Connect to mock
-	ctx := context.Background()
-	mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-	require.NoError(t, err)
-	defer mock.Close(ctx)
-	// Run test
-	schemas, err := LoadUserSchemas(ctx, mock)
-	// Check error
-	assert.NoError(t, err)
-	assert.ElementsMatch(t, []string{"test"}, schemas)
 }
 
 func TestDropStatements(t *testing.T) {

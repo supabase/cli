@@ -42,7 +42,7 @@ func ToPostgresURL(config pgconn.Config) string {
 }
 
 func GetPoolerConfig(projectRef string) *pgconn.Config {
-	logger := getDebugLogger()
+	logger := GetDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
 		return nil
@@ -79,19 +79,8 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
 	// Supavisor transaction mode does not support prepared statement
-	if poolerConfig.Port == 6543 {
-		if _, ok := poolerConfig.RuntimeParams["statement_cache_mode"]; !ok {
-			poolerConfig.RuntimeParams["statement_cache_mode"] = "describe"
-		}
-	}
+	poolerConfig.Port = 5432
 	return poolerConfig
-}
-
-func getDebugLogger() io.Writer {
-	if viper.GetBool("DEBUG") {
-		return os.Stderr
-	}
-	return io.Discard
 }
 
 func isSupabaseDomain(host string) bool {
@@ -109,7 +98,7 @@ func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...
 		config.Host = Config.Hostname
 	}
 	if config.Port == 0 {
-		config.Port = uint16(Config.Db.Port)
+		config.Port = Config.Db.Port
 	}
 	if len(config.User) == 0 {
 		config.User = "postgres"
@@ -166,5 +155,5 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 }
 
 func IsLocalDatabase(config pgconn.Config) bool {
-	return config.Host == Config.Hostname && config.Port == uint16(Config.Db.Port)
+	return config.Host == Config.Hostname && config.Port == Config.Db.Port
 }

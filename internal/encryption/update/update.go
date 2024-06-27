@@ -15,7 +15,7 @@ import (
 func Run(ctx context.Context, projectRef string, stdin *os.File) error {
 	fmt.Fprintf(os.Stderr, "Enter a new root key: ")
 	input := credentials.PromptMasked(stdin)
-	resp, err := utils.GetSupabase().UpdatePgsodiumConfigWithResponse(ctx, projectRef, api.UpdatePgsodiumConfigBody{
+	resp, err := utils.GetSupabase().V1UpdatePgsodiumConfigWithResponse(ctx, projectRef, api.UpdatePgsodiumConfigBody{
 		RootKey: strings.TrimSpace(input),
 	})
 	if err != nil {

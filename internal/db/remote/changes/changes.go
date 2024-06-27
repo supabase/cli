@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -14,13 +15,8 @@ var output string
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.AssertDockerIsRunning(ctx); err != nil {
-			return err
-		}
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
@@ -53,5 +49,5 @@ func loadSchema(ctx context.Context, config pgconn.Config, w io.Writer) ([]strin
 		return nil, err
 	}
 	defer conn.Close(context.Background())
-	return diff.LoadUserSchemas(ctx, conn)
+	return reset.LoadUserSchemas(ctx, conn)
 }

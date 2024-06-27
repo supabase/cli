@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestOrganizationCreateCommand(t *testing.T) {

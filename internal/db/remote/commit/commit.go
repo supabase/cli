@@ -3,15 +3,16 @@ package commit
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
@@ -19,13 +20,8 @@ import (
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.AssertDockerIsRunning(ctx); err != nil {
-			return err
-		}
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
@@ -52,7 +48,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 
 	// 2. Fetch remote schema changes
 	if len(schema) == 0 {
-		schema, err = diff.LoadUserSchemas(ctx, conn)
+		schema, err = reset.LoadUserSchemas(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -83,9 +79,9 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 		return err
 	}
 	if len(output) == 0 {
-		return errors.New("no schema changes found")
+		return errors.New("No schema changes found")
 	}
-	return afero.WriteFile(fsys, path, []byte(output), 0644)
+	return utils.WriteFile(path, []byte(output), fsys)
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

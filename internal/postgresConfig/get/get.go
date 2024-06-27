@@ -49,7 +49,7 @@ func PrintOutPostgresConfigOverrides(config map[string]interface{}) error {
 }
 
 func GetCurrentPostgresConfig(ctx context.Context, projectRef string) (map[string]interface{}, error) {
-	resp, err := utils.GetSupabase().GetConfig(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPostgresConfig(ctx, projectRef)
 	if err != nil {
 		return nil, errors.Errorf("failed to retrieve Postgres config overrides: %w", err)
 	}

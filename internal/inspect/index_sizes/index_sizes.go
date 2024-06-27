@@ -2,27 +2,21 @@ package index_sizes
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT c.relname AS name,
-  pg_size_pretty(sum(c.relpages::bigint*8192)::bigint) AS size
-FROM pg_class c
-LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='i'
-GROUP BY c.relname
-ORDER BY sum(c.relpages) DESC;`
+//go:embed index_sizes.sql
+var IndexSizesQuery string
 
 type Result struct {
 	Name string
@@ -34,7 +28,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, IndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

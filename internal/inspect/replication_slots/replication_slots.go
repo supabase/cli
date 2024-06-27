@@ -2,6 +2,7 @@ package replication_slots
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
@@ -13,23 +14,12 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT
-  s.slot_name,
-  s.active,
-  COALESCE(r.state, 'N/A') as state,
-  CASE WHEN r.client_addr IS NULL
-     THEN 'N/A'
-     ELSE r.client_addr::text
-  END replication_client_address,
-  GREATEST(0, ROUND((redo_lsn-restart_lsn)/1024/1024/1024, 2)) as replication_lag_gb
-FROM pg_control_checkpoint(), pg_replication_slots s
-LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid);
-`
+//go:embed replication_slots.sql
+var ReplicationSlotsQuery string
 
 type Result struct {
 	Slot_name                  string
-	Active                     string
+	Active                     bool
 	State                      string
 	Replication_client_address string
 	Replication_lag_gb         string
@@ -40,7 +30,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, ReplicationSlotsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -51,7 +42,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	// TODO: implement a markdown table marshaller
 	table := "|Name|Active|State|Replication Client Address|Replication Lag GB|\n|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%v`|`%v`|`%v`|`%v`|\n", r.Slot_name, r.Active, r.State, r.Replication_client_address, r.Replication_lag_gb)
+		table += fmt.Sprintf("|`%s`|`%t`|`%s`|`%s`|`%s`|\n", r.Slot_name, r.Active, r.State, r.Replication_client_address, r.Replication_lag_gb)
 	}
 	return list.RenderTable(table)
 }

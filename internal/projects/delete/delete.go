@@ -8,23 +8,27 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/unlink"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
 )
 
-func PreRun(ref string) error {
+func PreRun(ctx context.Context, ref string) error {
 	if err := utils.AssertProjectRefIsValid(ref); err != nil {
 		return err
 	}
-	if !utils.PromptYesNo("Do you want to delete project "+utils.Aqua(ref)+"? This action is irreversible.", true, os.Stdin) {
-		return errors.New("Not deleting project: " + utils.Aqua(ref))
+	title := fmt.Sprintf("Do you want to delete project %s? This action is irreversible.", utils.Aqua(ref))
+	if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, title, false); err != nil {
+		return err
+	} else if !shouldDelete {
+		return errors.New(context.Canceled)
 	}
 	return nil
 }
 
 func Run(ctx context.Context, ref string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().DeleteProjectWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1DeleteAProjectWithResponse(ctx, ref)
 	if err != nil {
 		return errors.Errorf("failed to delete project: %w", err)
 	}
@@ -42,19 +46,13 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	if err := credentials.Delete(ref); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if match, _ := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
-		tmpFiles := []string{
-			utils.ProjectRefPath,
-			utils.PostgresVersionPath,
-			utils.GotrueVersionPath,
-			utils.RestVersionPath,
-			utils.StorageVersionPath,
+	if match, err := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
+		if err := unlink.Unlink(ref, fsys); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 		}
-		for _, path := range tmpFiles {
-			if err := fsys.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				fmt.Fprintln(os.Stderr, err)
-			}
-		}
+	} else if err != nil {
+		logger := utils.GetDebugLogger()
+		fmt.Fprintln(logger, err)
 	}
 
 	fmt.Println("Deleted project: " + utils.Aqua(resp.JSON200.Name))

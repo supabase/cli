@@ -2,6 +2,7 @@ package long_running_queries
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
@@ -13,22 +14,11 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT
-  pid,
-  now() - pg_stat_activity.query_start AS duration,
-  query AS query
-FROM
-  pg_stat_activity
-WHERE
-  pg_stat_activity.query <> ''::text
-  AND state <> 'idle'
-  AND now() - pg_stat_activity.query_start > interval '5 minutes'
-ORDER BY
-  now() - pg_stat_activity.query_start DESC;`
+//go:embed long_running_queries.sql
+var LongRunningQueriesQuery string
 
 type Result struct {
-	Pid      string
+	Pid      int
 	Duration string
 	Query    string
 }
@@ -38,7 +28,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, LongRunningQueriesQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -49,7 +40,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|pid|Duration|Query|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
 	}
 	return list.RenderTable(table)
 }

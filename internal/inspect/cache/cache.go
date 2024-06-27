@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
@@ -13,18 +14,8 @@ import (
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
-const QUERY = `
-SELECT
-  'index hit rate' AS name,
-  (sum(idx_blks_hit)) / nullif(sum(idx_blks_hit + idx_blks_read),0) AS ratio
-FROM pg_statio_user_indexes
-UNION ALL
-SELECT
- 'table hit rate' AS name,
-  sum(heap_blks_hit) / nullif(sum(heap_blks_hit) + sum(heap_blks_read),0) AS ratio
-FROM pg_statio_user_tables;
-`
+//go:embed cache.sql
+var CacheQuery string
 
 type Result struct {
 	Name  string
@@ -32,11 +23,13 @@ type Result struct {
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	// Ref: https://github.com/heroku/heroku-pg-extras/blob/main/commands/cache_hit.js#L7
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, CacheQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -45,9 +38,19 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	// TODO: implement a markdown table marshaller
-	table := "|Name|Ratio|\n|-|-|\n"
+	table := "|Name|Ratio|OK?|Explanation|\n|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%.6f`|\n", r.Name, r.Ratio)
+		ok := "Yup!"
+		if r.Ratio < 0.94 {
+			ok = "Maybe not..."
+		}
+		var explanation string
+		if r.Name == "index hit rate" {
+			explanation = "This is the ratio of index hits to index scans. If this ratio is low, it means that the database is not using indexes effectively. Check the `index-usage` command for more info."
+		} else if r.Name == "table hit rate" {
+			explanation = "This is the ratio of table hits to table scans. If this ratio is low, it means that your queries are not finding the data effectively. Check your query performance and it might be worth increasing your compute."
+		}
+		table += fmt.Sprintf("|`%s`|`%.6f`|`%s`|`%s`|\n", r.Name, r.Ratio, ok, explanation)
 	}
 	return list.RenderTable(table)
 }

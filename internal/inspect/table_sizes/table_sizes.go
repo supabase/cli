@@ -2,30 +2,26 @@ package table_sizes
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT c.relname AS name,
-  pg_size_pretty(pg_table_size(c.oid)) AS size
-FROM pg_class c
-LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-AND n.nspname !~ '^pg_toast'
-AND c.relkind='r'
-ORDER BY pg_table_size(c.oid) DESC;`
+//go:embed table_sizes.sql
+var TableSizesQuery string
 
 type Result struct {
-	Name string
-	Size string
+	Schema string
+	Name   string
+	Size   string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -33,7 +29,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, TableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -42,9 +39,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|size|\n|-|-|\n"
+	table := "Schema|Table|size|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Size)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Schema, r.Name, r.Size)
 	}
 	return list.RenderTable(table)
 }

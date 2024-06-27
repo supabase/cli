@@ -37,10 +37,11 @@ func (c ConfigCopy) IsEmpty() bool {
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check service config
-	if _, err := tenant.GetApiKeys(ctx, projectRef); err != nil {
+	keys, err := tenant.GetApiKeys(ctx, projectRef)
+	if err != nil {
 		return err
 	}
-	linkServices(ctx, projectRef, fsys)
+	LinkServices(ctx, projectRef, keys.Anon, fsys)
 
 	// 2. Check database connection
 	config := flags.GetDbConfigOptionalPassword(projectRef)
@@ -63,7 +64,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	if updatedConfig.IsEmpty() {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
+	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 	enc := toml.NewEncoder(stdout)
 	enc.Indent = ""
 	if err := enc.Encode(updatedConfig); err != nil {
@@ -72,7 +73,7 @@ func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
 	return nil
 }
 
-func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
 	wg.Add(6)
@@ -90,25 +91,26 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 	}()
 	go func() {
 		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrueVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkStorageVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
 		if err := linkPooler(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	api := tenant.NewTenantAPI(ctx, projectRef, anonKey)
+	go func() {
+		defer wg.Done()
+		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkGotrueVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkStorageVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -116,7 +118,7 @@ func linkServices(ctx context.Context, projectRef string, fsys afero.Fs) {
 }
 
 func linkPostgrest(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().GetPostgRESTConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get postgrest config: %w", err)
 	}
@@ -127,8 +129,8 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	return nil
 }
 
-func linkPostgrestVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetPostgrestVersion(ctx, projectRef)
+func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetPostgrestVersion(ctx)
 	if err != nil {
 		return err
 	}
@@ -160,16 +162,16 @@ func readCsv(line string) []string {
 	return result
 }
 
-func linkGotrueVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetGotrueVersion(ctx, projectRef)
+func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetGotrueVersion(ctx)
 	if err != nil {
 		return err
 	}
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
-func linkStorageVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetStorageVersion(ctx, projectRef)
+func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetStorageVersion(ctx)
 	if err != nil {
 		return err
 	}
@@ -212,7 +214,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetPgbouncerConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetProjectPgbouncerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}

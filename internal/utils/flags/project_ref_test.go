@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-errors/errors"
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,6 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestProjectRef(t *testing.T) {
@@ -74,7 +74,7 @@ func TestProjectPrompt(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
 			Reply(http.StatusOK).
-			JSON([]api.ProjectResponse{{
+			JSON([]api.V1ProjectResponse{{
 				Id:             "test-project",
 				Name:           "My Project",
 				OrganizationId: "test-org",

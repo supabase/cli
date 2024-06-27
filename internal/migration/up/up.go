@@ -2,10 +2,11 @@ package up
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -41,23 +42,34 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 	if err != nil {
 		return nil, err
 	}
-	// Find local migrations older than the last migration on remote
-	var unapplied []string
-	for i, remote := range remoteMigrations {
-		for _, filename := range localMigrations[i+len(unapplied):] {
-			// Check if migration has been applied before, LoadLocalMigrations guarantees a match
-			local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-			if remote == local {
-				break
-			}
+	// Find unapplied local migrations older than the latest migration on
+	// remote, and remote migrations that are missing from local.
+	var unapplied, missing []string
+	i, j := 0, 0
+	for i < len(remoteMigrations) && j < len(localMigrations) {
+		remote := remoteMigrations[i]
+		filename := localMigrations[j]
+		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
+		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		if remote == local {
+			j++
+			i++
+		} else if remote < local {
+			missing = append(missing, remote)
+			i++
+		} else {
 			// Include out-of-order local migrations
 			unapplied = append(unapplied, filename)
+			j++
 		}
-		// Check if all remote versions exist in local
-		if i+len(unapplied) >= len(localMigrations) {
-			utils.CmdSuggestion = suggestRevertHistory(remoteMigrations[i:])
-			return nil, errMissingLocal
-		}
+	}
+	// Ensure all remote versions exist on local
+	if j == len(localMigrations) {
+		missing = append(missing, remoteMigrations[i:]...)
+	}
+	if len(missing) > 0 {
+		utils.CmdSuggestion = suggestRevertHistory(missing)
+		return nil, errMissingLocal
 	}
 	// Enforce migrations are applied in chronological order by default
 	if !includeAll && len(unapplied) > 0 {
@@ -70,9 +82,7 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 
 func suggestRevertHistory(versions []string) string {
 	result := fmt.Sprintln("\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:")
-	for _, ver := range versions {
-		result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + ver))
-	}
+	result += fmt.Sprintln(utils.Bold("supabase migration repair --status reverted " + strings.Join(versions, " ")))
 	result += fmt.Sprintln("\nAnd update local migrations to match remote database:")
 	result += fmt.Sprintln(utils.Bold("supabase db pull"))
 	return result

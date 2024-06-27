@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -24,23 +26,23 @@ var (
 const (
 	Pg13Image = "supabase/postgres:13.3.0"
 	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.0.147"
+	Pg15Image = "supabase/postgres:15.1.1.61"
 	// Append to ServiceImages when adding new dependencies below
 	KongImage        = "library/kong:2.8.1"
 	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v12.0.1"
+	PostgrestImage   = "postgrest/postgrest:v12.2.0"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
-	PgmetaImage      = "supabase/postgres-meta:v0.79.5"
-	StudioImage      = "supabase/studio:20240301-0942bfe"
+	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
+	StudioImage      = "supabase/studio:20240422-5cf8f30"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.38.0"
+	EdgeRuntimeImage = "supabase/edge-runtime:v1.54.8"
 	VectorImage      = "timberio/vector:0.28.1-alpine"
-	PgbouncerImage   = "bitnami/pgbouncer:1.20.1-debian-11-r39"
+	SupavisorImage   = "supabase/supavisor:1.1.56"
 	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.143.0"
-	RealtimeImage    = "supabase/realtime:v2.25.66"
-	StorageImage     = "supabase/storage-api:v0.46.4"
+	GotrueImage      = "supabase/gotrue:v2.151.0"
+	RealtimeImage    = "supabase/realtime:v2.29.13"
+	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage
 	DenoVersion = "1.30.3"
@@ -54,14 +56,17 @@ var ServiceImages = []string{
 	KongImage,
 	InbucketImage,
 	PostgrestImage,
-	DifferImage,
-	MigraImage,
 	PgmetaImage,
 	StudioImage,
 	EdgeRuntimeImage,
 	LogflareImage,
 	VectorImage,
-	PgbouncerImage,
+	SupavisorImage,
+}
+
+var JobImages = []string{
+	DifferImage,
+	MigraImage,
 	PgProveImage,
 }
 
@@ -87,6 +92,7 @@ DO 'BEGIN WHILE (
 
 var (
 	CmdSuggestion string
+	CurrentDirAbs string
 
 	// pg_dumpall --globals-only --no-role-passwords --dbname $DB_URL \
 	// | sed '/^CREATE ROLE postgres;/d' \
@@ -104,11 +110,35 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	SystemSchemas = []string{
+	PgSchemas = []string{
 		"information_schema",
 		"pg_*", // Wildcard pattern follows pg_dump
+	}
+	// Initialised by postgres image and owned by postgres role
+	ManagedSchemas = append([]string{
+		"_analytics",
+		"_realtime",
+		"_supavisor",
+		"pgbouncer",
+		"pgsodium",
+		"pgtle",
+		"supabase_migrations",
+		"vault",
+	}, PgSchemas...)
+	InternalSchemas = append([]string{
+		"_analytics",
+		"_realtime",
+		"_supavisor",
+		"auth",
+		"extensions",
+		"pgbouncer",
+		"realtime",
+		"storage",
+		"supabase_functions",
+		"supabase_migrations",
 		// Owned by extensions
 		"cron",
+		"dbdev",
 		"graphql",
 		"graphql_public",
 		"net",
@@ -122,18 +152,7 @@ var (
 		"_timescaledb_*",
 		"topology",
 		"vault",
-	}
-	InternalSchemas = append([]string{
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"_realtime",
-		"storage",
-		"_analytics",
-		"supabase_functions",
-		"supabase_migrations",
-	}, SystemSchemas...)
+	}, PgSchemas...)
 	ReservedRoles = []string{
 		"anon",
 		"authenticated",
@@ -146,6 +165,7 @@ var (
 		"supabase_auth_admin",
 		"supabase_functions_admin",
 		"supabase_read_only_user",
+		"supabase_realtime_admin",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
 		// Managed by extensions
@@ -174,7 +194,13 @@ var (
 	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
+	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
+	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
+	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
+	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
+	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
@@ -204,14 +230,18 @@ func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
 }
 
 func AssertSupabaseDbIsRunning() error {
-	if _, err := Docker.ContainerInspect(context.Background(), DbId); err != nil {
+	return AssertServiceIsRunning(context.Background(), DbId)
+}
+
+func AssertServiceIsRunning(ctx context.Context, containerId string) error {
+	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
 		if client.IsErrNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
 		if client.IsErrConnectionFailed(err) {
 			CmdSuggestion = suggestDockerInstall
 		}
-		return errors.Errorf("failed to inspect database container: %w", err)
+		return errors.Errorf("failed to inspect service: %w", err)
 	}
 	return nil
 }
@@ -225,22 +255,47 @@ func IsGitRepo() bool {
 // If the `os.Getwd()` is within a supabase project, this will return
 // the root of the given project as the current working directory.
 // Otherwise, the `os.Getwd()` is kept as is.
-func GetProjectRoot(fsys afero.Fs) (string, error) {
-	origWd, err := os.Getwd()
-	for cwd := origWd; err == nil; cwd = filepath.Dir(cwd) {
+func getProjectRoot(absPath string, fsys afero.Fs) string {
+	for cwd := absPath; ; cwd = filepath.Dir(cwd) {
 		path := filepath.Join(cwd, ConfigPath)
 		// Treat all errors as file not exists
-		if isSupaProj, _ := afero.Exists(fsys, path); isSupaProj {
-			return cwd, nil
+		if isSupaProj, err := afero.Exists(fsys, path); isSupaProj {
+			return cwd
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger := GetDebugLogger()
+			fmt.Fprintln(logger, err)
 		}
 		if isRootDirectory(cwd) {
 			break
 		}
 	}
-	if err != nil {
-		return "", errors.Errorf("failed to find project root: %w", err)
+	return absPath
+}
+
+func isRootDirectory(cleanPath string) bool {
+	// A cleaned path only ends with separator if it is root
+	return os.IsPathSeparator(cleanPath[len(cleanPath)-1])
+}
+
+func ChangeWorkDir(fsys afero.Fs) error {
+	// Track the original workdir before changing to project root
+	if !filepath.IsAbs(CurrentDirAbs) {
+		var err error
+		if CurrentDirAbs, err = os.Getwd(); err != nil {
+			return errors.Errorf("failed to get current directory: %w", err)
+		}
 	}
-	return origWd, nil
+	workdir := viper.GetString("WORKDIR")
+	if len(workdir) == 0 {
+		workdir = getProjectRoot(CurrentDirAbs, fsys)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		return errors.Errorf("failed to change workdir: %w", err)
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != CurrentDirAbs {
+		fmt.Fprintln(os.Stderr, "Using workdir", Bold(workdir))
+	}
+	return nil
 }
 
 func IsBranchNameReserved(branch string) bool {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,7 +45,7 @@ var (
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
-	RealtimeAliases    = []string{"realtime"}
+	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
 	RestAliases        = []string{"rest"}
 	StorageAliases     = []string{"storage"}
 	ImgProxyAliases    = []string{"imgproxy"}
@@ -73,16 +74,18 @@ func GetId(name string) string {
 }
 
 func UpdateDockerIds() {
-	NetId = GetId("network")
+	if NetId = viper.GetString("network-id"); len(NetId) == 0 {
+		NetId = GetId("network")
+	}
 	DbId = GetId(DbAliases[0])
 	ConfigId = GetId("config")
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])
-	RealtimeId = "realtime-dev." + GetId(RealtimeAliases[0])
+	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
-	ImgProxyId = "storage_" + ImgProxyAliases[0] + "_" + Config.ProjectId
+	ImgProxyId = GetId(ImgProxyAliases[0])
 	DifferId = GetId("differ")
 	PgmetaId = GetId(PgmetaAliases[0])
 	StudioId = GetId(StudioAliases[0])
@@ -90,6 +93,24 @@ func UpdateDockerIds() {
 	LogflareId = GetId(LogflareAliases[0])
 	VectorId = GetId(VectorAliases[0])
 	PoolerId = GetId(PoolerAliases[0])
+}
+
+func GetDockerIds() []string {
+	return []string{
+		KongId,
+		GotrueId,
+		InbucketId,
+		RealtimeId,
+		RestId,
+		StorageId,
+		ImgProxyId,
+		PgmetaId,
+		StudioId,
+		EdgeRuntimeId,
+		LogflareId,
+		VectorId,
+		PoolerId,
+	}
 }
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -128,6 +149,13 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func ToRealtimeEnv(addr AddressFamily) string {
+	if addr == AddressIPv6 {
+		return "-proto_dist inet6_tcp"
+	}
+	return "-proto_dist inet_tcp"
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -151,6 +179,13 @@ func (c CustomClaims) NewToken() *jwt.Token {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
+type RequestPolicy string
+
+const (
+	PolicyPerWorker RequestPolicy = "per_worker"
+	PolicyOneshot   RequestPolicy = "oneshot"
+)
+
 var Config = config{
 	Api: api{
 		Image: PostgrestImage,
@@ -159,13 +194,31 @@ var Config = config{
 		Image:    Pg15Image,
 		Password: "postgres",
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+		Pooler: pooler{
+			Image:         SupavisorImage,
+			TenantId:      "pooler-dev",
+			EncryptionKey: "12345678901234567890123456789032",
+			SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+		},
 	},
 	Realtime: realtime{
-		IpVersion:       AddressIPv6,
+		Image:           RealtimeImage,
+		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
+		TenantId:        "realtime-dev",
+		EncryptionKey:   "supabaserealtime",
+		SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 	},
 	Storage: storage{
 		Image: StorageImage,
+		S3Credentials: storageS3Credentials{
+			AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
+			SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+			Region:          "local",
+		},
+		ImageTransformation: imageTransformation{
+			Enabled: true,
+		},
 	},
 	Auth: auth{
 		Image: GotrueImage,
@@ -177,9 +230,11 @@ var Config = config{
 				"magic_link":   {},
 				"email_change": {},
 			},
-		},
-		Sms: sms{
-			Template: "Your code is {{ .Code }} .",
+			Smtp: smtp{
+				Host:       InbucketAliases[0],
+				Port:       2500,
+				AdminEmail: "admin@email.com",
+			},
 		},
 		External: map[string]provider{
 			"apple":         {},
@@ -201,9 +256,11 @@ var Config = config{
 			"workos":        {},
 			"zoom":          {},
 		},
-		Hook:      hook{},
-		JwtExpiry: 3600,
 		JwtSecret: defaultJwtSecret,
+	},
+	Studio: studio{
+		Image:       StudioImage,
+		PgmetaImage: PgmetaImage,
 	},
 	Analytics: analytics{
 		ApiKey: "api-key",
@@ -244,6 +301,7 @@ type (
 		Inbucket     inbucket            `toml:"inbucket"`
 		Storage      storage             `toml:"storage"`
 		Auth         auth                `toml:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime         `toml:"edge_runtime"`
 		Functions    map[string]function `toml:"functions"`
 		Analytics    analytics           `toml:"analytics"`
 		Experimental experimental        `toml:"experimental" mapstructure:"-"`
@@ -254,7 +312,7 @@ type (
 	api struct {
 		Enabled         bool     `toml:"enabled"`
 		Image           string   `toml:"-"`
-		Port            uint     `toml:"port"`
+		Port            uint16   `toml:"port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
@@ -262,8 +320,8 @@ type (
 
 	db struct {
 		Image        string `toml:"-"`
-		Port         uint   `toml:"port"`
-		ShadowPort   uint   `toml:"shadow_port"`
+		Port         uint16 `toml:"port"`
+		ShadowPort   uint16 `toml:"shadow_port"`
 		MajorVersion uint   `toml:"major_version"`
 		Password     string `toml:"-"`
 		RootKey      string `toml:"-" mapstructure:"root_key"`
@@ -272,37 +330,59 @@ type (
 
 	pooler struct {
 		Enabled          bool     `toml:"enabled"`
+		Image            string   `toml:"-"`
 		Port             uint16   `toml:"port"`
 		PoolMode         PoolMode `toml:"pool_mode"`
 		DefaultPoolSize  uint     `toml:"default_pool_size"`
 		MaxClientConn    uint     `toml:"max_client_conn"`
 		ConnectionString string   `toml:"-"`
+		TenantId         string   `toml:"-"`
+		EncryptionKey    string   `toml:"-"`
+		SecretKeyBase    string   `toml:"-"`
 	}
 
 	realtime struct {
 		Enabled         bool          `toml:"enabled"`
+		Image           string        `toml:"-"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
+		TenantId        string        `toml:"-"`
+		EncryptionKey   string        `toml:"-"`
+		SecretKeyBase   string        `toml:"-"`
 	}
 
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
-		Port         uint   `toml:"port"`
+		Image        string `toml:"-"`
+		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
+		PgmetaImage  string `toml:"-"`
 	}
 
 	inbucket struct {
-		Enabled  bool `toml:"enabled"`
-		Port     uint `toml:"port"`
-		SmtpPort uint `toml:"smtp_port"`
-		Pop3Port uint `toml:"pop3_port"`
+		Enabled  bool   `toml:"enabled"`
+		Port     uint16 `toml:"port"`
+		SmtpPort uint16 `toml:"smtp_port"`
+		Pop3Port uint16 `toml:"pop3_port"`
 	}
 
 	storage struct {
-		Enabled       bool        `toml:"enabled"`
-		Image         string      `toml:"-"`
-		FileSizeLimit sizeInBytes `toml:"file_size_limit"`
+		Enabled             bool                 `toml:"enabled"`
+		Image               string               `toml:"-"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
+		S3Credentials       storageS3Credentials `toml:"-"`
+		ImageTransformation imageTransformation  `toml:"image_transformation"`
+	}
+
+	imageTransformation struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	storageS3Credentials struct {
+		AccessKeyId     string `toml:"-"`
+		SecretAccessKey string `toml:"-"`
+		Region          string `toml:"-"`
 	}
 
 	auth struct {
@@ -315,12 +395,15 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
-		Hook                       hook `toml:"hook"`
 
-		EnableSignup bool  `toml:"enable_signup"`
-		Email        email `toml:"email"`
-		Sms          sms   `toml:"sms"`
-		External     map[string]provider
+		Hook     hook     `toml:"hook"`
+		Sessions sessions `toml:"sessions"`
+
+		EnableSignup           bool  `toml:"enable_signup"`
+		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
+		Email                  email `toml:"email"`
+		Sms                    sms   `toml:"sms"`
+		External               map[string]provider
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -333,6 +416,17 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
+		Smtp                 smtp                     `toml:"smtp"`
+		MaxFrequency         time.Duration            `toml:"max_frequency"`
+	}
+
+	smtp struct {
+		Host       string `toml:"host"`
+		Port       uint16 `toml:"port"`
+		User       string `toml:"user"`
+		Pass       string `toml:"pass"`
+		AdminEmail string `toml:"admin_email"`
+		SenderName string `toml:"sender_name"`
 	}
 
 	emailTemplate struct {
@@ -350,17 +444,26 @@ type (
 		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
+		MaxFrequency        time.Duration     `toml:"max_frequency"`
 	}
 
 	hook struct {
 		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
 		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
 		CustomAccessToken           hookConfig `toml:"custom_access_token"`
+		SendSMS                     hookConfig `toml:"send_sms"`
+		SendEmail                   hookConfig `toml:"send_email"`
 	}
 
 	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
+		Secrets string `toml:"secrets"`
+	}
+
+	sessions struct {
+		Timebox           time.Duration `toml:"timebox"`
+		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
 	}
 
 	twilioConfig struct {
@@ -390,16 +493,23 @@ type (
 	}
 
 	provider struct {
-		Enabled     bool   `toml:"enabled"`
-		ClientId    string `toml:"client_id"`
-		Secret      string `toml:"secret"`
-		Url         string `toml:"url"`
-		RedirectUri string `toml:"redirect_uri"`
+		Enabled        bool   `toml:"enabled"`
+		ClientId       string `toml:"client_id"`
+		Secret         string `toml:"secret"`
+		Url            string `toml:"url"`
+		RedirectUri    string `toml:"redirect_uri"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+	}
+
+	edgeRuntime struct {
+		Enabled       bool          `toml:"enabled"`
+		Policy        RequestPolicy `toml:"policy"`
+		InspectorPort uint16        `toml:"inspector_port"`
 	}
 
 	function struct {
-		VerifyJWT *bool  `toml:"verify_jwt"`
-		ImportMap string `toml:"import_map"`
+		VerifyJWT *bool  `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap string `toml:"import_map" json:"importMapPath,omitempty"`
 	}
 
 	analytics struct {
@@ -429,6 +539,24 @@ type (
 	// }
 )
 
+func (h *hookConfig) HandleHook(hookType string) error {
+	// If not enabled do nothing
+	if !h.Enabled {
+		return nil
+	}
+	if h.URI == "" {
+		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	}
+	if err := validateHookURI(h.URI, hookType); err != nil {
+		return err
+	}
+	var err error
+	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	}
+	return nil
+}
+
 func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
 	var buf bytes.Buffer
@@ -451,8 +579,8 @@ func LoadConfigFS(fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 	}
 	// Load secrets from .env file
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	if err := loadDefaultEnv(); err != nil {
+		return err
 	}
 	if err := viper.Unmarshal(&Config); err != nil {
 		return errors.Errorf("failed to parse env to config: %w", err)
@@ -480,7 +608,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
+		} else if sanitized := sanitizeProjectId(Config.ProjectId); sanitized != Config.ProjectId {
+			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
+			Config.ProjectId = sanitized
 		}
+
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
@@ -540,6 +672,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
 				return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 			}
+			if version, err := afero.ReadFile(fsys, PoolerVersionPath); err == nil && len(version) > 0 {
+				Config.Db.Pooler.Image = replaceImageTag(SupavisorImage, string(version))
+			}
 		}
 		if connString, err := afero.ReadFile(fsys, PoolerUrlPath); err == nil && len(connString) > 0 {
 			Config.Db.Pooler.ConnectionString = string(connString)
@@ -549,6 +684,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 			if !SliceContains(allowed, Config.Realtime.IpVersion) {
 				return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
+			}
+			if version, err := afero.ReadFile(fsys, RealtimeVersionPath); err == nil && len(version) > 0 {
+				Config.Realtime.Image = replaceImageTag(RealtimeImage, string(version))
 			}
 		}
 		// Validate storage config
@@ -562,6 +700,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
+			}
+			if version, err := afero.ReadFile(fsys, PgmetaVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.PgmetaImage = replaceImageTag(PgmetaImage, string(version))
+			}
 			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
 		// Validate email config
@@ -570,10 +714,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 				return errors.New("Missing required field in config: inbucket.port")
 			}
 		}
+
 		// Validate auth config
 		if Config.Auth.Enabled {
 			if Config.Auth.SiteUrl == "" {
 				return errors.New("Missing required field in config: auth.site_url")
+			}
+			var err error
+			if Config.Auth.SiteUrl, err = maybeLoadEnv(Config.Auth.SiteUrl); err != nil {
+				return err
 			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
@@ -586,8 +735,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 					}
 				}
 			}
+			if Config.Auth.Email.Smtp.Pass, err = maybeLoadEnv(Config.Auth.Email.Smtp.Pass); err != nil {
+				return err
+			}
 			// Validate sms config
-			var err error
 			if Config.Auth.Sms.Twilio.Enabled {
 				if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 					return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
@@ -655,25 +806,21 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			}
-
-			if Config.Auth.Hook.MFAVerificationAttempt.Enabled {
-				if Config.Auth.Hook.MFAVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.mfa_verification_atempt.uri")
-				}
+			if err := Config.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
-				if Config.Auth.Hook.PasswordVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.password_verification_attempt.uri")
-				}
+			if err := Config.Auth.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.CustomAccessToken.Enabled {
-				if Config.Auth.Hook.CustomAccessToken.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.custom_access_token.uri")
-				}
+			if err := Config.Auth.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
+				return err
 			}
-
+			if err := Config.Auth.Hook.SendSMS.HandleHook("send_sms"); err != nil {
+				return err
+			}
+			if err := Config.Auth.Hook.SendEmail.HandleHook("send_email"); err != nil {
+				return err
+			}
 			// Validate oauth config
 			for ext, provider := range Config.Auth.External {
 				if !provider.Enabled {
@@ -682,7 +829,7 @@ func LoadConfigFS(fsys afero.Fs) error {
 				if provider.ClientId == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 				}
-				if provider.Secret == "" {
+				if !SliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
 					return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 				}
 				if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
@@ -702,10 +849,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 	}
 	// Validate functions config
+	if Config.EdgeRuntime.Enabled {
+		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+		if !SliceContains(allowed, Config.EdgeRuntime.Policy) {
+			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
+		}
+	}
 	for name, functionConfig := range Config.Functions {
 		if functionConfig.VerifyJWT == nil {
-			verifyJWT := true
-			functionConfig.VerifyJWT = &verifyJWT
+			functionConfig.VerifyJWT = Ptr(true)
 			Config.Functions[name] = functionConfig
 		}
 	}
@@ -746,16 +898,29 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
+func truncateText(text string, maxLen int) string {
+	if len(text) > maxLen {
+		return text[:maxLen]
+	}
+	return text
+}
+
+const maxProjectIdLength = 40
+
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	return strings.TrimLeft(sanitized, "_.-")
+	sanitized = strings.TrimLeft(sanitized, "_.-")
+	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
+	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
+	return truncateText(sanitized, maxProjectIdLength)
 }
 
 type InitParams struct {
 	ProjectId   string
 	UseOrioleDB bool
+	Overwrite   bool
 }
 
 func InitConfig(params InitParams, fsys afero.Fs) error {
@@ -772,7 +937,13 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if err := MkdirIfNotExistFS(fsys, filepath.Dir(ConfigPath)); err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	flag := os.O_WRONLY | os.O_CREATE
+	if params.Overwrite {
+		flag |= os.O_TRUNC
+	} else {
+		flag |= os.O_EXCL
+	}
+	f, err := fsys.OpenFile(ConfigPath, flag, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create config file: %w", err)
 	}
@@ -797,4 +968,40 @@ func RemoveDuplicates(slice []string) (result []string) {
 		}
 	}
 	return result
+}
+
+func loadDefaultEnv() error {
+	env := viper.GetString("ENV")
+	if env == "" {
+		env = "development"
+	}
+	filenames := []string{".env." + env + ".local"}
+	if env != "test" {
+		filenames = append(filenames, ".env.local")
+	}
+	filenames = append(filenames, ".env."+env, ".env")
+	for _, path := range filenames {
+		if err := loadEnvIfExists(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadEnvIfExists(path string) error {
+	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	}
+	return nil
+}
+
+func validateHookURI(uri, hookName string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
+	}
+	return nil
 }

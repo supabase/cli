@@ -18,19 +18,26 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
+	if err := Unlink(projectRef, fsys); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase unlink")+".")
+	return nil
+}
 
+func Unlink(projectRef string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Unlinking project:", projectRef)
+	var allErrors []error
 	// Remove temp directory
 	if err := fsys.RemoveAll(utils.TempDir); err != nil {
-		return errors.Errorf("failed to remove temp directory: %w", err)
+		wrapped := errors.Errorf("failed to remove temp directory: %w", err)
+		allErrors = append(allErrors, wrapped)
 	}
 	// Remove linked credentials
 	if err := credentials.Delete(projectRef); err != nil &&
 		!errors.Is(err, credentials.ErrNotSupported) &&
 		!errors.Is(err, keyring.ErrNotFound) {
-		return err
+		allErrors = append(allErrors, err)
 	}
-
-	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase unlink")+".")
-	return nil
+	return errors.Join(allErrors...)
 }

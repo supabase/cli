@@ -5,20 +5,20 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestProjectCreateCommand(t *testing.T) {
-	var params = api.CreateProjectBody{
+	var params = api.V1CreateProjectBody{
 		Name:           "Test Project",
 		OrganizationId: "combined-fuchsia-lion",
 		DbPass:         "redacted",
-		Region:         api.CreateProjectBodyRegionUsWest1,
+		Region:         api.V1CreateProjectBodyRegionUsWest1,
 	}
 
 	t.Run("creates a new project", func(t *testing.T) {
@@ -34,7 +34,7 @@ func TestProjectCreateCommand(t *testing.T) {
 			MatchType("json").
 			JSON(params).
 			Reply(201).
-			JSON(api.ProjectResponse{
+			JSON(api.V1ProjectResponse{
 				Id:             apitest.RandomProjectRef(),
 				OrganizationId: params.OrganizationId,
 				Name:           params.Name,

@@ -2,29 +2,26 @@ package table_record_counts
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
 
-const QUERY = `
-SELECT
-  relname AS name,
-  n_live_tup AS estimated_count
-FROM
-  pg_stat_user_tables
-ORDER BY
-  n_live_tup DESC;`
+//go:embed table_record_counts.sql
+var TableRecordCountsQuery string
 
 type Result struct {
+	Schema          string
 	Name            string
-	Estimated_count string
+	Estimated_count int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -32,7 +29,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, TableRecordCountsQuery, reset.LikeEscapeSchema(utils.PgSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -41,9 +39,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|Estimated count|\n|-|-|\n"
+	table := "Schema|Table|Estimated count|\n|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Estimated_count)
+		table += fmt.Sprintf("|`%s`|`%s`|`%d`|\n", r.Schema, r.Name, r.Estimated_count)
 	}
 	return list.RenderTable(table)
 }
