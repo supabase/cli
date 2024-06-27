@@ -41,7 +41,7 @@ const (
 	SupavisorImage   = "supabase/supavisor:1.1.56"
 	PgProveImage     = "supabase/pg_prove:3.36"
 	GotrueImage      = "supabase/gotrue:v2.151.0"
-	RealtimeImage    = "supabase/realtime:v2.29.12"
+	RealtimeImage    = "supabase/realtime:v2.29.13"
 	StorageImage     = "supabase/storage-api:v1.0.6"
 	LogflareImage    = "supabase/logflare:1.4.0"
 	// Should be kept in-sync with EdgeRuntimeImage

@@ -223,6 +223,31 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	logger := utils.GetDebugLogger()
+	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Realtime.Image, []string{
+		"PORT=4000",
+		"DB_HOST=" + host,
+		"DB_PORT=5432",
+		"DB_USER=supabase_admin",
+		"DB_PASSWORD=" + utils.Config.Db.Password,
+		"DB_NAME=postgres",
+		"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+		"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+		"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		"APP_NAME=realtime",
+		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
+		"ENABLE_TAILSCALE=false",
+		"DNS_NODES=''",
+		"RLIMIT_NOFILE=10000",
+		"SEED_SELF_HOST=true",
+		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
+	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(
+		`'Application.load(:realtime); Realtime.Tenants.health_check("%s")'`,
+		utils.Config.Realtime.TenantId,
+	)}, io.Discard, logger); err != nil {
+		return err
+	}
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
 		"DB_INSTALL_ROLES=false",
 		"ANON_KEY=" + utils.Config.Auth.AnonKey,
