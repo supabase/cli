@@ -138,7 +138,7 @@ func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys af
 			Cmd:   cmd,
 		},
 		container.HostConfig{
-			Binds:      binds,
+			Binds: binds,
 		},
 		network.NetworkingConfig{},
 		"",

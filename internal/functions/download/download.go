@@ -185,7 +185,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", utils.DockerDenoDir},
 		},
 		container.HostConfig{
-			Binds:      binds,
+			Binds: binds,
 		},
 		network.NetworkingConfig{},
 		"",

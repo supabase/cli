@@ -183,15 +183,13 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		env := []string{
 			"VECTOR_CONFIG=/etc/vector/vector.yaml",
 		}
-		// Special case for GitLab pipeline
 		host := utils.Docker.DaemonHost()
 		if parsed, err := client.ParseHostURL(host); err == nil {
 			if parsed.Scheme == "tcp" {
+				// Special case for GitLab pipeline
 				env = append(env, "DOCKER_HOST="+host)
 			} else {
-				// TODO: mount windows named pipe as unix domain socket?
-				// TODO: mount domain socket from docker rootless mode
-				binds = append(binds, "/var/run/docker.sock:/var/run/docker.sock:ro")
+				binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
 			}
 		}
 		if _, err := utils.DockerStart(
