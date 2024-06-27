@@ -18,7 +18,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -138,9 +137,9 @@ func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys af
 			Env:   []string{},
 			Cmd:   cmd,
 		},
-		start.WithSyslogConfig(container.HostConfig{
+		container.HostConfig{
 			Binds: binds,
-		}),
+		},
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,

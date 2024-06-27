@@ -100,14 +100,14 @@ EOF
 
 func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
-	hostConfig := WithSyslogConfig(container.HostConfig{
+	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
-	})
+	}
 	return hostConfig
 }
 
@@ -182,17 +182,6 @@ func IsUnhealthyError(err error) bool {
 	// Health check always returns a joinError
 	_, ok := err.(interface{ Unwrap() []error })
 	return ok
-}
-
-func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
-	if utils.Config.Analytics.Enabled {
-		hostConfig.LogConfig.Type = "syslog"
-		hostConfig.LogConfig.Config = map[string]string{
-			"syslog-address": fmt.Sprintf("tcp://%s:%d", utils.Config.Hostname, utils.Config.Analytics.VectorPort),
-			"tag":            "{{.Name}}",
-		}
-	}
-	return hostConfig
 }
 
 func initCurrentBranch(fsys afero.Fs) error {
