@@ -107,7 +107,7 @@ func NewHostConfig() container.HostConfig {
 			utils.DbId + ":/var/lib/postgresql/data",
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
-	})
+	}
 	return hostConfig
 }
 

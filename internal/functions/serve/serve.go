@@ -15,7 +15,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
@@ -178,7 +177,7 @@ EOF
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		container.HostConfig{
-			Binds:      binds,
+			Binds:        binds,
 			PortBindings: portBindings,
 		},
 		network.NetworkingConfig{
