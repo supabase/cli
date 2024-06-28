@@ -226,7 +226,6 @@ func initSchema15(ctx context.Context, host string) error {
 		"APP_NAME=realtime",
 		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-		"ENABLE_TAILSCALE=false",
 		"DNS_NODES=''",
 		"RLIMIT_NOFILE=10000",
 		"SEED_SELF_HOST=true",
