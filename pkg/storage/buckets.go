@@ -27,12 +27,16 @@ func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) 
 	return fetcher.ParseJSON[[]BucketResponse](resp.Body)
 }
 
-type CreateBucketRequest struct {
-	Name             string   `json:"name"`                         // "string",
-	Id               string   `json:"id,omitempty"`                 // "string",
+type BucketProps struct {
 	Public           bool     `json:"public,omitempty"`             // false,
 	FileSizeLimit    int      `json:"file_size_limit,omitempty"`    // 0,
 	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
+}
+
+type CreateBucketRequest struct {
+	Name string `json:"name"`         // "string",
+	Id   string `json:"id,omitempty"` // "string",
+	*BucketProps
 }
 
 type CreateBucketResponse struct {
@@ -46,6 +50,24 @@ func (s *StorageAPI) CreateBucket(ctx context.Context, body CreateBucketRequest)
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[CreateBucketResponse](resp.Body)
+}
+
+type UpdateBucketRequest struct {
+	Id string `json:"id"`
+	*BucketProps
+}
+
+type UpdateBucketResponse struct {
+	Message string `json:"message"`
+}
+
+func (s *StorageAPI) UpdateBucket(ctx context.Context, body UpdateBucketRequest) (UpdateBucketResponse, error) {
+	resp, err := s.Send(ctx, http.MethodPut, "/storage/v1/bucket/"+body.Id, body.BucketProps)
+	if err != nil {
+		return UpdateBucketResponse{}, err
+	}
+	defer resp.Body.Close()
+	return fetcher.ParseJSON[UpdateBucketResponse](resp.Body)
 }
 
 type DeleteBucketResponse struct {

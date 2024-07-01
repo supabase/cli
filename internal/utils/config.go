@@ -381,7 +381,9 @@ type (
 	}
 
 	bucket struct {
-		Public bool `toml:"public"`
+		Public           bool        `toml:"public"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
 	}
 
 	storageS3Credentials struct {
