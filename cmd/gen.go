@@ -57,7 +57,8 @@ var (
 		Short: "Generate types from Postgres schema",
 	}
 
-	postgrestV9Compat bool
+	postgrestV9Compat  bool
+	swiftAccessControl string
 
 	genTypesTypescriptCmd = &cobra.Command{
 		Use:   "typescript",
@@ -105,12 +106,12 @@ var (
 					return err
 				}
 			}
-			return swift.Run(ctx, flags.ProjectRef, flags.DbConfig, schema, postgrestV9Compat, afero.NewOsFs())
+			return swift.Run(ctx, flags.ProjectRef, flags.DbConfig, schema, postgrestV9Compat, swiftAccessControl, afero.NewOsFs())
 		},
 		Example: `  supabase gen types swift --local
   supabase gen types swift --linked
   supabase gen types swift --project-id abc-def-123 --schema public --schema private
-  supabase gen types swift --db-url 'postgresql://...' --schema public --schema auth`,
+  supabase gen types swift --db-url 'postgresql://...' --schema public --schema auth --access-control public`,
 	}
 )
 
@@ -129,6 +130,7 @@ func init() {
 	genSwiftFlags.Bool("local", false, "Generate types from the local dev database.")
 	genSwiftFlags.Bool("linked", false, "Generate types from the linked project.")
 	genSwiftFlags.String("db-url", "", "Generate types from a database url.")
+	genSwiftFlags.StringVar(&swiftAccessControl, "access-control", "internal", "Generate types using the access control.")
 	genSwiftFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
 	genTypesSwiftCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
 	genSwiftFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
