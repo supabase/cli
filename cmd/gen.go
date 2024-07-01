@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/gen/types/swift"
 	"github.com/supabase/cli/internal/gen/types/typescript"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -84,18 +85,56 @@ var (
   supabase gen types typescript --project-id abc-def-123 --schema public --schema private
   supabase gen types typescript --db-url 'postgresql://...' --schema public --schema auth`,
 	}
+
+	genTypesSwiftCmd = &cobra.Command{
+		Use:   "swift",
+		Short: "Generate types for Swift",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if postgrestV9Compat && !cmd.Flags().Changed("db-url") {
+				return errors.New("--postgrest-v9-compat can only be used together with --db-url.")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			if flags.DbConfig.Host == "" {
+				// If no flag is specified, prompt for project id.
+				if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); errors.Is(err, utils.ErrNotLinked) {
+					return errors.New("Must specify one of --local, --linked, --project-id, or --db-url")
+				} else if err != nil {
+					return err
+				}
+			}
+			return swift.Run(ctx, flags.ProjectRef, flags.DbConfig, schema, postgrestV9Compat, afero.NewOsFs())
+		},
+		Example: `  supabase gen types swift --local
+  supabase gen types swift --linked
+  supabase gen types swift --project-id abc-def-123 --schema public --schema private
+  supabase gen types swift --db-url 'postgresql://...' --schema public --schema auth`,
+	}
 )
 
 func init() {
-	genFlags := genTypesTypescriptCmd.Flags()
-	genFlags.Bool("local", false, "Generate types from the local dev database.")
-	genFlags.Bool("linked", false, "Generate types from the linked project.")
-	genFlags.String("db-url", "", "Generate types from a database url.")
-	genFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
+	genTypescriptFlags := genTypesTypescriptCmd.Flags()
+	genTypescriptFlags.Bool("local", false, "Generate types from the local dev database.")
+	genTypescriptFlags.Bool("linked", false, "Generate types from the linked project.")
+	genTypescriptFlags.String("db-url", "", "Generate types from a database url.")
+	genTypescriptFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
 	genTypesTypescriptCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
-	genFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	genFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
+	genTypescriptFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	genTypescriptFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
+
+	genSwiftFlags := genTypesSwiftCmd.Flags()
+	genSwiftFlags.Bool("local", false, "Generate types from the local dev database.")
+	genSwiftFlags.Bool("linked", false, "Generate types from the linked project.")
+	genSwiftFlags.String("db-url", "", "Generate types from a database url.")
+	genSwiftFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
+	genTypesSwiftCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
+	genSwiftFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	genSwiftFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
+	genTypesCmd.AddCommand(genTypesSwiftCmd)
+
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")

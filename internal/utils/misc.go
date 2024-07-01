@@ -33,7 +33,7 @@ const (
 	PostgrestImage   = "postgrest/postgrest:v12.2.0"
 	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
 	MigraImage       = "supabase/migra:3.0.1663481299"
-	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
+	PgmetaImage      = "supabase/postgres-meta:dev"
 	StudioImage      = "supabase/studio:20240422-5cf8f30"
 	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	EdgeRuntimeImage = "supabase/edge-runtime:v1.54.9"
