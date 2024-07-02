@@ -1,4 +1,4 @@
-package typescript
+package types
 
 import (
 	"context"
@@ -16,7 +16,12 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+var SupportedLanguages = []string{
+	"typescript",
+	"go",
+}
+
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -76,7 +81,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 			Image: utils.Config.Studio.PgmetaImage,
 			Env: []string{
 				"PG_META_DB_URL=" + escaped,
-				"PG_META_GENERATE_TYPES=typescript",
+				"PG_META_GENERATE_TYPES=" + lang,
 				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
 			},
