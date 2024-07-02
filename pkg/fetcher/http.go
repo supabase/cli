@@ -14,6 +14,7 @@ type Fetcher struct {
 	server  string
 	client  *http.Client
 	editors []RequestEditor
+	status  []int
 }
 
 type FetcherOption func(*Fetcher)
@@ -32,6 +33,12 @@ func NewFetcher(server string, opts ...FetcherOption) *Fetcher {
 func WithHTTPClient(client *http.Client) FetcherOption {
 	return func(s *Fetcher) {
 		s.client = client
+	}
+}
+
+func WithExpectedStatus(statusCode ...int) FetcherOption {
+	return func(s *Fetcher) {
+		s.status = statusCode
 	}
 }
 
@@ -86,22 +93,28 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 	if err != nil {
 		return nil, errors.Errorf("failed to execute http request: %w", err)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	for _, expected := range s.status {
+		if resp.StatusCode == expected {
+			return resp, nil
+		}
+	}
+	// Reject unexpected status codes as error
+	if len(s.status) > 0 || resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+			return resp, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
 		}
-		return nil, errors.Errorf("Error status %d: %s", resp.StatusCode, data)
+		return resp, errors.Errorf("Error status %d: %s", resp.StatusCode, data)
 	}
 	return resp, nil
 }
 
-func ParseJSON[T any](r io.Reader) (*T, error) {
+func ParseJSON[T any](r io.Reader) (T, error) {
 	var data T
 	dec := json.NewDecoder(r)
 	if err := dec.Decode(&data); err != nil {
-		return nil, errors.Errorf("failed to parse response body: %w", err)
+		return data, errors.Errorf("failed to parse response body: %w", err)
 	}
-	return &data, nil
+	return data, nil
 }

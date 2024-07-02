@@ -18,7 +18,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -26,10 +25,6 @@ import (
 const (
 	eszipContentType       = "application/vnd.denoland.eszip"
 	compressedEszipMagicId = "EZBR"
-
-	// Import Map from CLI flag, i.e. --import-map, takes priority over config.toml & fallback.
-	dockerImportMapPath = utils.DockerDenoDir + "/import_map.json"
-	dockerOutputDir     = "/root/eszips"
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
@@ -38,7 +33,7 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 		return err
 	}
 	if len(slugs) == 0 {
-		allSlugs, err := getFunctionSlugs(fsys)
+		allSlugs, err := GetFunctionSlugs(fsys)
 		if err != nil {
 			return err
 		}
@@ -57,14 +52,14 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 }
 
 func RunDefault(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	slugs, err := getFunctionSlugs(fsys)
+	slugs, err := GetFunctionSlugs(fsys)
 	if len(slugs) == 0 {
 		return err
 	}
 	return deployAll(ctx, slugs, projectRef, "", nil, fsys)
 }
 
-func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
+func GetFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
@@ -80,7 +75,13 @@ func getFunctionSlugs(fsys afero.Fs) ([]string, error) {
 	return slugs, nil
 }
 
-func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPath string, fsys afero.Fs) (*bytes.Buffer, error) {
+type eszipFunction struct {
+	compressedBody *bytes.Buffer
+	entrypointPath string
+	importMapPath  string
+}
+
+func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys afero.Fs) (*eszipFunction, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, errors.Errorf("failed to get working directory: %w", err)
@@ -98,27 +99,35 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		}
 	}()
 
-	outputPath := dockerOutputDir + "/output.eszip"
+	hostFuncDir := filepath.Join(cwd, utils.FunctionsDir)
+	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
+
+	outputPath := utils.DockerEszipDir + "/output.eszip"
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
-		filepath.Join(cwd, utils.FunctionsDir) + ":" + utils.DockerFuncDirPath + ":ro,z",
-		filepath.Join(cwd, hostOutputDir) + ":" + dockerOutputDir + ":rw,z",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
+		hostFuncDir + ":" + dockerFuncDir + ":ro",
+		filepath.Join(cwd, hostOutputDir) + ":" + utils.DockerEszipDir + ":rw",
 	}
 
-	cmd := []string{"bundle", "--entrypoint", dockerEntrypointPath, "--output", outputPath}
+	result := eszipFunction{
+		entrypointPath: path.Join(dockerFuncDir, slug, "index.ts"),
+		importMapPath:  path.Join(dockerFuncDir, "import_map.json"),
+	}
+	cmd := []string{"bundle", "--entrypoint", result.entrypointPath, "--output", outputPath}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
 
-	if importMapPath != "" {
-		modules, err := utils.BindImportMap(importMapPath, dockerImportMapPath, fsys)
+	if hostImportMapPath != "" {
+		modules, dockerImportMapPath, err := utils.BindImportMap(hostImportMapPath, fsys)
 		if err != nil {
 			return nil, err
 		}
 		binds = append(binds, modules...)
-		cmd = append(cmd, "--import-map", dockerImportMapPath)
+		result.importMapPath = dockerImportMapPath
+		cmd = append(cmd, "--import-map", result.importMapPath)
 	}
 
 	err = utils.DockerRunOnceWithConfig(
@@ -128,10 +137,9 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 			Env:   []string{},
 			Cmd:   cmd,
 		},
-		start.WithSyslogConfig(container.HostConfig{
-			Binds:      binds,
-			ExtraHosts: []string{"host.docker.internal:host-gateway"},
-		}),
+		container.HostConfig{
+			Binds: binds,
+		},
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,
@@ -147,8 +155,8 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 	}
 	defer eszipBytes.Close()
 
-	compressedBuf := bytes.NewBufferString(compressedEszipMagicId)
-	brw := brotli.NewWriter(compressedBuf)
+	result.compressedBody = bytes.NewBufferString(compressedEszipMagicId)
+	brw := brotli.NewWriter(result.compressedBody)
 	defer brw.Close()
 
 	_, err = io.Copy(brw, eszipBytes)
@@ -156,11 +164,11 @@ func bundleFunction(ctx context.Context, slug, dockerEntrypointPath, importMapPa
 		return nil, errors.Errorf("failed to compress brotli: %w", err)
 	}
 
-	return compressedBuf, nil
+	return &result, nil
 }
 
 func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, importMapUrl string, verifyJWT bool, functionBody io.Reader) error {
-	resp, err := utils.GetSupabase().GetFunctionWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1GetAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to retrieve function: %w", err)
 	}
@@ -181,7 +189,7 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 			return errors.New("Failed to create a new Function on the Supabase project: " + string(resp.Body))
 		}
 	case http.StatusOK: // Function already exists, so do a PATCH
-		resp, err := utils.GetSupabase().UpdateFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.UpdateFunctionParams{
+		resp, err := utils.GetSupabase().V1UpdateAFunctionWithBodyWithResponse(ctx, projectRef, slug, &api.V1UpdateAFunctionParams{
 			VerifyJwt:      &verifyJWT,
 			ImportMapPath:  &importMapUrl,
 			EntrypointPath: &entrypointUrl,
@@ -203,45 +211,15 @@ func deployFunction(ctx context.Context, projectRef, slug, entrypointUrl, import
 }
 
 func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) error {
-	// 1. Ensure noVerifyJWT is not nil.
-	if noVerifyJWT == nil {
-		x := false
-		if functionConfig, ok := utils.Config.Functions[slug]; ok && !*functionConfig.VerifyJWT {
-			x = true
-		}
-		noVerifyJWT = &x
-	}
-	resolved, err := utils.AbsImportMapPath(importMapPath, slug, fsys)
-	if err != nil {
-		return err
-	}
-	// Upstream server expects import map to be always defined
-	if importMapPath == "" {
-		resolved, err = filepath.Abs(utils.FallbackImportMapPath)
-		if err != nil {
-			return errors.Errorf("failed to resolve absolute path: %w", err)
-		}
-	}
-	exists, err := afero.Exists(fsys, resolved)
-	if err != nil {
-		logger := utils.GetDebugLogger()
-		fmt.Fprintln(logger, err)
-	}
-	if exists {
-		importMapPath = resolved
-	} else {
-		importMapPath = ""
-	}
-
-	// 2. Bundle Function.
+	// 1. Bundle Function.
 	fmt.Println("Bundling " + utils.Bold(slug))
-	dockerEntrypointPath := path.Join(utils.DockerFuncDirPath, slug, "index.ts")
-	functionBody, err := bundleFunction(ctx, slug, dockerEntrypointPath, importMapPath, fsys)
+	fc := utils.GetFunctionConfig(slug, importMapPath, noVerifyJWT, fsys)
+	eszip, err := bundleFunction(ctx, slug, fc.ImportMap, fsys)
 	if err != nil {
 		return err
 	}
-	// 3. Deploy new Function.
-	functionSize := units.HumanSize(float64(functionBody.Len()))
+	// 2. Deploy new Function.
+	functionSize := units.HumanSize(float64(eszip.compressedBody.Len()))
 	fmt.Println("Deploying " + utils.Bold(slug) + " (script size: " + utils.Bold(functionSize) + ")")
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 3), ctx)
 	return backoff.Retry(func() error {
@@ -249,10 +227,10 @@ func deployOne(ctx context.Context, slug, projectRef, importMapPath string, noVe
 			ctx,
 			projectRef,
 			slug,
-			"file://"+dockerEntrypointPath,
-			"file://"+dockerImportMapPath,
-			!*noVerifyJWT,
-			functionBody,
+			"file://"+eszip.entrypointPath,
+			"file://"+eszip.importMapPath,
+			*fc.VerifyJWT,
+			eszip.compressedBody,
 		)
 	}, policy)
 }

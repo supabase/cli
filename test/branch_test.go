@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 
@@ -15,13 +16,10 @@ func (suite *DBTestSuite) TestBranchCreate() {
 	// create branch
 	branch := "test-branch"
 	create, args, err := suite.cmd.Traverse([]string{"db", "branch", "create", branch})
-	if err != nil {
-		suite.Fail("failed to find create command")
-	}
+	require.NoError(suite.T(), err)
+	create.SetContext(context.Background())
 	err = create.RunE(create, args)
-	if err != nil {
-		suite.Fail("failed to create branch", err)
-	}
+	require.NoError(suite.T(), err)
 
 	// check if branch dir exists
 	_, err = os.Stat("supabase/.branches/" + branch)

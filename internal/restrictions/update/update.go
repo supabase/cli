@@ -12,7 +12,7 @@ import (
 
 func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypassCidrChecks bool) error {
 	// 1. separate CIDR to v4 and v6
-	body := api.ApplyNetworkRestrictionsJSONRequestBody{
+	body := api.V1UpdateNetworkRestrictionsJSONRequestBody{
 		DbAllowedCidrs:   &[]string{},
 		DbAllowedCidrsV6: &[]string{},
 	}
@@ -32,7 +32,7 @@ func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypass
 	}
 
 	// 2. update restrictions
-	resp, err := utils.GetSupabase().ApplyNetworkRestrictionsWithResponse(ctx, projectRef, body)
+	resp, err := utils.GetSupabase().V1UpdateNetworkRestrictionsWithResponse(ctx, projectRef, body)
 	if err != nil {
 		return errors.Errorf("failed to apply network restrictions: %w", err)
 	}

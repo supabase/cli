@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -116,8 +118,6 @@ var (
 			if viper.GetBool("DEBUG") {
 				ctx = utils.WithTraceContext(ctx)
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
-			} else {
-				utils.CmdSuggestion = utils.SuggestDebugFlag
 			}
 			cmd.SetContext(ctx)
 			// Setup sentry last to ignore errors from parsing cli flags
@@ -137,9 +137,51 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		panic(err)
 	}
-	if utils.CmdSuggestion != utils.SuggestDebugFlag {
+	// Check upgrade last because --version flag is initialised after execute
+	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	if semver.Compare(version, "v"+utils.Version) > 0 {
+		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
+	}
+	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {
+	if shouldFetchRelease(fsys) {
+		version, err := utils.GetLatestRelease(ctx)
+		if exists, _ := afero.DirExists(fsys, utils.SupabaseDirPath); exists && len(version) > 0 {
+			err = utils.WriteFile(utils.CliVersionPath, []byte(version), fsys)
+		}
+		return version, err
+	}
+	version, err := afero.ReadFile(fsys, utils.CliVersionPath)
+	if err != nil {
+		return "", errors.Errorf("failed to read cli version: %w", err)
+	}
+	return string(version), nil
+}
+
+func shouldFetchRelease(fsys afero.Fs) bool {
+	// Always fetch latest release when using --version flag
+	if vf := rootCmd.Flag("version"); vf != nil && vf.Changed {
+		return true
+	}
+	if fi, err := fsys.Stat(utils.CliVersionPath); err == nil {
+		expiry := fi.ModTime().Add(time.Hour * 10)
+		// Skip if last checked is less than 10 hours ago
+		return time.Now().After(expiry)
+	}
+	return true
+}
+
+func suggestUpgrade(version string) string {
+	const guide = "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli"
+	return fmt.Sprintf(`A new version of Supabase CLI is available: %s (currently installed v%s)
+We recommend updating regularly for new features and bug fixes: %s`, utils.Yellow(version), utils.Version, utils.Bold(guide))
 }
 
 func recoverAndExit() {
@@ -152,6 +194,11 @@ func recoverAndExit() {
 	case string:
 		msg = err
 	case error:
+		if !errors.Is(err, context.Canceled) &&
+			len(utils.CmdSuggestion) == 0 &&
+			!viper.GetBool("DEBUG") {
+			utils.CmdSuggestion = utils.SuggestDebugFlag
+		}
 		msg = err.Error()
 	default:
 		msg = fmt.Sprintf("%#v", err)
@@ -194,6 +241,7 @@ func init() {
 	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
+	flags.String("network-id", "", "use the specified docker network instead of a generated one")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
 	cobra.CheckErr(viper.BindPFlags(flags))

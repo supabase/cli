@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -25,7 +26,6 @@ import (
 )
 
 var (
-	ErrDatabase   = errors.New("database is not healthy")
 	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
@@ -45,7 +45,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
-		if err := utils.DockerRemoveAll(context.Background(), io.Discard); err != nil {
+		if err := utils.DockerRemoveAll(context.Background(), os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
@@ -100,15 +100,14 @@ EOF
 
 func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
-	hostConfig := WithSyslogConfig(container.HostConfig{
+	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
-		ExtraHosts: []string{"host.docker.internal:host-gateway"},
-	})
+	}
 	return hostConfig
 }
 
@@ -137,8 +136,8 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if !WaitForHealthyService(ctx, utils.DbId, HealthTimeout) {
-		return errors.New(ErrDatabase)
+	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil {
+		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
 	if utils.NoBackupVolume {
@@ -149,35 +148,40 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	return initCurrentBranch(fsys)
 }
 
-func RetryEverySecond(ctx context.Context, callback func() bool, timeout time.Duration) bool {
-	now := time.Now()
-	expiry := now.Add(timeout)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for t := now; t.Before(expiry) && ctx.Err() == nil; t = <-ticker.C {
-		if callback() {
-			return true
+func WaitForHealthyService(ctx context.Context, timeout time.Duration, started ...string) error {
+	probe := func() error {
+		var errHealth []error
+		var unhealthy []string
+		for _, container := range started {
+			if err := status.IsServiceReady(ctx, container); err != nil {
+				unhealthy = append(unhealthy, container)
+				errHealth = append(errHealth, err)
+			}
+		}
+		started = unhealthy
+		return errors.Join(errHealth...)
+	}
+	policy := backoff.WithContext(backoff.WithMaxRetries(
+		backoff.NewConstantBackOff(time.Second),
+		uint64(timeout.Seconds()),
+	), ctx)
+	err := backoff.Retry(probe, policy)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		// Print container logs for easier debugging
+		for _, containerId := range started {
+			fmt.Fprintln(os.Stderr, containerId, "container logs:")
+			if err := utils.DockerStreamLogsOnce(context.Background(), containerId, os.Stderr, os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		}
 	}
-	return false
+	return err
 }
 
-func WaitForHealthyService(ctx context.Context, container string, timeout time.Duration) bool {
-	probe := func() bool {
-		return status.AssertContainerHealthy(ctx, container) == nil
-	}
-	return RetryEverySecond(ctx, probe, timeout)
-}
-
-func WithSyslogConfig(hostConfig container.HostConfig) container.HostConfig {
-	if utils.Config.Analytics.Enabled {
-		hostConfig.LogConfig.Type = "syslog"
-		hostConfig.LogConfig.Config = map[string]string{
-			"syslog-address": fmt.Sprintf("tcp://%s:%d", utils.Config.Hostname, utils.Config.Analytics.VectorPort),
-			"tag":            "{{.Name}}",
-		}
-	}
-	return hostConfig
+func IsUnhealthyError(err error) bool {
+	// Health check always returns a joinError
+	_, ok := err.(interface{ Unwrap() []error })
+	return ok
 }
 
 func initCurrentBranch(fsys afero.Fs) error {
@@ -208,7 +212,7 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	logger := utils.GetDebugLogger()
-	if err := utils.DockerRunOnceWithStream(ctx, utils.RealtimeImage, []string{
+	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Realtime.Image, []string{
 		"PORT=4000",
 		"DB_HOST=" + host,
 		"DB_PORT=5432",
@@ -219,17 +223,15 @@ func initSchema15(ctx context.Context, host string) error {
 		"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 		"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		"FLY_APP_NAME=realtime",
+		"APP_NAME=realtime",
 		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-		"ENABLE_TAILSCALE=false",
 		"DNS_NODES=''",
-		"RLIMIT_NOFILE=",
+		"RLIMIT_NOFILE=10000",
+		"SEED_SELF_HOST=true",
 		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-	}, []string{"/bin/sh", "-c", fmt.Sprintf(
-		`/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo); Application.ensure_all_started(:realtime); Realtime.Tenants.health_check("%s")'`,
-		utils.Config.Realtime.TenantId,
-	)}, io.Discard, logger); err != nil {
+	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
+{:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)}, io.Discard, logger); err != nil {
 		return err
 	}
 	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{

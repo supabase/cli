@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestSecretUnsetCommand(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
+			JSON(api.V1BulkDeleteSecretsJSONRequestBody{"my-secret"}).
 			Reply(200)
 		// Run test
 		err := Run(context.Background(), project, []string{"my-secret"}, fsys)
@@ -49,7 +49,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
+			JSON(api.V1BulkDeleteSecretsJSONRequestBody{"my-secret"}).
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, []string{"my-secret"}, fsys)
@@ -71,7 +71,7 @@ func TestSecretUnsetCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Delete("/v1/projects/" + project + "/secrets").
 			MatchType("json").
-			JSON(api.DeleteSecretsJSONBody{"my-secret"}).
+			JSON(api.V1BulkDeleteSecretsJSONRequestBody{"my-secret"}).
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test

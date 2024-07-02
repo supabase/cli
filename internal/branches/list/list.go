@@ -13,7 +13,7 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().GetBranchesWithResponse(ctx, flags.ProjectRef)
+	resp, err := utils.GetSupabase().V1ListAllBranchesWithResponse(ctx, flags.ProjectRef)
 	if err != nil {
 		return errors.Errorf("failed to list preview branches: %w", err)
 	}

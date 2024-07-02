@@ -25,7 +25,7 @@ func Run(ctx context.Context, projectRef string, includeRawOutput bool, fsys afe
 
 	// 2. activate custom hostname config
 	{
-		resp, err := utils.GetSupabase().ActivateWithResponse(ctx, projectRef)
+		resp, err := utils.GetSupabase().V1ActivateCustomHostnameWithResponse(ctx, projectRef)
 		if err != nil {
 			return errors.Errorf("failed to active custom hostname: %w", err)
 		}

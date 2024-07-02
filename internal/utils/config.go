@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,7 +74,9 @@ func GetId(name string) string {
 }
 
 func UpdateDockerIds() {
-	NetId = GetId("network")
+	if NetId = viper.GetString("network-id"); len(NetId) == 0 {
+		NetId = GetId("network")
+	}
 	DbId = GetId(DbAliases[0])
 	ConfigId = GetId("config")
 	KongId = GetId(KongAliases[0])
@@ -90,6 +93,24 @@ func UpdateDockerIds() {
 	LogflareId = GetId(LogflareAliases[0])
 	VectorId = GetId(VectorAliases[0])
 	PoolerId = GetId(PoolerAliases[0])
+}
+
+func GetDockerIds() []string {
+	return []string{
+		KongId,
+		GotrueId,
+		InbucketId,
+		RealtimeId,
+		RestId,
+		StorageId,
+		ImgProxyId,
+		PgmetaId,
+		StudioId,
+		EdgeRuntimeId,
+		LogflareId,
+		VectorId,
+		PoolerId,
+	}
 }
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -158,6 +179,13 @@ func (c CustomClaims) NewToken() *jwt.Token {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
+type RequestPolicy string
+
+const (
+	PolicyPerWorker RequestPolicy = "per_worker"
+	PolicyOneshot   RequestPolicy = "oneshot"
+)
+
 var Config = config{
 	Api: api{
 		Image: PostgrestImage,
@@ -166,8 +194,15 @@ var Config = config{
 		Image:    Pg15Image,
 		Password: "postgres",
 		RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+		Pooler: pooler{
+			Image:         SupavisorImage,
+			TenantId:      "pooler-dev",
+			EncryptionKey: "12345678901234567890123456789032",
+			SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+		},
 	},
 	Realtime: realtime{
+		Image:           RealtimeImage,
 		IpVersion:       AddressIPv4,
 		MaxHeaderLength: 4096,
 		TenantId:        "realtime-dev",
@@ -195,6 +230,11 @@ var Config = config{
 				"magic_link":   {},
 				"email_change": {},
 			},
+			Smtp: smtp{
+				Host:       InbucketAliases[0],
+				Port:       2500,
+				AdminEmail: "admin@email.com",
+			},
 		},
 		External: map[string]provider{
 			"apple":         {},
@@ -217,6 +257,10 @@ var Config = config{
 			"zoom":          {},
 		},
 		JwtSecret: defaultJwtSecret,
+	},
+	Studio: studio{
+		Image:       StudioImage,
+		PgmetaImage: PgmetaImage,
 	},
 	Analytics: analytics{
 		ApiKey: "api-key",
@@ -257,6 +301,7 @@ type (
 		Inbucket     inbucket            `toml:"inbucket"`
 		Storage      storage             `toml:"storage"`
 		Auth         auth                `toml:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime         `toml:"edge_runtime"`
 		Functions    map[string]function `toml:"functions"`
 		Analytics    analytics           `toml:"analytics"`
 		Experimental experimental        `toml:"experimental" mapstructure:"-"`
@@ -285,15 +330,20 @@ type (
 
 	pooler struct {
 		Enabled          bool     `toml:"enabled"`
+		Image            string   `toml:"-"`
 		Port             uint16   `toml:"port"`
 		PoolMode         PoolMode `toml:"pool_mode"`
 		DefaultPoolSize  uint     `toml:"default_pool_size"`
 		MaxClientConn    uint     `toml:"max_client_conn"`
 		ConnectionString string   `toml:"-"`
+		TenantId         string   `toml:"-"`
+		EncryptionKey    string   `toml:"-"`
+		SecretKeyBase    string   `toml:"-"`
 	}
 
 	realtime struct {
 		Enabled         bool          `toml:"enabled"`
+		Image           string        `toml:"-"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
 		TenantId        string        `toml:"-"`
@@ -303,9 +353,11 @@ type (
 
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
+		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey string `toml:"openai_api_key"`
+		PgmetaImage  string `toml:"-"`
 	}
 
 	inbucket struct {
@@ -321,10 +373,17 @@ type (
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		ImageTransformation imageTransformation  `toml:"image_transformation"`
+		Buckets             map[string]bucket    `toml:"buckets"`
 	}
 
 	imageTransformation struct {
 		Enabled bool `toml:"enabled"`
+	}
+
+	bucket struct {
+		Public           bool        `toml:"public"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
 	}
 
 	storageS3Credentials struct {
@@ -343,7 +402,9 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
-		Hook                       hook `toml:"hook"`
+
+		Hook     hook     `toml:"hook"`
+		Sessions sessions `toml:"sessions"`
 
 		EnableSignup           bool  `toml:"enable_signup"`
 		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
@@ -362,7 +423,17 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		Template             map[string]emailTemplate `toml:"template"`
+		Smtp                 smtp                     `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
+	}
+
+	smtp struct {
+		Host       string `toml:"host"`
+		Port       uint16 `toml:"port"`
+		User       string `toml:"user"`
+		Pass       string `toml:"pass"`
+		AdminEmail string `toml:"admin_email"`
+		SenderName string `toml:"sender_name"`
 	}
 
 	emailTemplate struct {
@@ -387,11 +458,19 @@ type (
 		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
 		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
 		CustomAccessToken           hookConfig `toml:"custom_access_token"`
+		SendSMS                     hookConfig `toml:"send_sms"`
+		SendEmail                   hookConfig `toml:"send_email"`
 	}
 
 	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
+		Secrets string `toml:"secrets"`
+	}
+
+	sessions struct {
+		Timebox           time.Duration `toml:"timebox"`
+		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
 	}
 
 	twilioConfig struct {
@@ -429,20 +508,27 @@ type (
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
 
+	edgeRuntime struct {
+		Enabled       bool          `toml:"enabled"`
+		Policy        RequestPolicy `toml:"policy"`
+		InspectorPort uint16        `toml:"inspector_port"`
+	}
+
 	function struct {
-		VerifyJWT *bool  `toml:"verify_jwt"`
-		ImportMap string `toml:"import_map"`
+		VerifyJWT *bool  `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap string `toml:"import_map" json:"importMapPath,omitempty"`
 	}
 
 	analytics struct {
 		Enabled          bool            `toml:"enabled"`
 		Port             uint16          `toml:"port"`
 		Backend          LogflareBackend `toml:"backend"`
-		VectorPort       uint16          `toml:"vector_port"`
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		// Deprecated together with syslog
+		VectorPort uint16 `toml:"vector_port"`
 	}
 
 	experimental struct {
@@ -459,6 +545,24 @@ type (
 	// 	AfterMigrations  string `toml:"after_migrations"`
 	// }
 )
+
+func (h *hookConfig) HandleHook(hookType string) error {
+	// If not enabled do nothing
+	if !h.Enabled {
+		return nil
+	}
+	if h.URI == "" {
+		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	}
+	if err := validateHookURI(h.URI, hookType); err != nil {
+		return err
+	}
+	var err error
+	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	}
+	return nil
+}
 
 func LoadConfigFS(fsys afero.Fs) error {
 	// Load default values
@@ -511,7 +615,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
+		} else if sanitized := sanitizeProjectId(Config.ProjectId); sanitized != Config.ProjectId {
+			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
+			Config.ProjectId = sanitized
 		}
+
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
@@ -571,6 +679,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if !SliceContains(allowed, Config.Db.Pooler.PoolMode) {
 				return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 			}
+			if version, err := afero.ReadFile(fsys, PoolerVersionPath); err == nil && len(version) > 0 {
+				Config.Db.Pooler.Image = replaceImageTag(SupavisorImage, string(version))
+			}
 		}
 		if connString, err := afero.ReadFile(fsys, PoolerUrlPath); err == nil && len(connString) > 0 {
 			Config.Db.Pooler.ConnectionString = string(connString)
@@ -580,6 +691,9 @@ func LoadConfigFS(fsys afero.Fs) error {
 			allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 			if !SliceContains(allowed, Config.Realtime.IpVersion) {
 				return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
+			}
+			if version, err := afero.ReadFile(fsys, RealtimeVersionPath); err == nil && len(version) > 0 {
+				Config.Realtime.Image = replaceImageTag(RealtimeImage, string(version))
 			}
 		}
 		// Validate storage config
@@ -592,6 +706,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Studio.Enabled {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
+			}
+			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
+			}
+			if version, err := afero.ReadFile(fsys, PgmetaVersionPath); err == nil && len(version) > 0 {
+				Config.Studio.PgmetaImage = replaceImageTag(PgmetaImage, string(version))
 			}
 			Config.Studio.OpenaiApiKey, _ = maybeLoadEnv(Config.Studio.OpenaiApiKey)
 		}
@@ -607,6 +727,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Auth.SiteUrl == "" {
 				return errors.New("Missing required field in config: auth.site_url")
 			}
+			var err error
+			if Config.Auth.SiteUrl, err = maybeLoadEnv(Config.Auth.SiteUrl); err != nil {
+				return err
+			}
 			if version, err := afero.ReadFile(fsys, GotrueVersionPath); err == nil && len(version) > 0 && Config.Db.MajorVersion > 14 {
 				Config.Auth.Image = replaceImageTag(GotrueImage, string(version))
 			}
@@ -618,8 +742,10 @@ func LoadConfigFS(fsys afero.Fs) error {
 					}
 				}
 			}
+			if Config.Auth.Email.Smtp.Pass, err = maybeLoadEnv(Config.Auth.Email.Smtp.Pass); err != nil {
+				return err
+			}
 			// Validate sms config
-			var err error
 			if Config.Auth.Sms.Twilio.Enabled {
 				if len(Config.Auth.Sms.Twilio.AccountSid) == 0 {
 					return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
@@ -687,25 +813,21 @@ func LoadConfigFS(fsys afero.Fs) error {
 					return err
 				}
 			}
-
-			if Config.Auth.Hook.MFAVerificationAttempt.Enabled {
-				if Config.Auth.Hook.MFAVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.mfa_verification_atempt.uri")
-				}
+			if err := Config.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
-				if Config.Auth.Hook.PasswordVerificationAttempt.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.password_verification_attempt.uri")
-				}
+			if err := Config.Auth.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
+				return err
 			}
-
-			if Config.Auth.Hook.CustomAccessToken.Enabled {
-				if Config.Auth.Hook.CustomAccessToken.URI == "" {
-					return errors.New("Missing required field in config: auth.hook.custom_access_token.uri")
-				}
+			if err := Config.Auth.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
+				return err
 			}
-
+			if err := Config.Auth.Hook.SendSMS.HandleHook("send_sms"); err != nil {
+				return err
+			}
+			if err := Config.Auth.Hook.SendEmail.HandleHook("send_email"); err != nil {
+				return err
+			}
 			// Validate oauth config
 			for ext, provider := range Config.Auth.External {
 				if !provider.Enabled {
@@ -734,10 +856,15 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 	}
 	// Validate functions config
+	if Config.EdgeRuntime.Enabled {
+		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+		if !SliceContains(allowed, Config.EdgeRuntime.Policy) {
+			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
+		}
+	}
 	for name, functionConfig := range Config.Functions {
 		if functionConfig.VerifyJWT == nil {
-			verifyJWT := true
-			functionConfig.VerifyJWT = &verifyJWT
+			functionConfig.VerifyJWT = Ptr(true)
 			Config.Functions[name] = functionConfig
 		}
 	}
@@ -778,11 +905,23 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
+func truncateText(text string, maxLen int) string {
+	if len(text) > maxLen {
+		return text[:maxLen]
+	}
+	return text
+}
+
+const maxProjectIdLength = 40
+
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	return strings.TrimLeft(sanitized, "_.-")
+	sanitized = strings.TrimLeft(sanitized, "_.-")
+	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
+	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
+	return truncateText(sanitized, maxProjectIdLength)
 }
 
 type InitParams struct {
@@ -859,6 +998,17 @@ func loadDefaultEnv() error {
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to load %s: %w", Bold(".env"), err)
+	}
+	return nil
+}
+
+func validateHookURI(uri, hookName string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
 }

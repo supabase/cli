@@ -25,7 +25,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 	included := strings.Join(schemas, ",")
 
 	if projectId != "" {
-		resp, err := utils.GetSupabase().GetTypescriptTypesWithResponse(ctx, projectId, &api.GetTypescriptTypesParams{
+		resp, err := utils.GetSupabase().V1GenerateTypescriptTypesWithResponse(ctx, projectId, &api.V1GenerateTypescriptTypesParams{
 			IncludedSchemas: &included,
 		})
 		if err != nil {
@@ -40,7 +40,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		return nil
 	}
 
-	networkID := "host"
+	hostConfig := container.HostConfig{}
 	if utils.IsLocalDatabase(dbConfig) {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
@@ -53,7 +53,8 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 		// Use custom network when connecting to local database
 		dbConfig.Host = utils.DbAliases[0]
 		dbConfig.Port = 5432
-		networkID = utils.NetId
+	} else {
+		hostConfig.NetworkMode = network.NetworkHost
 	}
 	// pg-meta does not set username as the default database, ie. postgres
 	if len(dbConfig.Database) == 0 {
@@ -72,7 +73,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.PgmetaImage,
+			Image: utils.Config.Studio.PgmetaImage,
 			Env: []string{
 				"PG_META_DB_URL=" + escaped,
 				"PG_META_GENERATE_TYPES=typescript",
@@ -81,9 +82,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, schemas 
 			},
 			Cmd: []string{"node", "dist/server/server.js"},
 		},
-		container.HostConfig{
-			NetworkMode: container.NetworkMode(networkID),
-		},
+		hostConfig,
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,

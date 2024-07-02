@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
@@ -23,7 +24,6 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 var dbConfig = pgconn.Config{
@@ -35,6 +35,9 @@ var dbConfig = pgconn.Config{
 }
 
 var escapedSchemas = []string{
+	`\_analytics`,
+	`\_realtime`,
+	`\_supavisor`,
 	"pgbouncer",
 	"pgsodium",
 	"pgtle",
@@ -243,6 +246,15 @@ func TestDiffDatabase(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg14Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: false,
+					Status:  "exited",
+				},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/logs").
 			Reply(http.StatusServiceUnavailable)
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
@@ -251,7 +263,7 @@ func TestDiffDatabase(t *testing.T) {
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, diff)
-		assert.ErrorIs(t, err, start.ErrDatabase)
+		assert.ErrorContains(t, err, "test-shadow-db container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

@@ -162,7 +162,7 @@ func init() {
 }
 
 func promptBranchId(ctx context.Context, ref string) error {
-	resp, err := utils.GetSupabase().GetBranchesWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1ListAllBranchesWithResponse(ctx, ref)
 	if err != nil {
 		return errors.Errorf("failed to list preview branches: %w", err)
 	}
@@ -177,7 +177,9 @@ func promptBranchId(ctx context.Context, ref string) error {
 		if len(gitBranch) > 0 {
 			title = fmt.Sprintf("%-2s (or leave blank to use %s): ", title, utils.Aqua(gitBranch))
 		}
-		if name := console.PromptText(title); len(name) > 0 {
+		if name, err := console.PromptText(ctx, title); err != nil {
+			return err
+		} else if len(name) > 0 {
 			gitBranch = name
 		}
 		if len(gitBranch) == 0 {

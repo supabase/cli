@@ -45,24 +45,27 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 	// Find unapplied local migrations older than the latest migration on
 	// remote, and remote migrations that are missing from local.
 	var unapplied, missing []string
-	for i, remote := range remoteMigrations {
-		for _, filename := range localMigrations[i+len(unapplied)-len(missing):] {
-			// Check if migration has been applied before, LoadLocalMigrations guarantees a match
-			local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-			if remote == local {
-				break
-			}
-			if remote < local {
-				missing = append(missing, remote)
-				break
-			}
+	i, j := 0, 0
+	for i < len(remoteMigrations) && j < len(localMigrations) {
+		remote := remoteMigrations[i]
+		filename := localMigrations[j]
+		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
+		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
+		if remote == local {
+			j++
+			i++
+		} else if remote < local {
+			missing = append(missing, remote)
+			i++
+		} else {
 			// Include out-of-order local migrations
 			unapplied = append(unapplied, filename)
+			j++
 		}
 	}
-	// Check if all remote versions exist in local
-	if len(localMigrations) == 0 {
-		missing = remoteMigrations
+	// Ensure all remote versions exist on local
+	if j == len(localMigrations) {
+		missing = append(missing, remoteMigrations[i:]...)
 	}
 	if len(missing) > 0 {
 		utils.CmdSuggestion = suggestRevertHistory(missing)

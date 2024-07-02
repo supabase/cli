@@ -3,15 +3,17 @@ package serve
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestServeCommand(t *testing.T) {
@@ -19,7 +21,7 @@ func TestServeCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
-		require.NoError(t, afero.WriteFile(fsys, ".env", []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.FallbackEnvFilePath, []byte{}, 0644))
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
@@ -35,8 +37,7 @@ func TestServeCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 		// Run test
-		noVerifyJWT := true
-		err := Run(context.Background(), ".env", &noVerifyJWT, "", fsys)
+		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -46,7 +47,7 @@ func TestServeCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", nil, "", fsys)
+		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open supabase/config.toml: file does not exist")
 	})
@@ -62,7 +63,7 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusNotFound)
 		// Run test
-		err := Run(context.Background(), "", nil, "", fsys)
+		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
@@ -79,7 +80,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), ".env", nil, "", fsys)
+		err := Run(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open .env: file does not exist")
 	})
@@ -89,6 +90,8 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		require.NoError(t, afero.WriteFile(fsys, ".env", []byte{}, 0644))
+		entrypoint := filepath.Join(utils.FunctionsDir, "hello", "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypoint, []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -97,9 +100,8 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), ".env", nil, "import_map.json", fsys)
+		err := Run(context.Background(), ".env", utils.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to read import map")
-		assert.ErrorContains(t, err, "file does not exist")
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 }

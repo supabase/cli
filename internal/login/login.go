@@ -8,7 +8,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,11 +17,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type RunParams struct {
@@ -43,6 +44,7 @@ type AccessTokenResponse struct {
 }
 
 const defaultRetryAfterSeconds = 2
+const defaultMaxRetries = 90
 const decryptionErrorMsg = "cannot decrypt access token"
 
 var loggedInMsg = "You are now logged in. " + utils.Aqua("Happy coding!")
@@ -127,48 +129,29 @@ func (enc LoginEncryption) decryptAccessToken(accessToken string, publicKey stri
 }
 
 func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, error) {
-	var accessTokenResponse AccessTokenResponse
-
 	// TODO: Move to OpenAPI-generated http client once we reach v1 on API schema.
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return accessTokenResponse, errors.Errorf("cannot fetch access token: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return accessTokenResponse, errors.Errorf("cannot fetch access token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		retryAfterSeconds, err := strconv.Atoi(resp.Header.Get("Retry-After"))
-		if err != nil {
-			retryAfterSeconds = defaultRetryAfterSeconds
+	client := fetcher.NewFetcher(
+		utils.GetSupabaseAPIHost(),
+		fetcher.WithHTTPClient(&http.Client{
+			Timeout: 10 * time.Second,
+		}),
+		fetcher.WithExpectedStatus(http.StatusOK),
+	)
+	timeout := backoff.NewConstantBackOff(defaultRetryAfterSeconds)
+	probe := func() (AccessTokenResponse, error) {
+		resp, err := client.Send(ctx, http.MethodGet, url, nil)
+		if err == nil {
+			defer resp.Body.Close()
+			return fetcher.ParseJSON[AccessTokenResponse](resp.Body)
+		} else if resp != nil {
+			if retryAfterSeconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
+				timeout.Interval = time.Duration(retryAfterSeconds) * time.Second
+			}
 		}
-		t := time.NewTimer(time.Duration(retryAfterSeconds) * time.Second)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-		case <-t.C:
-		}
-		return pollForAccessToken(ctx, url)
+		return AccessTokenResponse{}, err
 	}
-
-	if resp.StatusCode == http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-
-		if err != nil {
-			return accessTokenResponse, errors.Errorf("cannot read access token response body: %w", err)
-		}
-
-		if err := json.Unmarshal(body, &accessTokenResponse); err != nil {
-			return accessTokenResponse, errors.Errorf("cannot unmarshal access token response: %w", err)
-		}
-
-		return accessTokenResponse, nil
-	}
-
-	return accessTokenResponse, errors.Errorf("HTTP %s: cannot retrieve access token", resp.Status)
+	policy := backoff.WithContext(backoff.WithMaxRetries(timeout, defaultMaxRetries), ctx)
+	return backoff.RetryWithData(probe, policy)
 }
 
 func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
@@ -201,7 +184,9 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 
 	if params.OpenBrowser {
 		fmt.Fprintf(stdout, "Hello from %s! Press %s to open browser and login automatically.\n", utils.Aqua("Supabase"), utils.Aqua("Enter"))
-		fmt.Scanln()
+		if _, err := fmt.Scanln(); err != nil {
+			return errors.Errorf("failed to scan line: %w", err)
+		}
 		fmt.Fprintf(stdout, "Here is your login link in case browser did not open %s\n\n", utils.Bold(createLoginSessionUrl))
 		if err := RunOpenCmd(ctx, createLoginSessionUrl); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -213,7 +198,7 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		p.Send(utils.StatusMsg("Your token is now being generated and securely encrypted. Waiting for it to arrive..."))
 
-		sessionPollingUrl := utils.GetSupabaseAPIHost() + "/platform/cli/login/" + params.SessionId
+		sessionPollingUrl := "/platform/cli/login/" + params.SessionId
 		accessTokenResponse, err := pollForAccessToken(ctx, sessionPollingUrl)
 		if err != nil {
 			return err

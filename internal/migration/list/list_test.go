@@ -103,7 +103,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", nil)
+			Reply("SELECT 1", []interface{}{})
 		// Run test
 		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error

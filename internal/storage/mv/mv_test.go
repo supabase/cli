@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -13,7 +14,6 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/pkg/storage"
-	"gopkg.in/h2non/gock.v1"
 )
 
 var mockFile = storage.ObjectResponse{

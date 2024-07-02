@@ -38,7 +38,8 @@ begin
     select *
     from pg_class c
     where
-      c.relnamespace::regnamespace::name in ('auth', 'supabase_migrations')
+      (c.relnamespace::regnamespace::name = 'auth' and c.relname != 'schema_migrations'
+      or c.relnamespace::regnamespace::name = 'supabase_migrations')
       and c.relkind = 'r'
   loop
     execute format('truncate %I.%I restart identity cascade', rec.relnamespace::regnamespace::name, rec.relname);

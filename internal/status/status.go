@@ -8,11 +8,14 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sync"
+	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type CustomName struct {
@@ -38,7 +41,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.ApiURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
 		values[c.GraphqlURL] = fmt.Sprintf("http://%s:%d/graphql/v1", utils.Config.Hostname, utils.Config.Api.Port)
 	}
-	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.StudioImage)) {
+	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
 	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
@@ -60,28 +63,17 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			return err
-		}
-		if err := AssertContainerHealthy(ctx, utils.DbId); err != nil {
-			return err
-		}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		return err
+	}
+	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
+		return err
 	}
 
-	services := []string{
-		utils.KongId,
-		utils.GotrueId,
-		utils.InbucketId,
-		utils.RealtimeId,
-		utils.RestId,
-		utils.StorageId,
-		utils.ImgProxyId,
-		utils.PgmetaId,
-		utils.StudioId,
-		utils.LogflareId,
+	stopped, err := checkServiceHealth(ctx)
+	if err != nil {
+		return err
 	}
-	stopped := checkServiceHealth(ctx, services, os.Stderr)
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
 	}
@@ -93,23 +85,31 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	return printStatus(names, format, os.Stdout, stopped...)
 }
 
-func checkServiceHealth(ctx context.Context, services []string, w io.Writer) (stopped []string) {
-	for _, name := range services {
-		if err := AssertContainerHealthy(ctx, name); err != nil {
-			if client.IsErrNotFound(err) {
-				stopped = append(stopped, name)
-			} else {
-				// Log unhealthy containers instead of failing
-				fmt.Fprintln(w, err)
-			}
+func checkServiceHealth(ctx context.Context) ([]string, error) {
+	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
+		Filters: utils.CliProjectFilter(),
+	})
+	if err != nil {
+		return nil, errors.Errorf("failed to list running containers: %w", err)
+	}
+	running := make(map[string]struct{}, len(resp))
+	for _, c := range resp {
+		for _, n := range c.Names {
+			running[n] = struct{}{}
 		}
 	}
-	return stopped
+	var stopped []string
+	for _, containerId := range utils.GetDockerIds() {
+		if _, ok := running["/"+containerId]; !ok {
+			stopped = append(stopped, containerId)
+		}
+	}
+	return stopped, nil
 }
 
-func AssertContainerHealthy(ctx context.Context, container string) error {
+func assertContainerHealthy(ctx context.Context, container string) error {
 	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
-		return err
+		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
 		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
 	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
@@ -118,36 +118,42 @@ func AssertContainerHealthy(ctx context.Context, container string) error {
 	return nil
 }
 
-func IsServiceReady(ctx context.Context, container string) bool {
+func IsServiceReady(ctx context.Context, container string) error {
 	if container == utils.RestId {
-		return isPostgRESTHealthy(ctx)
+		// PostgREST does not support native health checks
+		return checkHTTPHead(ctx, "/rest-admin/v1/ready")
 	}
 	if container == utils.EdgeRuntimeId {
-		return isEdgeRuntimeHealthy(ctx)
+		// Native health check logs too much hyper::Error(IncompleteMessage)
+		return checkHTTPHead(ctx, "/functions/v1/_internal/health")
 	}
-	return AssertContainerHealthy(ctx, container) == nil
+	return assertContainerHealthy(ctx, container)
 }
 
-func isPostgRESTHealthy(ctx context.Context) bool {
-	// PostgREST does not support native health checks
-	restUrl := fmt.Sprintf("http://%s:%d/rest-admin/v1/ready", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
+var (
+	healthClient *fetcher.Fetcher
+	healthOnce   sync.Once
+)
 
-func isEdgeRuntimeHealthy(ctx context.Context) bool {
-	// Native health check logs too much hyper::Error(IncompleteMessage)
-	restUrl := fmt.Sprintf("http://%s:%d/functions/v1/_internal/health", utils.Config.Hostname, utils.Config.Api.Port)
-	return checkHTTPHead(ctx, restUrl)
-}
-
-func checkHTTPHead(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Add("apikey", utils.Config.Auth.AnonKey)
-	resp, err := http.DefaultClient.Do(req)
-	return err == nil && resp.StatusCode == http.StatusOK
+func checkHTTPHead(ctx context.Context, path string) error {
+	healthOnce.Do(func() {
+		server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+		header := func(req *http.Request) {
+			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
+		}
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		healthClient = fetcher.NewFetcher(
+			server,
+			fetcher.WithHTTPClient(client),
+			fetcher.WithRequestEditor(header),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+	})
+	// HEAD method does not return response body
+	_, err := healthClient.Send(ctx, http.MethodHead, path, nil)
+	return err
 }
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {

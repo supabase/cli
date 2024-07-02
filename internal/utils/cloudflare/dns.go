@@ -141,14 +141,14 @@ type DNSParams struct {
 
 // Performs DNS lookup via HTTPS, in case firewall blocks native netgo resolver.
 // Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
-func (c *CloudflareAPI) DNSQuery(ctx context.Context, params DNSParams) (*DNSResponse, error) {
+func (c *CloudflareAPI) DNSQuery(ctx context.Context, params DNSParams) (DNSResponse, error) {
 	values, err := query.Values(params)
 	if err != nil {
-		return nil, errors.Errorf("failed to encode query params: %w", err)
+		return DNSResponse{}, errors.Errorf("failed to encode query params: %w", err)
 	}
 	resp, err := c.Send(ctx, http.MethodGet, "/dns-query?"+values.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return DNSResponse{}, err
 	}
 	defer resp.Body.Close()
 	return fetcher.ParseJSON[DNSResponse](resp.Body)

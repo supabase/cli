@@ -10,6 +10,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,6 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
 )
 
 func TestInitBranch(t *testing.T) {
@@ -197,11 +197,6 @@ func TestStartCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
@@ -219,11 +214,6 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New(utils.Docker.DaemonHost()).
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusNotFound)

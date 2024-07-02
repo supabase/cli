@@ -2,17 +2,20 @@ package long_running_queries
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/pgxv5"
 )
+
+//go:embed long_running_queries.sql
+var LongRunningQueriesQuery string
 
 type Result struct {
 	Pid      int
@@ -25,7 +28,8 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	if err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, inspect.LONG_RUNNING_QUERY)
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, LongRunningQueriesQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

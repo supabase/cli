@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"gopkg.in/h2non/gock.v1"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 func TestStartCommand(t *testing.T) {
@@ -61,16 +62,6 @@ func TestStartCommand(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		gock.New("http:///var/run/docker.sock").
-			Head("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/_ping").
-			Reply(http.StatusOK).
-			SetHeader("API-Version", utils.Docker.ClientVersion()).
-			SetHeader("OSType", "linux")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
@@ -154,6 +145,8 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StudioImage), utils.StudioId)
 		utils.LogflareId = "test-logflare"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.LogflareImage), utils.LogflareId)
+		utils.VectorId = "test-vector"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.VectorImage), utils.VectorId)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -161,7 +154,7 @@ func TestDatabaseStart(t *testing.T) {
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
 			utils.StorageId, utils.ImgProxyId, utils.EdgeRuntimeId, utils.PgmetaId, utils.StudioId,
-			utils.LogflareId, utils.RestId,
+			utils.LogflareId, utils.RestId, utils.VectorId,
 		}
 		for _, container := range started {
 			gock.New(utils.Docker.DaemonHost()).
@@ -180,6 +173,20 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New("127.0.0.1").
 			Head("/functions/v1/_internal/health").
 			Reply(http.StatusOK)
+		// Seed tenant services
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: "healthy"},
+				},
+			}})
+		gock.New("127.0.0.1").
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
 		// Run test
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
 			return run(p, context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)

@@ -2,6 +2,7 @@ package integration
 
 // Basic imports
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +34,7 @@ func (suite *LoginTestSuite) TestLink() {
 	// run command
 	login, _, err := suite.cmd.Find([]string{"login"})
 	require.NoError(suite.T(), err)
+	login.SetContext(context.Background())
 	key := "sbp_" + gonanoid.MustGenerate(supabase.KeyAlphabet, supabase.KeyLength)
 
 	// change stdin to read from a file
@@ -73,6 +75,7 @@ func (suite *LoginTestSuite) SetupTest() {
 	// init supabase
 	init, _, err := suite.cmd.Find([]string{"init"})
 	require.NoError(suite.T(), err)
+	init.SetContext(context.Background())
 	require.NoError(suite.T(), init.RunE(init, []string{}))
 
 	// implement mocks

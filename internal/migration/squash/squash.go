@@ -44,7 +44,12 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// 2. Update migration history
-	if utils.IsLocalDatabase(config) || !utils.NewConsole().PromptYesNo("Update remote migration history table?", true) {
+	if utils.IsLocalDatabase(config) {
+		return nil
+	}
+	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
+		return err
+	} else if !shouldUpdate {
 		return nil
 	}
 	return baselineMigrations(ctx, config, version, fsys, options...)
@@ -85,8 +90,8 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if !start.WaitForHealthyService(ctx, shadow, start.HealthTimeout) {
-		return errors.New(start.ErrDatabase)
+	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+		return err
 	}
 	conn, err := diff.ConnectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {

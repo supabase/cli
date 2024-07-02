@@ -11,7 +11,8 @@ import (
 	"os/signal"
 	"regexp"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/tools/shared"
 )
 
@@ -45,7 +46,7 @@ func updateRefDoc(ctx context.Context, path string, stdin io.Reader) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "Updating reference doc: %s\n", path)
-	client := shared.NewGtihubClient(ctx)
+	client := utils.GetGtihubClient(ctx)
 	branch := "cli/ref-doc"
 	master := "master"
 	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, branch, master); err != nil {

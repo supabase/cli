@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v62/github"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/tools/shared"
 	"gopkg.in/yaml.v3"
@@ -42,7 +42,7 @@ type ComposeFile struct {
 }
 
 func updateSelfHosted(ctx context.Context, branch string) error {
-	client := shared.NewGtihubClient(ctx)
+	client := utils.GetGtihubClient(ctx)
 	master := "master"
 	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, branch, master); err != nil {
 		return err

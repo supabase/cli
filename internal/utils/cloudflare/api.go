@@ -23,6 +23,7 @@ func NewCloudflareAPI() CloudflareAPI {
 		server,
 		fetcher.WithHTTPClient(client),
 		fetcher.WithRequestEditor(header),
+		fetcher.WithExpectedStatus(http.StatusOK),
 	)}
 	return api
 }

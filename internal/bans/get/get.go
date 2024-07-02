@@ -13,7 +13,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	// 2. get network bans
 	{
-		resp, err := utils.GetSupabase().GetNetworkBansWithResponse(ctx, projectRef)
+		resp, err := utils.GetSupabase().V1ListAllNetworkBansWithResponse(ctx, projectRef)
 		if err != nil {
 			return errors.Errorf("failed to retrieve network bans: %w", err)
 		}

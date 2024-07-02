@@ -42,7 +42,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		return errors.Errorf("failed to resolve absolute path: %w", err)
 	}
 	dstPath := "/tmp"
-	binds := []string{fmt.Sprintf("%s:%s:ro,z", srcPath, dstPath)}
+	binds := []string{fmt.Sprintf("%s:%s:ro", srcPath, dstPath)}
 	// Enable pgTAP if not already exists
 	alreadyExists := false
 	options = append(options, func(cc *pgx.ConnConfig) {
@@ -66,11 +66,12 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		}()
 	}
 	// Use custom network when connecting to local database
-	networkID := "host"
+	hostConfig := container.HostConfig{Binds: binds}
 	if utils.IsLocalDatabase(config) {
 		config.Host = utils.DbAliases[0]
 		config.Port = 5432
-		networkID = utils.NetId
+	} else {
+		hostConfig.NetworkMode = network.NetworkHost
 	}
 	// Run pg_prove on volume mount
 	return utils.DockerRunOnceWithConfig(
@@ -87,10 +88,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 			Cmd:        cmd,
 			WorkingDir: dstPath,
 		},
-		container.HostConfig{
-			NetworkMode: container.NetworkMode(networkID),
-			Binds:       binds,
-		},
+		hostConfig,
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,

@@ -14,7 +14,7 @@ func Run(ctx context.Context, projectRef string, includeRawOutput bool, fsys afe
 	// 1. Sanity checks.
 	// 2. attempt to re-verify custom hostname config
 	{
-		resp, err := utils.GetSupabase().ReverifyWithResponse(ctx, projectRef)
+		resp, err := utils.GetSupabase().V1VerifyDnsConfigWithResponse(ctx, projectRef)
 		if err != nil {
 			return errors.Errorf("failed to re-verify custom hostname: %w", err)
 		}

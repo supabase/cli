@@ -19,7 +19,7 @@ func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) err
 	}
 
 	// 2. Delete Function.
-	resp, err := utils.GetSupabase().DeleteFunctionWithResponse(ctx, projectRef, slug)
+	resp, err := utils.GetSupabase().V1DeleteAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to delete function: %w", err)
 	}

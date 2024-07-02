@@ -73,6 +73,7 @@ func (suite *SecretsTestSuite) SetupTest() {
 	// init supabase
 	init, _, err := suite.cmd.Find([]string{"init"})
 	require.NoError(suite.T(), err)
+	init.SetContext(context.Background())
 	require.NoError(suite.T(), init.RunE(init, []string{}))
 
 	// add `link` dir

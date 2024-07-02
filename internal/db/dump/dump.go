@@ -96,11 +96,12 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		"extensions",
 		"pgbouncer",
 		"realtime",
-		"_realtime",
 		// "storage",
-		"_analytics",
 		// "supabase_functions",
 		"supabase_migrations",
+		"_analytics",
+		"_realtime",
+		"_supavisor",
 	}
 	var env []string
 	if len(schema) > 0 {
@@ -113,12 +114,19 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		extraFlags = append(extraFlags, "--column-inserts", "--rows-per-insert 100000")
 	}
 	for _, table := range excludeTable {
-		extraFlags = append(extraFlags, "--exclude-table "+table)
+		escaped := quoteUpperCase(table)
+		// Use separate flags to avoid error: too many dotted names
+		extraFlags = append(extraFlags, "--exclude-table "+escaped)
 	}
 	if len(extraFlags) > 0 {
 		env = append(env, "EXTRA_FLAGS="+strings.Join(extraFlags, " "))
 	}
 	return dump(ctx, config, dumpDataScript, env, dryRun, stdout)
+}
+
+func quoteUpperCase(table string) string {
+	escaped := strings.ReplaceAll(table, ".", `"."`)
+	return fmt.Sprintf(`"%s"`, escaped)
 }
 
 func dumpRole(ctx context.Context, config pgconn.Config, keepComments, dryRun bool, stdout io.Writer) error {
@@ -152,7 +160,9 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 			// Bash variable expansion is unsupported:
 			// https://github.com/golang/go/issues/47187
 			parts := strings.Split(key, ":")
-			return envMap[parts[0]]
+			value := envMap[parts[0]]
+			// Escape double quotes in env vars
+			return strings.ReplaceAll(value, `"`, `\"`)
 		})
 		fmt.Println(expanded)
 		return nil
@@ -165,7 +175,7 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 			Cmd:   []string{"bash", "-c", script, "--"},
 		},
 		container.HostConfig{
-			NetworkMode: container.NetworkMode("host"),
+			NetworkMode: network.NetworkHost,
 		},
 		network.NetworkingConfig{},
 		"",

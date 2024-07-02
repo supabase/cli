@@ -29,7 +29,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 }
 
 func RunGetApiKeys(ctx context.Context, projectRef string) ([]api.ApiKeyResponse, error) {
-	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef)
 	if err != nil {
 		return nil, errors.Errorf("failed to get api keys: %w", err)
 	}

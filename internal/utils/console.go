@@ -2,11 +2,15 @@ package utils
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/go-errors/errors"
 	"golang.org/x/term"
 )
 
@@ -14,30 +18,64 @@ type Console struct {
 	IsTTY  bool
 	stdin  *bufio.Scanner
 	logger io.Writer
+	token  chan string
+	mu     sync.Mutex
 }
 
-func NewConsole() Console {
-	return Console{
+func NewConsole() *Console {
+	return &Console{
 		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
 		stdin:  bufio.NewScanner(os.Stdin),
 		logger: GetDebugLogger(),
+		token:  make(chan string),
+		mu:     sync.Mutex{},
 	}
 }
 
+// Prevent interactive terminals from hanging more than 10 minutes
+const ttyTimeout = time.Minute * 10
+
+func (c *Console) ReadLine(ctx context.Context) string {
+	// Wait a few ms for input
+	timeout := time.Millisecond
+	if c.IsTTY {
+		timeout = ttyTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	// Read from stdin in background
+	go func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		// Scan one line from input or file
+		if c.stdin.Scan() {
+			c.token <- strings.TrimSpace(c.stdin.Text())
+		}
+	}()
+	var input string
+	select {
+	case input = <-c.token:
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return input
+}
+
 // PromptYesNo asks yes/no questions using the label.
-func (c Console) PromptYesNo(label string, def bool) bool {
+func (c *Console) PromptYesNo(ctx context.Context, label string, def bool) (bool, error) {
 	choices := "Y/n"
 	if !def {
 		choices = "y/N"
 	}
 	labelWithChoice := fmt.Sprintf("%s [%s] ", label, choices)
 	// Any error will be handled as default value
-	if input := c.PromptText(labelWithChoice); len(input) > 0 {
+	input, err := c.PromptText(ctx, labelWithChoice)
+	if len(input) > 0 {
 		if answer := parseYesNo(input); answer != nil {
-			return *answer
+			return *answer, nil
 		}
 	}
-	return def
+	return def, err
 }
 
 func parseYesNo(s string) *bool {
@@ -52,19 +90,15 @@ func parseYesNo(s string) *bool {
 }
 
 // PromptText asks for input using the label.
-func (c Console) PromptText(label string) string {
+func (c *Console) PromptText(ctx context.Context, label string) (string, error) {
 	fmt.Fprint(os.Stderr, label)
-	// Scan a single line from input or file
-	if !c.stdin.Scan() {
-		fmt.Fprintln(c.logger, io.EOF)
-	}
-	if err := c.stdin.Err(); err != nil {
-		fmt.Fprintln(c.logger, err)
-	}
-	token := strings.TrimSpace(c.stdin.Text())
-	// Echo input to stderr for non-interactive terminals
+	input := c.ReadLine(ctx)
+	// Echo to stderr for non-interactive terminals
 	if !c.IsTTY {
-		fmt.Fprintln(os.Stderr, token)
+		fmt.Fprintln(os.Stderr, input)
 	}
-	return token
+	if err := ctx.Err(); err != nil {
+		return "", errors.New(err)
+	}
+	return input, nil
 }

@@ -34,6 +34,8 @@ const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
 )!;
 
+const WALLCLOCK_LIMIT_SEC = parseInt(Deno.env.get("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC"));
+
 const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.InvalidWorkerCreation, SB_SPECIFIC_ERROR_CODE.BootError],
   [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
@@ -115,6 +117,12 @@ Deno.serve({
       return getResponse({ message: "ok" }, STATUS_CODE.OK);
     }
 
+    // handle metrics
+    if (pathname === '/_internal/metric') {
+      const metric = await EdgeRuntime.getRuntimeMetrics();
+      return Response.json(metric);
+    }
+
     const pathParts = pathname.split("/");
     const functionName = pathParts[1];
 
@@ -140,7 +148,7 @@ Deno.serve({
     console.error(`serving the request with ${servicePath}`);
 
     const memoryLimitMb = 150;
-    const workerTimeoutMs = 400 * 1000;
+    const workerTimeoutMs = isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
     const envVars = Object.entries(envVarsObj)
@@ -148,7 +156,7 @@ Deno.serve({
         !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")
       );
 
-    const forceCreate = true;
+    const forceCreate = false;
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;

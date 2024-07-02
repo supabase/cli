@@ -39,7 +39,7 @@ func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 }
 
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
-	resp, err := utils.GetSupabase().GetProjectApiKeysWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef)
 	if err != nil {
 		return ApiKey{}, errors.Errorf("failed to get api keys: %w", err)
 	}
@@ -70,6 +70,7 @@ func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
 		fetcher.WithHTTPClient(client),
 		fetcher.WithRequestEditor(header),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+		fetcher.WithExpectedStatus(http.StatusOK),
 	)}
 	return api
 }

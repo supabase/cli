@@ -28,7 +28,7 @@ type RunParams struct {
 }
 
 func Run(ctx context.Context, params RunParams) error {
-	var body api.CreateProviderForProjectJSONRequestBody
+	var body api.V1CreateASsoProviderJSONRequestBody
 	body.Type = api.CreateProviderBodyType(params.Type)
 
 	if params.MetadataFile != "" {
@@ -61,7 +61,7 @@ func Run(ctx context.Context, params RunParams) error {
 		body.Domains = &params.Domains
 	}
 
-	resp, err := utils.GetSupabase().CreateProviderForProjectWithResponse(ctx, params.ProjectRef, body)
+	resp, err := utils.GetSupabase().V1CreateASsoProviderWithResponse(ctx, params.ProjectRef, body)
 	if err != nil {
 		return errors.Errorf("failed to create sso provider: %w", err)
 	}

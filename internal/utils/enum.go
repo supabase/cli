@@ -18,15 +18,7 @@ func (a EnumFlag) String() string {
 }
 
 func (a *EnumFlag) Set(p string) error {
-	isIncluded := func(opts []string, val string) bool {
-		for _, opt := range opts {
-			if val == opt {
-				return true
-			}
-		}
-		return false
-	}
-	if !isIncluded(a.Allowed, p) {
+	if !SliceContains(a.Allowed, p) {
 		return errors.Errorf("must be one of [ %s ]", strings.Join(a.Allowed, " | "))
 	}
 	a.Value = p
