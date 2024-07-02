@@ -106,7 +106,7 @@ func init() {
 	genFlags.String("db-url", "", "Generate types from a database url.")
 	genFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
 	genTypesCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
-	genFlags.Var(&lang, "lang", "Language to generate types for.")
+	genFlags.Var(&lang, "lang", "Output language of the generated types.")
 	genFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	genFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
 	genTypesCmd.AddCommand(genTypesTypescriptCmd)
