@@ -11,7 +11,7 @@ import (
 	"github.com/supabase/cli/pkg/storage"
 )
 
-func Run(ctx context.Context) error {
+func Run(ctx context.Context, console *utils.Console) error {
 	api, err := client.NewStorageAPI(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
@@ -21,7 +21,6 @@ func Run(ctx context.Context) error {
 		return err
 	}
 	var exists []string
-	console := utils.NewConsole()
 	for _, b := range buckets {
 		props := NewBucketProps(b.Name)
 		if props == nil {

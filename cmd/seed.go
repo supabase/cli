@@ -26,7 +26,7 @@ var (
 		Short: "Seed buckets declared in [storage.buckets]",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return buckets.Run(cmd.Context())
+			return buckets.Run(cmd.Context(), utils.NewConsole())
 		},
 	}
 )

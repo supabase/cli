@@ -1,4 +1,4 @@
-package typescript
+package types
 
 import (
 	"context"
@@ -48,7 +48,7 @@ func TestGenLocalCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{}, true, fsys, conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -63,7 +63,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, []string{}, true, fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -83,7 +83,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, []string{}, true, fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -106,7 +106,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
 		// Run test
-		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, []string{}, true, fsys))
+		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -121,7 +121,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), projectId, pgconn.Config{}, []string{}, true, fsys)
+		err := Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, fsys)
 		// Validate api
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -136,7 +136,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, []string{}, true, fsys))
+		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, fsys))
 	})
 }
 
@@ -161,7 +161,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, []string{"public"}, true, afero.NewMemMapFs(), conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, afero.NewMemMapFs(), conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
