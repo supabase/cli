@@ -1,28 +1,30 @@
 api:
   enabled: true
-  address: "0.0.0.0:9001"
+  address: 0.0.0.0:9001
 
 sources:
-  docker_syslog:
-    type: "syslog"
-    address: "0.0.0.0:9000"
-    mode: "tcp"
-    path: "/tmp/socket"
+  docker_host:
+    type: docker_logs
+    exclude_containers:
+      - "{{ .VectorId }}"
 
 transforms:
   project_logs:
     type: remap
     inputs:
-      - docker_syslog
+      - docker_host
     source: |-
       .project = "default"
       .event_message = del(.message)
-      del(.procid)
-      del(.source_id)
+      .appname = del(.container_name)
+      del(.container_created_at)
+      del(.container_id)
       del(.source_type)
-      del(.facility)
+      del(.stream)
+      del(.label)
+      del(.image)
       del(.host)
-      del(.id)
+      del(.stream)
   router:
     type: route
     inputs:
@@ -35,7 +37,7 @@ transforms:
       storage: '.appname == "{{ .StorageId }}"'
       functions: '.appname == "{{ .EdgeRuntimeId }}"'
       db: '.appname == "{{ .DbId }}"'
-  # Kong logs only include api requests
+  # Ignores non nginx errors since they are related with kong booting up
   kong_logs:
     type: remap
     inputs:
@@ -52,7 +54,10 @@ transforms:
           .metadata.request.protocol = req.protocol
           .metadata.response.status_code = req.status
       }
-  # TODO: create a separate page and filter for kong error logs
+      if err != null {
+        abort
+      }
+  # Ignores non nginx errors since they are related with kong booting up
   kong_err:
     type: remap
     inputs:
@@ -72,6 +77,9 @@ transforms:
               .metadata.request.path = url[1]
               .metadata.request.protocol = url[2]
           }
+      }
+      if err != null {
+        abort
       }
   # Gotrue logs are structured json strings which frontend parses directly. But we keep metadata for consistency.
   auth_logs:
@@ -126,7 +134,6 @@ transforms:
           .metadata.context[0].pid = parsed.pid
       }
   # Postgres logs some messages to stderr which we map to warning severity level
-  # TODO: parse raw postgres logs via regex
   db_logs:
     type: remap
     inputs:
@@ -134,11 +141,20 @@ transforms:
     source: |-
       .metadata.host = "db-default"
       .metadata.parsed.timestamp = .timestamp
-      .metadata.parsed.error_severity = replace!(.severity, r'^err$', "warning")
+
+      parsed, err = parse_regex(.event_message, r'.*(?P<level>INFO|NOTICE|WARNING|ERROR|LOG|FATAL|PANIC?):.*', numeric_groups: true)
+
+      if err != null || parsed == null {
+        .metadata.parsed.error_severity = "info"
+      }
+      if parsed != null {
+       .metadata.parsed.error_severity = parsed.level
+      }
       if .metadata.parsed.error_severity == "info" {
           .metadata.parsed.error_severity = "log"
       }
-      .metadata.parsed.error_severity = upcase(.metadata.parsed.error_severity)
+      .metadata.parsed.error_severity = upcase!(.metadata.parsed.error_severity)
+
 sinks:
   logflare_auth:
     type: "http"
@@ -179,20 +195,7 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    # We must route the sink through kong because ingesting logs before logflare is fully initialized will
-    # lead to broken queries from studio. This works by the assumption that containers are started in the
-    # following order: vector > db > logflare > kong
-    uri: "http://{{ .KongId }}:8000/analytics/v1/api/logs?source_name=postgres.logs&api_key={{ .ApiKey }}"
-  logflare_storage:
-    type: "http"
-    inputs:
-      - storage_logs
-    encoding:
-      codec: "json"
-    method: "post"
-    request:
-      retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=storage.logs.prod.2&api_key={{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=postgres.logs&api_key={{ .ApiKey }}"
   logflare_functions:
     type: "http"
     inputs:
@@ -203,10 +206,21 @@ sinks:
     request:
       retry_max_duration_secs: 10
     uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=deno-relay-logs&api_key={{ .ApiKey }}"
+  logflare_storage:
+    type: "http"
+    inputs:
+      - storage_logs
+    encoding:
+      codec: "json"
+    method: "post"
+    request:
+      retry_max_duration_secs: 10
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=storage.logs.prod.2&api_key={{ .ApiKey }}"
   logflare_kong:
     type: "http"
     inputs:
       - kong_logs
+      - kong_err
     encoding:
       codec: "json"
     method: "post"

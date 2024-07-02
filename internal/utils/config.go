@@ -373,10 +373,17 @@ type (
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		ImageTransformation imageTransformation  `toml:"image_transformation"`
+		Buckets             map[string]bucket    `toml:"buckets"`
 	}
 
 	imageTransformation struct {
 		Enabled bool `toml:"enabled"`
+	}
+
+	bucket struct {
+		Public           bool        `toml:"public"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
 	}
 
 	storageS3Credentials struct {
@@ -516,11 +523,12 @@ type (
 		Enabled          bool            `toml:"enabled"`
 		Port             uint16          `toml:"port"`
 		Backend          LogflareBackend `toml:"backend"`
-		VectorPort       uint16          `toml:"vector_port"`
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		// Deprecated together with syslog
+		VectorPort uint16 `toml:"vector_port"`
 	}
 
 	experimental struct {
@@ -607,7 +615,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 	{
 		if Config.ProjectId == "" {
 			return errors.New("Missing required field in config: project_id")
+		} else if sanitized := sanitizeProjectId(Config.ProjectId); sanitized != Config.ProjectId {
+			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
+			Config.ProjectId = sanitized
 		}
+
 		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
@@ -893,11 +905,23 @@ func maybeLoadEnv(s string) (string, error) {
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
+func truncateText(text string, maxLen int) string {
+	if len(text) > maxLen {
+		return text[:maxLen]
+	}
+	return text
+}
+
+const maxProjectIdLength = 40
+
 func sanitizeProjectId(src string) string {
 	// A valid project ID must only contain alphanumeric and special characters _.-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	return strings.TrimLeft(sanitized, "_.-")
+	sanitized = strings.TrimLeft(sanitized, "_.-")
+	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
+	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
+	return truncateText(sanitized, maxProjectIdLength)
 }
 
 type InitParams struct {

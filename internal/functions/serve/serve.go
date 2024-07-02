@@ -15,7 +15,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
@@ -177,10 +176,10 @@ EOF
 			WorkingDir:   utils.DockerDenoDir,
 			// No tcp health check because edge runtime logs them as client connection error
 		},
-		start.WithSyslogConfig(container.HostConfig{
+		container.HostConfig{
 			Binds:        binds,
 			PortBindings: portBindings,
-		}),
+		},
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				utils.NetId: {

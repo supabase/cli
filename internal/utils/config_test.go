@@ -2,6 +2,7 @@ package utils
 
 import (
 	_ "embed"
+	"strings"
 	"testing"
 	"text/template"
 
@@ -135,6 +136,9 @@ func TestSanitizeProjectI(t *testing.T) {
 	assert.Equal(t, "abc", sanitizeProjectId("_@abc"))
 	// Replaces consecutive invalid characters with a single _
 	assert.Equal(t, "a_bc-", sanitizeProjectId("a@@bc-"))
+	// Truncates to less than 40 characters
+	sanitized := strings.Repeat("a", maxProjectIdLength)
+	assert.Equal(t, sanitized, sanitizeProjectId(sanitized+"bb"))
 }
 
 const (

@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -22,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
@@ -118,6 +120,7 @@ var (
 
 type vectorConfig struct {
 	ApiKey        string
+	VectorId      string
 	LogflareId    string
 	KongId        string
 	GotrueId      string
@@ -159,64 +162,6 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	// Start vector
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
-		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:        utils.Config.Analytics.ApiKey,
-			LogflareId:    utils.LogflareId,
-			KongId:        utils.KongId,
-			GotrueId:      utils.GotrueId,
-			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
-			StorageId:     utils.StorageId,
-			EdgeRuntimeId: utils.EdgeRuntimeId,
-			DbId:          utils.DbId,
-		}); err != nil {
-			return errors.Errorf("failed to exec template: %w", err)
-		}
-		p.Send(utils.StatusMsg("Starting syslog driver..."))
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image: utils.VectorImage,
-				Env: []string{
-					"VECTOR_CONFIG=/etc/vector/vector.yaml",
-				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
-` + vectorConfigBuf.String() + `
-EOF
-`},
-				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
-						"http://127.0.0.1:9001/health",
-					},
-					Interval: 10 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  3,
-				},
-				ExposedPorts: nat.PortSet{"9000/tcp": {}},
-			},
-			container.HostConfig{
-				PortBindings:  nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.VectorPort), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
-			},
-			network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					utils.NetId: {
-						Aliases: utils.VectorAliases,
-					},
-				},
-			},
-			utils.VectorId,
-		); err != nil {
-			return err
-		}
-		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.VectorId); err != nil {
-			return err
-		}
-	}
-
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
@@ -226,6 +171,8 @@ EOF
 	}
 
 	var started []string
+	p.Send(utils.StatusMsg("Starting containers..."))
+
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
 		env := []string{
@@ -307,13 +254,77 @@ EOF
 		); err != nil {
 			return err
 		}
-		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.LogflareId); err != nil {
+		started = append(started, utils.LogflareId)
+	}
+
+	// Start vector
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+		var vectorConfigBuf bytes.Buffer
+		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+			ApiKey:        utils.Config.Analytics.ApiKey,
+			VectorId:      utils.VectorId,
+			LogflareId:    utils.LogflareId,
+			KongId:        utils.KongId,
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.RealtimeId,
+			StorageId:     utils.StorageId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			DbId:          utils.DbId,
+		}); err != nil {
+			return errors.Errorf("failed to exec template: %w", err)
+		}
+		var binds []string
+		env := []string{
+			"VECTOR_CONFIG=/etc/vector/vector.yaml",
+		}
+		// Special case for GitLab pipeline
+		host := utils.Docker.DaemonHost()
+		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
+			env = append(env, "DOCKER_HOST="+host)
+		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
+			if host != client.DefaultDockerHost {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
+			}
+			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+		}
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.VectorImage,
+				Env:   env,
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+` + vectorConfigBuf.String() + `
+EOF
+`},
+				Healthcheck: &container.HealthConfig{
+					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+						"http://127.0.0.1:9001/health",
+					},
+					Interval: 10 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  3,
+				},
+			},
+			container.HostConfig{
+				Binds:         binds,
+				RestartPolicy: container.RestartPolicy{Name: "always"},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.VectorAliases,
+					},
+				},
+			},
+			utils.VectorId,
+		); err != nil {
 			return err
 		}
+		started = append(started, utils.VectorId)
 	}
 
 	// Start Kong.
-	p.Send(utils.StatusMsg("Starting containers..."))
 	if !isContainerExcluded(utils.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
@@ -370,11 +381,11 @@ EOF
 EOF
 `},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				Binds:         binds,
 				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -606,9 +617,9 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -678,18 +689,13 @@ EOF
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"FLY_APP_NAME=realtime",
+					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-					"ENABLE_TAILSCALE=false",
 					"DNS_NODES=''",
-					"RLIMIT_NOFILE=",
+					"RLIMIT_NOFILE=10000",
+					"SEED_SELF_HOST=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-				},
-				// TODO: remove this after deprecating PG14
-				Cmd: []string{
-					"/bin/sh", "-c",
-					"/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server",
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
@@ -703,9 +709,9 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -737,9 +743,9 @@ EOF
 				},
 				// PostgREST does not expose a shell for health check
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -793,10 +799,10 @@ EOF
 					Retries:  3,
 				},
 			},
-			start.WithSyslogConfig(container.HostConfig{
+			container.HostConfig{
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
-			}),
+			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
@@ -869,7 +875,6 @@ EOF
 					"PG_META_DB_USER=" + dbConfig.User,
 					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
@@ -906,6 +911,7 @@ EOF
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
@@ -1017,6 +1023,17 @@ EOF
 	}
 
 	p.Send(utils.StatusMsg("Waiting for health checks..."))
+	if utils.NoBackupVolume && utils.SliceContains(started, utils.StorageId) {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
+			return err
+		}
+		// Disable prompts when seeding
+		console := utils.NewConsole()
+		console.IsTTY = false
+		if err := buckets.Run(ctx, console); err != nil {
+			return err
+		}
+	}
 	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
 

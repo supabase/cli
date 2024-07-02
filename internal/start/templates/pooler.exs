@@ -1,4 +1,4 @@
-Application.ensure_all_started(:supavisor)
+{:ok, _} = Application.ensure_all_started(:supavisor)
 
 {:ok, version} =
   case Supavisor.Repo.query!("select version()") do
