@@ -52,8 +52,11 @@ var (
 	}
 
 	lang = utils.EnumFlag{
-		Allowed: types.SupportedLanguages,
-		Value:   types.SupportedLanguages[0],
+		Allowed: []string{
+			types.LangTypescript,
+			types.LangGo,
+		},
+		Value: types.LangTypescript,
 	}
 	postgrestV9Compat bool
 
@@ -89,7 +92,7 @@ var (
 		Use:        "typescript",
 		Short:      "Generate types for TypeScript",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			lang.Value = types.SupportedLanguages[0]
+			lang.Value = types.LangTypescript
 			return cmd.Parent().PreRunE(cmd, args)
 		},
 		RunE: genTypesCmd.RunE,

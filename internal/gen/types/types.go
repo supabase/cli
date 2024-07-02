@@ -16,10 +16,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-var SupportedLanguages = []string{
-	"typescript",
-	"go",
-}
+const (
+	LangTypescript = "typescript"
+	LangGo         = "go"
+)
 
 func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
@@ -30,6 +30,9 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	included := strings.Join(schemas, ",")
 
 	if projectId != "" {
+		if lang != LangTypescript {
+			return errors.Errorf("Unable to generate %s types for selected project. Try using --db-url flag instead.", lang)
+		}
 		resp, err := utils.GetSupabase().V1GenerateTypescriptTypesWithResponse(ctx, projectId, &api.V1GenerateTypescriptTypesParams{
 			IncludedSchemas: &included,
 		})
