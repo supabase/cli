@@ -19,9 +19,15 @@ import (
 const (
 	LangTypescript = "typescript"
 	LangGo         = "go"
+	LangSwift      = "swift"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+const (
+	SwiftPublicAccessControl   = "public"
+	SwiftInternalAccessControl = "internal"
+)
+
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -86,6 +92,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 				"PG_META_DB_URL=" + escaped,
 				"PG_META_GENERATE_TYPES=" + lang,
 				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
+				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
 				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
 			},
 			Cmd: []string{"node", "dist/server/server.js"},
