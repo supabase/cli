@@ -874,7 +874,6 @@ EOF
 					"PG_META_DB_USER=" + dbConfig.User,
 					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
@@ -911,6 +910,7 @@ EOF
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
