@@ -1027,7 +1027,10 @@ EOF
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err
 		}
-		if err := buckets.Run(ctx); err != nil {
+		// Disable prompts when seeding
+		console := utils.NewConsole()
+		console.IsTTY = false
+		if err := buckets.Run(ctx, console); err != nil {
 			return err
 		}
 	}
