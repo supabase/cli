@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
@@ -1022,6 +1023,14 @@ EOF
 	}
 
 	p.Send(utils.StatusMsg("Waiting for health checks..."))
+	if utils.NoBackupVolume && utils.SliceContains(started, utils.StorageId) {
+		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
+			return err
+		}
+		if err := buckets.Run(ctx); err != nil {
+			return err
+		}
+	}
 	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
 

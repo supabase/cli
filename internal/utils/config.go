@@ -373,10 +373,17 @@ type (
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		ImageTransformation imageTransformation  `toml:"image_transformation"`
+		Buckets             map[string]bucket    `toml:"buckets"`
 	}
 
 	imageTransformation struct {
 		Enabled bool `toml:"enabled"`
+	}
+
+	bucket struct {
+		Public           bool        `toml:"public"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
 	}
 
 	storageS3Credentials struct {
