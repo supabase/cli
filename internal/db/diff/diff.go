@@ -144,7 +144,7 @@ func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")
+	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "supabase_db_shadow")
 }
 
 func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
