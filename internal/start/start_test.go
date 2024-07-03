@@ -167,10 +167,10 @@ func TestDatabaseStart(t *testing.T) {
 					},
 				}})
 		}
-		gock.New("127.0.0.1").
+		gock.New(utils.GetApiUrl("")).
 			Head("/rest-admin/v1/ready").
 			Reply(http.StatusOK)
-		gock.New("127.0.0.1").
+		gock.New(utils.GetApiUrl("")).
 			Head("/functions/v1/_internal/health").
 			Reply(http.StatusOK)
 		// Seed tenant services
@@ -183,7 +183,7 @@ func TestDatabaseStart(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		gock.New("127.0.0.1").
+		gock.New(utils.GetApiUrl("")).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})

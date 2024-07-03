@@ -2,6 +2,9 @@ package status
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,6 +133,41 @@ func IsServiceReady(ctx context.Context, container string) error {
 }
 
 var (
+	//go:embed kong.local.crt
+	KongCert string
+	//go:embed kong.local.key
+	KongKey string
+)
+
+// To regenerate local certificate pair:
+//
+//	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
+//	  -nodes -keyout kong.local.key -out kong.local.crt -subj "/CN=localhost" \
+//	  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+func NewKongClient() *http.Client {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+			pool = x509.NewCertPool()
+		}
+		// No need to replace TLS config if we fail to append cert
+		if pool.AppendCertsFromPEM([]byte(KongCert)) {
+			rt := t.Clone()
+			rt.TLSClientConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    pool,
+			}
+			client.Transport = rt
+		}
+	}
+	return client
+}
+
+var (
 	healthClient *fetcher.Fetcher
 	healthOnce   sync.Once
 )
@@ -140,9 +178,7 @@ func checkHTTPHead(ctx context.Context, path string) error {
 		header := func(req *http.Request) {
 			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
 		}
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
+		client := NewKongClient()
 		healthClient = fetcher.NewFetcher(
 			server,
 			fetcher.WithHTTPClient(client),

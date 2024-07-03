@@ -713,6 +713,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
 			}
+			if parsed, err := url.Parse(Config.Studio.ApiUrl); err != nil {
+				return errors.Errorf("Invalid config for studio.api_url: %w", err)
+			} else if parsed.Host == "" || parsed.Host == Config.Hostname {
+				Config.Studio.ApiUrl = GetApiUrl("")
+			}
 			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
 				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
 			}

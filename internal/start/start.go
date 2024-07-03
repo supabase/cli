@@ -377,11 +377,22 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
+					// Use modern TLS certificate
+					"KONG_SSL_CERT=/home/kong/localhost.crt",
+					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && \
+cat <<'EOF' > /home/kong/custom_nginx.template && \
+cat <<'EOF' > /home/kong/localhost.crt && \
+cat <<'EOF' > /home/kong/localhost.key && \
+./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
 EOF
 ` + nginxConfigEmbed + `
+EOF
+` + status.KongCert + `
+EOF
+` + status.KongKey + `
 EOF
 `},
 			},
@@ -913,7 +924,7 @@ EOF
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
+					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
