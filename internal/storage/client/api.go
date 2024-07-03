@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
@@ -12,7 +11,7 @@ import (
 )
 
 func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, error) {
-	server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+	server := utils.GetApiUrl("")
 	token := utils.Config.Auth.ServiceRoleKey
 	if len(projectRef) > 0 {
 		server = "https://" + utils.GetSupabaseHost(projectRef)

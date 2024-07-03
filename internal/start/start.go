@@ -358,6 +358,10 @@ EOF
 			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
 		}
 
+		dockerPort := uint16(8000)
+		if utils.Config.Api.Tls.Enabled {
+			dockerPort = 8443
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -383,10 +387,9 @@ EOF
 			},
 			container.HostConfig{
 				Binds: binds,
-				PortBindings: nat.PortMap{
-					"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}},
-					"8443/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.HttpsPort), 10)}},
-				},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -411,7 +414,7 @@ EOF
 		}
 
 		env := []string{
-			fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port),
+			"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -428,7 +431,7 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-			fmt.Sprintf("GOTRUE_JWT_ISSUER=http://%s:%d/auth/v1", utils.Config.Hostname, utils.Config.Api.Port),
+			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -444,13 +447,10 @@ EOF
 			fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-			// TODO: To be reverted to `/auth/v1/verify` once
-			// https://github.com/supabase/supabase/issues/16100
-			// is fixed on upstream GoTrue.
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
+			"GOTRUE_MAILER_URLPATHS_INVITE=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_RECOVERY=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -594,7 +594,7 @@ EOF
 				)
 			} else {
 				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://%s:%d/auth/v1/callback", strings.ToUpper(name), utils.Config.Hostname, utils.Config.Api.Port),
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), utils.GetApiUrl("/auth/v1/callback")),
 				)
 			}
 

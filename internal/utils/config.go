@@ -4,10 +4,12 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -313,10 +315,14 @@ type (
 		Enabled         bool     `toml:"enabled"`
 		Image           string   `toml:"-"`
 		Port            uint16   `toml:"port"`
-		HttpsPort       uint16   `toml:"https_port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
+		Tls             tlsKong  `toml:"tls"`
+	}
+
+	tlsKong struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	db struct {
@@ -1012,4 +1018,17 @@ func validateHookURI(uri, hookName string) error {
 		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
+}
+
+func GetApiUrl(path string) string {
+	host := net.JoinHostPort(Config.Hostname,
+		strconv.FormatUint(uint64(Config.Api.Port), 10),
+	)
+	apiUrl := url.URL{Host: host, Path: path}
+	if Config.Api.Tls.Enabled {
+		apiUrl.Scheme = "https"
+	} else {
+		apiUrl.Scheme = "http"
+	}
+	return apiUrl.String()
 }
