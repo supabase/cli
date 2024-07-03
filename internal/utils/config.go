@@ -189,6 +189,7 @@ const (
 )
 
 var Config = config{
+	Hostname: GetHostname(),
 	Api: api{
 		Image: PostgrestImage,
 	},
@@ -626,8 +627,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
 			Config.ProjectId = sanitized
 		}
-
-		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
 		if Config.Api.Port == 0 {
