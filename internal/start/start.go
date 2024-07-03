@@ -382,8 +382,11 @@ EOF
 `},
 			},
 			container.HostConfig{
-				Binds:         binds,
-				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
+				Binds: binds,
+				PortBindings: nat.PortMap{
+					"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}},
+					"8443/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.HttpsPort), 10)}},
+				},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{

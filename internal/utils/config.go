@@ -313,6 +313,7 @@ type (
 		Enabled         bool     `toml:"enabled"`
 		Image           string   `toml:"-"`
 		Port            uint16   `toml:"port"`
+		HttpsPort       uint16   `toml:"https_port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
