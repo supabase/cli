@@ -4,10 +4,12 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -187,6 +189,7 @@ const (
 )
 
 var Config = config{
+	Hostname: GetHostname(),
 	Api: api{
 		Image: PostgrestImage,
 	},
@@ -316,6 +319,11 @@ type (
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
+		Tls             tlsKong  `toml:"tls"`
+	}
+
+	tlsKong struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	db struct {
@@ -619,8 +627,6 @@ func LoadConfigFS(fsys afero.Fs) error {
 			fmt.Fprintln(os.Stderr, Yellow("WARNING:"), "project_id field in config is invalid. Auto-fixing to", Aqua(sanitized))
 			Config.ProjectId = sanitized
 		}
-
-		Config.Hostname = GetHostname()
 		UpdateDockerIds()
 		// Validate api config
 		if Config.Api.Port == 0 {
@@ -706,6 +712,11 @@ func LoadConfigFS(fsys afero.Fs) error {
 		if Config.Studio.Enabled {
 			if Config.Studio.Port == 0 {
 				return errors.New("Missing required field in config: studio.port")
+			}
+			if parsed, err := url.Parse(Config.Studio.ApiUrl); err != nil {
+				return errors.Errorf("Invalid config for studio.api_url: %w", err)
+			} else if parsed.Host == "" || parsed.Host == Config.Hostname {
+				Config.Studio.ApiUrl = GetApiUrl("")
 			}
 			if version, err := afero.ReadFile(fsys, StudioVersionPath); err == nil && len(version) > 0 {
 				Config.Studio.Image = replaceImageTag(StudioImage, string(version))
@@ -1011,4 +1022,17 @@ func validateHookURI(uri, hookName string) error {
 		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
+}
+
+func GetApiUrl(path string) string {
+	host := net.JoinHostPort(Config.Hostname,
+		strconv.FormatUint(uint64(Config.Api.Port), 10),
+	)
+	apiUrl := url.URL{Host: host, Path: path}
+	if Config.Api.Tls.Enabled {
+		apiUrl.Scheme = "https"
+	} else {
+		apiUrl.Scheme = "http"
+	}
+	return apiUrl.String()
 }

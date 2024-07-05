@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
   1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
   2. Make an HTTP request:
 
-  curl -i --location --request POST 'http://127.0.0.1:{{ .Port }}/functions/v1/{{ .Slug }}' \
+  curl -i --location --request POST '{{ .URL }}' \
     --header 'Authorization: Bearer {{ .Token }}' \
     --header 'Content-Type: application/json' \
     --data '{"name":"Functions"}'

@@ -250,7 +250,7 @@ func initSchema15(ctx context.Context, host string) error {
 		return err
 	}
 	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
-		fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", host, utils.Config.Api.Port),
+		"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
 		"GOTRUE_LOG_LEVEL=error",
 		"GOTRUE_DB_DRIVER=postgres",
 		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
