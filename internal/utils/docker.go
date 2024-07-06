@@ -325,12 +325,19 @@ func DockerRemove(containerId string) {
 	}
 }
 
+type DockerJob struct {
+	Image string
+	Env   []string
+	Cmd   []string
+}
+
+func DockerRunJob(ctx context.Context, job DockerJob, stdout, stderr io.Writer) error {
+	return DockerRunOnceWithStream(ctx, job.Image, job.Env, job.Cmd, stdout, stderr)
+}
+
 // Runs a container image exactly once, returning stdout and throwing error on non-zero exit code.
 func DockerRunOnce(ctx context.Context, image string, env []string, cmd []string) (string, error) {
-	stderr := io.Discard
-	if viper.GetBool("DEBUG") {
-		stderr = os.Stderr
-	}
+	stderr := GetDebugLogger()
 	var out bytes.Buffer
 	err := DockerRunOnceWithStream(ctx, image, env, cmd, &out, stderr)
 	return out.String(), err

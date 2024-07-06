@@ -209,54 +209,87 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
 }
 
+func initRealtimeJob(host string) utils.DockerJob {
+	return utils.DockerJob{
+		Image: utils.Config.Realtime.Image,
+		Env: []string{
+			"PORT=4000",
+			"DB_HOST=" + host,
+			"DB_PORT=5432",
+			"DB_USER=supabase_admin",
+			"DB_PASSWORD=" + utils.Config.Db.Password,
+			"DB_NAME=postgres",
+			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"APP_NAME=realtime",
+			"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+			"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
+			"DNS_NODES=''",
+			"RLIMIT_NOFILE=10000",
+			"SEED_SELF_HOST=true",
+			fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
+		},
+		Cmd: []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
+{:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)},
+	}
+}
+
+func initStorageJob(host string) utils.DockerJob {
+	return utils.DockerJob{
+		Image: utils.Config.Storage.Image,
+		Env: []string{
+			"DB_INSTALL_ROLES=false",
+			"ANON_KEY=" + utils.Config.Auth.AnonKey,
+			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
+			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+			fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+			"STORAGE_BACKEND=file",
+			"TENANT_ID=stub",
+			// TODO: https://github.com/supabase/storage-api/issues/55
+			"REGION=stub",
+			"GLOBAL_S3_BUCKET=stub",
+		},
+		Cmd: []string{"node", "dist/scripts/migrate-call.js"},
+	}
+}
+
+func initAuthJob(host string) utils.DockerJob {
+	return utils.DockerJob{
+		Image: utils.Config.Auth.Image,
+		Env: []string{
+			"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
+			"GOTRUE_LOG_LEVEL=error",
+			"GOTRUE_DB_DRIVER=postgres",
+			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
+			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		},
+		Cmd: []string{"gotrue", "migrate"},
+	}
+}
+
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
+	var initJobs []utils.DockerJob
+	if utils.Config.Realtime.Enabled {
+		initJobs = append(initJobs, initRealtimeJob(host))
+	}
+	if utils.Config.Storage.Enabled {
+		initJobs = append(initJobs, initStorageJob(host))
+	}
+	if utils.Config.Auth.Enabled {
+		initJobs = append(initJobs, initAuthJob(host))
+	}
 	logger := utils.GetDebugLogger()
-	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Realtime.Image, []string{
-		"PORT=4000",
-		"DB_HOST=" + host,
-		"DB_PORT=5432",
-		"DB_USER=supabase_admin",
-		"DB_PASSWORD=" + utils.Config.Db.Password,
-		"DB_NAME=postgres",
-		"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-		"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
-		"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		"APP_NAME=realtime",
-		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
-		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-		"DNS_NODES=''",
-		"RLIMIT_NOFILE=10000",
-		"SEED_SELF_HOST=true",
-		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-	}, []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
-{:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)}, io.Discard, logger); err != nil {
-		return err
+	for _, job := range initJobs {
+		if err := utils.DockerRunJob(ctx, job, io.Discard, logger); err != nil {
+			return err
+		}
 	}
-	if err := utils.DockerRunOnceWithStream(ctx, utils.Config.Storage.Image, []string{
-		"DB_INSTALL_ROLES=false",
-		"ANON_KEY=" + utils.Config.Auth.AnonKey,
-		"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-		"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-		fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
-		fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
-		"STORAGE_BACKEND=file",
-		"TENANT_ID=stub",
-		// TODO: https://github.com/supabase/storage-api/issues/55
-		"REGION=stub",
-		"GLOBAL_S3_BUCKET=stub",
-	}, []string{"node", "dist/scripts/migrate-call.js"}, io.Discard, logger); err != nil {
-		return err
-	}
-	return utils.DockerRunOnceWithStream(ctx, utils.Config.Auth.Image, []string{
-		"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
-		"GOTRUE_LOG_LEVEL=error",
-		"GOTRUE_DB_DRIVER=postgres",
-		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
-		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
-		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-	}, []string{"gotrue", "migrate"}, io.Discard, logger)
+	return nil
 }
 
 func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
