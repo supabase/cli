@@ -153,7 +153,8 @@ func Execute() {
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {
 	if shouldFetchRelease(fsys) {
 		version, err := utils.GetLatestRelease(ctx)
-		if exists, _ := afero.DirExists(fsys, utils.SupabaseDirPath); exists && len(version) > 0 {
+		if exists, _ := afero.DirExists(fsys, utils.SupabaseDirPath); exists {
+			// If user is offline, write an empty file to skip subsequent checks
 			err = utils.WriteFile(utils.CliVersionPath, []byte(version), fsys)
 		}
 		return version, err

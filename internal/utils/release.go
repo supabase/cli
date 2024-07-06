@@ -19,8 +19,7 @@ var (
 func GetGtihubClient(ctx context.Context) *github.Client {
 	githubOnce.Do(func() {
 		var client *http.Client
-		token := os.Getenv("GITHUB_TOKEN")
-		if len(token) > 0 {
+		if token := os.Getenv("GITHUB_TOKEN"); len(token) > 0 {
 			ts := oauth2.StaticTokenSource(
 				&oauth2.Token{AccessToken: token},
 			)
