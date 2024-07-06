@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -157,13 +158,15 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 EOF
 `}
 	// 5. Parse exposed ports
-	ports := []string{fmt.Sprintf("::%d/tcp", dockerRuntimeServerPort)}
+	dockerRuntimePort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeServerPort))
+	exposedPorts := nat.PortSet{dockerRuntimePort: struct{}{}}
+	portBindings := nat.PortMap{}
 	if runtimeOption.InspectMode != nil {
-		ports = append(ports, fmt.Sprintf(":%d:%d/tcp", utils.Config.EdgeRuntime.InspectorPort, dockerRuntimeInspectorPort))
-	}
-	exposedPorts, portBindings, err := nat.ParsePortSpecs(ports)
-	if err != nil {
-		return errors.Errorf("failed to expose ports: %w", err)
+		dockerInspectorPort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeInspectorPort))
+		exposedPorts[dockerInspectorPort] = struct{}{}
+		portBindings[dockerInspectorPort] = []nat.PortBinding{{
+			HostPort: strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10),
+		}}
 	}
 	// 6. Start container
 	_, err = utils.DockerStart(
