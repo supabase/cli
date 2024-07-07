@@ -147,7 +147,8 @@ Deno.serve({
     const servicePath = `${FUNCTIONS_PATH}/${functionName}`;
     console.error(`serving the request with ${servicePath}`);
 
-    const memoryLimitMb = 150;
+    // Ref: https://supabase.com/docs/guides/functions/limits
+    const memoryLimitMb = 256;
     const workerTimeoutMs = isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
