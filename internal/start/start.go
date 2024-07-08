@@ -261,7 +261,7 @@ EOF
 	// Start vector
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
 			VectorId:      utils.VectorId,
 			LogflareId:    utils.LogflareId,
@@ -328,7 +328,7 @@ EOF
 	// Start Kong.
 	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
+		if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
 			RealtimeId:    utils.Config.Realtime.TenantId,
@@ -977,7 +977,7 @@ EOF
 		}
 		// Create pooler tenant
 		var poolerTenantBuf bytes.Buffer
-		if err := poolerTenantTemplate.Execute(&poolerTenantBuf, poolerTenant{
+		if err := poolerTenantTemplate.Option("missingkey=error").Execute(&poolerTenantBuf, poolerTenant{
 			DbHost:            dbConfig.Host,
 			DbPort:            dbConfig.Port,
 			DbDatabase:        dbConfig.Database,
