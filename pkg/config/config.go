@@ -511,7 +511,7 @@ func NewConfig(editors ...ConfigEditor) config {
 }
 
 var (
-	//go:embed templates/init_config.toml
+	//go:embed templates/config.toml
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
