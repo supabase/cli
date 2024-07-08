@@ -23,54 +23,6 @@ var (
 	SentryDsn string
 )
 
-const (
-	Pg13Image = "supabase/postgres:13.3.0"
-	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.1.61"
-	// Append to ServiceImages when adding new dependencies below
-	// TODO: try https://github.com/axllent/mailpit
-	KongImage        = "library/kong:2.8.1"
-	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v12.2.0"
-	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage       = "supabase/migra:3.0.1663481299"
-	PgmetaImage      = "supabase/postgres-meta:v0.83.2"
-	StudioImage      = "supabase/studio:20240701-05dfbec"
-	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.54.10"
-	VectorImage      = "timberio/vector:0.28.1-alpine"
-	SupavisorImage   = "supabase/supavisor:1.1.56"
-	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.151.0"
-	RealtimeImage    = "supabase/realtime:v2.29.15"
-	StorageImage     = "supabase/storage-api:v1.0.6"
-	LogflareImage    = "supabase/logflare:1.4.0"
-	// Should be kept in-sync with EdgeRuntimeImage
-	DenoVersion = "1.30.3"
-)
-
-var ServiceImages = []string{
-	GotrueImage,
-	RealtimeImage,
-	StorageImage,
-	ImageProxyImage,
-	KongImage,
-	InbucketImage,
-	PostgrestImage,
-	PgmetaImage,
-	StudioImage,
-	EdgeRuntimeImage,
-	LogflareImage,
-	VectorImage,
-	SupavisorImage,
-}
-
-var JobImages = []string{
-	DifferImage,
-	MigraImage,
-	PgProveImage,
-}
-
 func ShortContainerImageName(imageName string) string {
 	matches := ImageNamePattern.FindStringSubmatch(imageName)
 	if len(matches) < 2 {

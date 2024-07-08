@@ -1,10 +1,12 @@
 package utils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,9 +112,9 @@ func TestImportMapPath(t *testing.T) {
 
 	t.Run("per function config takes precedence", func(t *testing.T) {
 		slug := "hello"
-		Config.Functions = map[string]function{
-			slug: {ImportMap: "import_map.json"},
-		}
+		config := fmt.Sprintf("[%s]\n", slug)
+		config += `import_map = "import_map.json"`
+		require.NoError(t, toml.Unmarshal([]byte(config), &Config.Functions))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))
@@ -124,9 +126,9 @@ func TestImportMapPath(t *testing.T) {
 
 	t.Run("overrides with cli flag", func(t *testing.T) {
 		slug := "hello"
-		Config.Functions = map[string]function{
-			slug: {ImportMap: "import_map.json"},
-		}
+		config := fmt.Sprintf("[%s]\n", slug)
+		config += `import_map = "import_map.json"`
+		require.NoError(t, toml.Unmarshal([]byte(config), &Config.Functions))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))

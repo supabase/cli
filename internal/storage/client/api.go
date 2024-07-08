@@ -29,7 +29,7 @@ func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, 
 func newLocalClient() *fetcher.Fetcher {
 	client := status.NewKongClient()
 	return fetcher.NewFetcher(
-		utils.GetApiUrl(""),
+		utils.Config.Api.ExternalUrl,
 		fetcher.WithHTTPClient(client),
 		fetcher.WithBearerToken(utils.Config.Auth.ServiceRoleKey),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),

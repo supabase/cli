@@ -32,7 +32,7 @@ func TestGenLocalCommand(t *testing.T) {
 
 	t.Run("generates typescript types", func(t *testing.T) {
 		const containerId = "test-pgmeta"
-		imageUrl := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -90,7 +90,7 @@ func TestGenLocalCommand(t *testing.T) {
 
 	t.Run("generates swift types", func(t *testing.T) {
 		const containerId = "test-pgmeta"
-		imageUrl := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -174,7 +174,7 @@ func TestGenRemoteCommand(t *testing.T) {
 
 	t.Run("generates type from remote db", func(t *testing.T) {
 		const containerId = "test-pgmeta"
-		imageUrl := utils.GetRegistryImageUrl(utils.PgmetaImage)
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

@@ -206,7 +206,11 @@ func initSchema14(ctx context.Context, conn *pgx.Conn) error {
 	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
 		return err
 	}
-	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+	sql := utils.InitialSchemaPg14Sql
+	if utils.Config.Db.MajorVersion == 13 {
+		sql = utils.InitialSchemaPg13Sql
+	}
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(sql))
 }
 
 func initRealtimeJob(host string) utils.DockerJob {
@@ -260,7 +264,7 @@ func initAuthJob(host string) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Auth.Image,
 		Env: []string{
-			"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
+			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
 			"GOTRUE_LOG_LEVEL=error",
 			"GOTRUE_DB_DRIVER=postgres",
 			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),

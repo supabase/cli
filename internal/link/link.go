@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	cliConfig "github.com/supabase/cli/pkg/config"
 )
 
 var updatedConfig ConfigCopy
@@ -232,7 +233,7 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
 	copy := utils.Config.Db.Pooler
 	if config.PoolMode != nil {
-		copy.PoolMode = utils.PoolMode(*config.PoolMode)
+		copy.PoolMode = cliConfig.PoolMode(*config.PoolMode)
 	}
 	if config.DefaultPoolSize != nil {
 		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)

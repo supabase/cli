@@ -28,6 +28,7 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
@@ -143,7 +144,7 @@ type poolerTenant struct {
 	DbDatabase        string
 	DbPassword        string
 	ExternalId        string
-	ModeType          utils.PoolMode
+	ModeType          config.PoolMode
 	DefaultMaxClients uint
 	DefaultPoolSize   uint
 }
@@ -174,7 +175,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
 			"DB_DATABASE=" + dbConfig.Database,
 			"DB_HOSTNAME=" + dbConfig.Host,
@@ -194,7 +195,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		bind := []string{}
 
 		switch utils.Config.Analytics.Backend {
-		case utils.LogflareBigQuery:
+		case config.LogflareBigQuery:
 			workdir, err := os.Getwd()
 			if err != nil {
 				return errors.Errorf("failed to get working directory: %w", err)
@@ -207,7 +208,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 				"GOOGLE_PROJECT_ID="+utils.Config.Analytics.GcpProjectId,
 				"GOOGLE_PROJECT_NUMBER="+utils.Config.Analytics.GcpProjectNumber,
 			)
-		case utils.LogflarePostgres:
+		case config.LogflarePostgres:
 			env = append(env,
 				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 				"POSTGRES_BACKEND_SCHEMA=_analytics",
@@ -218,7 +219,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			ctx,
 			container.Config{
 				Hostname: "127.0.0.1",
-				Image:    utils.LogflareImage,
+				Image:    utils.Config.Analytics.Image,
 				Env:      env,
 				// Original entrypoint conflicts with healthcheck due to 15 seconds sleep:
 				// https://github.com/Logflare/logflare/blob/staging/run.sh#L35
@@ -258,7 +259,7 @@ EOF
 	}
 
 	// Start vector
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
@@ -291,7 +292,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.VectorImage,
+				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
 ` + vectorConfigBuf.String() + `
@@ -325,7 +326,7 @@ EOF
 	}
 
 	// Start Kong.
-	if !isContainerExcluded(utils.KongImage, excluded) {
+	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
 		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
@@ -365,7 +366,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.KongImage,
+				Image: utils.Config.Api.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
@@ -395,6 +396,11 @@ EOF
 ` + status.KongKey + `
 EOF
 `},
+				ExposedPorts: nat.PortSet{
+					"8000/tcp": {},
+					"8443/tcp": {},
+					nat.Port(fmt.Sprintf("%d/tcp", nginxTemplateServerPort)): {},
+				},
 			},
 			container.HostConfig{
 				Binds: binds,
@@ -425,7 +431,7 @@ EOF
 		}
 
 		env := []string{
-			"API_EXTERNAL_URL=" + utils.GetApiUrl(""),
+			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -649,7 +655,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.InbucketImage, excluded) {
+	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -660,7 +666,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.InbucketImage,
+				Image: utils.Config.Inbucket.Image,
 			},
 			container.HostConfig{
 				Binds: []string{
@@ -832,11 +838,11 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.ImageProxyImage,
+				Image: utils.Config.Storage.ImageTransformation.Image,
 				Env: []string{
 					"IMGPROXY_BIND=:5001",
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
@@ -868,7 +874,7 @@ EOF
 	}
 
 	// Start all functions.
-	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
@@ -966,7 +972,7 @@ EOF
 		portSession := uint16(5432)
 		portTransaction := uint16(6543)
 		dockerPort := portTransaction
-		if utils.Config.Db.Pooler.PoolMode == utils.SessionMode {
+		if utils.Config.Db.Pooler.PoolMode == config.SessionMode {
 			dockerPort = portSession
 		}
 		// Create pooler tenant
@@ -1059,7 +1065,7 @@ func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 
 func ExcludableContainers() []string {
 	names := []string{}
-	for _, image := range utils.ServiceImages {
+	for _, image := range config.ServiceImages {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names

@@ -181,7 +181,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.EdgeRuntimeImage,
+			Image: utils.Config.EdgeRuntime.Image,
 			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", utils.DockerDenoDir},
 		},
 		container.HostConfig{
