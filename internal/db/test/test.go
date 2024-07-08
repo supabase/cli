@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	cliConfig "github.com/supabase/cli/pkg/config"
 )
 
 const (
@@ -77,7 +78,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.PgProveImage,
+			Image: cliConfig.PgProveImage,
 			Env: []string{
 				"PGHOST=" + config.Host,
 				fmt.Sprintf("PGPORT=%d", config.Port),

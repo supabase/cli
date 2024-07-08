@@ -34,7 +34,7 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), containerId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 		// Run test
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)

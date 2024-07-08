@@ -152,7 +152,11 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+	sql := utils.InitialSchemaPg14Sql
+	if utils.Config.Db.MajorVersion == 13 {
+		sql = utils.InitialSchemaPg13Sql
+	}
+	return apply.BatchExecDDL(ctx, conn, strings.NewReader(sql))
 }
 
 // Recreate postgres database by connecting to template1

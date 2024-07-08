@@ -133,7 +133,7 @@ func bundleFunction(ctx context.Context, slug, hostImportMapPath string, fsys af
 	err = utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.EdgeRuntimeImage,
+			Image: utils.Config.EdgeRuntime.Image,
 			Env:   []string{},
 			Cmd:   cmd,
 		},

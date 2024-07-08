@@ -23,7 +23,7 @@ import (
 
 func TestDeployOne(t *testing.T) {
 	const slug = "test-func"
-	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	imageUrl := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 	utils.EdgeRuntimeId = "test-edge-runtime"
 	const containerId = "test-container"
 
@@ -151,7 +151,7 @@ func TestDeployOne(t *testing.T) {
 
 func TestDeployAll(t *testing.T) {
 	const slug = "test-func"
-	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	imageUrl := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 	utils.EdgeRuntimeId = "test-edge-runtime"
 	const containerId = "test-container"
 
@@ -225,7 +225,7 @@ func TestDeployAll(t *testing.T) {
 
 func TestDeployCommand(t *testing.T) {
 	const slug = "test-func"
-	imageUrl := utils.GetRegistryImageUrl(utils.EdgeRuntimeImage)
+	imageUrl := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 	utils.EdgeRuntimeId = "test-edge-runtime"
 	const containerId = "test-container"
 

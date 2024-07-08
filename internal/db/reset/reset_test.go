@@ -96,11 +96,11 @@ func TestResetCommand(t *testing.T) {
 func TestInitDatabase(t *testing.T) {
 	t.Run("initializes postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
+		conn.Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA")
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
@@ -116,11 +116,11 @@ func TestInitDatabase(t *testing.T) {
 
 	t.Run("throws error on duplicate schema", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
+		conn.Query(utils.InitialSchemaPg14Sql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
 		err := initDatabase(context.Background(), conn.Intercept)

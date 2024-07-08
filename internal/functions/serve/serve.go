@@ -172,7 +172,7 @@ EOF
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
-			Image:        utils.EdgeRuntimeImage,
+			Image:        utils.Config.EdgeRuntime.Image,
 			Env:          env,
 			Entrypoint:   entrypoint,
 			ExposedPorts: exposedPorts,
@@ -221,7 +221,7 @@ func populatePerFunctionConfigs(importMapPath string, noVerifyJWT *bool, fsys af
 	}
 
 	binds := []string{}
-	functionsConfig := make(map[string]interface{}, len(slugs))
+	functionsConfig := make(map[string]utils.FunctionConfig, len(slugs))
 	for _, functionName := range slugs {
 		fc := utils.GetFunctionConfig(functionName, importMapPath, noVerifyJWT, fsys)
 		if fc.ImportMap != "" {

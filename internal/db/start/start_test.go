@@ -52,7 +52,6 @@ func TestInitBranch(t *testing.T) {
 func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
-		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
@@ -79,11 +78,11 @@ func TestStartDatabase(t *testing.T) {
 					Health:  &types.Health{Status: "healthy"},
 				},
 			}})
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Storage.Image), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -105,7 +104,6 @@ func TestStartDatabase(t *testing.T) {
 
 	t.Run("recover from backup volume", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
-		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
@@ -141,7 +139,6 @@ func TestStartDatabase(t *testing.T) {
 
 	t.Run("throws error on start failure", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
-		utils.Config.Db.Image = utils.Pg15Image
 		utils.DbId = "supabase_db_test"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -222,7 +219,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Pg15Image) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Cleanup resources
 		apitest.MockDockerStop(utils.Docker)
@@ -244,7 +241,7 @@ func TestSetupDatabase(t *testing.T) {
 		}()
 		utils.Config.Db.Port = 5432
 		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaSql = "create schema private"
+		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		roles := "create role postgres"
@@ -254,7 +251,7 @@ func TestSetupDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaSql).
+			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
 			Query(roles).
 			Reply("CREATE ROLE")
@@ -279,7 +276,7 @@ func TestSetupDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.RealtimeImage) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Realtime.Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -298,11 +295,11 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.RealtimeImage), "test-realtime")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.StorageImage), "test-storage")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Storage.Image), "test-storage")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.GotrueImage), "test-auth")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		// Setup mock postgres
 		conn := pgtest.NewConn()

@@ -41,7 +41,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
 	}
 	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
-		values[c.ApiURL] = utils.GetApiUrl("")
+		values[c.ApiURL] = utils.Config.Api.ExternalUrl
 		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
 	}
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
@@ -52,7 +52,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
-	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
+	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
@@ -174,7 +174,7 @@ var (
 
 func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
-		server := utils.GetApiUrl("")
+		server := utils.Config.Api.ExternalUrl
 		header := func(req *http.Request) {
 			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
 		}

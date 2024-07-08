@@ -31,6 +31,8 @@ var (
 const (
 	DockerDenoDir  = "/home/deno"
 	DockerEszipDir = "/root/eszips"
+	// Legacy bundle option
+	DenoVersion = "1.30.3"
 )
 
 func GetDenoPath() (string, error) {
@@ -283,8 +285,17 @@ func (m *ImportMap) BindHostModules() []string {
 	return binds
 }
 
-func GetFunctionConfig(slug, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) function {
-	fc := Config.Functions[slug]
+type FunctionConfig struct {
+	VerifyJWT *bool  `json:"verifyJWT"`
+	ImportMap string `json:"importMapPath,omitempty"`
+}
+
+func GetFunctionConfig(slug, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) FunctionConfig {
+	fc := FunctionConfig{}
+	if c, ok := Config.Functions[slug]; ok {
+		fc.VerifyJWT = c.VerifyJWT
+		fc.ImportMap = c.ImportMap
+	}
 	// Precedence order: CLI flags > config.toml > fallback value
 	if noVerifyJWT != nil {
 		value := !*noVerifyJWT

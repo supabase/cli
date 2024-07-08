@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-github/v62/github"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/tools/shared"
 	"gopkg.in/yaml.v3"
 )
@@ -60,7 +61,7 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 }
 
 func getStableVersions() map[string]string {
-	images := append([]string{utils.Pg15Image}, utils.ServiceImages...)
+	images := append([]string{config.Pg15Image}, config.ServiceImages...)
 	result := make(map[string]string, len(images))
 	for _, img := range images {
 		parts := strings.Split(img, ":")

@@ -477,8 +477,3 @@ func suggestDockerStop(ctx context.Context, hostPort string) string {
 	}
 	return ""
 }
-
-func replaceImageTag(image string, tag string) string {
-	index := strings.IndexByte(image, ':')
-	return image[:index+1] + strings.TrimSpace(tag)
-}

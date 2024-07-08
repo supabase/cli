@@ -23,7 +23,7 @@ var dbConfig = pgconn.Config{
 }
 
 func TestPullCommand(t *testing.T) {
-	imageUrl := utils.GetRegistryImageUrl(utils.Pg15Image)
+	imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 	const containerId = "test-container"
 
 	t.Run("pulls from remote", func(t *testing.T) {
