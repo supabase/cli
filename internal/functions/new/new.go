@@ -52,7 +52,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			URL:   utils.GetApiUrl("/functions/v1/" + slug),
 			Token: utils.Config.Auth.AnonKey,
 		}
-		if err := indexTemplate.Execute(f, config); err != nil {
+		if err := indexTemplate.Option("missingkey=error").Execute(f, config); err != nil {
 			return errors.Errorf("failed to initialise function entrypoint: %w", err)
 		}
 	}

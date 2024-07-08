@@ -112,7 +112,7 @@ func updatePackage(ctx context.Context, client *github.Client, repo, path string
 	fmt.Fprintf(os.Stderr, "Updating %s: %s\n", repo, path)
 	// Render formula from template
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, config); err != nil {
+	if err := tmpl.Option("missingkey=error").Execute(&buf, config); err != nil {
 		return err
 	}
 	branch := "release/cli"
