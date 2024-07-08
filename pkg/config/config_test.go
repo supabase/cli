@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:embed templates/init_config.test.toml
+//go:embed testdata/config.toml
 var testInitConfigEmbed []byte
 
 func TestConfigParsing(t *testing.T) {
