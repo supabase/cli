@@ -1,0 +1,1 @@
+create role developer_role with login password 'developer'
