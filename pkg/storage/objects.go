@@ -77,6 +77,7 @@ func ParseFileOptions(f afero.File, opts ...func(*FileOptions)) (*FileOptions, e
 			return nil, errors.Errorf("failed to read file: %w", err)
 		}
 		fo.ContentType = http.DetectContentType(buf)
+		// TODO: handle cases where file is not seekable
 		_, err = f.Seek(0, io.SeekStart)
 		if err != nil {
 			return nil, errors.Errorf("failed to seek file: %w", err)

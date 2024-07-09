@@ -1,0 +1,1 @@
+INSERT INTO employees(name) VALUES ('Alice')
