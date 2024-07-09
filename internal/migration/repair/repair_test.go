@@ -20,7 +20,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
+	"github.com/supabase/cli/pkg/parser"
 )
 
 var dbConfig = pgconn.Config{

@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/pgxv5"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 //go:embed total_index_size.sql
