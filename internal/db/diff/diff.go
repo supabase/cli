@@ -28,7 +28,7 @@ import (
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
+	"github.com/supabase/cli/pkg/parser"
 )
 
 type DiffFunc func(context.Context, string, string, []string) (string, error)

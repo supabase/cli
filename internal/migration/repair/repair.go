@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/parser"
+	"github.com/supabase/cli/pkg/parser"
 )
 
 const (

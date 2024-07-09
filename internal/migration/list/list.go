@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/pgxv5"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 const LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"

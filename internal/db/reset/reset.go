@@ -22,7 +22,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/pgxv5"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 var (
