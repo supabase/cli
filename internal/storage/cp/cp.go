@@ -12,7 +12,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/storage/client"
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
@@ -106,6 +105,7 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 	}); err != nil {
 		return err
 	}
+	config := utils.Config.Storage.GetBucketConfig()
 	baseName := filepath.Base(localPath)
 	jq := utils.NewJobQueue(maxJobs)
 	err := afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
@@ -138,9 +138,9 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 			if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 				// Retry after creating bucket
 				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
-					body := storage.CreateBucketRequest{
-						Name:        bucket,
-						BucketProps: buckets.NewBucketProps(bucket),
+					body := storage.CreateBucketRequest{Name: bucket}
+					if props, ok := config[bucket]; ok {
+						body.BucketProps = &props
 					}
 					if _, err := api.CreateBucket(ctx, body); err != nil {
 						return err
