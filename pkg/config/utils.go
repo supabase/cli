@@ -3,6 +3,8 @@ package config
 import (
 	"path/filepath"
 	"strings"
+
+	types "github.com/supabase/cli/pkg/storage"
 )
 
 type pathBuilder struct {
@@ -68,6 +70,23 @@ func NewPathBuilder(configPath string) pathBuilder {
 	}
 }
 
+func (s *storage) GetBucketConfig() map[string]types.BucketProps {
+	result := make(map[string]types.BucketProps, len(s.Buckets))
+	for name, bucket := range s.Buckets {
+		props := types.BucketProps{
+			Public:           bucket.Public,
+			AllowedMimeTypes: bucket.AllowedMimeTypes,
+		}
+		if bucket.FileSizeLimit > 0 {
+			props.FileSizeLimit = int(bucket.FileSizeLimit)
+		} else {
+			props.FileSizeLimit = int(s.FileSizeLimit)
+		}
+		result[name] = props
+	}
+	return result
+}
+
 func ptr[T any](v T) *T {
 	return &v
 }
@@ -81,8 +100,8 @@ func sliceContains[T comparable](s []T, e T) bool {
 	return false
 }
 
-func removeDuplicates(slice []string) (result []string) {
-	set := make(map[string]struct{})
+func removeDuplicates[T comparable](slice []T) (result []T) {
+	set := make(map[T]struct{})
 	for _, item := range slice {
 		if _, exists := set[item]; !exists {
 			set[item] = struct{}{}

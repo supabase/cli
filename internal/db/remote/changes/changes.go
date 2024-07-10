@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var output string
@@ -49,5 +49,5 @@ func loadSchema(ctx context.Context, config pgconn.Config, w io.Writer) ([]strin
 		return nil, err
 	}
 	defer conn.Close(context.Background())
-	return reset.LoadUserSchemas(ctx, conn)
+	return migration.ListUserSchemas(ctx, conn)
 }

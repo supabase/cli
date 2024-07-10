@@ -1049,9 +1049,7 @@ EOF
 			return err
 		}
 		// Disable prompts when seeding
-		console := utils.NewConsole()
-		console.IsTTY = false
-		if err := buckets.Run(ctx, console); err != nil {
+		if err := buckets.Run(ctx, "", nil); err != nil {
 			return err
 		}
 	}

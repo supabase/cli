@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -48,7 +47,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 
 	// 2. Fetch remote schema changes
 	if len(schema) == 0 {
-		schema, err = reset.LoadUserSchemas(ctx, conn)
+		schema, err = migration.ListUserSchemas(ctx, conn)
 		if err != nil {
 			return err
 		}

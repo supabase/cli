@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -27,19 +26,6 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
-}
-
-var escapedSchemas = []string{
-	`\_analytics`,
-	`\_realtime`,
-	`\_supavisor`,
-	"pgbouncer",
-	"pgsodium",
-	"pgtle",
-	`supabase\_migrations`,
-	"vault",
-	`information\_schema`,
-	`pg\_%`,
 }
 
 func TestPullCommand(t *testing.T) {
@@ -117,7 +103,7 @@ func TestPullSchema(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(reset.ListSchemas, escapedSchemas).
+			Query(migration.ListSchemas, migration.ManagedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
 		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {

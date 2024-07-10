@@ -111,6 +111,7 @@ func TestImportMapPath(t *testing.T) {
 	})
 
 	t.Run("per function config takes precedence", func(t *testing.T) {
+		t.Cleanup(func() { clear(Config.Functions) })
 		slug := "hello"
 		config := fmt.Sprintf("[%s]\n", slug)
 		config += `import_map = "import_map.json"`
@@ -125,6 +126,7 @@ func TestImportMapPath(t *testing.T) {
 	})
 
 	t.Run("overrides with cli flag", func(t *testing.T) {
+		t.Cleanup(func() { clear(Config.Functions) })
 		slug := "hello"
 		config := fmt.Sprintf("[%s]\n", slug)
 		config += `import_map = "import_map.json"`
