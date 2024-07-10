@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -15,20 +14,18 @@ import (
 )
 
 type Console struct {
-	IsTTY  bool
-	stdin  *bufio.Scanner
-	logger io.Writer
-	token  chan string
-	mu     sync.Mutex
+	IsTTY bool
+	stdin *bufio.Scanner
+	token chan string
+	mu    sync.Mutex
 }
 
 func NewConsole() *Console {
 	return &Console{
-		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
-		stdin:  bufio.NewScanner(os.Stdin),
-		logger: GetDebugLogger(),
-		token:  make(chan string),
-		mu:     sync.Mutex{},
+		IsTTY: term.IsTerminal(int(os.Stdin.Fd())),
+		stdin: bufio.NewScanner(os.Stdin),
+		token: make(chan string),
+		mu:    sync.Mutex{},
 	}
 }
 

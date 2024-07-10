@@ -81,8 +81,8 @@ func sliceContains[T comparable](s []T, e T) bool {
 	return false
 }
 
-func removeDuplicates(slice []string) (result []string) {
-	set := make(map[string]struct{})
+func removeDuplicates[T comparable](slice []T) (result []T) {
+	set := make(map[T]struct{})
 	for _, item := range slice {
 		if _, exists := set[item]; !exists {
 			set[item] = struct{}{}
