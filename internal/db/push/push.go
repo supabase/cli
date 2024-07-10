@@ -3,7 +3,6 @@ package push
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -52,7 +51,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			return errors.New(context.Canceled)
 		}
 		if includeRoles {
-			if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
+			if err := apply.CreateCustomRoles(ctx, conn, fsys); err != nil {
 				return err
 			}
 		}
@@ -67,15 +66,4 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
-}
-
-func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, w io.Writer, fsys afero.Fs) error {
-	roles, err := fsys.Open(utils.CustomRolesPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return errors.Errorf("failed to load custom roles: %w", err)
-	}
-	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
-	return apply.BatchExecDDL(ctx, conn, roles)
 }

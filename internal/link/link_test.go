@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/zalando/go-keyring"
 )
 
@@ -82,7 +83,7 @@ func TestLinkCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
+		helper.MockMigrationHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -327,7 +328,7 @@ func TestLinkDatabase(t *testing.T) {
 			"standard_conforming_strings": "on",
 		})
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
+		helper.MockMigrationHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -344,7 +345,7 @@ func TestLinkDatabase(t *testing.T) {
 			"server_version":              "15.0",
 		})
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
+		helper.MockMigrationHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -361,13 +362,13 @@ func TestLinkDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(history.SET_LOCK_TIMEOUT).
-			Query(history.CREATE_VERSION_SCHEMA).
+		conn.Query(migration.SET_LOCK_TIMEOUT).
+			Query(migration.CREATE_VERSION_SCHEMA).
 			Reply("CREATE SCHEMA").
-			Query(history.CREATE_VERSION_TABLE).
+			Query(migration.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(history.ADD_STATEMENTS_COLUMN).
-			Query(history.ADD_NAME_COLUMN)
+			Query(migration.ADD_STATEMENTS_COLUMN).
+			Query(migration.ADD_NAME_COLUMN)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error

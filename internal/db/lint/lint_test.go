@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -121,13 +121,8 @@ func TestLintDatabase(t *testing.T) {
 				[]interface{}{"f2", string(r2)},
 			).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		result, err := LintDatabase(ctx, mock, []string{"public"})
+		result, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
 		assert.NoError(t, err)
 		// Validate result
 		assert.ElementsMatch(t, expected, result)
@@ -167,15 +162,10 @@ func TestLintDatabase(t *testing.T) {
 			Query(checkSchemaScript, "private").
 			Reply("SELECT 1", []interface{}{"f2", string(r2)}).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		result, err := LintDatabase(ctx, mock, []string{"public", "private"})
+		result, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public", "private"})
+		// Check error
 		assert.NoError(t, err)
-		// Validate result
 		assert.ElementsMatch(t, expected, result)
 	})
 
@@ -187,13 +177,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			ReplyError(pgerrcode.UndefinedFile, `could not open extension control file "/usr/share/postgresql/14/extension/plpgsql_check.control": No such file or directory"`).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = LintDatabase(ctx, mock, []string{"public"})
+		_, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
+		// Check error
 		assert.Error(t, err)
 	})
 
@@ -207,13 +193,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 1", []interface{}{"f1", "malformed"}).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = LintDatabase(ctx, mock, []string{"public"})
+		_, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
+		// Check error
 		assert.Error(t, err)
 	})
 }

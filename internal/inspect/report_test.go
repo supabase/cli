@@ -27,7 +27,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/total_table_sizes"
 	"github.com/supabase/cli/internal/inspect/unused_indexes"
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{

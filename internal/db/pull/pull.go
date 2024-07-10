@@ -19,6 +19,7 @@ import (
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var (
@@ -121,7 +122,7 @@ func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, pat
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
+	remoteMigrations, err := migration.ListRemoteMigrations(ctx, conn)
 	if err != nil {
 		return err
 	}
