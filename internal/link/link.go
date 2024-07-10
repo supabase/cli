@@ -15,13 +15,13 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	cliConfig "github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var updatedConfig ConfigCopy
@@ -187,7 +187,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	return history.CreateMigrationTable(ctx, conn)
+	return migration.CreateMigrationTable(ctx, conn)
 }
 
 func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {

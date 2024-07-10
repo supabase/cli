@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -43,11 +43,11 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	return nil
 }
 
-func fetchMigrationHistory(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]history.SchemaMigration, error) {
+func fetchMigrationHistory(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]migration.MigrationFile, error) {
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close(context.Background())
-	return history.ReadMigrationTable(ctx, conn)
+	return migration.ReadMigrationTable(ctx, conn)
 }

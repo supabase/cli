@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
@@ -152,11 +153,7 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	sql := utils.InitialSchemaPg14Sql
-	if utils.Config.Db.MajorVersion == 13 {
-		sql = utils.InitialSchemaPg13Sql
-	}
-	return apply.BatchExecDDL(ctx, conn, strings.NewReader(sql))
+	return start.InitSchema14(ctx, conn)
 }
 
 // Recreate postgres database by connecting to template1
@@ -170,8 +167,8 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 		return err
 	}
 	// We are not dropping roles here because they are cluster level entities. Use stop && start instead.
-	sql := repair.MigrationFile{
-		Lines: []string{
+	sql := migration.MigrationFile{
+		Statements: []string{
 			"DROP DATABASE IF EXISTS postgres WITH (FORCE)",
 			"CREATE DATABASE postgres WITH OWNER postgres",
 		},
@@ -238,15 +235,15 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	// Drop all user defined schemas
-	migration := repair.MigrationFile{}
+	migration := migration.MigrationFile{}
 	for _, schema := range userSchemas {
 		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
-		migration.Lines = append(migration.Lines, sql)
+		migration.Statements = append(migration.Statements, sql)
 	}
 	// If an extension uses a schema it doesn't create, dropping the schema will cascade to also
 	// drop the extension. But if an extension creates its own schema, dropping the schema will
 	// throw an error. Hence, we drop the extension instead so it cascades to its own schema.
-	migration.Lines = append(migration.Lines, dropObjects)
+	migration.Statements = append(migration.Statements, dropObjects)
 	if err := migration.ExecBatch(ctx, conn); err != nil {
 		return err
 	}

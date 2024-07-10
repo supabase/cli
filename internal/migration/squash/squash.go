@@ -19,10 +19,10 @@ import (
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/apply"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var ErrMissingVersion = errors.New("version not found")
@@ -179,7 +179,7 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := history.CreateMigrationTable(ctx, conn); err != nil {
+	if err := migration.CreateMigrationTable(ctx, conn); err != nil {
 		return err
 	}
 	m, err := repair.NewMigrationFromVersion(version, fsys)
@@ -188,8 +188,8 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := pgx.Batch{}
-	batch.Queue(history.DELETE_MIGRATION_BEFORE, m.Version)
-	batch.Queue(history.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Lines)
+	batch.Queue(migration.DELETE_MIGRATION_BEFORE, m.Version)
+	batch.Queue(migration.INSERT_MIGRATION_VERSION, m.Version, m.Name, m.Statements)
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return errors.Errorf("failed to update migration history: %w", err)
 	}

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 func ToPostgresURL(config pgconn.Config) string {
@@ -116,24 +116,10 @@ func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...
 }
 
 func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
-	// Parse connection url
-	config, err := pgx.ParseConfig(url)
-	if err != nil {
-		return nil, errors.Errorf("failed to parse postgres url: %w", err)
-	}
-	// Apply config overrides
-	for _, op := range options {
-		op(config)
-	}
 	if viper.GetBool("DEBUG") {
-		debug.SetupPGX(config)
+		options = append(options, debug.SetupPGX)
 	}
-	// Connect to database
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return nil, errors.Errorf("failed to connect to postgres: %w", err)
-	}
-	return conn, nil
+	return pgxv5.Connect(ctx, url, options...)
 }
 
 func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Writer, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {

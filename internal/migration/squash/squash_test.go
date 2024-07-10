@@ -22,12 +22,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -81,12 +82,12 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(sql).
+		helper.MockMigrationHistory(conn).
+			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1").
-			Query(history.INSERT_MIGRATION_VERSION, "1", "target", nil).
+			Query(migration.INSERT_MIGRATION_VERSION, "1", "target", nil).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "", pgconn.Config{
@@ -114,8 +115,8 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
+		helper.MockMigrationHistory(conn).
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), "0", dbConfig, fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
@@ -304,10 +305,10 @@ func TestSquashMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(sql).
+		helper.MockMigrationHistory(conn).
+			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
@@ -331,8 +332,8 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
+		helper.MockMigrationHistory(conn).
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '0' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'init' ,  '{%s}' )", sql)).
 			Reply("INSERT 0 1")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
@@ -359,8 +360,8 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '%[1]s' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '%[1]s' ,  'init' ,  null )", "0")).
+		helper.MockMigrationHistory(conn).
+			Query(fmt.Sprintf("DELETE FROM supabase_migrations.schema_migrations WHERE version <=  '%[1]s' ;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '%[1]s' ,  'init' ,  null )", "0")).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept, func(cc *pgx.ConnConfig) {
@@ -376,7 +377,7 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
+		helper.MockMigrationHistory(conn)
 		// Run test
 		err := baselineMigrations(context.Background(), dbConfig, "0", fsys, conn.Intercept)
 		// Check error

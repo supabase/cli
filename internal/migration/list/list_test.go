@@ -13,8 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -32,7 +33,7 @@ func TestMigrationList(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
@@ -55,7 +56,7 @@ func TestMigrationList(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
@@ -69,7 +70,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"20220727064247"})
 		// Run test
 		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
@@ -89,7 +90,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.UndefinedTable, "relation \"supabase_migrations.schema_migrations\" does not exist")
 		// Run test
 		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
@@ -102,7 +103,7 @@ func TestRemoteMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{})
 		// Run test
 		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)

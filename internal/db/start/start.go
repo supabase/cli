@@ -19,10 +19,10 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/push"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var (
@@ -197,20 +197,26 @@ func initCurrentBranch(fsys afero.Fs) error {
 func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {
 	fmt.Fprintln(w, "Setting up initial schema...")
 	if utils.Config.Db.MajorVersion <= 14 {
-		return initSchema14(ctx, conn)
+		if file, err := migration.NewMigrationFromReader(strings.NewReader(utils.GlobalsSql)); err != nil {
+			return err
+		} else if err := file.ExecBatch(ctx, conn); err != nil {
+			return err
+		}
+		return InitSchema14(ctx, conn)
 	}
 	return initSchema15(ctx, host)
 }
 
-func initSchema14(ctx context.Context, conn *pgx.Conn) error {
-	if err := apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.GlobalsSql)); err != nil {
-		return err
-	}
+func InitSchema14(ctx context.Context, conn *pgx.Conn) error {
 	sql := utils.InitialSchemaPg14Sql
 	if utils.Config.Db.MajorVersion == 13 {
 		sql = utils.InitialSchemaPg13Sql
 	}
-	return apply.BatchExecDDL(ctx, conn, strings.NewReader(sql))
+	file, err := migration.NewMigrationFromReader(strings.NewReader(sql))
+	if err != nil {
+		return err
+	}
+	return file.ExecBatch(ctx, conn)
 }
 
 func initRealtimeJob(host string) utils.DockerJob {
@@ -312,5 +318,5 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
-	return push.CreateCustomRoles(ctx, conn, os.Stderr, fsys)
+	return apply.CreateCustomRoles(ctx, conn, fsys)
 }

@@ -11,13 +11,8 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/apply"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
-)
-
-var (
-	errMissingRemote = errors.New("Found local migration files to be inserted before the last migration on remote database.")
-	errMissingLocal  = errors.New("Remote migration versions not found in " + utils.MigrationsDir + " directory.")
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -34,50 +29,25 @@ func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.
 }
 
 func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
-	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
+	remoteMigrations, err := migration.ListRemoteMigrations(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
-	localMigrations, err := list.LoadLocalMigrations(fsys)
+	localMigrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return nil, err
 	}
-	// Find unapplied local migrations older than the latest migration on
-	// remote, and remote migrations that are missing from local.
-	var unapplied, missing []string
-	i, j := 0, 0
-	for i < len(remoteMigrations) && j < len(localMigrations) {
-		remote := remoteMigrations[i]
-		filename := localMigrations[j]
-		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
-		local := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		if remote == local {
-			j++
-			i++
-		} else if remote < local {
-			missing = append(missing, remote)
-			i++
-		} else {
-			// Include out-of-order local migrations
-			unapplied = append(unapplied, filename)
-			j++
+	diff, err := migration.FindPendingMigrations(localMigrations, remoteMigrations)
+	if errors.Is(err, migration.ErrMissingLocal) {
+		utils.CmdSuggestion = suggestRevertHistory(diff)
+	} else if errors.Is(err, migration.ErrMissingRemote) {
+		if includeAll {
+			pending := localMigrations[len(remoteMigrations)+len(diff):]
+			return append(diff, pending...), nil
 		}
+		utils.CmdSuggestion = suggestIgnoreFlag(diff)
 	}
-	// Ensure all remote versions exist on local
-	if j == len(localMigrations) {
-		missing = append(missing, remoteMigrations[i:]...)
-	}
-	if len(missing) > 0 {
-		utils.CmdSuggestion = suggestRevertHistory(missing)
-		return nil, errMissingLocal
-	}
-	// Enforce migrations are applied in chronological order by default
-	if !includeAll && len(unapplied) > 0 {
-		utils.CmdSuggestion = suggestIgnoreFlag(unapplied)
-		return nil, errMissingRemote
-	}
-	pending := localMigrations[len(remoteMigrations)+len(unapplied):]
-	return append(unapplied, pending...), nil
+	return diff, err
 }
 
 func suggestRevertHistory(versions []string) string {

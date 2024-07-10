@@ -6,15 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 func TestMigrateDatabase(t *testing.T) {
@@ -27,18 +27,13 @@ func TestMigrateDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(sql).
+		helper.MockMigrationHistory(conn).
+			Query(sql).
 			Reply("CREATE SCHEMA").
-			Query(history.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = MigrateAndSeed(ctx, "", mock, fsys)
+		err := MigrateAndSeed(context.Background(), "", conn.MockClient(t), fsys)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -69,13 +64,10 @@ func TestSeedDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			Reply("INSERT 0 1")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		assert.NoError(t, SeedDatabase(ctx, mock, fsys))
+		err := SeedDatabase(context.Background(), conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
 	})
 
 	t.Run("ignores missing seed", func(t *testing.T) {
@@ -102,13 +94,8 @@ func TestSeedDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(sql).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = SeedDatabase(ctx, mock, fsys)
+		err := SeedDatabase(context.Background(), conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
 	})
@@ -121,14 +108,9 @@ func TestMigrateUp(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		pgtest.MockMigrationHistory(conn)
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
+		helper.MockMigrationHistory(conn)
 		// Run test
-		err = MigrateUp(context.Background(), mock, []string{"20220727064247_missing.sql"}, fsys)
+		err := MigrateUp(context.Background(), conn.MockClient(t), []string{"20220727064247_missing.sql"}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})

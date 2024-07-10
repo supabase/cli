@@ -25,9 +25,8 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
-	"github.com/supabase/cli/internal/migration/list"
-	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
 
@@ -158,7 +157,7 @@ func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 }
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	migrations, err := list.LoadLocalMigrations(fsys)
+	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
 	}
@@ -186,17 +185,7 @@ func migrateBaseDatabase(ctx context.Context, container string, fsys afero.Fs, o
 	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
-	for _, path := range migrations {
-		fmt.Fprintln(os.Stderr, "Applying schema "+utils.Bold(path)+"...")
-		migration, err := repair.NewMigrationFromFile(path, fsys)
-		if err != nil {
-			return err
-		}
-		if err := migration.ExecBatch(ctx, conn); err != nil {
-			return err
-		}
-	}
-	return nil
+	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ func(context.Context, string, string, []string) (string, error), options ...func(*pgx.ConnConfig)) (string, error) {

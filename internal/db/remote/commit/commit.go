@@ -13,9 +13,9 @@ import (
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
@@ -65,7 +65,7 @@ func run(p utils.Program, ctx context.Context, schema []string, config pgconn.Co
 func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestamp string, config pgconn.Config, fsys afero.Fs) error {
 	path := filepath.Join(utils.MigrationsDir, timestamp+"_remote_commit.sql")
 	// Special case if this is the first migration
-	if migrations, err := list.LoadLocalMigrations(fsys); err != nil {
+	if migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys)); err != nil {
 		return err
 	} else if len(migrations) == 0 {
 		p.Send(utils.StatusMsg("Committing initial migration on remote database..."))
@@ -85,11 +85,11 @@ func fetchRemote(p utils.Program, ctx context.Context, schema []string, timestam
 }
 
 func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	remoteMigrations, err := list.LoadRemoteMigrations(ctx, conn)
+	remoteMigrations, err := migration.ListRemoteMigrations(ctx, conn)
 	if err != nil {
 		return err
 	}
-	localMigrations, err := list.LoadLocalMigrations(fsys)
+	localMigrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 	for i, remoteTimestamp := range remoteMigrations {
 		// LoadLocalMigrations guarantees we always have a match
-		localTimestamp := utils.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1]
+		localTimestamp := migration.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1]
 		if localTimestamp != remoteTimestamp {
 			return conflictErr
 		}

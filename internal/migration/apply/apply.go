@@ -2,18 +2,15 @@ package apply
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/migration/list"
-	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
@@ -28,45 +25,25 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	seed, err := repair.NewMigrationFromFile(utils.SeedDataPath, fsys)
+	err := migration.SeedData(ctx, []string{utils.SeedDataPath}, conn, afero.NewIOFS(fsys))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
-	} else if err != nil {
-		return err
 	}
-	fmt.Fprintln(os.Stderr, "Seeding data "+utils.Bold(utils.SeedDataPath)+"...")
-	// Batch seed commands, safe to use statement cache
-	return seed.ExecBatchWithCache(ctx, conn)
+	return err
 }
 
 func MigrateUp(ctx context.Context, conn *pgx.Conn, pending []string, fsys afero.Fs) error {
-	if len(pending) > 0 {
-		if err := history.CreateMigrationTable(ctx, conn); err != nil {
-			return err
-		}
+	var paths []string
+	for _, name := range pending {
+		paths = append(paths, filepath.Join(utils.MigrationsDir, name))
 	}
-	for _, filename := range pending {
-		if err := applyMigration(ctx, conn, filename, fsys); err != nil {
-			return err
-		}
-	}
-	return nil
+	return migration.ApplyMigrations(ctx, paths, conn, afero.NewIOFS(fsys))
 }
 
-func applyMigration(ctx context.Context, conn *pgx.Conn, filename string, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Applying migration "+utils.Bold(filename)+"...")
-	path := filepath.Join(utils.MigrationsDir, filename)
-	migration, err := repair.NewMigrationFromFile(path, fsys)
-	if err != nil {
-		return err
+func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	return migration.ExecBatch(ctx, conn)
-}
-
-func BatchExecDDL(ctx context.Context, conn *pgx.Conn, sql io.Reader) error {
-	migration, err := repair.NewMigrationFromReader(sql)
-	if err != nil {
-		return err
-	}
-	return migration.ExecBatch(ctx, conn)
+	return err
 }

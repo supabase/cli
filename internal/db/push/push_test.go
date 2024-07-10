@@ -11,11 +11,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/migration/history"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -35,7 +35,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), true, false, true, true, dbConfig, fsys, conn.Intercept)
@@ -49,7 +49,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
@@ -72,7 +72,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
 		err := Run(context.Background(), false, false, false, false, pgconn.Config{
@@ -94,16 +94,16 @@ func TestMigrationPush(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
 		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+history.INSERT_MIGRATION_VERSION)
+		assert.ErrorContains(t, err, "At statement 0: "+migration.INSERT_MIGRATION_VERSION)
 	})
 }
 
@@ -116,10 +116,10 @@ func TestPushAll(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
@@ -136,7 +136,7 @@ func TestPushAll(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
@@ -152,7 +152,7 @@ func TestPushAll(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
 		err := Run(context.Background(), false, false, true, false, dbConfig, fsys, conn.Intercept)
@@ -168,10 +168,10 @@ func TestPushAll(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		pgtest.MockMigrationHistory(conn)
-		conn.Query(history.INSERT_MIGRATION_VERSION, "0", "test", nil).
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), false, false, false, true, dbConfig, fsys, conn.Intercept)
