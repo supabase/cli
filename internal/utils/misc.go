@@ -68,16 +68,6 @@ var (
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
 	// Initialised by postgres image and owned by postgres role
-	ManagedSchemas = append([]string{
-		"_analytics",
-		"_realtime",
-		"_supavisor",
-		"pgbouncer",
-		"pgsodium",
-		"pgtle",
-		"supabase_migrations",
-		"vault",
-	}, PgSchemas...)
 	InternalSchemas = append([]string{
 		"_analytics",
 		"_realtime",

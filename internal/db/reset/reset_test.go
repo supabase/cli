@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -315,20 +318,7 @@ func TestRestartDatabase(t *testing.T) {
 	})
 }
 
-var escapedSchemas = []string{
-	"extensions",
-	"public",
-	`\_analytics`,
-	`\_realtime`,
-	`\_supavisor`,
-	"pgbouncer",
-	"pgsodium",
-	"pgtle",
-	`supabase\_migrations`,
-	"vault",
-	`information\_schema`,
-	`pg\_%`,
-}
+var escapedSchemas = append(migration.ManagedSchemas, "extensions", "public")
 
 func TestResetRemote(t *testing.T) {
 	dbConfig := pgconn.Config{
@@ -342,15 +332,20 @@ func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
+		conn.Query(migration.ListSchemas, escapedSchemas).
 			Reply("SELECT 1", []interface{}{"private"}).
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
-			Query(dropObjects).
+			Query(migration.DropObjects).
 			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -366,29 +361,15 @@ func TestResetRemote(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on list schema failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
-		// Run test
-		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "ERROR: permission denied for relation information_schema (SQLSTATE 42501)")
-	})
-
 	t.Run("throws error on drop schema failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
+		conn.Query(migration.ListSchemas, escapedSchemas).
 			Reply("SELECT 0").
-			Query(dropObjects).
+			Query(migration.DropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)

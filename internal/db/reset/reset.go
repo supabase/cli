@@ -23,14 +23,6 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/pgxv5"
-)
-
-var (
-	//go:embed templates/drop.sql
-	dropObjects string
-	//go:embed templates/list.sql
-	ListSchemas string
 )
 
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -225,42 +217,10 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	defer conn.Close(context.Background())
-	// Only drop objects in extensions and public schema
-	excludes := append([]string{
-		"extensions",
-		"public",
-	}, utils.ManagedSchemas...)
-	userSchemas, err := LoadUserSchemas(ctx, conn, excludes...)
-	if err != nil {
-		return err
-	}
-	// Drop all user defined schemas
-	migration := migration.MigrationFile{}
-	for _, schema := range userSchemas {
-		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
-		migration.Statements = append(migration.Statements, sql)
-	}
-	// If an extension uses a schema it doesn't create, dropping the schema will cascade to also
-	// drop the extension. But if an extension creates its own schema, dropping the schema will
-	// throw an error. Hence, we drop the extension instead so it cascades to its own schema.
-	migration.Statements = append(migration.Statements, dropObjects)
-	if err := migration.ExecBatch(ctx, conn); err != nil {
+	if err := migration.DropUserSchemas(ctx, conn); err != nil {
 		return err
 	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
-}
-
-func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	if len(exclude) == 0 {
-		exclude = utils.ManagedSchemas
-	}
-	exclude = LikeEscapeSchema(exclude)
-	rows, err := conn.Query(ctx, ListSchemas, exclude)
-	if err != nil {
-		return nil, errors.Errorf("failed to list schemas: %w", err)
-	}
-	// TODO: show detail and hint from pgconn.PgError
-	return pgxv5.CollectStrings(rows)
 }
 
 func LikeEscapeSchema(schemas []string) (result []string) {

@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 const ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
@@ -93,7 +93,7 @@ func LintDatabase(ctx context.Context, conn *pgx.Conn, schema []string) ([]Resul
 		return nil, errors.Errorf("failed to begin transaction: %w", err)
 	}
 	if len(schema) == 0 {
-		schema, err = reset.LoadUserSchemas(ctx, conn)
+		schema, err = migration.ListUserSchemas(ctx, conn)
 		if err != nil {
 			return nil, err
 		}

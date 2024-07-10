@@ -21,7 +21,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
@@ -128,7 +127,7 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 	}
 	defer conn.Close(context.Background())
 	// RLS policies in auth and storage schemas can be included with -s flag
-	return reset.LoadUserSchemas(ctx, conn)
+	return migration.ListUserSchemas(ctx, conn)
 }
 
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
