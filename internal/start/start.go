@@ -282,7 +282,8 @@ EOF
 		// Special case for GitLab pipeline
 		host := utils.Docker.DaemonHost()
 		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
-			env = append(env, "DOCKER_HOST="+host)
+			parsed.Host = "host.docker.internal"
+			env = append(env, "DOCKER_HOST="+parsed.String())
 		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
 			if host != client.DefaultDockerHost {
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
