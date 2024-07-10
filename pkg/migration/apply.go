@@ -43,12 +43,10 @@ func FindPendingMigrations(localMigrations, remoteMigrations []string) ([]string
 		missing = append(missing, remoteMigrations[i:]...)
 	}
 	if len(missing) > 0 {
-		// utils.CmdSuggestion = suggestRevertHistory(missing)
 		return missing, errors.New(ErrMissingLocal)
 	}
 	// Enforce migrations are applied in chronological order by default
 	if len(unapplied) > 0 {
-		// utils.CmdSuggestion = suggestIgnoreFlag(unapplied)
 		return unapplied, errors.New(ErrMissingRemote)
 	}
 	pending := localMigrations[len(remoteMigrations):]
