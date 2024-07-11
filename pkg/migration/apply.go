@@ -23,7 +23,7 @@ func FindPendingMigrations(localMigrations, remoteMigrations []string) ([]string
 	i, j := 0, 0
 	for i < len(remoteMigrations) && j < len(localMigrations) {
 		remote := remoteMigrations[i]
-		filename := localMigrations[j]
+		filename := filepath.Base(localMigrations[j])
 		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
 		local := MigrateFilePattern.FindStringSubmatch(filename)[1]
 		if remote == local {
@@ -34,7 +34,7 @@ func FindPendingMigrations(localMigrations, remoteMigrations []string) ([]string
 			i++
 		} else {
 			// Include out-of-order local migrations
-			unapplied = append(unapplied, filename)
+			unapplied = append(unapplied, localMigrations[j])
 			j++
 		}
 	}

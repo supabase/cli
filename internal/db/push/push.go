@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -37,14 +38,13 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		if includeRoles {
 			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
 		}
-		for _, filename := range pending {
-			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
-		}
+		fmt.Fprintln(os.Stderr, "Would push these migrations:")
+		fmt.Fprint(os.Stderr, utils.Bold(confirmPushAll(pending)))
 		if includeSeed {
 			fmt.Fprintln(os.Stderr, "Would seed data "+utils.Bold(utils.SeedDataPath)+"...")
 		}
 	} else {
-		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n • %s\n\n", strings.Join(pending, "\n • "))
+		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))
 		if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
 			return err
 		} else if !shouldPush {
@@ -55,7 +55,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 				return err
 			}
 		}
-		if err := apply.MigrateUp(ctx, conn, pending, fsys); err != nil {
+		if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
 		}
 		if includeSeed {
@@ -66,4 +66,12 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
+}
+
+func confirmPushAll(pending []string) (msg string) {
+	for _, path := range pending {
+		filename := filepath.Base(path)
+		msg += fmt.Sprintf(" • %s\n", filename)
+	}
+	return msg
 }

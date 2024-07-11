@@ -88,25 +88,18 @@ func RenderTable(markdown string) error {
 }
 
 func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
-	names, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
-	if err != nil {
-		return nil, err
-	}
 	var versions []string
-	for _, filename := range names {
-		// LoadLocalMigrations guarantees we always have a match
-		version := migration.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		versions = append(versions, version)
+	filter := func(v string) bool {
+		versions = append(versions, v)
+		return true
 	}
-	return versions, nil
+	_, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
+	return versions, err
 }
 
 func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
-	var filter []func(string) bool
-	if len(version) > 0 {
-		filter = append(filter, func(v string) bool {
-			return v <= version
-		})
+	filter := func(v string) bool {
+		return version == "" || v <= version
 	}
-	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter...)
+	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
 }
