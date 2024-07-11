@@ -720,7 +720,7 @@ func (c *config) Validate() error {
 		}
 		// Validate email config
 		for name, tmpl := range c.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 && !fs.ValidPath(tmpl.ContentPath) {
+			if len(tmpl.ContentPath) > 0 && !fs.ValidPath(filepath.Clean(tmpl.ContentPath)) {
 				return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
 			}
 		}
