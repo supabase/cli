@@ -25,7 +25,7 @@ func FindPendingMigrations(localMigrations, remoteMigrations []string) ([]string
 		remote := remoteMigrations[i]
 		filename := filepath.Base(localMigrations[j])
 		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
-		local := MigrateFilePattern.FindStringSubmatch(filename)[1]
+		local := migrateFilePattern.FindStringSubmatch(filename)[1]
 		if remote == local {
 			j++
 			i++

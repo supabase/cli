@@ -15,13 +15,13 @@ import (
 	"github.com/supabase/cli/pkg/parser"
 )
 
-var MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
-
 type MigrationFile struct {
 	Version    string
 	Name       string
 	Statements []string
 }
+
+var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	sql, err := fsys.Open(path)
@@ -41,7 +41,7 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	if err == nil {
 		// Parse version from file name
 		filename := filepath.Base(path)
-		matches := MigrateFilePattern.FindStringSubmatch(filename)
+		matches := migrateFilePattern.FindStringSubmatch(filename)
 		if len(matches) > 2 {
 			file.Version = matches[1]
 			file.Name = matches[2]

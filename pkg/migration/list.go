@@ -48,7 +48,7 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (replace \"init\" with a different file name to apply this migration)\n", filename)
 			continue
 		}
-		matches := MigrateFilePattern.FindStringSubmatch(filename)
+		matches := migrateFilePattern.FindStringSubmatch(filename)
 		if len(matches) == 0 {
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
 			continue

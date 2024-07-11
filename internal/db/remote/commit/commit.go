@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -88,7 +89,7 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 	if err != nil {
 		return err
 	}
-	localMigrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
+	localMigrations, err := list.LoadLocalVersions(fsys)
 	if err != nil {
 		return err
 	}
@@ -102,10 +103,7 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 	}
 
 	for i, remoteTimestamp := range remoteMigrations {
-		// LoadLocalMigrations guarantees we always have a match
-		filename := filepath.Base(localMigrations[i])
-		localTimestamp := migration.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		if localTimestamp != remoteTimestamp {
+		if localMigrations[i] != remoteTimestamp {
 			return conflictErr
 		}
 	}
