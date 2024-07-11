@@ -23,7 +23,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
-	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
@@ -168,7 +167,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
-	return apply.MigrateUp(ctx, conn, migrations, fsys)
+	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
 func migrateBaseDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

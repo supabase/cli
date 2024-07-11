@@ -3,14 +3,12 @@ package up
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 )
@@ -25,7 +23,7 @@ func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.
 	if err != nil {
 		return err
 	}
-	return apply.MigrateUp(ctx, conn, pending, fsys)
+	return migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys))
 }
 
 func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
@@ -58,10 +56,8 @@ func suggestRevertHistory(versions []string) string {
 	return result
 }
 
-func suggestIgnoreFlag(filenames []string) string {
+func suggestIgnoreFlag(paths []string) string {
 	result := "\nRerun the command with --include-all flag to apply these migrations:\n"
-	for _, name := range filenames {
-		result += fmt.Sprintln(utils.Bold(filepath.Join(utils.MigrationsDir, name)))
-	}
+	result += fmt.Sprintln(utils.Bold(strings.Join(paths, "\n")))
 	return result
 }

@@ -103,7 +103,8 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 
 	for i, remoteTimestamp := range remoteMigrations {
 		// LoadLocalMigrations guarantees we always have a match
-		localTimestamp := migration.MigrateFilePattern.FindStringSubmatch(localMigrations[i])[1]
+		filename := filepath.Base(localMigrations[i])
+		localTimestamp := migration.MigrateFilePattern.FindStringSubmatch(filename)[1]
 		if localTimestamp != remoteTimestamp {
 			return conflictErr
 		}

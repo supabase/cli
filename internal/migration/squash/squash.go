@@ -18,7 +18,6 @@ import (
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
@@ -64,18 +63,17 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 		return errors.New(ErrMissingVersion)
 	}
 	// Migrate to target version and dump
-	path := filepath.Join(utils.MigrationsDir, migrations[len(migrations)-1])
+	local := migrations[len(migrations)-1]
 	if len(migrations) == 1 {
-		fmt.Fprintln(os.Stderr, utils.Bold(path), "is already the earliest migration.")
+		fmt.Fprintln(os.Stderr, utils.Bold(local), "is already the earliest migration.")
 		return nil
 	}
 	if err := squashMigrations(ctx, migrations, fsys, options...); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Squashed local migrations to", utils.Bold(path))
+	fmt.Fprintln(os.Stderr, "Squashed local migrations to", utils.Bold(local))
 	// Remove merged files
-	for _, name := range migrations[:len(migrations)-1] {
-		path := filepath.Join(utils.MigrationsDir, name)
+	for _, path := range migrations[:len(migrations)-1] {
 		if err := fsys.Remove(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
@@ -115,14 +113,14 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	// 2. Migrate to target version
-	if err := apply.MigrateUp(ctx, conn, migrations, fsys); err != nil {
+	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
 	if err := dump.DumpSchema(ctx, config, schemas, false, false, &after); err != nil {
 		return err
 	}
 	// 3. Dump migrated schema
-	path := filepath.Join(utils.MigrationsDir, migrations[len(migrations)-1])
+	path := migrations[len(migrations)-1]
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return errors.Errorf("failed to open migration file: %w", err)
@@ -165,7 +163,8 @@ func baselineMigrations(ctx context.Context, config pgconn.Config, version strin
 	if len(version) == 0 {
 		// Expecting no errors here because the caller should have handled them
 		if migrations, err := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
-			if matches := utils.MigrateFilePattern.FindStringSubmatch(migrations[0]); len(matches) > 1 {
+			filename := filepath.Base(migrations[0])
+			if matches := utils.MigrateFilePattern.FindStringSubmatch(filename); len(matches) > 1 {
 				version = matches[1]
 			}
 		} else if err != nil {

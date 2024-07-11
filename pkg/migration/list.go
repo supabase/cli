@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 
@@ -32,12 +33,15 @@ func ListRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error)
 	return versions, err
 }
 
-func ListLocalMigrations(path string, fsys fs.FS, filter ...func(string) bool) ([]string, error) {
-	localMigrations, err := fs.ReadDir(fsys, path)
+func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string) bool) ([]string, error) {
+	localMigrations, err := fs.ReadDir(fsys, migrationsDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Errorf("failed to read directory: %w", err)
 	}
-	var names []string
+	if len(filter) == 0 {
+		filter = append(filter, func(string) bool { return true })
+	}
+	var clean []string
 	for i, migration := range localMigrations {
 		filename := migration.Name()
 		if i == 0 && shouldSkip(filename) {
@@ -49,17 +53,14 @@ func ListLocalMigrations(path string, fsys fs.FS, filter ...func(string) bool) (
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
 			continue
 		}
-		if len(filter) == 0 {
-			names = append(names, filename)
-			continue
-		}
+		path := filepath.Join(migrationsDir, filename)
 		for _, keep := range filter {
 			if version := matches[1]; keep(version) {
-				names = append(names, filename)
+				clean = append(clean, path)
 			}
 		}
 	}
-	return names, nil
+	return clean, nil
 }
 
 var initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)

@@ -311,7 +311,7 @@ func TestSquashMigrations(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
-		err := squashMigrations(context.Background(), []string{filepath.Base(path)}, afero.NewReadOnlyFs(fsys), conn.Intercept)
+		err := squashMigrations(context.Background(), []string{path}, afero.NewReadOnlyFs(fsys), conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

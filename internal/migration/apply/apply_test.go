@@ -100,18 +100,3 @@ func TestSeedDatabase(t *testing.T) {
 		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
 	})
 }
-
-func TestMigrateUp(t *testing.T) {
-	t.Run("throws error on missing file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		helper.MockMigrationHistory(conn)
-		// Run test
-		err := MigrateUp(context.Background(), conn.MockClient(t), []string{"20220727064247_missing.sql"}, fsys)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-}

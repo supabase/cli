@@ -3,7 +3,6 @@ package apply
 import (
 	"context"
 	"os"
-	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
@@ -18,7 +17,7 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 	if err != nil {
 		return err
 	}
-	if err := MigrateUp(ctx, conn, migrations, fsys); err != nil {
+	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
 	return SeedDatabase(ctx, conn, fsys)
@@ -30,14 +29,6 @@ func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 		return nil
 	}
 	return err
-}
-
-func MigrateUp(ctx context.Context, conn *pgx.Conn, pending []string, fsys afero.Fs) error {
-	var paths []string
-	for _, name := range pending {
-		paths = append(paths, filepath.Join(utils.MigrationsDir, name))
-	}
-	return migration.ApplyMigrations(ctx, paths, conn, afero.NewIOFS(fsys))
 }
 
 func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
