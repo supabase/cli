@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -162,11 +161,8 @@ func lineByLineDiff(before, after io.Reader, f io.Writer) error {
 func baselineMigrations(ctx context.Context, config pgconn.Config, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) == 0 {
 		// Expecting no errors here because the caller should have handled them
-		if migrations, err := list.LoadPartialMigrations(version, fsys); len(migrations) > 0 {
-			filename := filepath.Base(migrations[0])
-			if matches := utils.MigrateFilePattern.FindStringSubmatch(filename); len(matches) > 1 {
-				version = matches[1]
-			}
+		if localVersions, err := list.LoadLocalVersions(fsys); len(localVersions) > 0 {
+			version = localVersions[0]
 		} else if err != nil {
 			logger := utils.GetDebugLogger()
 			fmt.Fprintln(logger, err)
