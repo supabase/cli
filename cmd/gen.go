@@ -73,7 +73,11 @@ var (
 		Short: "Generate types from Postgres schema",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if postgrestV9Compat && !cmd.Flags().Changed("db-url") {
-				return errors.New("--postgrest-v9-compat can only be used together with --db-url.")
+				return errors.New("--postgrest-v9-compat can only be used together with --db-url")
+			}
+			// Legacy commands specify language using arg, eg. gen types typescript
+			if len(args) > 0 && args[0] != types.LangTypescript && !cmd.Flags().Changed("lang") {
+				return errors.New("use --lang flag to specify the typegen language")
 			}
 			return nil
 		},
@@ -94,31 +98,19 @@ var (
   supabase gen types --project-id abc-def-123 --schema public --schema private
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
-
-	genTypesTypescriptCmd = &cobra.Command{
-		Deprecated: "use \"gen types --lang=typescript\" instead.\n",
-		Use:        "typescript",
-		Short:      "Generate types for TypeScript",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			lang.Value = types.LangTypescript
-			return cmd.Parent().PreRunE(cmd, args)
-		},
-		RunE: genTypesCmd.RunE,
-	}
 )
 
 func init() {
-	genFlags := genTypesCmd.PersistentFlags()
-	genFlags.Bool("local", false, "Generate types from the local dev database.")
-	genFlags.Bool("linked", false, "Generate types from the linked project.")
-	genFlags.String("db-url", "", "Generate types from a database url.")
-	genFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
+	typeFlags := genTypesCmd.Flags()
+	typeFlags.Bool("local", false, "Generate types from the local dev database.")
+	typeFlags.Bool("linked", false, "Generate types from the linked project.")
+	typeFlags.String("db-url", "", "Generate types from a database url.")
+	typeFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
 	genTypesCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
-	genFlags.Var(&lang, "lang", "Output language of the generated types.")
-	genFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	genFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
-	genFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
-	genTypesCmd.AddCommand(genTypesTypescriptCmd)
+	typeFlags.Var(&lang, "lang", "Output language of the generated types.")
+	typeFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	typeFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
+	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
