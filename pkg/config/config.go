@@ -607,8 +607,16 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 	}
 	for slug, function := range c.Functions {
+		// TODO: support configuring alternative entrypoint path, such as index.js
 		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join("functions", slug, "index.ts")
+			function.Entrypoint = filepath.Join(builder.FunctionsDir, slug, "index.ts")
+		} else if !filepath.IsAbs(function.Entrypoint) {
+			// Append supabase/ because paths in configs are specified relative to config.toml
+			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
+		}
+		// Functions may not use import map so we don't set a default value
+		if len(function.ImportMap) > 0 && !filepath.IsAbs(function.ImportMap) {
+			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 	}
 	return c.Validate()
