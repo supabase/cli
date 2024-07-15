@@ -141,7 +141,6 @@ func pollForAccessToken(ctx context.Context, url string) (AccessTokenResponse, e
 	probe := func() (AccessTokenResponse, error) {
 		resp, err := client.Send(ctx, http.MethodGet, url, nil)
 		if err == nil {
-			defer resp.Body.Close()
 			return fetcher.ParseJSON[AccessTokenResponse](resp.Body)
 		} else if resp != nil {
 			if retryAfterSeconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {

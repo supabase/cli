@@ -23,7 +23,6 @@ func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]BucketResponse](resp.Body)
 }
 
@@ -48,7 +47,6 @@ func (s *StorageAPI) CreateBucket(ctx context.Context, body CreateBucketRequest)
 	if err != nil {
 		return CreateBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[CreateBucketResponse](resp.Body)
 }
 
@@ -66,7 +64,6 @@ func (s *StorageAPI) UpdateBucket(ctx context.Context, body UpdateBucketRequest)
 	if err != nil {
 		return UpdateBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[UpdateBucketResponse](resp.Body)
 }
 
@@ -79,6 +76,5 @@ func (s *StorageAPI) DeleteBucket(ctx context.Context, bucketId string) (DeleteB
 	if err != nil {
 		return DeleteBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[DeleteBucketResponse](resp.Body)
 }
