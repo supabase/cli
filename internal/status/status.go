@@ -187,8 +187,12 @@ func checkHTTPHead(ctx context.Context, path string) error {
 		)
 	})
 	// HEAD method does not return response body
-	_, err := healthClient.Send(ctx, http.MethodHead, path, nil)
-	return err
+	resp, err := healthClient.Send(ctx, http.MethodHead, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {

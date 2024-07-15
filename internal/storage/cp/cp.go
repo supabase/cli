@@ -105,7 +105,6 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 	}); err != nil {
 		return err
 	}
-	config := utils.Config.Storage.GetBucketConfig()
 	baseName := filepath.Base(localPath)
 	jq := utils.NewJobQueue(maxJobs)
 	err := afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
@@ -139,8 +138,12 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 				// Retry after creating bucket
 				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
 					body := storage.CreateBucketRequest{Name: bucket}
-					if props, ok := config[bucket]; ok {
-						body.BucketProps = &props
+					if config, ok := utils.Config.Storage.Buckets[bucket]; ok {
+						body.BucketProps = &storage.BucketProps{
+							Public:           config.Public,
+							FileSizeLimit:    int(config.FileSizeLimit),
+							AllowedMimeTypes: config.AllowedMimeTypes,
+						}
 					}
 					if _, err := api.CreateBucket(ctx, body); err != nil {
 						return err
