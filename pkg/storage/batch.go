@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+
+	"github.com/supabase/cli/pkg/config"
 )
 
-func (s *StorageAPI) UpsertBuckets(ctx context.Context, config map[string]BucketProps, filter ...func(string) bool) error {
+func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.BucketConfig, filter ...func(string) bool) error {
 	buckets, err := s.ListBuckets(ctx)
 	if err != nil {
 		return err
@@ -15,7 +17,12 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, config map[string]Bucket
 	for _, b := range buckets {
 		exists[b.Name] = b.Id
 	}
-	for name, props := range config {
+	for name, bucket := range bucketConfig {
+		props := BucketProps{
+			Public:           bucket.Public,
+			FileSizeLimit:    int(bucket.FileSizeLimit),
+			AllowedMimeTypes: bucket.AllowedMimeTypes,
+		}
 		// Update bucket properties if already exists
 		if bucketId, ok := exists[name]; ok {
 			for _, keep := range filter {

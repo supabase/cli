@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/status"
@@ -33,6 +34,7 @@ func newLocalClient() *fetcher.Fetcher {
 		fetcher.WithHTTPClient(client),
 		fetcher.WithBearerToken(utils.Config.Auth.ServiceRoleKey),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+		fetcher.WithExpectedStatus(http.StatusOK),
 	)
 }
 
@@ -41,5 +43,6 @@ func newRemoteClient(projectRef, token string) *fetcher.Fetcher {
 		"https://"+utils.GetSupabaseHost(projectRef),
 		fetcher.WithBearerToken(token),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+		fetcher.WithExpectedStatus(http.StatusOK),
 	)
 }

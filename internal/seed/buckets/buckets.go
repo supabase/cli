@@ -13,9 +13,8 @@ func Run(ctx context.Context, projectRef string, console *utils.Console) error {
 	if err != nil {
 		return err
 	}
-	config := utils.Config.Storage.GetBucketConfig()
 	if console == nil {
-		return api.UpsertBuckets(ctx, config)
+		return api.UpsertBuckets(ctx, utils.Config.Storage.Buckets)
 	}
 	filter := func(bucketId string) bool {
 		label := fmt.Sprintf("Bucket %s already exists. Do you want to overwrite its properties?", utils.Bold(bucketId))
@@ -25,5 +24,5 @@ func Run(ctx context.Context, projectRef string, console *utils.Console) error {
 		}
 		return shouldOverwrite
 	}
-	return api.UpsertBuckets(ctx, config, filter)
+	return api.UpsertBuckets(ctx, utils.Config.Storage.Buckets, filter)
 }

@@ -114,19 +114,19 @@ func (c CustomClaims) NewToken() *jwt.Token {
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	config struct {
-		ProjectId    string              `toml:"project_id"`
-		Hostname     string              `toml:"-"`
-		Api          api                 `toml:"api"`
-		Db           db                  `toml:"db" mapstructure:"db"`
-		Realtime     realtime            `toml:"realtime"`
-		Studio       studio              `toml:"studio"`
-		Inbucket     inbucket            `toml:"inbucket"`
-		Storage      storage             `toml:"storage"`
-		Auth         auth                `toml:"auth" mapstructure:"auth"`
-		EdgeRuntime  edgeRuntime         `toml:"edge_runtime"`
-		Functions    map[string]function `toml:"functions"`
-		Analytics    analytics           `toml:"analytics"`
-		Experimental experimental        `toml:"experimental" mapstructure:"-"`
+		ProjectId    string         `toml:"project_id"`
+		Hostname     string         `toml:"-"`
+		Api          api            `toml:"api"`
+		Db           db             `toml:"db" mapstructure:"db"`
+		Realtime     realtime       `toml:"realtime"`
+		Studio       studio         `toml:"studio"`
+		Inbucket     inbucket       `toml:"inbucket"`
+		Storage      storage        `toml:"storage"`
+		Auth         auth           `toml:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
+		Functions    FunctionConfig `toml:"functions"`
+		Analytics    analytics      `toml:"analytics"`
+		Experimental experimental   `toml:"experimental" mapstructure:"-"`
 	}
 
 	api struct {
@@ -202,18 +202,20 @@ type (
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		ImageTransformation imageTransformation  `toml:"image_transformation"`
-		Buckets             map[string]bucket    `toml:"buckets"`
+		Buckets             BucketConfig         `toml:"buckets"`
 	}
 
-	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
-	}
+	BucketConfig map[string]bucket
 
 	bucket struct {
 		Public           bool        `toml:"public"`
 		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
 		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
+	}
+
+	imageTransformation struct {
+		Enabled bool   `toml:"enabled"`
+		Image   string `toml:"-"`
 	}
 
 	storageS3Credentials struct {
@@ -345,9 +347,12 @@ type (
 		InspectorPort uint16        `toml:"inspector_port"`
 	}
 
+	FunctionConfig map[string]function
+
 	function struct {
-		VerifyJWT *bool  `toml:"verify_jwt"`
-		ImportMap string `toml:"import_map"`
+		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
+		Entrypoint string
 	}
 
 	analytics struct {
@@ -372,35 +377,6 @@ type (
 		S3SecretKey     string `toml:"s3_secret_key"`
 	}
 )
-
-func (h *hookConfig) HandleHook(hookType string) error {
-	// If not enabled do nothing
-	if !h.Enabled {
-		return nil
-	}
-	if h.URI == "" {
-		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
-	}
-	if err := validateHookURI(h.URI, hookType); err != nil {
-		return err
-	}
-	var err error
-	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
-	}
-	return nil
-}
-
-func validateHookURI(uri, hookName string) error {
-	parsed, err := url.Parse(uri)
-	if err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
-	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
-	}
-	return nil
-}
 
 type ConfigEditor func(*config)
 
@@ -624,6 +600,17 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
+	// Update fallback configs
+	for _, bucket := range c.Storage.Buckets {
+		if bucket.FileSizeLimit == 0 {
+			bucket.FileSizeLimit = c.Storage.FileSizeLimit
+		}
+	}
+	for slug, function := range c.Functions {
+		if len(function.Entrypoint) == 0 {
+			function.Entrypoint = filepath.Join("functions", slug, "index.ts")
+		}
+	}
 	return c.Validate()
 }
 
@@ -691,6 +678,11 @@ func (c *config) Validate() error {
 		}
 	}
 	// Validate storage config
+	for name := range c.Storage.Buckets {
+		if err := ValidateBucketName(name); err != nil {
+			return err
+		}
+	}
 	// Validate studio config
 	if c.Studio.Enabled {
 		if c.Studio.Port == 0 {
@@ -843,10 +835,9 @@ func (c *config) Validate() error {
 			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
 		}
 	}
-	for name, functionConfig := range c.Functions {
-		if functionConfig.VerifyJWT == nil {
-			functionConfig.VerifyJWT = ptr(true)
-			c.Functions[name] = functionConfig
+	for name := range c.Functions {
+		if err := ValidateFunctionSlug(name); err != nil {
+			return err
 		}
 	}
 	// Validate logflare config
@@ -926,6 +917,55 @@ func loadDefaultEnv() error {
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to load %s: %w", ".env", err)
+	}
+	return nil
+}
+
+func (h *hookConfig) HandleHook(hookType string) error {
+	// If not enabled do nothing
+	if !h.Enabled {
+		return nil
+	}
+	if h.URI == "" {
+		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	}
+	if err := validateHookURI(h.URI, hookType); err != nil {
+		return err
+	}
+	var err error
+	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	}
+	return nil
+}
+
+func validateHookURI(uri, hookName string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
+	}
+	return nil
+}
+
+// TODO: use field tag validator instead
+var funcSlugPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
+func ValidateFunctionSlug(slug string) error {
+	if !funcSlugPattern.MatchString(slug) {
+		return errors.Errorf(`Invalid Function name: %s. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (%s)`, slug, funcSlugPattern.String())
+	}
+	return nil
+}
+
+// Ref: https://github.com/supabase/storage/blob/master/src/storage/limits.ts#L59
+var bucketNamePattern = regexp.MustCompile(`^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$`)
+
+func ValidateBucketName(name string) error {
+	if !bucketNamePattern.MatchString(name) {
+		return errors.Errorf("Invalid Bucket name: %s. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (%s)", name, bucketNamePattern.String())
 	}
 	return nil
 }
