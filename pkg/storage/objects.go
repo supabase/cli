@@ -50,7 +50,6 @@ func (s *StorageAPI) ListObjects(ctx context.Context, bucket, prefix string, pag
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]ObjectResponse](resp.Body)
 }
 
@@ -141,7 +140,6 @@ func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath 
 	if err != nil {
 		return MoveObjectResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[MoveObjectResponse](resp.Body)
 }
 
@@ -161,7 +159,6 @@ func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath 
 	if err != nil {
 		return CopyObjectResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[CopyObjectResponse](resp.Body)
 }
 
@@ -188,6 +185,5 @@ func (s *StorageAPI) DeleteObjects(ctx context.Context, bucket string, prefixes 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]DeleteObjectsResponse](resp.Body)
 }

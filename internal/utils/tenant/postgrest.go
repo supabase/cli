@@ -27,7 +27,6 @@ func (t *TenantAPI) GetPostgrestVersion(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 	data, err := fetcher.ParseJSON[SwaggerResponse](resp.Body)
 	if err != nil {
 		return "", err
