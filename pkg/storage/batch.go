@@ -25,7 +25,7 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 					continue
 				}
 			}
-			fmt.Fprintln(os.Stderr, "Updating storage bucket:", bucketId)
+			fmt.Fprintln(os.Stderr, "Updating Storage bucket:", bucketId)
 			body := UpdateBucketRequest{
 				Id:               bucketId,
 				Public:           bucket.Public,
@@ -36,7 +36,7 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 				return err
 			}
 		} else {
-			fmt.Fprintln(os.Stderr, "Creating storage bucket:", name)
+			fmt.Fprintln(os.Stderr, "Creating Storage bucket:", name)
 			body := CreateBucketRequest{
 				Name:             name,
 				Public:           bucket.Public,

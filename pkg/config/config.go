@@ -601,10 +601,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
 	// Update fallback configs
-	for _, bucket := range c.Storage.Buckets {
+	for name, bucket := range c.Storage.Buckets {
 		if bucket.FileSizeLimit == 0 {
 			bucket.FileSizeLimit = c.Storage.FileSizeLimit
 		}
+		c.Storage.Buckets[name] = bucket
 	}
 	for slug, function := range c.Functions {
 		// TODO: support configuring alternative entrypoint path, such as index.js
@@ -618,6 +619,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if len(function.ImportMap) > 0 && !filepath.IsAbs(function.ImportMap) {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
+		c.Functions[slug] = function
 	}
 	return c.Validate()
 }
