@@ -29,10 +29,10 @@ var (
 )
 
 const (
+	// Legacy bundle options
 	DockerDenoDir  = "/home/deno"
 	DockerEszipDir = "/root/eszips"
-	// Legacy bundle option
-	DenoVersion = "1.30.3"
+	DenoVersion    = "1.30.3"
 )
 
 func GetDenoPath() (string, error) {
@@ -283,73 +283,6 @@ func (m *ImportMap) BindHostModules() []string {
 		}
 	}
 	return binds
-}
-
-type FunctionConfig struct {
-	VerifyJWT *bool  `json:"verifyJWT"`
-	ImportMap string `json:"importMapPath,omitempty"`
-}
-
-func GetFunctionConfig(slug, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) FunctionConfig {
-	fc := FunctionConfig{}
-	if c, ok := Config.Functions[slug]; ok {
-		fc.VerifyJWT = c.VerifyJWT
-		fc.ImportMap = c.ImportMap
-	}
-	// Precedence order: CLI flags > config.toml > fallback value
-	if noVerifyJWT != nil {
-		value := !*noVerifyJWT
-		fc.VerifyJWT = &value
-	} else if fc.VerifyJWT == nil {
-		fc.VerifyJWT = Ptr(true)
-	}
-	fc.ImportMap = getImportMapPath(importMapPath, fc.ImportMap, fsys)
-	return fc
-}
-
-// Path returned is either absolute or relative to CWD.
-func getImportMapPath(flagImportMap, slugImportMap string, fsys afero.Fs) string {
-	// Precedence order: CLI flags > config.toml > fallback value
-	if filepath.IsAbs(flagImportMap) {
-		return flagImportMap
-	}
-	if flagImportMap != "" {
-		return filepath.Join(CurrentDirAbs, flagImportMap)
-	}
-	if filepath.IsAbs(slugImportMap) {
-		return slugImportMap
-	}
-	if slugImportMap != "" {
-		return filepath.Join(SupabaseDirPath, slugImportMap)
-	}
-	if exists, err := afero.Exists(fsys, FallbackImportMapPath); err != nil {
-		logger := GetDebugLogger()
-		fmt.Fprintln(logger, err)
-	} else if exists {
-		return FallbackImportMapPath
-	}
-	return ""
-}
-
-func BindImportMap(importMapPath string, fsys afero.Fs) ([]string, string, error) {
-	fallback, err := filepath.Abs(FallbackImportMapPath)
-	if err != nil {
-		return nil, "", errors.Errorf("failed to resolve fallback import map: %w", err)
-	}
-	hostImportMapPath, err := filepath.Abs(importMapPath)
-	if err != nil {
-		return nil, "", errors.Errorf("failed to resolve host import map: %w", err)
-	}
-	dockerImportMapPath := ToDockerPath(hostImportMapPath)
-	importMap, err := NewImportMap(hostImportMapPath, fsys)
-	if err != nil {
-		return nil, "", err
-	}
-	binds := importMap.BindHostModules()
-	if hostImportMapPath != fallback {
-		binds = append(binds, hostImportMapPath+":"+dockerImportMapPath+":ro")
-	}
-	return binds, dockerImportMapPath, nil
 }
 
 func ToDockerPath(absHostPath string) string {
