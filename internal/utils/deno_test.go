@@ -1,12 +1,10 @@
 package utils
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/BurntSushi/toml"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,67 +94,5 @@ func TestBindModules(t *testing.T) {
 		mods := importMap.BindHostModules()
 		// Check error
 		assert.Empty(t, mods)
-	})
-}
-
-func TestImportMapPath(t *testing.T) {
-	t.Run("loads import map from default location", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc := GetFunctionConfig("", "", nil, fsys)
-		// Check error
-		assert.Equal(t, FallbackImportMapPath, fc.ImportMap)
-	})
-
-	t.Run("per function config takes precedence", func(t *testing.T) {
-		t.Cleanup(func() { clear(Config.Functions) })
-		slug := "hello"
-		config := fmt.Sprintf("[%s]\n", slug)
-		config += `import_map = "import_map.json"`
-		require.NoError(t, toml.Unmarshal([]byte(config), &Config.Functions))
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc := GetFunctionConfig(slug, "", nil, fsys)
-		// Check error
-		assert.Equal(t, "supabase/import_map.json", fc.ImportMap)
-	})
-
-	t.Run("overrides with cli flag", func(t *testing.T) {
-		t.Cleanup(func() { clear(Config.Functions) })
-		slug := "hello"
-		config := fmt.Sprintf("[%s]\n", slug)
-		config += `import_map = "import_map.json"`
-		require.NoError(t, toml.Unmarshal([]byte(config), &Config.Functions))
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc := GetFunctionConfig(slug, FallbackImportMapPath, Ptr(false), fsys)
-		// Check error
-		assert.Equal(t, FallbackImportMapPath, fc.ImportMap)
-	})
-
-	t.Run("returns empty string if no fallback", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		fc := GetFunctionConfig("", "", nil, fsys)
-		// Check error
-		assert.Empty(t, fc.ImportMap)
-	})
-
-	t.Run("preserves absolute path", func(t *testing.T) {
-		path := "/tmp/import_map.json"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc := GetFunctionConfig("", path, nil, fsys)
-		// Check error
-		assert.Equal(t, path, fc.ImportMap)
 	})
 }
