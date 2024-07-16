@@ -72,7 +72,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 			return nil
 		}
 		functionSize := units.HumanSize(float64(body.Len()))
-		fmt.Fprintf(os.Stderr, "Deploying Function %s (script size: %s)\n", slug, functionSize)
+		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
 		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 		if err := backoff.Retry(upsert, policy); err != nil {
 			return err

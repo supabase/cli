@@ -37,6 +37,8 @@ func (b *nativeBundler) Bundle(ctx context.Context, entrypoint string, importMap
 		args = append(args, "--import-map", importMap)
 	}
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
 		return errors.Errorf("failed to bundle function: %w", err)
 	}
