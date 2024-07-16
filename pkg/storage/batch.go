@@ -18,11 +18,6 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 		exists[b.Name] = b.Id
 	}
 	for name, bucket := range bucketConfig {
-		props := BucketProps{
-			Public:           bucket.Public,
-			FileSizeLimit:    int(bucket.FileSizeLimit),
-			AllowedMimeTypes: bucket.AllowedMimeTypes,
-		}
 		// Update bucket properties if already exists
 		if bucketId, ok := exists[name]; ok {
 			for _, keep := range filter {
@@ -32,8 +27,10 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 			}
 			fmt.Fprintln(os.Stderr, "Updating storage bucket:", bucketId)
 			body := UpdateBucketRequest{
-				Id:          bucketId,
-				BucketProps: &props,
+				Id:               bucketId,
+				Public:           bucket.Public,
+				FileSizeLimit:    int64(bucket.FileSizeLimit),
+				AllowedMimeTypes: bucket.AllowedMimeTypes,
 			}
 			if _, err := s.UpdateBucket(ctx, body); err != nil {
 				return err
@@ -41,8 +38,10 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 		} else {
 			fmt.Fprintln(os.Stderr, "Creating storage bucket:", name)
 			body := CreateBucketRequest{
-				Name:        name,
-				BucketProps: &props,
+				Name:             name,
+				Public:           bucket.Public,
+				FileSizeLimit:    int64(bucket.FileSizeLimit),
+				AllowedMimeTypes: bucket.AllowedMimeTypes,
 			}
 			if _, err := s.CreateBucket(ctx, body); err != nil {
 				return err
