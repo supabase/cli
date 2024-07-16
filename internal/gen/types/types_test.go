@@ -43,7 +43,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -101,7 +101,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
