@@ -516,7 +516,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load default values
 	var buf bytes.Buffer
-	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, nil); err != nil {
+	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
 		return errors.Errorf("failed to initialise config template: %w", err)
 	}
 	dec := toml.NewDecoder(&buf)
