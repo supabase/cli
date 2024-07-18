@@ -352,7 +352,7 @@ type (
 	function struct {
 		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint string
+		Entrypoint string `json:"-"`
 	}
 
 	analytics struct {
