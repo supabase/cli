@@ -109,11 +109,11 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return err
 	}
-	hostFuncDir, err := filepath.Abs(utils.FunctionsDir)
+	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Errorf("failed to resolve functions dir: %w", err)
+		return errors.Errorf("failed to get working directory: %w", err)
 	}
-	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
+	dockerFuncDir := utils.ToDockerPath(filepath.Join(cwd, utils.FunctionsDir))
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey,
@@ -130,10 +130,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		env = append(env, "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0")
 	}
 	// 3. Parse custom import map
-	cwd, err := os.Getwd()
-	if err != nil {
-		return errors.Errorf("failed to get working directory: %w", err)
-	}
 	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
@@ -223,9 +219,6 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	}
 	binds := []string{}
 	for slug, fc := range functionsConfig {
-		if len(fc.ImportMap) == 0 {
-			continue
-		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
 		if err != nil {
 			return nil, "", err
