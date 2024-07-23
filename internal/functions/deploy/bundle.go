@@ -96,6 +96,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		hostFuncDir += sep
 	}
 	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
+	// TODO: bind ./supabase/functions:/home/deno/functions to hide PII?
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
@@ -128,6 +129,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
 		}
 	}
+	// Imports outside of ./supabase/functions will be bound by absolute path
 	if len(hostImportMapPath) > 0 {
 		if !filepath.IsAbs(hostImportMapPath) {
 			hostImportMapPath = filepath.Join(cwd, hostImportMapPath)

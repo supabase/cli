@@ -151,8 +151,8 @@ func TestSigningJWT(t *testing.T) {
 	})
 
 	t.Run("signs default service_role key", func(t *testing.T) {
-		anonToken := CustomClaims{Role: "service_role"}.NewToken()
-		signed, err := anonToken.SignedString([]byte(defaultJwtSecret))
+		serviceToken := CustomClaims{Role: "service_role"}.NewToken()
+		signed, err := serviceToken.SignedString([]byte(defaultJwtSecret))
 		assert.NoError(t, err)
 		assert.Equal(t, defaultServiceRoleKey, signed)
 	})

@@ -50,6 +50,7 @@ func NewDocker() *client.Client {
 }
 
 const (
+	DinDHost            = "host.docker.internal"
 	CliProjectLabel     = "com.supabase.cli.project"
 	composeProjectLabel = "com.docker.compose.project"
 )
