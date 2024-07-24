@@ -225,6 +225,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		}
 		binds = append(binds, modules...)
 		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
+		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
 		functionsConfig[slug] = fc
 	}
 	functionsConfigBytes, err := json.Marshal(functionsConfig)

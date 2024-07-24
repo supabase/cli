@@ -5,6 +5,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -275,27 +277,38 @@ EOF
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
-		var binds []string
-		env := []string{
-			"VECTOR_CONFIG=/etc/vector/vector.yaml",
-		}
+		var binds, env []string
 		// Special case for GitLab pipeline
-		host := utils.Docker.DaemonHost()
-		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
-			parsed.Host = "host.docker.internal"
-			env = append(env, "DOCKER_HOST="+parsed.String())
-		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
-			if host != client.DefaultDockerHost {
+		parsed, err := client.ParseHostURL(utils.Docker.DaemonHost())
+		if err != nil {
+			return errors.Errorf("failed to parse docker host: %w", err)
+		}
+		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
+		dindHost := url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+		switch parsed.Scheme {
+		case "tcp":
+			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
+				dindHost.Host = net.JoinHostPort(utils.DinDHost, port)
+			}
+			env = append(env, "DOCKER_HOST="+dindHost.String())
+		case "npipe":
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
+			env = append(env, "DOCKER_HOST="+dindHost.String())
+		case "unix":
+			if parsed, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
+				return errors.Errorf("failed to parse default host: %w", err)
+			}
+			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
 			}
-			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", parsed.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
 `},
