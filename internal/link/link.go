@@ -1,9 +1,9 @@
 package link
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/go-errors/errors"
+	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -24,19 +25,11 @@ import (
 	"github.com/supabase/cli/pkg/migration"
 )
 
-var updatedConfig ConfigCopy
-
-type ConfigCopy struct {
-	Api    interface{} `toml:"api"`
-	Db     interface{} `toml:"db"`
-	Pooler interface{} `toml:"db.pooler"`
-}
-
-func (c ConfigCopy) IsEmpty() bool {
-	return c.Api == nil && c.Db == nil && c.Pooler == nil
-}
-
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	original := toTomlLines(map[string]interface{}{
+		"api": utils.Config.Api,
+		"db":  utils.Config.Db,
+	})
 	// 1. Check service config
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
@@ -57,21 +50,32 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	}
 
 	// 3. Save project ref
-	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
-}
-
-func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
-	fmt.Fprintln(stdout, "Finished "+utils.Aqua("supabase link")+".")
-	if updatedConfig.IsEmpty() {
-		return nil
+	if err := utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys); err != nil {
+		return err
 	}
-	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
-	enc := toml.NewEncoder(stdout)
-	enc.Indent = ""
-	if err := enc.Encode(updatedConfig); err != nil {
-		return errors.Errorf("failed to marshal toml config: %w", err)
+	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
+
+	// 4. Suggest config update
+	updated := toTomlLines(map[string]interface{}{
+		"api": utils.Config.Api,
+		"db":  utils.Config.Db,
+	})
+	lineDiff := cmp.Diff(original, updated)
+	if len(lineDiff) > 0 {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
+		fmt.Println(lineDiff)
 	}
 	return nil
+}
+
+func toTomlLines(config map[string]interface{}) []string {
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(config); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), "failed to marshal toml config:", err)
+	}
+	return strings.Split(buf.String(), "\n")
 }
 
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
@@ -139,16 +143,9 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	copy := utils.Config.Api
-	copy.MaxRows = uint(config.MaxRows)
-	copy.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
-	copy.Schemas = readCsv(config.DbSchema)
-	changed := utils.Config.Api.MaxRows != copy.MaxRows ||
-		!utils.SliceEqual(utils.Config.Api.ExtraSearchPath, copy.ExtraSearchPath) ||
-		!utils.SliceEqual(utils.Config.Api.Schemas, copy.Schemas)
-	if changed {
-		updatedConfig.Api = copy
-	}
+	utils.Config.Api.MaxRows = uint(config.MaxRows)
+	utils.Config.Api.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
+	utils.Config.Api.Schemas = readCsv(config.DbSchema)
 }
 
 func readCsv(line string) []string {
@@ -205,46 +202,35 @@ func updatePostgresConfig(conn *pgx.Conn) {
 	if majorDigits > 2 {
 		majorDigits = 2
 	}
-	dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7)
 	// Treat error as unchanged
-	if err == nil && uint64(utils.Config.Db.MajorVersion) != dbMajorVersion {
-		copy := utils.Config.Db
-		copy.MajorVersion = uint(dbMajorVersion)
-		updatedConfig.Db = copy
+	if dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7); err == nil {
+		utils.Config.Db.MajorVersion = uint(dbMajorVersion)
 	}
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetProjectPgbouncerConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetSupavisorConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
-	updatePoolerConfig(*resp.JSON200)
-	if resp.JSON200.ConnectionString != nil {
-		utils.Config.Db.Pooler.ConnectionString = *resp.JSON200.ConnectionString
-		return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
+	for _, config := range *resp.JSON200 {
+		if config.DatabaseType == api.PRIMARY {
+			updatePoolerConfig(config)
+		}
 	}
-	return nil
+	return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
 }
 
-func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
-	copy := utils.Config.Db.Pooler
-	if config.PoolMode != nil {
-		copy.PoolMode = cliConfig.PoolMode(*config.PoolMode)
-	}
+func updatePoolerConfig(config api.SupavisorConfigResponse) {
+	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
+	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
 	if config.DefaultPoolSize != nil {
-		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)
+		utils.Config.Db.Pooler.DefaultPoolSize = uint(*config.DefaultPoolSize)
 	}
 	if config.MaxClientConn != nil {
-		copy.MaxClientConn = uint(*config.MaxClientConn)
-	}
-	changed := utils.Config.Db.Pooler.PoolMode != copy.PoolMode ||
-		utils.Config.Db.Pooler.DefaultPoolSize != copy.DefaultPoolSize ||
-		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
-	if changed {
-		updatedConfig.Pooler = copy
+		utils.Config.Db.Pooler.MaxClientConn = uint(*config.MaxClientConn)
 	}
 }

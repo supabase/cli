@@ -36,9 +36,6 @@ var (
 			}
 			return link.Run(ctx, flags.ProjectRef, fsys)
 		},
-		PostRunE: func(cmd *cobra.Command, args []string) error {
-			return link.PostRun(flags.ProjectRef, os.Stdout, afero.NewOsFs())
-		},
 	}
 )
 
