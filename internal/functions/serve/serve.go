@@ -139,7 +139,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	cmd := append([]string{
 		"edge-runtime",
 		"start",
-		"--main-service=.",
+		"--main-service=/root",
 		fmt.Sprintf("--port=%d", dockerRuntimeServerPort),
 		fmt.Sprintf("--policy=%s", utils.Config.EdgeRuntime.Policy),
 	}, runtimeOption.toArgs()...)
@@ -147,7 +147,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		cmd = append(cmd, "--verbose")
 	}
 	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `cat <<'EOF' > /root/index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
 EOF
 `}
