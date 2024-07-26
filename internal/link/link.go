@@ -60,15 +60,14 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
-	lineDiff := cmp.Diff(original, updated)
-	if len(lineDiff) > 0 {
+	if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 		fmt.Println(lineDiff)
 	}
 	return nil
 }
 
-func toTomlLines(config map[string]interface{}) []string {
+func toTomlLines(config any) []string {
 	var buf bytes.Buffer
 	enc := toml.NewEncoder(&buf)
 	enc.Indent = ""
