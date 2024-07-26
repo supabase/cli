@@ -128,7 +128,7 @@ func TestPushAll(t *testing.T) {
 	})
 
 	t.Run("throws error on cancel", func(t *testing.T) {
-		defer fstest.MockStdin(t, "n")()
+		t.Cleanup(fstest.MockStdin(t, "n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")

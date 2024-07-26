@@ -20,7 +20,7 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("login with token and logout", func(t *testing.T) {
 		keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
@@ -49,7 +49,7 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("exits 0 if not logged in", func(t *testing.T) {
 		keyring.MockInit()
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -60,7 +60,7 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("throws error on failure to delete", func(t *testing.T) {
 		keyring.MockInitWithError(keyring.ErrNotFound)
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup empty home directory
 		t.Setenv("HOME", "")
 		// Setup in-memory fs

@@ -72,7 +72,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes multiple objects", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
@@ -111,7 +111,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes buckets and directories", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
@@ -181,7 +181,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("throws error on delete failure", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api

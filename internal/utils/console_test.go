@@ -22,7 +22,7 @@ func TestPromptYesNo(t *testing.T) {
 	})
 
 	t.Run("parses piped stdin", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		c := NewConsole()
 		// Run test
 		val, err := c.PromptYesNo(context.Background(), "test", false)
