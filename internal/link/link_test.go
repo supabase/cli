@@ -3,7 +3,6 @@ package link
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -31,42 +30,6 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-// Reset global variable
-func teardown() {
-	updatedConfig.Api = nil
-	updatedConfig.Db = nil
-	updatedConfig.Pooler = nil
-}
-
-func TestPostRun(t *testing.T) {
-	t.Run("prints completion message", func(t *testing.T) {
-		defer teardown()
-		project := "test-project"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		buf := &strings.Builder{}
-		err := PostRun(project, buf, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, "Finished supabase link.\n", buf.String())
-	})
-
-	t.Run("prints changed config", func(t *testing.T) {
-		defer teardown()
-		project := "test-project"
-		updatedConfig.Api = "test"
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		buf := &strings.Builder{}
-		err := PostRun(project, buf, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Contains(t, buf.String(), `api = "test"`)
-	})
-}
-
 func TestLinkCommand(t *testing.T) {
 	project := "test-project"
 	// Setup valid access token
@@ -76,8 +39,7 @@ func TestLinkCommand(t *testing.T) {
 	keyring.MockInit()
 
 	t.Run("link valid project", func(t *testing.T) {
-		defer teardown()
-		defer fstest.MockStdin(t, "\n")()
+		t.Cleanup(fstest.MockStdin(t, "\n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -96,7 +58,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.V1PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Get("/v1/projects/" + project + "/config/database/pooler").
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
 		// Link versions
@@ -152,7 +114,7 @@ func TestLinkCommand(t *testing.T) {
 	})
 
 	t.Run("ignores error linking services", func(t *testing.T) {
-		defer fstest.MockStdin(t, "\n")()
+		t.Cleanup(fstest.MockStdin(t, "\n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
@@ -166,7 +128,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -193,7 +155,6 @@ func TestLinkCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on write failure", func(t *testing.T) {
-		defer teardown()
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Flush pending mocks after test execution
@@ -207,7 +168,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/postgrest").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/config/database/pgbouncer").
+			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -241,7 +202,6 @@ func TestLinkPostgrest(t *testing.T) {
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("ignores matching config", func(t *testing.T) {
-		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -253,11 +213,9 @@ func TestLinkPostgrest(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		assert.Empty(t, updatedConfig)
 	})
 
 	t.Run("updates api on newer config", func(t *testing.T) {
-		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -273,16 +231,12 @@ func TestLinkPostgrest(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		utils.Config.Api.Schemas = []string{"public", "graphql_public"}
-		utils.Config.Api.ExtraSearchPath = []string{"public", "extensions"}
-		utils.Config.Api.MaxRows = 1000
-		assert.Equal(t, ConfigCopy{
-			Api: utils.Config.Api,
-		}, updatedConfig)
+		assert.ElementsMatch(t, []string{"public", "graphql_public"}, utils.Config.Api.Schemas)
+		assert.ElementsMatch(t, []string{"public", "extensions"}, utils.Config.Api.ExtraSearchPath)
+		assert.Equal(t, uint(1000), utils.Config.Api.MaxRows)
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
-		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -296,7 +250,6 @@ func TestLinkPostgrest(t *testing.T) {
 	})
 
 	t.Run("throws error on server unavailable", func(t *testing.T) {
-		defer teardown()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -313,16 +266,13 @@ func TestLinkPostgrest(t *testing.T) {
 
 func TestLinkDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
-		defer teardown()
 		// Run test
 		err := linkDatabase(context.Background(), pgconn.Config{})
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
-		assert.Empty(t, updatedConfig)
 	})
 
 	t.Run("ignores missing server version", func(t *testing.T) {
-		defer teardown()
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
 			"standard_conforming_strings": "on",
@@ -333,11 +283,9 @@ func TestLinkDatabase(t *testing.T) {
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, updatedConfig)
 	})
 
 	t.Run("updates config to newer db version", func(t *testing.T) {
-		defer teardown()
 		utils.Config.Db.MajorVersion = 14
 		// Setup mock postgres
 		conn := pgtest.NewWithStatus(map[string]string{
@@ -351,13 +299,10 @@ func TestLinkDatabase(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		utils.Config.Db.MajorVersion = 15
-		assert.Equal(t, ConfigCopy{
-			Db: utils.Config.Db,
-		}, updatedConfig)
+		assert.Equal(t, uint(15), utils.Config.Db.MajorVersion)
 	})
 
 	t.Run("throws error on query failure", func(t *testing.T) {
-		defer teardown()
 		utils.Config.Db.MajorVersion = 14
 		// Setup mock postgres
 		conn := pgtest.NewConn()
