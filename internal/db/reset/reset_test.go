@@ -48,7 +48,7 @@ func TestResetCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on invalid port", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test

@@ -98,7 +98,7 @@ func TestRepairCommand(t *testing.T) {
 
 func TestRepairAll(t *testing.T) {
 	t.Run("repairs whole history", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
@@ -119,7 +119,7 @@ func TestRepairAll(t *testing.T) {
 	})
 
 	t.Run("reverts whole history", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -144,7 +144,7 @@ func TestRepairAll(t *testing.T) {
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
 		// Run test

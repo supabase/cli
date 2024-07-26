@@ -34,7 +34,7 @@ import (
 )
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
-	cmd := "You are running outdated service versions locally:\n"
+	cmd := fmt.Sprintln(utils.Yellow("WARNING:"), "You are running different service versions locally than your linked project:")
 	for k, v := range serviceImages {
 		cmd += fmt.Sprintf("%s => %s\n", k, v)
 	}
