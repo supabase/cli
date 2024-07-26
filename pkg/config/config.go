@@ -636,9 +636,6 @@ func (c *config) Validate() error {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
 		}
-		// Append required schemas if they are missing
-		c.Api.Schemas = removeDuplicates(append([]string{"public", "storage"}, c.Api.Schemas...))
-		c.Api.ExtraSearchPath = removeDuplicates(append([]string{"public"}, c.Api.ExtraSearchPath...))
 	}
 	// Validate db config
 	if c.Db.Port == 0 {

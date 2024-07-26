@@ -77,17 +77,6 @@ func sliceContains[T comparable](s []T, e T) bool {
 	return false
 }
 
-func removeDuplicates[T comparable](slice []T) (result []T) {
-	set := make(map[T]struct{})
-	for _, item := range slice {
-		if _, exists := set[item]; !exists {
-			set[item] = struct{}{}
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
 func replaceImageTag(image string, tag string) string {
 	index := strings.IndexByte(image, ':')
 	return image[:index+1] + strings.TrimSpace(tag)
