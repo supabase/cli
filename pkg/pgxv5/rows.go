@@ -11,6 +11,7 @@ import (
 )
 
 func CollectStrings(rows pgx.Rows) ([]string, error) {
+	defer rows.Close()
 	result := []string{}
 	for rows.Next() {
 		var version string
