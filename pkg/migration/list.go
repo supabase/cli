@@ -18,10 +18,7 @@ import (
 
 func ListRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
 	// We query the version string only for backwards compatibility
-	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
-	if err != nil {
-		return nil, errors.Errorf("failed to query rows: %w", err)
-	}
+	rows, _ := conn.Query(ctx, LIST_MIGRATION_VERSION)
 	versions, err := pgxv5.CollectStrings(rows)
 	if err != nil {
 		var pgErr *pgconn.PgError
