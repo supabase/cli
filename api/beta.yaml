@@ -22,7 +22,7 @@ paths:
         '500':
           description: Failed to retrieve database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     patch:
@@ -52,7 +52,7 @@ paths:
         '500':
           description: Failed to update database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     delete:
@@ -76,7 +76,7 @@ paths:
         '500':
           description: Failed to delete database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/branches/{branch_id}/reset:
@@ -101,7 +101,7 @@ paths:
         '500':
           description: Failed to reset database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/projects:
@@ -120,7 +120,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/V1ProjectResponse'
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
     post:
@@ -141,7 +141,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/V1ProjectResponse'
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/organizations:
@@ -162,7 +162,7 @@ paths:
         '500':
           description: Unexpected error listing organizations
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
     post:
@@ -185,7 +185,7 @@ paths:
         '500':
           description: Unexpected error creating an organization
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
   /v1/oauth/authorize:
@@ -245,7 +245,7 @@ paths:
         '303':
           description: ''
       tags:
-        - oauth
+        - OAuth
       security:
         - oauth2:
             - read
@@ -268,7 +268,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
       tags:
-        - oauth
+        - OAuth
       security:
         - oauth2:
             - write
@@ -292,7 +292,7 @@ paths:
         '500':
           description: Failed to list user's SQL snippets
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/snippets/{id}:
@@ -315,7 +315,7 @@ paths:
         '500':
           description: Failed to retrieve SQL snippet
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/api-keys:
@@ -343,7 +343,7 @@ paths:
         '403':
           description: ''
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/branches:
@@ -372,7 +372,7 @@ paths:
         '500':
           description: Failed to retrieve database branches
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     post:
@@ -404,7 +404,7 @@ paths:
         '500':
           description: Failed to create database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     delete:
@@ -426,7 +426,7 @@ paths:
         '500':
           description: Failed to disable preview branching
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname:
@@ -454,7 +454,7 @@ paths:
         '500':
           description: Failed to retrieve project's custom hostname config
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
     delete:
@@ -477,7 +477,7 @@ paths:
         '500':
           description: Failed to delete project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/initialize:
@@ -511,7 +511,7 @@ paths:
         '500':
           description: Failed to update project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/reverify:
@@ -541,7 +541,7 @@ paths:
         '500':
           description: Failed to verify project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/activate:
@@ -569,7 +569,7 @@ paths:
         '500':
           description: Failed to activate project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/network-bans/retrieve:
@@ -597,7 +597,7 @@ paths:
         '500':
           description: Failed to retrieve project's network bans
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-bans:
@@ -627,7 +627,7 @@ paths:
         '500':
           description: Failed to remove network bans.
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-restrictions:
@@ -655,7 +655,7 @@ paths:
         '500':
           description: Failed to retrieve project's network restrictions
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-restrictions/apply:
@@ -689,7 +689,7 @@ paths:
         '500':
           description: Failed to update project network restrictions
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/pgsodium:
@@ -717,7 +717,7 @@ paths:
         '500':
           description: Failed to retrieve project's pgsodium config
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     put:
@@ -752,7 +752,7 @@ paths:
         '500':
           description: Failed to update project's pgsodium config
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/postgrest:
@@ -780,7 +780,7 @@ paths:
         '500':
           description: Failed to retrieve project's postgrest config
       tags:
-        - rest
+        - Rest
       security:
         - bearer: []
     patch:
@@ -813,12 +813,12 @@ paths:
         '500':
           description: Failed to update project's postgrest config
       tags:
-        - rest
+        - Rest
       security:
         - bearer: []
   /v1/projects/{ref}:
     delete:
-      operationId: v1-Delete a project
+      operationId: v1-delete-a-project
       summary: Deletes the given project
       parameters:
         - name: ref
@@ -839,7 +839,7 @@ paths:
         '403':
           description: ''
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/secrets:
@@ -870,7 +870,7 @@ paths:
         '500':
           description: Failed to retrieve project's secrets
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     post:
@@ -902,7 +902,7 @@ paths:
         '500':
           description: Failed to create project's secrets
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     delete:
@@ -938,7 +938,7 @@ paths:
         '500':
           description: Failed to delete secrets with given names
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/ssl-enforcement:
@@ -966,7 +966,7 @@ paths:
         '500':
           description: Failed to retrieve project's SSL enforcement config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     put:
@@ -999,7 +999,7 @@ paths:
         '500':
           description: Failed to update project's SSL enforcement configuration.
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/types/typescript:
@@ -1034,7 +1034,7 @@ paths:
         '500':
           description: Failed to generate TypeScript types
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain:
@@ -1062,7 +1062,7 @@ paths:
         '500':
           description: Failed to get project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
     delete:
@@ -1085,7 +1085,7 @@ paths:
         '500':
           description: Failed to delete project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain/check-availability:
@@ -1119,7 +1119,7 @@ paths:
         '500':
           description: Failed to check project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain/activate:
@@ -1153,7 +1153,7 @@ paths:
         '500':
           description: Failed to activate project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade:
@@ -1187,7 +1187,7 @@ paths:
         '500':
           description: Failed to initiate project upgrade
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade/eligibility:
@@ -1215,7 +1215,7 @@ paths:
         '500':
           description: Failed to determine project upgrade eligibility
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade/status:
@@ -1243,7 +1243,7 @@ paths:
         '500':
           description: Failed to retrieve project upgrade status
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/readonly:
@@ -1269,7 +1269,7 @@ paths:
         '500':
           description: Failed to get project readonly mode status
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/readonly/temporary-disable:
@@ -1291,7 +1291,7 @@ paths:
         '500':
           description: Failed to disable project's readonly mode
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/read-replicas/setup:
@@ -1319,7 +1319,7 @@ paths:
         '500':
           description: Failed to set up read replica
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/read-replicas/remove:
@@ -1347,7 +1347,7 @@ paths:
         '500':
           description: Failed to remove read replica
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/health:
@@ -1396,7 +1396,7 @@ paths:
         '500':
           description: Failed to retrieve project's service health status
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/config/database/postgres:
@@ -1422,7 +1422,7 @@ paths:
         '500':
           description: Failed to retrieve project's Postgres config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     put:
@@ -1453,7 +1453,7 @@ paths:
         '500':
           description: Failed to update project's Postgres config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/config/database/pgbouncer:
@@ -1479,7 +1479,7 @@ paths:
         '500':
           description: Failed to retrieve project's pgbouncer config
       tags:
-        - database
+        - Database
   /v1/projects/{ref}/config/database/pooler:
     get:
       operationId: v1-get-supavisor-config
@@ -1505,7 +1505,7 @@ paths:
         '500':
           description: Failed to retrieve project's supavisor config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     patch:
@@ -1538,7 +1538,7 @@ paths:
         '500':
           description: Failed to update project's supavisor config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth:
@@ -1566,7 +1566,7 @@ paths:
         '500':
           description: Failed to retrieve project's auth config
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     patch:
@@ -1599,7 +1599,127 @@ paths:
         '500':
           description: Failed to update project's auth config
       tags:
-        - auth
+        - Auth
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth:
+    post:
+      operationId: createTPAForProject
+      summary: '[Alpha] Creates a new third-party auth integration'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateThirdPartyAuthBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    get:
+      operationId: listTPAForProject
+      summary: '[Alpha] Lists all third-party auth integrations'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth/{tpa_id}:
+    delete:
+      operationId: deleteTPAForProject
+      summary: '[Alpha] Removes a third-party auth integration'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    get:
+      operationId: getTPAForProject
+      summary: '[Alpha] Get a third-party integration'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/database/query:
@@ -1633,7 +1753,7 @@ paths:
         '500':
           description: Failed to run sql query
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/database/webhooks/enable:
@@ -1657,7 +1777,7 @@ paths:
         '500':
           description: Failed to enable Database Webhooks on the project
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/functions:
@@ -1726,7 +1846,7 @@ paths:
         '500':
           description: Failed to create project's function
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     get:
@@ -1756,7 +1876,7 @@ paths:
         '500':
           description: Failed to retrieve project's functions
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/functions/{function_slug}:
@@ -1792,7 +1912,7 @@ paths:
         '500':
           description: Failed to retrieve function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     patch:
@@ -1867,7 +1987,7 @@ paths:
         '500':
           description: Failed to update function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     delete:
@@ -1898,7 +2018,7 @@ paths:
         '500':
           description: Failed to delete function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/functions/{function_slug}/body:
@@ -1930,7 +2050,7 @@ paths:
         '500':
           description: Failed to retrieve function body with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/storage/buckets:
@@ -1960,7 +2080,7 @@ paths:
         '500':
           description: Failed to get list of buckets
       tags:
-        - storage
+        - Storage
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers:
@@ -1994,7 +2114,7 @@ paths:
         '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     get:
@@ -2021,7 +2141,7 @@ paths:
         '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers/{provider_id}:
@@ -2056,7 +2176,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     put:
@@ -2096,7 +2216,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     delete:
@@ -2130,7 +2250,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/database/backups:
@@ -2156,7 +2276,7 @@ paths:
         '500':
           description: Failed to get backups
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/database/backups/restore-pitr:
@@ -2182,7 +2302,7 @@ paths:
         '201':
           description: ''
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/organizations/{slug}/members:
@@ -2205,7 +2325,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/V1OrganizationMemberResponse'
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
   /v1/organizations/{slug}:
@@ -2226,19 +2346,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/V1OrganizationSlugResponse'
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
 info:
   title: Supabase API (v1)
-  description: ''
+  description: >-
+    Supabase API generated from the OpenAPI specification.<br>Visit
+    [https://supabase.com/docs](https://supabase.com/docs) for a complete
+    documentation.
   version: 1.0.0
   contact: {}
 tags:
-  - name: organizations
-    description: Organization endpoints
-  - name: projects
-    description: Project endpoints
+  - name: Auth
+    description: Auth related endpoints
+  - name: Database
+    description: Database related endpoints
+  - name: Domains
+    description: Domains related endpoints
+  - name: Edge Functions
+    description: Edge related endpoints
+  - name: Environments
+    description: Environments related endpoints
+  - name: OAuth
+    description: OAuth related endpoints
+  - name: Organizations
+    description: Organizations related endpoints
+  - name: Projects
+    description: Projects related endpoints
+  - name: Rest
+    description: Rest related endpoints
+  - name: Secrets
+    description: Secrets related endpoints
+  - name: Storage
+    description: Storage related endpoints
 servers: []
 components:
   securitySchemes:
@@ -2265,10 +2406,13 @@ components:
             - INACTIVE
             - INIT_FAILED
             - REMOVED
-            - RESTORING
+            - RESTARTING
             - UNKNOWN
             - UPGRADING
             - PAUSING
+            - RESTORING
+            - RESTORE_FAILED
+            - PAUSE_FAILED
           type: string
         db_host:
           type: string
@@ -2399,10 +2543,13 @@ components:
             - INACTIVE
             - INIT_FAILED
             - REMOVED
-            - RESTORING
+            - RESTARTING
             - UNKNOWN
             - UPGRADING
             - PAUSING
+            - RESTORING
+            - RESTORE_FAILED
+            - PAUSE_FAILED
           type: string
       required:
         - id
@@ -2442,7 +2589,7 @@ components:
             - free
             - pro
           description: >-
-            Subscription plan is now set on organization level and is ignored in
+            Subscription Plan is now set on organization level and is ignored in
             this request
           example: free
           deprecated: true
@@ -2687,6 +2834,98 @@ components:
           type: string
       required:
         - branch_name
+    ValidationRecord:
+      type: object
+      properties:
+        txt_name:
+          type: string
+        txt_value:
+          type: string
+      required:
+        - txt_name
+        - txt_value
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    SslValidation:
+      type: object
+      properties:
+        status:
+          type: string
+        validation_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationRecord'
+        validation_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+      required:
+        - status
+        - validation_records
+    OwnershipVerification:
+      type: object
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - type
+        - name
+        - value
+    CustomHostnameDetails:
+      type: object
+      properties:
+        id:
+          type: string
+        hostname:
+          type: string
+        ssl:
+          $ref: '#/components/schemas/SslValidation'
+        ownership_verification:
+          $ref: '#/components/schemas/OwnershipVerification'
+        custom_origin_server:
+          type: string
+        verification_errors:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+      required:
+        - id
+        - hostname
+        - ssl
+        - ownership_verification
+        - custom_origin_server
+        - status
+    CfResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: object
+        messages:
+          type: array
+          items:
+            type: object
+        result:
+          $ref: '#/components/schemas/CustomHostnameDetails'
+      required:
+        - success
+        - errors
+        - messages
+        - result
     UpdateCustomHostnameResponse:
       type: object
       properties:
@@ -2701,7 +2940,7 @@ components:
         custom_hostname:
           type: string
         data:
-          type: object
+          $ref: '#/components/schemas/CfResponse'
       required:
         - status
         - custom_hostname
@@ -3002,6 +3241,8 @@ components:
       properties:
         initiated_at:
           type: string
+        latest_status_at:
+          type: string
         target_version:
           type: number
         error:
@@ -3015,6 +3256,7 @@ components:
             - 6_volume_detachchment_from_original_instance_failed
             - 7_volume_attachment_to_upgraded_instance_failed
             - 8_upgrade_completion_failed
+            - 9_post_physical_backup_failed
         progress:
           type: string
           enum:
@@ -3028,6 +3270,7 @@ components:
             - 7_detached_volume_from_original_instance
             - 8_attached_volume_to_upgraded_instance
             - 9_completed_upgrade
+            - 10_completed_post_physical_backup
         status:
           type: number
           enum:
@@ -3036,6 +3279,7 @@ components:
             - 2
       required:
         - initiated_at
+        - latest_status_at
         - target_version
         - status
     DatabaseUpgradeStatusResponse:
@@ -3477,6 +3721,15 @@ components:
         external_linkedin_oidc_secret:
           type: string
           nullable: true
+        external_slack_oidc_client_id:
+          type: string
+          nullable: true
+        external_slack_oidc_enabled:
+          type: boolean
+          nullable: true
+        external_slack_oidc_secret:
+          type: string
+          nullable: true
         external_notion_client_id:
           type: string
           nullable: true
@@ -3671,11 +3924,17 @@ components:
         rate_limit_verify:
           type: number
           nullable: true
+        rate_limit_otp:
+          type: number
+          nullable: true
         refresh_token_rotation_enabled:
           type: boolean
           nullable: true
         saml_enabled:
           type: boolean
+          nullable: true
+        saml_external_url:
+          type: string
           nullable: true
         security_captcha_enabled:
           type: boolean
@@ -3847,6 +4106,9 @@ components:
         - external_linkedin_oidc_client_id
         - external_linkedin_oidc_enabled
         - external_linkedin_oidc_secret
+        - external_slack_oidc_client_id
+        - external_slack_oidc_enabled
+        - external_slack_oidc_secret
         - external_notion_client_id
         - external_notion_enabled
         - external_notion_secret
@@ -3912,8 +4174,10 @@ components:
         - rate_limit_sms_sent
         - rate_limit_token_refresh
         - rate_limit_verify
+        - rate_limit_otp
         - refresh_token_rotation_enabled
         - saml_enabled
+        - saml_external_url
         - security_captcha_enabled
         - security_captcha_provider
         - security_captcha_secret
@@ -4025,6 +4289,9 @@ components:
           type: boolean
         saml_enabled:
           type: boolean
+        saml_external_url:
+          type: string
+          pattern: /^[^,]+$/
         security_captcha_enabled:
           type: boolean
         security_captcha_provider:
@@ -4059,6 +4326,10 @@ components:
           minimum: 1
           maximum: 2147483647
         rate_limit_token_refresh:
+          type: number
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_otp:
           type: number
           minimum: 1
           maximum: 2147483647
@@ -4260,6 +4531,12 @@ components:
           type: string
         external_linkedin_oidc_secret:
           type: string
+        external_slack_oidc_enabled:
+          type: boolean
+        external_slack_oidc_client_id:
+          type: string
+        external_slack_oidc_secret:
+          type: string
         external_notion_enabled:
           type: boolean
         external_notion_client_id:
@@ -4308,6 +4585,46 @@ components:
           type: number
         api_max_request_duration:
           type: number
+    CreateThirdPartyAuthBody:
+      type: object
+      properties:
+        oidc_issuer_url:
+          type: string
+        jwks_url:
+          type: string
+        custom_jwks:
+          type: object
+    ThirdPartyAuth:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        oidc_issuer_url:
+          type: string
+          nullable: true
+        jwks_url:
+          type: string
+          nullable: true
+        custom_jwks:
+          type: object
+          nullable: true
+        resolved_jwks:
+          type: object
+          nullable: true
+        inserted_at:
+          type: string
+        updated_at:
+          type: string
+        resolved_at:
+          type: string
+          nullable: true
+      required:
+        - id
+        - type
+        - inserted_at
+        - updated_at
     V1RunQueryBody:
       type: object
       properties:
@@ -4451,6 +4768,8 @@ components:
           type: array
           items:
             type: string
+        array:
+          type: boolean
     AttributeMapping:
       type: object
       properties:

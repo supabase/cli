@@ -30,8 +30,11 @@ const (
 	BranchDetailResponseStatusGOINGDOWN       BranchDetailResponseStatus = "GOING_DOWN"
 	BranchDetailResponseStatusINACTIVE        BranchDetailResponseStatus = "INACTIVE"
 	BranchDetailResponseStatusINITFAILED      BranchDetailResponseStatus = "INIT_FAILED"
+	BranchDetailResponseStatusPAUSEFAILED     BranchDetailResponseStatus = "PAUSE_FAILED"
 	BranchDetailResponseStatusPAUSING         BranchDetailResponseStatus = "PAUSING"
 	BranchDetailResponseStatusREMOVED         BranchDetailResponseStatus = "REMOVED"
+	BranchDetailResponseStatusRESTARTING      BranchDetailResponseStatus = "RESTARTING"
+	BranchDetailResponseStatusRESTOREFAILED   BranchDetailResponseStatus = "RESTORE_FAILED"
 	BranchDetailResponseStatusRESTORING       BranchDetailResponseStatus = "RESTORING"
 	BranchDetailResponseStatusUNKNOWN         BranchDetailResponseStatus = "UNKNOWN"
 	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
@@ -62,11 +65,13 @@ const (
 	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
 	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
 	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusError = "8_upgrade_completion_failed"
+	N9PostPhysicalBackupFailed                     DatabaseUpgradeStatusError = "9_post_physical_backup_failed"
 )
 
 // Defines values for DatabaseUpgradeStatusProgress.
 const (
 	N0Requested                          DatabaseUpgradeStatusProgress = "0_requested"
+	N10CompletedPostPhysicalBackup       DatabaseUpgradeStatusProgress = "10_completed_post_physical_backup"
 	N1Started                            DatabaseUpgradeStatusProgress = "1_started"
 	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
 	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
@@ -290,8 +295,11 @@ const (
 	V1ProjectResponseStatusGOINGDOWN       V1ProjectResponseStatus = "GOING_DOWN"
 	V1ProjectResponseStatusINACTIVE        V1ProjectResponseStatus = "INACTIVE"
 	V1ProjectResponseStatusINITFAILED      V1ProjectResponseStatus = "INIT_FAILED"
+	V1ProjectResponseStatusPAUSEFAILED     V1ProjectResponseStatus = "PAUSE_FAILED"
 	V1ProjectResponseStatusPAUSING         V1ProjectResponseStatus = "PAUSING"
 	V1ProjectResponseStatusREMOVED         V1ProjectResponseStatus = "REMOVED"
+	V1ProjectResponseStatusRESTARTING      V1ProjectResponseStatus = "RESTARTING"
+	V1ProjectResponseStatusRESTOREFAILED   V1ProjectResponseStatus = "RESTORE_FAILED"
 	V1ProjectResponseStatusRESTORING       V1ProjectResponseStatus = "RESTORING"
 	V1ProjectResponseStatusUNKNOWN         V1ProjectResponseStatus = "UNKNOWN"
 	V1ProjectResponseStatusUPGRADING       V1ProjectResponseStatus = "UPGRADING"
@@ -363,6 +371,7 @@ type AttributeMapping struct {
 
 // AttributeValue defines model for AttributeValue.
 type AttributeValue struct {
+	Array   *bool                   `json:"array,omitempty"`
 	Default *AttributeValue_Default `json:"default,omitempty"`
 	Name    *string                 `json:"name,omitempty"`
 	Names   *[]string               `json:"names,omitempty"`
@@ -440,6 +449,9 @@ type AuthConfigResponse struct {
 	ExternalPhoneEnabled                          *bool    `json:"external_phone_enabled"`
 	ExternalSlackClientId                         *string  `json:"external_slack_client_id"`
 	ExternalSlackEnabled                          *bool    `json:"external_slack_enabled"`
+	ExternalSlackOidcClientId                     *string  `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEnabled                      *bool    `json:"external_slack_oidc_enabled"`
+	ExternalSlackOidcSecret                       *string  `json:"external_slack_oidc_secret"`
 	ExternalSlackSecret                           *string  `json:"external_slack_secret"`
 	ExternalSpotifyClientId                       *string  `json:"external_spotify_client_id"`
 	ExternalSpotifyEnabled                        *bool    `json:"external_spotify_enabled"`
@@ -496,11 +508,13 @@ type AuthConfigResponse struct {
 	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
 	RateLimitAnonymousUsers                       *float32 `json:"rate_limit_anonymous_users"`
 	RateLimitEmailSent                            *float32 `json:"rate_limit_email_sent"`
+	RateLimitOtp                                  *float32 `json:"rate_limit_otp"`
 	RateLimitSmsSent                              *float32 `json:"rate_limit_sms_sent"`
 	RateLimitTokenRefresh                         *float32 `json:"rate_limit_token_refresh"`
 	RateLimitVerify                               *float32 `json:"rate_limit_verify"`
 	RefreshTokenRotationEnabled                   *bool    `json:"refresh_token_rotation_enabled"`
 	SamlEnabled                                   *bool    `json:"saml_enabled"`
+	SamlExternalUrl                               *string  `json:"saml_external_url"`
 	SecurityCaptchaEnabled                        *bool    `json:"security_captcha_enabled"`
 	SecurityCaptchaProvider                       *string  `json:"security_captcha_provider"`
 	SecurityCaptchaSecret                         *string  `json:"security_captcha_secret"`
@@ -599,6 +613,14 @@ type BranchResponse struct {
 // BranchResponseStatus defines model for BranchResponse.Status.
 type BranchResponseStatus string
 
+// CfResponse defines model for CfResponse.
+type CfResponse struct {
+	Errors   []map[string]interface{} `json:"errors"`
+	Messages []map[string]interface{} `json:"messages"`
+	Result   CustomHostnameDetails    `json:"result"`
+	Success  bool                     `json:"success"`
+}
+
 // CreateBranchBody defines model for CreateBranchBody.
 type CreateBranchBody struct {
 	BranchName string  `json:"branch_name"`
@@ -641,13 +663,32 @@ type CreateSecretBody struct {
 	Value string `json:"value"`
 }
 
+// CreateThirdPartyAuthBody defines model for CreateThirdPartyAuthBody.
+type CreateThirdPartyAuthBody struct {
+	CustomJwks    *map[string]interface{} `json:"custom_jwks,omitempty"`
+	JwksUrl       *string                 `json:"jwks_url,omitempty"`
+	OidcIssuerUrl *string                 `json:"oidc_issuer_url,omitempty"`
+}
+
+// CustomHostnameDetails defines model for CustomHostnameDetails.
+type CustomHostnameDetails struct {
+	CustomOriginServer    string                `json:"custom_origin_server"`
+	Hostname              string                `json:"hostname"`
+	Id                    string                `json:"id"`
+	OwnershipVerification OwnershipVerification `json:"ownership_verification"`
+	Ssl                   SslValidation         `json:"ssl"`
+	Status                string                `json:"status"`
+	VerificationErrors    *[]string             `json:"verification_errors,omitempty"`
+}
+
 // DatabaseUpgradeStatus defines model for DatabaseUpgradeStatus.
 type DatabaseUpgradeStatus struct {
-	Error         *DatabaseUpgradeStatusError    `json:"error,omitempty"`
-	InitiatedAt   string                         `json:"initiated_at"`
-	Progress      *DatabaseUpgradeStatusProgress `json:"progress,omitempty"`
-	Status        DatabaseUpgradeStatusStatus    `json:"status"`
-	TargetVersion float32                        `json:"target_version"`
+	Error          *DatabaseUpgradeStatusError    `json:"error,omitempty"`
+	InitiatedAt    string                         `json:"initiated_at"`
+	LatestStatusAt string                         `json:"latest_status_at"`
+	Progress       *DatabaseUpgradeStatusProgress `json:"progress,omitempty"`
+	Status         DatabaseUpgradeStatusStatus    `json:"status"`
+	TargetVersion  float32                        `json:"target_version"`
 }
 
 // DatabaseUpgradeStatusError defines model for DatabaseUpgradeStatus.Error.
@@ -788,6 +829,13 @@ type OAuthTokenResponseTokenType string
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// OwnershipVerification defines model for OwnershipVerification.
+type OwnershipVerification struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
 }
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
@@ -988,6 +1036,13 @@ type SslEnforcements struct {
 	Database bool `json:"database"`
 }
 
+// SslValidation defines model for SslValidation.
+type SslValidation struct {
+	Status            string             `json:"status"`
+	ValidationErrors  *[]ValidationError `json:"validation_errors,omitempty"`
+	ValidationRecords []ValidationRecord `json:"validation_records"`
+}
+
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
 type SubdomainAvailabilityResponse struct {
 	Available bool `json:"available"`
@@ -1013,6 +1068,19 @@ type SupavisorConfigResponseDatabaseType string
 
 // SupavisorConfigResponsePoolMode defines model for SupavisorConfigResponse.PoolMode.
 type SupavisorConfigResponsePoolMode string
+
+// ThirdPartyAuth defines model for ThirdPartyAuth.
+type ThirdPartyAuth struct {
+	CustomJwks    *map[string]interface{} `json:"custom_jwks"`
+	Id            string                  `json:"id"`
+	InsertedAt    string                  `json:"inserted_at"`
+	JwksUrl       *string                 `json:"jwks_url"`
+	OidcIssuerUrl *string                 `json:"oidc_issuer_url"`
+	ResolvedAt    *string                 `json:"resolved_at"`
+	ResolvedJwks  *map[string]interface{} `json:"resolved_jwks"`
+	Type          string                  `json:"type"`
+	UpdatedAt     string                  `json:"updated_at"`
+}
 
 // TypescriptResponse defines model for TypescriptResponse.
 type TypescriptResponse struct {
@@ -1074,6 +1142,9 @@ type UpdateAuthConfigBody struct {
 	ExternalPhoneEnabled                          *bool                                           `json:"external_phone_enabled,omitempty"`
 	ExternalSlackClientId                         *string                                         `json:"external_slack_client_id,omitempty"`
 	ExternalSlackEnabled                          *bool                                           `json:"external_slack_enabled,omitempty"`
+	ExternalSlackOidcClientId                     *string                                         `json:"external_slack_oidc_client_id,omitempty"`
+	ExternalSlackOidcEnabled                      *bool                                           `json:"external_slack_oidc_enabled,omitempty"`
+	ExternalSlackOidcSecret                       *string                                         `json:"external_slack_oidc_secret,omitempty"`
 	ExternalSlackSecret                           *string                                         `json:"external_slack_secret,omitempty"`
 	ExternalSpotifyClientId                       *string                                         `json:"external_spotify_client_id,omitempty"`
 	ExternalSpotifyEnabled                        *bool                                           `json:"external_spotify_enabled,omitempty"`
@@ -1130,11 +1201,13 @@ type UpdateAuthConfigBody struct {
 	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
 	RateLimitAnonymousUsers                       *float32                                        `json:"rate_limit_anonymous_users,omitempty"`
 	RateLimitEmailSent                            *float32                                        `json:"rate_limit_email_sent,omitempty"`
+	RateLimitOtp                                  *float32                                        `json:"rate_limit_otp,omitempty"`
 	RateLimitSmsSent                              *float32                                        `json:"rate_limit_sms_sent,omitempty"`
 	RateLimitTokenRefresh                         *float32                                        `json:"rate_limit_token_refresh,omitempty"`
 	RateLimitVerify                               *float32                                        `json:"rate_limit_verify,omitempty"`
 	RefreshTokenRotationEnabled                   *bool                                           `json:"refresh_token_rotation_enabled,omitempty"`
 	SamlEnabled                                   *bool                                           `json:"saml_enabled,omitempty"`
+	SamlExternalUrl                               *string                                         `json:"saml_external_url,omitempty"`
 	SecurityCaptchaEnabled                        *bool                                           `json:"security_captcha_enabled,omitempty"`
 	SecurityCaptchaProvider                       *string                                         `json:"security_captcha_provider,omitempty"`
 	SecurityCaptchaSecret                         *string                                         `json:"security_captcha_secret,omitempty"`
@@ -1197,7 +1270,7 @@ type UpdateCustomHostnameBody struct {
 // UpdateCustomHostnameResponse defines model for UpdateCustomHostnameResponse.
 type UpdateCustomHostnameResponse struct {
 	CustomHostname string                             `json:"custom_hostname"`
-	Data           map[string]interface{}             `json:"data"`
+	Data           CfResponse                         `json:"data"`
 	Status         UpdateCustomHostnameResponseStatus `json:"status"`
 }
 
@@ -1324,7 +1397,7 @@ type V1CreateProjectBody struct {
 	// OrganizationId Slug of your organization
 	OrganizationId string `json:"organization_id"`
 
-	// Plan Subscription plan is now set on organization level and is ignored in this request
+	// Plan Subscription Plan is now set on organization level and is ignored in this request
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
@@ -1335,7 +1408,7 @@ type V1CreateProjectBody struct {
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyPlan Subscription plan is now set on organization level and is ignored in this request
+// V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyPlan string
 
 // V1CreateProjectBodyRegion Region you want your server to reside in
@@ -1475,6 +1548,17 @@ type V1UpdateFunctionBody struct {
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
+// ValidationError defines model for ValidationError.
+type ValidationError struct {
+	Message string `json:"message"`
+}
+
+// ValidationRecord defines model for ValidationRecord.
+type ValidationRecord struct {
+	TxtName  string `json:"txt_name"`
+	TxtValue string `json:"txt_value"`
+}
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -1575,6 +1659,9 @@ type V1CreateASsoProviderJSONRequestBody = CreateProviderBody
 
 // V1UpdateASsoProviderJSONRequestBody defines body for V1UpdateASsoProvider for application/json ContentType.
 type V1UpdateASsoProviderJSONRequestBody = UpdateProviderBody
+
+// CreateTPAForProjectJSONRequestBody defines body for CreateTPAForProject for application/json ContentType.
+type CreateTPAForProjectJSONRequestBody = CreateThirdPartyAuthBody
 
 // V1UpdateSupavisorConfigJSONRequestBody defines body for V1UpdateSupavisorConfig for application/json ContentType.
 type V1UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
