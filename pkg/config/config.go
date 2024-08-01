@@ -238,6 +238,7 @@ type (
 		// Add MFA Config here
 
 		Hook     hook     `toml:"hook"`
+		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
 		EnableSignup           bool  `toml:"enable_signup"`
@@ -294,6 +295,26 @@ type (
 		CustomAccessToken           hookConfig `toml:"custom_access_token"`
 		SendSMS                     hookConfig `toml:"send_sms"`
 		SendEmail                   hookConfig `toml:"send_email"`
+	}
+	factorTypeConfiguration struct {
+		EnrollEnabled bool `toml:"enroll_enabled"`
+		VerifyEnabled bool `toml:"verify_enabled"`
+	}
+	totpFactorTypeConfiguration struct {
+		factorTypeConfiguration
+	}
+
+	phoneFactorTypeConfiguration struct {
+		factorTypeConfiguration
+		OtpLength int    `toml:"otp_length"`
+		Template  string `toml:"template"`
+	}
+
+	mfa struct {
+		TOTP  totpFactorTypeConfiguration  `toml:"totp"`
+		Phone phoneFactorTypeConfiguration `toml:"phone"`
+		// set to float64 for backward compatibility
+		MaxEnrolledFactors float64 `toml:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
