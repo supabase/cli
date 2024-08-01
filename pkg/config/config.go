@@ -235,6 +235,7 @@ type (
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		// Add MFA Config here
 
 		Hook     hook     `toml:"hook"`
 		Sessions sessions `toml:"sessions"`
