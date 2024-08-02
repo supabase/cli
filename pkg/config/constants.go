@@ -15,7 +15,7 @@ const (
 	edgeRuntimeImage = "supabase/edge-runtime:v1.55.2"
 	vectorImage      = "timberio/vector:0.28.1-alpine"
 	supavisorImage   = "supabase/supavisor:1.1.56"
-	gotrueImage      = "supabase/gotrue:v2.151.0"
+	gotrueImage      = "supabase/gotrue:v2.157.1"
 	realtimeImage    = "supabase/realtime:v2.29.15"
 	storageImage     = "supabase/storage-api:v1.0.6"
 	logflareImage    = "supabase/logflare:1.4.0"
