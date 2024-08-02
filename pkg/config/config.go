@@ -455,7 +455,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				"notion":        {},
 				"twitch":        {},
 				"twitter":       {},
-				"slack":         {},
+				"slack":         {}, // TODO: remove this field in v2
 				"slack_oidc":    {},
 				"spotify":       {},
 				"workos":        {},
