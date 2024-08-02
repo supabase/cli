@@ -456,6 +456,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				"twitch":        {},
 				"twitter":       {},
 				"slack":         {},
+				"slack_oidc":    {},
 				"spotify":       {},
 				"workos":        {},
 				"zoom":          {},
