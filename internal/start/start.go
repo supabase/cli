@@ -616,8 +616,6 @@ EOF
 				env,
 				"GOTRUE_MFA_PHONE_ENROLL_ENABLED=true",
 				"GOTRUE_MFA_PHONE_VERIFY_ENABLED=true",
-				// TODO: Revisit once we have connected the "Enabled" field with the Phone fields
-
 			)
 		}
 		if utils.Config.Auth.MFA.TOTP.EnrollEnabled && utils.Config.Auth.MFA.TOTP.VerifyEnabled {
@@ -625,8 +623,6 @@ EOF
 				env,
 				"GOTRUE_MFA_TOTP_ENROLL_ENABLED=true",
 				"GOTRUE_MFA_TOTP_VERIFY_ENABLED=true",
-				// TODO: Revisit once we have connected the "Enabled" field with the Phone fields
-
 			)
 		}
 
