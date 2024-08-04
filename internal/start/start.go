@@ -611,20 +611,20 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
-		if utils.Config.Auth.MFA.Phone.Enroll.Enabled && utils.Config.Auth.MFA.Phone.Verify.Enabled {
+		if utils.Config.Auth.MFA.Phone.EnrollEnabled && utils.Config.Auth.MFA.Phone.VerifyEnabled {
 			env = append(
 				env,
 				"GOTRUE_MFA_PHONE_ENROLL_ENABLED=true",
-				"GOTRUE_MFA_PHONE_VERIFY_ENABLED=true"
+				"GOTRUE_MFA_PHONE_VERIFY_ENABLED=true",
 				// TODO: Revisit once we have connected the "Enabled" field with the Phone fields
 
 			)
 		}
-		if utils.Config.Auth.MFA.TOTP.Enroll.Enabled && utils.Config.Auth.MFA.TOTP.Verify.Enabled {
+		if utils.Config.Auth.MFA.TOTP.EnrollEnabled && utils.Config.Auth.MFA.TOTP.VerifyEnabled {
 			env = append(
 				env,
 				"GOTRUE_MFA_TOTP_ENROLL_ENABLED=true",
-				"GOTRUE_MFA_TOTP_VERIFY_ENABLED=true"
+				"GOTRUE_MFA_TOTP_VERIFY_ENABLED=true",
 				// TODO: Revisit once we have connected the "Enabled" field with the Phone fields
 
 			)
