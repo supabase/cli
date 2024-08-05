@@ -305,8 +305,9 @@ type (
 
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
-		OtpLength int    `toml:"otp_length"`
-		Template  string `toml:"template"`
+		OtpLength    int           `toml:"otp_length"`
+		Template     string        `toml:"template"`
+		MaxFrequency time.Duration `toml:"max_frequency"`
 	}
 
 	mfa struct {

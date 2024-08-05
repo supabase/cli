@@ -497,6 +497,11 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
 		if utils.Config.Auth.Sessions.Timebox > 0 {
@@ -611,18 +616,12 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
-		if utils.Config.Auth.MFA.Phone.EnrollEnabled && utils.Config.Auth.MFA.Phone.VerifyEnabled {
+		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
 			env = append(
 				env,
-				"GOTRUE_MFA_PHONE_ENROLL_ENABLED=true",
-				"GOTRUE_MFA_PHONE_VERIFY_ENABLED=true",
-			)
-		}
-		if utils.Config.Auth.MFA.TOTP.EnrollEnabled && utils.Config.Auth.MFA.TOTP.VerifyEnabled {
-			env = append(
-				env,
-				"GOTRUE_MFA_TOTP_ENROLL_ENABLED=true",
-				"GOTRUE_MFA_TOTP_VERIFY_ENABLED=true",
+				"GOTRUE_MFA_PHONE_TEMPLATE="+utils.Config.Auth.MFA.Phone.Template,
+				fmt.Sprintf("GOTRUE_MFA_PHONE_OTP_LENGTH=%v", utils.Config.Auth.MFA.Phone.OtpLength),
+				fmt.Sprintf("GOTRUE_MFA_PHONE_MAX_FREQUENCY=%v", utils.Config.Auth.MFA.Phone.MaxFrequency),
 			)
 		}
 
