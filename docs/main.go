@@ -185,7 +185,7 @@ func GenYamlDoc(cmd *cobra.Command, root *SpecDoc) CmdDoc {
 		Subcommands: subcommands,
 	}
 
-	names := strings.Split(cmd.CommandPath(), " ")
+	names := strings.Fields(cmd.CommandPath())
 	if len(names) > 3 {
 		base := strings.Join(names[2:], "-")
 		names = append(names[:2], base)
