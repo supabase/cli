@@ -1062,7 +1062,7 @@ EOF
 			return err
 		}
 		// Disable prompts when seeding
-		if err := buckets.Run(ctx, "", nil); err != nil {
+		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
 		}
 	}

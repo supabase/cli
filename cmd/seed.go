@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
@@ -27,7 +28,7 @@ var (
 		Short: "Seed buckets declared in [storage.buckets]",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return buckets.Run(cmd.Context(), flags.ProjectRef, utils.NewConsole())
+			return buckets.Run(cmd.Context(), flags.ProjectRef, true, afero.NewOsFs())
 		},
 	}
 )
