@@ -3,10 +3,12 @@ package buckets
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 	"github.com/h2non/gock"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -23,6 +25,10 @@ public = true
 [private]
 public = false`
 		require.NoError(t, toml.Unmarshal([]byte(config), &utils.Config.Storage.Buckets))
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		bucketPath := filepath.Join(utils.SupabaseDirPath, "images")
+		require.NoError(t, fsys.Mkdir(bucketPath, 0755))
 		// Setup mock api
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
@@ -40,7 +46,7 @@ public = false`
 			Reply(http.StatusOK).
 			JSON(storage.CreateBucketResponse{Name: "private"})
 		// Run test
-		err := Run(context.Background(), "", utils.NewConsole())
+		err := Run(context.Background(), "", false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -53,7 +59,7 @@ public = false`
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
 		// Run test
-		err := Run(context.Background(), "", nil)
+		err := Run(context.Background(), "", false, afero.NewMemMapFs())
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

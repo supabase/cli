@@ -94,16 +94,19 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 	// Check if directory exists on remote
 	dirExists := false
 	fileExists := false
-	if err := ls.IterateStoragePaths(ctx, api, noSlash, func(objectName string) error {
-		if objectName == path.Base(noSlash) {
-			fileExists = true
+	if len(noSlash) > 0 {
+		callback := func(objectName string) error {
+			if objectName == path.Base(noSlash) {
+				fileExists = true
+			}
+			if objectName == path.Base(noSlash)+"/" {
+				dirExists = true
+			}
+			return nil
 		}
-		if objectName == path.Base(noSlash)+"/" {
-			dirExists = true
+		if err := ls.IterateStoragePaths(ctx, api, noSlash, callback); err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
-		return err
 	}
 	baseName := filepath.Base(localPath)
 	jq := utils.NewJobQueue(maxJobs)

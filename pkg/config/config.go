@@ -211,6 +211,7 @@ type (
 		Public           *bool       `toml:"public"`
 		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
 		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
+		ObjectsPath      string      `toml:"objects_path"`
 	}
 
 	imageTransformation struct {
