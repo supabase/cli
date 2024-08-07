@@ -2,11 +2,15 @@ package config
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +27,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
+
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -249,6 +255,34 @@ type (
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key"`
 		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+
+		ThirdParty thirdParty `toml:"third_party"`
+	}
+
+	thirdParty struct {
+		Firebase tpaFirebase `toml:"firebase"`
+		Auth0    tpaAuth0    `toml:"auth0"`
+		Cognito  tpaCognito  `toml:"aws_cognito"`
+	}
+
+	tpaFirebase struct {
+		Enabled bool `toml:"enabled"`
+
+		ProjectID string `toml:"project_id"`
+	}
+
+	tpaAuth0 struct {
+		Enabled bool `toml:"enabled"`
+
+		Tenant       string `toml:"tenant"`
+		TenantRegion string `toml:"tenant_region"`
+	}
+
+	tpaCognito struct {
+		Enabled bool `toml:"enabled"`
+
+		UserPoolID     string `toml:"user_pool_id"`
+		UserPoolRegion string `toml:"user_pool_region"`
 	}
 
 	email struct {
@@ -837,6 +871,10 @@ func (c *config) Validate() error {
 			c.Auth.External[ext] = provider
 		}
 	}
+	// Validate Third-Party Auth config
+	if err := c.Auth.ThirdParty.validate(); err != nil {
+		return err
+	}
 	// Validate functions config
 	if c.EdgeRuntime.Enabled {
 		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
@@ -977,4 +1015,183 @@ func ValidateBucketName(name string) error {
 		return errors.Errorf("Invalid Bucket name: %s. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (%s)", name, bucketNamePattern.String())
 	}
 	return nil
+}
+
+func (f *tpaFirebase) issuerURL() string {
+	return fmt.Sprintf("https://securetoken.google.com/%s", f.ProjectID)
+}
+
+func (f *tpaFirebase) validate() error {
+	if f.ProjectID == "" {
+		return errors.New("Invalid config: auth.third_party.firebase is enabled but without a project_id.")
+	}
+
+	return nil
+}
+
+func (a *tpaAuth0) issuerURL() string {
+	if a.TenantRegion != "" {
+		return fmt.Sprintf("https://%s.%s.auth0.com", a.Tenant, a.TenantRegion)
+	}
+
+	return fmt.Sprintf("https://%s.auth0.com", a.Tenant)
+}
+
+func (a *tpaAuth0) validate() error {
+	if a.Tenant == "" {
+		return errors.New("Invalid config: auth.third_party.auth0 is enabled but without a tenant.")
+	}
+
+	return nil
+}
+
+func (c *tpaCognito) issuerURL() string {
+	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", c.UserPoolRegion, c.UserPoolID)
+}
+
+func (c *tpaCognito) validate() error {
+	if c.UserPoolID == "" {
+		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
+	}
+
+	if c.UserPoolRegion == "" {
+		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
+	}
+
+	return nil
+}
+
+func (tpa *thirdParty) validate() error {
+	enabled := 0
+
+	if tpa.Firebase.Enabled {
+		enabled += 1
+
+		if err := tpa.Firebase.validate(); err != nil {
+			return err
+		}
+	}
+
+	if tpa.Auth0.Enabled {
+		enabled += 1
+
+		if err := tpa.Auth0.validate(); err != nil {
+			return err
+		}
+	}
+
+	if tpa.Cognito.Enabled {
+		enabled += 1
+
+		if err := tpa.Cognito.validate(); err != nil {
+			return err
+		}
+	}
+
+	if enabled > 1 {
+		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
+	}
+
+	return nil
+}
+
+func (tpa *thirdParty) IssuerURL() string {
+	if tpa.Firebase.Enabled {
+		return tpa.Firebase.issuerURL()
+	}
+
+	if tpa.Auth0.Enabled {
+		return tpa.Auth0.issuerURL()
+	}
+
+	if tpa.Cognito.Enabled {
+		return tpa.Cognito.issuerURL()
+	}
+
+	return ""
+}
+
+// ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
+// configs by resolving the JWKS via the OIDC discovery URL.
+// It always returns a JWKS string, except when there's an error fetching.
+func (a *auth) ResolveJWKS() (string, error) {
+	var jwks struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+
+	issuerURL := a.ThirdParty.IssuerURL()
+	if issuerURL != "" {
+		discoveryURL := issuerURL + "/.well-known/openid-configuration"
+
+		client := fetcher.NewFetcher(
+			discoveryURL,
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+
+		resp, err := client.Send(context.Background(), http.MethodGet, "", nil)
+		if err != nil {
+			return "", err
+		}
+
+		type oidcConfiguration struct {
+			JWKSURI string `json:"jwks_uri"`
+		}
+
+		oidcConfig, err := fetcher.ParseJSON[oidcConfiguration](resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if oidcConfig.JWKSURI == "" {
+			return "", fmt.Errorf("auth.third_party: OIDC configuration at URL %q does not expose a jwks_uri property", discoveryURL)
+		}
+
+		client = fetcher.NewFetcher(
+			oidcConfig.JWKSURI,
+			fetcher.WithExpectedStatus(http.StatusOK))
+
+		resp, err = client.Send(context.Background(), http.MethodGet, "", nil)
+		if err != nil {
+			return "", err
+		}
+
+		type remoteJWKS struct {
+			Keys []json.RawMessage `json:"keys"`
+		}
+
+		rJWKS, err := fetcher.ParseJSON[remoteJWKS](resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if len(rJWKS.Keys) == 0 {
+			return "", fmt.Errorf("auth.third_party: JWKS at URL %q as discovered from %q does not contain any JWK keys", oidcConfig.JWKSURI, discoveryURL)
+		}
+
+		jwks.Keys = rJWKS.Keys
+	}
+
+	var secretJWK struct {
+		KeyType      string `json:"kty"`
+		KeyBase64URL string `json:"k"`
+	}
+
+	secretJWK.KeyType = "oct"
+	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret))
+
+	secretJWKEncoded, err := json.Marshal(&secretJWK)
+	if err != nil {
+		// must always be marshallable
+		panic(err)
+	}
+
+	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
+
+	jwksEncoded, err := json.Marshal(jwks)
+	if err != nil {
+		// must always be marshallable
+		panic(err)
+	}
+
+	return string(jwksEncoded), nil
 }
