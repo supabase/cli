@@ -314,7 +314,7 @@ type (
 		TOTP  totpFactorTypeConfiguration  `toml:"totp"`
 		Phone phoneFactorTypeConfiguration `toml:"phone"`
 		// set to float64 for backward compatibility
-		MaxEnrolledFactors float64 `toml:"max_enrolled_factors"`
+		MaxEnrolledFactors uint `toml:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
