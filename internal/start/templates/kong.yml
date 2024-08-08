@@ -76,11 +76,22 @@ services:
             headers:
               - "Content-Profile: graphql_public"
   - name: realtime-v1-ws
-    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/websocket"
     url: http://{{ .RealtimeId }}:4000/socket
     protocol: ws
     routes:
       - name: realtime-v1-ws
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+  - name: realtime-v1-longpoll
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
+    url: http://{{ .RealtimeId }}:4000/socket
+    protocol: http
+    routes:
+      - name: realtime-v1-longpoll
         strip_path: true
         paths:
           - /realtime/v1/
