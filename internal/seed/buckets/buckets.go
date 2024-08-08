@@ -38,5 +38,5 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 		}
 		resolved[name] = bucket
 	}
-	return api.UpsertObjects(ctx, resolved, 5, utils.NewRootFS(fsys))
+	return api.UpsertObjects(ctx, resolved, utils.NewRootFS(fsys))
 }

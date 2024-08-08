@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/config"
@@ -57,8 +56,17 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 	return nil
 }
 
-func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.BucketConfig, maxJobs uint, fsys fs.FS, opts ...func(*FileOptions)) error {
-	jq := queue.NewJobQueue(maxJobs)
+type UploadOptions struct {
+	MaxConcurrency uint
+	KeyPrefix      string
+}
+
+func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.BucketConfig, fsys fs.FS, opts ...func(*UploadOptions)) error {
+	uo := UploadOptions{MaxConcurrency: 5}
+	for _, apply := range opts {
+		apply(&uo)
+	}
+	jq := queue.NewJobQueue(uo.MaxConcurrency)
 	for name, bucket := range bucketConfig {
 		localPath := bucket.ObjectsPath
 		if len(localPath) == 0 {
@@ -71,7 +79,7 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 			if !info.Type().IsRegular() {
 				return nil
 			}
-			var dstPath string
+			dstPath := uo.KeyPrefix
 			relPath, err := filepath.Rel(localPath, filePath)
 			if err != nil {
 				return errors.Errorf("failed to resolve relative path: %w", err)
@@ -90,11 +98,6 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 				defer f.Close()
 				fo, err := ParseFileOptions(f)
 				if err != nil {
-					return err
-				}
-				if err := s.UploadObjectStream(ctx, dstPath, f, *fo); err == nil {
-					return nil
-				} else if !strings.Contains(err.Error(), `"statusCode":"409"`) {
 					return err
 				}
 				fo.Overwrite = true

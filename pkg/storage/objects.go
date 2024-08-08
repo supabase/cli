@@ -104,16 +104,19 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 
 func (s *StorageAPI) UploadObjectStream(ctx context.Context, remotePath string, localFile io.Reader, fo FileOptions) error {
 	headers := func(req *http.Request) {
-		req.Header.Add("Content-Type", fo.ContentType)
-		req.Header.Add("Cache-Control", fo.CacheControl)
+		if len(fo.ContentType) > 0 {
+			req.Header.Add("Content-Type", fo.ContentType)
+		}
+		if len(fo.CacheControl) > 0 {
+			req.Header.Add("Cache-Control", fo.CacheControl)
+		}
+		if fo.Overwrite {
+			req.Header.Add("x-upsert", "true")
+		}
 	}
 	// Prepare request
 	remotePath = strings.TrimPrefix(remotePath, "/")
-	method := http.MethodPost
-	if fo.Overwrite {
-		method = http.MethodPut
-	}
-	resp, err := s.Send(ctx, method, "/storage/v1/object/"+remotePath, io.NopCloser(localFile), headers)
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, io.NopCloser(localFile), headers)
 	if err != nil {
 		return err
 	}
