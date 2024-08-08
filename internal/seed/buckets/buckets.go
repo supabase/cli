@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage/client"
-	"github.com/supabase/cli/internal/storage/cp"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs) error {
@@ -31,11 +31,12 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 	if err := api.UpsertBuckets(ctx, utils.Config.Storage.Buckets, filter); err != nil {
 		return err
 	}
-	for _, bucket := range utils.Config.Storage.Buckets {
-		localPath := filepath.Join(utils.SupabaseDirPath, bucket.ObjectsPath)
-		if err := cp.UploadStorageObjectAll(ctx, api, "", localPath, 5, fsys); err != nil {
-			return err
+	resolved := config.BucketConfig{}
+	for name, bucket := range utils.Config.Storage.Buckets {
+		if len(bucket.ObjectsPath) > 0 && !filepath.IsAbs(bucket.ObjectsPath) {
+			bucket.ObjectsPath = filepath.Join(utils.SupabaseDirPath, bucket.ObjectsPath)
 		}
+		resolved[name] = bucket
 	}
-	return nil
+	return api.UpsertObjects(ctx, resolved, 5, afero.NewIOFS(fsys))
 }

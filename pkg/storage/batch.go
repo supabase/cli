@@ -3,9 +3,15 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/queue"
 )
 
 func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.BucketConfig, filter ...func(string) bool) error {
@@ -49,4 +55,56 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 		}
 	}
 	return nil
+}
+
+func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.BucketConfig, maxJobs uint, fsys fs.FS, opts ...func(*FileOptions)) error {
+	jq := queue.NewJobQueue(maxJobs)
+	for name, bucket := range bucketConfig {
+		localPath := bucket.ObjectsPath
+		if len(localPath) == 0 {
+			continue
+		}
+		upload := func(filePath string, info fs.DirEntry, err error) error {
+			if err != nil {
+				return errors.New(err)
+			}
+			if !info.Type().IsRegular() {
+				return nil
+			}
+			var dstPath string
+			relPath, err := filepath.Rel(localPath, filePath)
+			if err != nil {
+				return errors.Errorf("failed to resolve relative path: %w", err)
+			} else if relPath == "." {
+				// Copying single file
+				dstPath = path.Join(name, info.Name())
+			} else {
+				dstPath = path.Join(name, filepath.ToSlash(relPath))
+			}
+			fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
+			job := func() error {
+				f, err := fsys.Open(filePath)
+				if err != nil {
+					return errors.Errorf("failed to open file: %w", err)
+				}
+				defer f.Close()
+				fo, err := ParseFileOptions(f)
+				if err != nil {
+					return err
+				}
+				if err := s.UploadObjectStream(ctx, dstPath, f, *fo); err == nil {
+					return nil
+				} else if !strings.Contains(err.Error(), `"statusCode":"409"`) {
+					return err
+				}
+				fo.Overwrite = true
+				return s.UploadObjectStream(ctx, dstPath, f, *fo)
+			}
+			return jq.Put(job)
+		}
+		if err := fs.WalkDir(fsys, localPath, upload); err != nil {
+			return err
+		}
+	}
+	return jq.Collect()
 }
