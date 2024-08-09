@@ -211,6 +211,7 @@ type (
 		Public           *bool       `toml:"public"`
 		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
 		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
+		ObjectsPath      string      `toml:"objects_path"`
 	}
 
 	imageTransformation struct {
@@ -455,7 +456,8 @@ func NewConfig(editors ...ConfigEditor) config {
 				"notion":        {},
 				"twitch":        {},
 				"twitter":       {},
-				"slack":         {},
+				"slack":         {}, // TODO: remove this field in v2
+				"slack_oidc":    {},
 				"spotify":       {},
 				"workos":        {},
 				"zoom":          {},

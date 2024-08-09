@@ -78,6 +78,7 @@ enabled = true
 # public = false
 # file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
+# objects_path = "./images"
 
 [auth]
 enabled = true

@@ -107,6 +107,8 @@ func getPassword(projectRef string) string {
 	if password, err := credentials.Get(projectRef); err == nil {
 		return password
 	}
+	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
+	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
 	fmt.Fprint(os.Stderr, "Enter your database password: ")
 	return credentials.PromptMasked(os.Stdin)
 }

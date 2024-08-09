@@ -311,7 +311,7 @@ func TestUploadAll(t *testing.T) {
 			Get("/storage/v1/bucket").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := UploadStorageObjectAll(context.Background(), mockApi, "", ".", 1, fsys)
+		err := UploadStorageObjectAll(context.Background(), mockApi, "missing", ".", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

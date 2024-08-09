@@ -11,7 +11,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/go-errors/errors"
-	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -26,7 +25,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original := toTomlLines(map[string]interface{}{
+	original := toTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
@@ -56,25 +55,26 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated := toTomlLines(map[string]interface{}{
+	updated := toTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
-	if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
+	// if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
+	if lineDiff := Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
-		fmt.Println(lineDiff)
+		fmt.Println(string(lineDiff))
 	}
 	return nil
 }
 
-func toTomlLines(config any) []string {
+func toTomlBytes(config any) []byte {
 	var buf bytes.Buffer
 	enc := toml.NewEncoder(&buf)
 	enc.Indent = ""
 	if err := enc.Encode(config); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), "failed to marshal toml config:", err)
 	}
-	return strings.Split(buf.String(), "\n")
+	return buf.Bytes()
 }
 
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
