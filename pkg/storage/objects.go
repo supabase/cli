@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -125,11 +124,7 @@ func (s *StorageAPI) UploadObjectStream(ctx context.Context, remotePath string, 
 }
 
 func (s *StorageAPI) DownloadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs) error {
-	dir := filepath.Dir(localPath)
-	if err := fsys.MkdirAll(dir, 0755); err != nil && !errors.Is(err, os.ErrExist) {
-		return errors.Errorf("failed to mkdir: %w", err)
-	}
-	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create file: %w", err)
 	}
