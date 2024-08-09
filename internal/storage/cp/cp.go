@@ -16,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/queue"
 	"github.com/supabase/cli/pkg/storage"
 )
 
@@ -66,7 +67,7 @@ func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remot
 	}
 	// No need to be atomic because it's incremented only on main thread
 	count := 0
-	jq := utils.NewJobQueue(maxJobs)
+	jq := queue.NewJobQueue(maxJobs)
 	err := ls.IterateStoragePathsAll(ctx, api, remotePath, func(objectPath string) error {
 		relPath := strings.TrimPrefix(objectPath, remotePath)
 		dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
@@ -79,7 +80,13 @@ func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remot
 			if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dstPath)); err != nil {
 				return err
 			}
-			return api.DownloadObject(ctx, objectPath, dstPath, fsys)
+			// Overwrites existing file when using --recursive flag
+			f, err := fsys.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				return errors.Errorf("failed to create file: %w", err)
+			}
+			defer f.Close()
+			return api.DownloadObjectStream(ctx, objectPath, f)
 		}
 		return jq.Put(job)
 	})
@@ -108,8 +115,12 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 			return err
 		}
 	}
+	// Overwrites existing object when using --recursive flag
+	opts = append(opts, func(fo *storage.FileOptions) {
+		fo.Overwrite = true
+	})
 	baseName := filepath.Base(localPath)
-	jq := utils.NewJobQueue(maxJobs)
+	jq := queue.NewJobQueue(maxJobs)
 	err := afero.Walk(fsys, localPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return errors.New(err)
@@ -126,6 +137,7 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 		if relPath == "." {
 			_, prefix := client.SplitBucketPrefix(dstPath)
 			if IsDir(prefix) || (dirExists && !fileExists) {
+				// Keep the file name when destination is a directory
 				dstPath = path.Join(dstPath, info.Name())
 			}
 		} else {

@@ -3,6 +3,7 @@ package utils
 import (
 	_ "embed"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -101,7 +102,7 @@ func GetDockerIds() []string {
 var Config = config.NewConfig(config.WithHostname(GetHostname()))
 
 func LoadConfigFS(fsys afero.Fs) error {
-	if err := Config.Load("", afero.NewIOFS(fsys)); err != nil {
+	if err := Config.Load("", NewRootFS(fsys)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
 		}
@@ -109,6 +110,19 @@ func LoadConfigFS(fsys afero.Fs) error {
 	}
 	UpdateDockerIds()
 	return nil
+}
+
+// Adapts fs.FS to support absolute paths
+type rootFS struct {
+	fsys afero.Fs
+}
+
+func (f *rootFS) Open(name string) (fs.File, error) {
+	return f.fsys.Open(name)
+}
+
+func NewRootFS(fsys afero.Fs) fs.FS {
+	return &rootFS{fsys: fsys}
 }
 
 func ToRealtimeEnv(addr config.AddressFamily) string {
