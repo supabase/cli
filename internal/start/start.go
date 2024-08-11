@@ -105,6 +105,7 @@ type kongConfig struct {
 	PgmetaId      string
 	EdgeRuntimeId string
 	LogflareId    string
+	PoolerId      string
 	ApiHost       string
 	ApiPort       uint16
 }
@@ -350,6 +351,7 @@ EOF
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			LogflareId:    utils.LogflareId,
+			PoolerId:      utils.PoolerId,
 			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
