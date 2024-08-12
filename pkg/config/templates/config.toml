@@ -173,7 +173,7 @@ max_enrolled_factors = 10
 # enroll_enabled = true
 # verify_enabled = true
 # otp_length = 6
-# template = "Your Code is {{ .Code }}"
+# template = "Your code is {{ `{{ .Code }}` }} ."
 # max_frequency = "10s"
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
