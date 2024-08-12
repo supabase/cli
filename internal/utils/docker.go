@@ -33,6 +33,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel"
 )
 
 var Docker = NewDocker()
@@ -43,6 +44,10 @@ func NewDocker() *client.Client {
 	if err != nil {
 		log.Fatalln("Failed to create Docker client:", err)
 	}
+	// Silence otel errors as users don't care about docker metrics
+	// 2024/08/12 23:11:12 1 errors occurred detecting resource:
+	// 	* conflicting Schema URL: https://opentelemetry.io/schemas/1.21.0
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(cause error) {}))
 	if err := cli.Initialize(&dockerFlags.ClientOptions{}); err != nil {
 		log.Fatalln("Failed to initialize Docker client:", err)
 	}

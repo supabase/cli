@@ -13,8 +13,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.59.2
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
-	github.com/docker/cli v26.1.2+incompatible
-	github.com/docker/docker v26.1.4+incompatible
+	github.com/docker/cli v26.1.5+incompatible
+	github.com/docker/docker v26.1.5+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.28.1
@@ -24,7 +24,6 @@ require (
 	github.com/go-xmlfmt/xmlfmt v1.1.2
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golangci/golangci-lint v1.59.1
-	github.com/google/go-cmp v0.6.0
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/go-querystring v1.1.0
 	github.com/google/uuid v1.6.0
@@ -49,6 +48,7 @@ require (
 	github.com/stripe/pg-schema-diff v0.7.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.5
+	go.opentelemetry.io/otel v1.28.0
 	golang.org/x/mod v0.20.0
 	golang.org/x/oauth2 v0.21.0
 	golang.org/x/term v0.22.0
@@ -169,6 +169,7 @@ require (
 	github.com/golangci/plugin-module-register v0.1.1 // indirect
 	github.com/golangci/revgrep v0.5.3 // indirect
 	github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gordonklaus/ineffassign v0.1.0 // indirect
 	github.com/gorilla/css v1.0.0 // indirect
@@ -317,7 +318,6 @@ require (
 	go-simpler.org/musttag v0.12.2 // indirect
 	go-simpler.org/sloglint v0.7.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.49.0 // indirect
-	go.opentelemetry.io/otel v1.28.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.28.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0 // indirect
