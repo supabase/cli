@@ -88,6 +88,9 @@ jobs:
           exit 1
 
       - name: Perform CodeQL Analysis
+        id: results
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{matrix.language}}"
+
+      - run: cat ${{ steps.results.outputs.sarif-output }}/go.sarif
