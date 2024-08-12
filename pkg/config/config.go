@@ -299,9 +299,6 @@ type (
 		EnrollEnabled bool `toml:"enroll_enabled"`
 		VerifyEnabled bool `toml:"verify_enabled"`
 	}
-	totpFactorTypeConfiguration struct {
-		factorTypeConfiguration
-	}
 
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
@@ -311,7 +308,7 @@ type (
 	}
 
 	mfa struct {
-		TOTP  totpFactorTypeConfiguration  `toml:"totp"`
+		TOTP  factorTypeConfiguration      `toml:"totp"`
 		Phone phoneFactorTypeConfiguration `toml:"phone"`
 		// set to float64 for backward compatibility
 		MaxEnrolledFactors uint `toml:"max_enrolled_factors"`
