@@ -225,7 +225,8 @@ func TestRestartDatabase(t *testing.T) {
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
-		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
+		utils.PoolerId = "test-pooler"
+		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusOK)
@@ -259,11 +260,15 @@ func TestRestartDatabase(t *testing.T) {
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
 		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusServiceUnavailable)
 		}
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.PoolerId + "/restart").
+			Reply(http.StatusNotFound)
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
