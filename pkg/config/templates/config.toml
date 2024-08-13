@@ -160,13 +160,13 @@ message_service_sid = ""
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
 auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
+[auth.mfa]
+max_enrolled_factors = 10
+
 # Configure MFA via App Authenticator (TOTP)
 [auth.mfa.totp]
 enroll_enabled = true
 verify_enabled = true
-
-[auth.mfa]
-max_enrolled_factors = 10
 
 # Configure Multi-factor-authentication via Phone Messaging
 # [auth.mfa.phone]
