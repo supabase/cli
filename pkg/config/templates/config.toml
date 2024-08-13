@@ -161,9 +161,10 @@ message_service_sid = ""
 auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
 [auth.mfa]
+# Control how many MFA factors can be enrolled at once per user.
 max_enrolled_factors = 10
 
-# Configure MFA via App Authenticator (TOTP)
+# Control use of MFA via App Authenticator (TOTP)
 [auth.mfa.totp]
 enroll_enabled = true
 verify_enabled = true
