@@ -308,10 +308,9 @@ type (
 	}
 
 	mfa struct {
-		TOTP  factorTypeConfiguration      `toml:"totp"`
-		Phone phoneFactorTypeConfiguration `toml:"phone"`
-		// set to float64 for backward compatibility
-		MaxEnrolledFactors uint `toml:"max_enrolled_factors"`
+		TOTP               factorTypeConfiguration      `toml:"totp"`
+		Phone              phoneFactorTypeConfiguration `toml:"phone"`
+		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
