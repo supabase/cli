@@ -98,16 +98,17 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 }
 
 type kongConfig struct {
-	GotrueId      string
-	RestId        string
-	RealtimeId    string
-	StorageId     string
-	PgmetaId      string
-	EdgeRuntimeId string
-	LogflareId    string
-	PoolerId      string
-	ApiHost       string
-	ApiPort       uint16
+	GotrueId              string
+	RestId                string
+	RealtimeId            string
+	StorageId             string
+	PgmetaId              string
+	EdgeRuntimeId         string
+	LogflareId            string
+	PoolerId              string
+	ApiHost               string
+	ApiPort               uint16
+	StorageForwardHeaders bool
 }
 
 var (
@@ -343,17 +344,19 @@ EOF
 	// Start Kong.
 	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
+
 		if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig{
-			GotrueId:      utils.GotrueId,
-			RestId:        utils.RestId,
-			RealtimeId:    utils.Config.Realtime.TenantId,
-			StorageId:     utils.StorageId,
-			PgmetaId:      utils.PgmetaId,
-			EdgeRuntimeId: utils.EdgeRuntimeId,
-			LogflareId:    utils.LogflareId,
-			PoolerId:      utils.PoolerId,
-			ApiHost:       utils.Config.Hostname,
-			ApiPort:       utils.Config.Api.Port,
+			GotrueId:              utils.GotrueId,
+			RestId:                utils.RestId,
+			RealtimeId:            utils.Config.Realtime.TenantId,
+			StorageId:             utils.StorageId,
+			PgmetaId:              utils.PgmetaId,
+			EdgeRuntimeId:         utils.EdgeRuntimeId,
+			LogflareId:            utils.LogflareId,
+			PoolerId:              utils.PoolerId,
+			ApiHost:               utils.Config.Hostname,
+			ApiPort:               utils.Config.Api.Port,
+			StorageForwardHeaders: shouldIncludeStorageForwardHeaders(),
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
@@ -388,6 +391,7 @@ EOF
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors",
+					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
@@ -1097,4 +1101,26 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+// Keep backwards compatibility for versions lower than 1.10.1
+func shouldIncludeStorageForwardHeaders() bool {
+	imageTag := utils.GetImageTag(utils.Config.Storage.Image)
+	potentialVersion := strings.Replace(imageTag, "v", "", 1)
+	potentialVersion = strings.ReplaceAll(potentialVersion, ".", "")
+
+	version, err := strconv.ParseInt(potentialVersion, 10, 16)
+
+	// if we get an error, it means the tag might not be a semantic version
+	// we then default to not include it
+	if err != nil {
+		return false
+	}
+
+	// version deployed is lower than v1.10.1
+	if version < 1101 {
+		return true
+	}
+
+	return false
 }

@@ -201,6 +201,14 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
+func GetImageTag(imageUrl string) string {
+	parts := strings.Split(imageUrl, ":")
+	if len(parts) > 1 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
 func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
 	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
 		RegistryAuth: GetRegistryAuth(),
