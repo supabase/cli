@@ -157,7 +157,6 @@ max_frequency = "5s"
 enabled = false
 account_sid = ""
 message_service_sid = ""
-
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
 auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
