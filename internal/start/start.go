@@ -166,7 +166,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS()
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
 		return err
 	}

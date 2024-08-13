@@ -1114,7 +1114,7 @@ func (tpa *thirdParty) IssuerURL() string {
 // ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
 // configs by resolving the JWKS via the OIDC discovery URL.
 // It always returns a JWKS string, except when there's an error fetching.
-func (a *auth) ResolveJWKS() (string, error) {
+func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	var jwks struct {
 		Keys []json.RawMessage `json:"keys"`
 	}
@@ -1123,12 +1123,14 @@ func (a *auth) ResolveJWKS() (string, error) {
 	if issuerURL != "" {
 		discoveryURL := issuerURL + "/.well-known/openid-configuration"
 
+		t := &http.Client{Timeout: 10 * time.Second}
 		client := fetcher.NewFetcher(
-			discoveryURL,
+			issuerURL,
+			fetcher.WithHTTPClient(t),
 			fetcher.WithExpectedStatus(http.StatusOK),
 		)
 
-		resp, err := client.Send(context.Background(), http.MethodGet, "", nil)
+		resp, err := client.Send(ctx, http.MethodGet, "", nil)
 		if err != nil {
 			return "", err
 		}
@@ -1148,9 +1150,11 @@ func (a *auth) ResolveJWKS() (string, error) {
 
 		client = fetcher.NewFetcher(
 			oidcConfig.JWKSURI,
-			fetcher.WithExpectedStatus(http.StatusOK))
+			fetcher.WithHTTPClient(t),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
 
-		resp, err = client.Send(context.Background(), http.MethodGet, "", nil)
+		resp, err = client.Send(ctx, http.MethodGet, "", nil)
 		if err != nil {
 			return "", err
 		}
@@ -1181,16 +1185,14 @@ func (a *auth) ResolveJWKS() (string, error) {
 
 	secretJWKEncoded, err := json.Marshal(&secretJWK)
 	if err != nil {
-		// must always be marshallable
-		panic(err)
+		return "", errors.Errorf("failed to marshal secret jwk: %w", err)
 	}
 
 	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
 
 	jwksEncoded, err := json.Marshal(jwks)
 	if err != nil {
-		// must always be marshallable
-		panic(err)
+		return "", errors.Errorf("failed to marshal jwks keys: %w", err)
 	}
 
 	return string(jwksEncoded), nil
