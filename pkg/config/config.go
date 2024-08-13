@@ -237,6 +237,7 @@ type (
 		EnableManualLinking        bool `toml:"enable_manual_linking"`
 
 		Hook     hook     `toml:"hook"`
+		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
 		EnableSignup           bool  `toml:"enable_signup"`
@@ -293,6 +294,23 @@ type (
 		CustomAccessToken           hookConfig `toml:"custom_access_token"`
 		SendSMS                     hookConfig `toml:"send_sms"`
 		SendEmail                   hookConfig `toml:"send_email"`
+	}
+	factorTypeConfiguration struct {
+		EnrollEnabled bool `toml:"enroll_enabled"`
+		VerifyEnabled bool `toml:"verify_enabled"`
+	}
+
+	phoneFactorTypeConfiguration struct {
+		factorTypeConfiguration
+		OtpLength    uint          `toml:"otp_length"`
+		Template     string        `toml:"template"`
+		MaxFrequency time.Duration `toml:"max_frequency"`
+	}
+
+	mfa struct {
+		TOTP               factorTypeConfiguration      `toml:"totp"`
+		Phone              phoneFactorTypeConfiguration `toml:"phone"`
+		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
