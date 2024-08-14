@@ -160,6 +160,23 @@ message_service_sid = ""
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
 auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
+[auth.mfa]
+# Control how many MFA factors can be enrolled at once per user.
+max_enrolled_factors = 10
+
+# Control use of MFA via App Authenticator (TOTP)
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+# Configure Multi-factor-authentication via Phone Messaging
+# [auth.mfa.phone]
+# enroll_enabled = true
+# verify_enabled = true
+# otp_length = 6
+# template = "Your code is {{ `{{ .Code }}` }} ."
+# max_frequency = "10s"
+
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `slack`, `spotify`, `workos`, `zoom`.
@@ -175,6 +192,23 @@ redirect_uri = ""
 url = ""
 # If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
 skip_nonce_check = false
+
+# Use Firebase Auth as a third-party provider alongside Supabase Auth.
+[auth.third_party.firebase]
+enabled = false
+# project_id = "my-firebase-project"
+
+# Use Auth0 as a third-party provider alongside Supabase Auth.
+[auth.third_party.auth0]
+enabled = false
+# tenant = "my-auth0-tenant"
+# tenant_region = "us"
+
+# Use AWS Cognito (Amplify) as a third-party provider alongside Supabase Auth.
+[auth.third_party.aws_cognito]
+enabled = false
+# user_pool_id = "my-user-pool-id"
+# user_pool_region = "us-east-1"
 
 [edge_runtime]
 enabled = true

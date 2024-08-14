@@ -167,6 +167,11 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
@@ -356,7 +361,7 @@ EOF
 			PoolerId:              utils.PoolerId,
 			ApiHost:               utils.Config.Hostname,
 			ApiPort:               utils.Config.Api.Port,
-			StorageForwardHeaders: shouldIncludeStorageForwardHeaders(),
+			StorageForwardHeaders: StorageSupportsForwardHeaders(),
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
@@ -501,6 +506,11 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
 		if utils.Config.Auth.Sessions.Timebox > 0 {
@@ -613,6 +623,14 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
 				"GOTRUE_HOOK_SEND_EMAIL_URI="+utils.Config.Auth.Hook.SendEmail.URI,
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
+			)
+		}
+		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
+			env = append(
+				env,
+				"GOTRUE_MFA_PHONE_TEMPLATE="+utils.Config.Auth.MFA.Phone.Template,
+				fmt.Sprintf("GOTRUE_MFA_PHONE_OTP_LENGTH=%v", utils.Config.Auth.MFA.Phone.OtpLength),
+				fmt.Sprintf("GOTRUE_MFA_PHONE_MAX_FREQUENCY=%v", utils.Config.Auth.MFA.Phone.MaxFrequency),
 			)
 		}
 
@@ -728,6 +746,7 @@ EOF
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("API_JWT_JWKS=%s", jwks),
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
@@ -778,7 +797,7 @@ EOF
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					"PGRST_DB_ANON_ROLE=anon",
-					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("PGRST_JWT_SECRET=%s", jwks),
 					"PGRST_ADMIN_SERVER_PORT=3001",
 				},
 				// PostgREST does not expose a shell for health check
@@ -811,6 +830,7 @@ EOF
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("AUTH_JWT_JWKS=%s", jwks),
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
@@ -825,7 +845,7 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
-					"S3_ALLOW_FORWARDED_HEADER=true",
+					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%s", strconv.FormatBool(!StorageSupportsForwardHeaders())),
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
@@ -1104,7 +1124,7 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 }
 
 // Keep backwards compatibility for versions lower than 1.10.1
-func shouldIncludeStorageForwardHeaders() bool {
+func StorageSupportsForwardHeaders() bool {
 	imageTag := utils.GetImageTag(utils.Config.Storage.Image)
 	potentialVersion := strings.Replace(imageTag, "v", "", 1)
 	potentialVersion = strings.ReplaceAll(potentialVersion, ".", "")
