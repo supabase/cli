@@ -31,6 +31,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
+	"golang.org/x/mod/semver"
 )
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
@@ -110,10 +111,18 @@ type kongConfig struct {
 	ApiPort       uint16
 }
 
+// TODO: deprecate after removing storage headers from kong
+func StorageVersionBelow(target string) bool {
+	parts := strings.Split(utils.Config.Storage.Image, ":v")
+	return semver.Compare(parts[len(parts)-1], target) < 0
+}
+
 var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
-	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+	kongConfigTemplate = template.Must(template.New("kongConfig").Funcs(template.FuncMap{
+		"StorageVersionBelow": StorageVersionBelow,
+	}).Parse(kongConfigEmbed))
 
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
@@ -393,6 +402,7 @@ EOF
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors",
+					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
@@ -841,7 +851,7 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
-					"S3_ALLOW_FORWARDED_HEADER=true",
+					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%v", StorageVersionBelow("1.10.1")),
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
