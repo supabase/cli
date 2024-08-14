@@ -31,6 +31,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
+	"golang.org/x/mod/semver"
 )
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
@@ -98,23 +99,30 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 }
 
 type kongConfig struct {
-	GotrueId              string
-	RestId                string
-	RealtimeId            string
-	StorageId             string
-	PgmetaId              string
-	EdgeRuntimeId         string
-	LogflareId            string
-	PoolerId              string
-	ApiHost               string
-	ApiPort               uint16
-	StorageForwardHeaders bool
+	GotrueId      string
+	RestId        string
+	RealtimeId    string
+	StorageId     string
+	PgmetaId      string
+	EdgeRuntimeId string
+	LogflareId    string
+	PoolerId      string
+	ApiHost       string
+	ApiPort       uint16
+}
+
+// TODO: deprecate after removing storage headers from kong
+func StorageVersionBelow(target string) bool {
+	parts := strings.Split(utils.Config.Storage.Image, ":v")
+	return semver.Compare(parts[len(parts)-1], target) < 0
 }
 
 var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
-	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+	kongConfigTemplate = template.Must(template.New("kongConfig").Funcs(template.FuncMap{
+		"StorageVersionBelow": StorageVersionBelow,
+	}).Parse(kongConfigEmbed))
 
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
@@ -349,19 +357,17 @@ EOF
 	// Start Kong.
 	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-
 		if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig{
-			GotrueId:              utils.GotrueId,
-			RestId:                utils.RestId,
-			RealtimeId:            utils.Config.Realtime.TenantId,
-			StorageId:             utils.StorageId,
-			PgmetaId:              utils.PgmetaId,
-			EdgeRuntimeId:         utils.EdgeRuntimeId,
-			LogflareId:            utils.LogflareId,
-			PoolerId:              utils.PoolerId,
-			ApiHost:               utils.Config.Hostname,
-			ApiPort:               utils.Config.Api.Port,
-			StorageForwardHeaders: StorageSupportsForwardHeaders(),
+			GotrueId:      utils.GotrueId,
+			RestId:        utils.RestId,
+			RealtimeId:    utils.Config.Realtime.TenantId,
+			StorageId:     utils.StorageId,
+			PgmetaId:      utils.PgmetaId,
+			EdgeRuntimeId: utils.EdgeRuntimeId,
+			LogflareId:    utils.LogflareId,
+			PoolerId:      utils.PoolerId,
+			ApiHost:       utils.Config.Hostname,
+			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
@@ -845,7 +851,7 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
-					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%s", strconv.FormatBool(!StorageSupportsForwardHeaders())),
+					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%v", StorageVersionBelow("1.10.1")),
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
@@ -1121,26 +1127,4 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
-}
-
-// Keep backwards compatibility for versions lower than 1.10.1
-func StorageSupportsForwardHeaders() bool {
-	imageTag := utils.GetImageTag(utils.Config.Storage.Image)
-	potentialVersion := strings.Replace(imageTag, "v", "", 1)
-	potentialVersion = strings.ReplaceAll(potentialVersion, ".", "")
-
-	version, err := strconv.ParseInt(potentialVersion, 10, 16)
-
-	// if we get an error, it means the tag might not be a semantic version
-	// we then default to not include it
-	if err != nil {
-		return false
-	}
-
-	// version deployed is lower than v1.10.1
-	if version < 1101 {
-		return true
-	}
-
-	return false
 }
