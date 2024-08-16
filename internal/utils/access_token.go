@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	AccessTokenPattern = regexp.MustCompile(`^sbp_[a-f0-9]{40}$`)
+	AccessTokenPattern = regexp.MustCompile(`^sbp_(oauth_)?[a-f0-9]{40}$`)
 	ErrInvalidToken    = errors.New("Invalid access token format. Must be like `sbp_0102...1920`.")
 	ErrMissingToken    = errors.Errorf("Access token not provided. Supply an access token by running %s or setting the SUPABASE_ACCESS_TOKEN environment variable.", Aqua("supabase login"))
 	ErrNotLoggedIn     = errors.New("You were not logged in, nothing to do.")
