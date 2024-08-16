@@ -1316,6 +1316,8 @@ paths:
       responses:
         '201':
           description: ''
+        '403':
+          description: ''
         '500':
           description: Failed to set up read replica
       tags:
@@ -1343,6 +1345,8 @@ paths:
               $ref: '#/components/schemas/RemoveReadReplicaBody'
       responses:
         '201':
+          description: ''
+        '403':
           description: ''
         '500':
           description: Failed to remove read replica
@@ -1605,7 +1609,7 @@ paths:
   /v1/projects/{ref}/config/auth/third-party-auth:
     post:
       operationId: createTPAForProject
-      summary: '[Alpha] Creates a new third-party auth integration'
+      summary: Creates a new third-party auth integration
       parameters:
         - name: ref
           required: true
@@ -2439,6 +2443,15 @@ components:
           type: boolean
         persistent:
           type: boolean
+        status:
+          enum:
+            - CREATING_PROJECT
+            - RUNNING_MIGRATIONS
+            - MIGRATIONS_PASSED
+            - MIGRATIONS_FAILED
+            - FUNCTIONS_DEPLOYED
+            - FUNCTIONS_FAILED
+          type: string
     BranchResponse:
       type: object
       properties:
@@ -2826,10 +2839,14 @@ components:
     CreateBranchBody:
       type: object
       properties:
+        desired_instance_size:
+          $ref: '#/components/schemas/DesiredInstanceSize'
         branch_name:
           type: string
         git_branch:
           type: string
+        persistent:
+          type: boolean
         region:
           type: string
       required:
@@ -3900,6 +3917,26 @@ components:
         mfa_max_enrolled_factors:
           type: number
           nullable: true
+        mfa_totp_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_totp_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_otp_length:
+          type: number
+        mfa_phone_template:
+          type: string
+          nullable: true
+        mfa_phone_max_frequency:
+          type: number
+          nullable: true
         password_hibp_enabled:
           type: boolean
           nullable: true
@@ -4166,6 +4203,13 @@ components:
         - mailer_templates_reauthentication_content
         - mailer_templates_recovery_content
         - mfa_max_enrolled_factors
+        - mfa_totp_enroll_enabled
+        - mfa_totp_verify_enabled
+        - mfa_phone_enroll_enabled
+        - mfa_phone_verify_enabled
+        - mfa_phone_otp_length
+        - mfa_phone_template
+        - mfa_phone_max_frequency
         - password_hibp_enabled
         - password_min_length
         - password_required_characters
@@ -4585,6 +4629,24 @@ components:
           type: number
         api_max_request_duration:
           type: number
+        mfa_totp_enroll_enabled:
+          type: boolean
+        mfa_totp_verify_enabled:
+          type: boolean
+        mfa_phone_enroll_enabled:
+          type: boolean
+        mfa_phone_verify_enabled:
+          type: boolean
+        mfa_phone_max_frequency:
+          type: number
+          minimum: 0
+          maximum: 32767
+        mfa_phone_otp_length:
+          type: number
+          minimum: 0
+          maximum: 32767
+        mfa_phone_template:
+          type: string
     CreateThirdPartyAuthBody:
       type: object
       properties:
@@ -4946,6 +5008,7 @@ components:
             - PENDING
             - REMOVED
             - ARCHIVED
+            - CANCELLED
         is_physical_backup:
           type: boolean
         inserted_at:
