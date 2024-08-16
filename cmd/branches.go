@@ -31,20 +31,6 @@ var (
 	branchRegion = utils.EnumFlag{
 		Allowed: flyRegions(),
 	}
-	branchSize = utils.EnumFlag{
-		Allowed: []string{
-			string(api.Micro),
-			string(api.Small),
-			string(api.Medium),
-			string(api.Large),
-			string(api.Xlarge),
-			string(api.N2xlarge),
-			string(api.N4xlarge),
-			string(api.N8xlarge),
-			string(api.N12xlarge),
-			string(api.N16xlarge),
-		},
-	}
 	persistent bool
 
 	branchCreateCmd = &cobra.Command{
@@ -62,7 +48,7 @@ var (
 				body.Region = &branchRegion.Value
 			}
 			if cmdFlags.Changed("size") {
-				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&branchSize.Value)
+				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
 			}
 			if cmdFlags.Changed("persistent") {
 				body.Persistent = &persistent
@@ -182,7 +168,7 @@ func init() {
 	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	createFlags := branchCreateCmd.Flags()
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
-	createFlags.Var(&branchSize, "size", "Select a desired instance size for the branch database.")
+	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
