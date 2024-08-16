@@ -30,11 +30,25 @@ var (
 	dbPassword  string
 
 	region = utils.EnumFlag{
-		Allowed: make([]string, len(utils.RegionMap)),
+		Allowed: awsRegions(),
 	}
 	plan = utils.EnumFlag{
 		Allowed: []string{string(api.V1CreateProjectBodyPlanFree), string(api.V1CreateProjectBodyPlanPro)},
 		Value:   string(api.V1CreateProjectBodyPlanFree),
+	}
+	size = utils.EnumFlag{
+		Allowed: []string{
+			string(api.Micro),
+			string(api.Small),
+			string(api.Medium),
+			string(api.Large),
+			string(api.Xlarge),
+			string(api.N2xlarge),
+			string(api.N4xlarge),
+			string(api.N8xlarge),
+			string(api.N12xlarge),
+			string(api.N16xlarge),
+		},
 	}
 
 	projectsCreateCmd = &cobra.Command{
@@ -55,12 +69,16 @@ var (
 			if len(args) > 0 {
 				projectName = args[0]
 			}
-			return create.Run(cmd.Context(), api.V1CreateProjectBody{
+			body := api.V1CreateProjectBody{
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
 				Region:         api.V1CreateProjectBodyRegion(region.Value),
-			}, afero.NewOsFs())
+			}
+			if cmd.Flags().Changed("size") {
+				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
+			}
+			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
 	}
 
@@ -108,13 +126,6 @@ var (
 )
 
 func init() {
-	// Setup enum flags
-	i := 0
-	for k := range utils.RegionMap {
-		region.Allowed[i] = k
-		i++
-	}
-	sort.Strings(region.Allowed)
 	// Add flags to cobra command
 	createFlags := projectsCreateCmd.Flags()
 	createFlags.BoolVarP(&interactive, "interactive", "i", true, "Enables interactive mode.")
@@ -124,6 +135,7 @@ func init() {
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
 	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
 	cobra.CheckErr(createFlags.MarkHidden("plan"))
+	createFlags.Var(&size, "size", "Select a desired instance size for your project.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
@@ -135,4 +147,15 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)
+}
+
+func awsRegions() []string {
+	result := make([]string, len(utils.RegionMap))
+	i := 0
+	for k := range utils.RegionMap {
+		result[i] = k
+		i++
+	}
+	sort.Strings(result)
+	return result
 }
