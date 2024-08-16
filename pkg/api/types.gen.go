@@ -42,12 +42,12 @@ const (
 
 // Defines values for BranchResponseStatus.
 const (
-	CREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
-	FUNCTIONSDEPLOYED BranchResponseStatus = "FUNCTIONS_DEPLOYED"
-	FUNCTIONSFAILED   BranchResponseStatus = "FUNCTIONS_FAILED"
-	MIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
-	MIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
-	RUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
+	BranchResponseStatusCREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
+	BranchResponseStatusFUNCTIONSDEPLOYED BranchResponseStatus = "FUNCTIONS_DEPLOYED"
+	BranchResponseStatusFUNCTIONSFAILED   BranchResponseStatus = "FUNCTIONS_FAILED"
+	BranchResponseStatusMIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
+	BranchResponseStatusMIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
+	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
 )
 
 // Defines values for CreateProviderBodyType.
@@ -213,6 +213,16 @@ const (
 	Empty                                                           UpdateAuthConfigBodyPasswordRequiredCharacters = ""
 )
 
+// Defines values for UpdateBranchBodyStatus.
+const (
+	UpdateBranchBodyStatusCREATINGPROJECT   UpdateBranchBodyStatus = "CREATING_PROJECT"
+	UpdateBranchBodyStatusFUNCTIONSDEPLOYED UpdateBranchBodyStatus = "FUNCTIONS_DEPLOYED"
+	UpdateBranchBodyStatusFUNCTIONSFAILED   UpdateBranchBodyStatus = "FUNCTIONS_FAILED"
+	UpdateBranchBodyStatusMIGRATIONSFAILED  UpdateBranchBodyStatus = "MIGRATIONS_FAILED"
+	UpdateBranchBodyStatusMIGRATIONSPASSED  UpdateBranchBodyStatus = "MIGRATIONS_PASSED"
+	UpdateBranchBodyStatusRUNNINGMIGRATIONS UpdateBranchBodyStatus = "RUNNING_MIGRATIONS"
+)
+
 // Defines values for UpdateCustomHostnameResponseStatus.
 const (
 	N1NotStarted           UpdateCustomHostnameResponseStatus = "1_not_started"
@@ -244,6 +254,7 @@ const (
 // Defines values for V1BackupStatus.
 const (
 	V1BackupStatusARCHIVED  V1BackupStatus = "ARCHIVED"
+	V1BackupStatusCANCELLED V1BackupStatus = "CANCELLED"
 	V1BackupStatusCOMPLETED V1BackupStatus = "COMPLETED"
 	V1BackupStatusFAILED    V1BackupStatus = "FAILED"
 	V1BackupStatusPENDING   V1BackupStatus = "PENDING"
@@ -503,6 +514,13 @@ type AuthConfigResponse struct {
 	MailerTemplatesReauthenticationContent        *string  `json:"mailer_templates_reauthentication_content"`
 	MailerTemplatesRecoveryContent                *string  `json:"mailer_templates_recovery_content"`
 	MfaMaxEnrolledFactors                         *float32 `json:"mfa_max_enrolled_factors"`
+	MfaPhoneEnrollEnabled                         *bool    `json:"mfa_phone_enroll_enabled"`
+	MfaPhoneMaxFrequency                          *float32 `json:"mfa_phone_max_frequency"`
+	MfaPhoneOtpLength                             float32  `json:"mfa_phone_otp_length"`
+	MfaPhoneTemplate                              *string  `json:"mfa_phone_template"`
+	MfaPhoneVerifyEnabled                         *bool    `json:"mfa_phone_verify_enabled"`
+	MfaTotpEnrollEnabled                          *bool    `json:"mfa_totp_enroll_enabled"`
+	MfaTotpVerifyEnabled                          *bool    `json:"mfa_totp_verify_enabled"`
 	PasswordHibpEnabled                           *bool    `json:"password_hibp_enabled"`
 	PasswordMinLength                             *float32 `json:"password_min_length"`
 	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
@@ -623,9 +641,11 @@ type CfResponse struct {
 
 // CreateBranchBody defines model for CreateBranchBody.
 type CreateBranchBody struct {
-	BranchName string  `json:"branch_name"`
-	GitBranch  *string `json:"git_branch,omitempty"`
-	Region     *string `json:"region,omitempty"`
+	BranchName          string               `json:"branch_name"`
+	DesiredInstanceSize *DesiredInstanceSize `json:"desired_instance_size,omitempty"`
+	GitBranch           *string              `json:"git_branch,omitempty"`
+	Persistent          *bool                `json:"persistent,omitempty"`
+	Region              *string              `json:"region,omitempty"`
 }
 
 // CreateOrganizationBodyV1 defines model for CreateOrganizationBodyV1.
@@ -1196,6 +1216,13 @@ type UpdateAuthConfigBody struct {
 	MailerTemplatesReauthenticationContent        *string                                         `json:"mailer_templates_reauthentication_content,omitempty"`
 	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content,omitempty"`
 	MfaMaxEnrolledFactors                         *float32                                        `json:"mfa_max_enrolled_factors,omitempty"`
+	MfaPhoneEnrollEnabled                         *bool                                           `json:"mfa_phone_enroll_enabled,omitempty"`
+	MfaPhoneMaxFrequency                          *float32                                        `json:"mfa_phone_max_frequency,omitempty"`
+	MfaPhoneOtpLength                             *float32                                        `json:"mfa_phone_otp_length,omitempty"`
+	MfaPhoneTemplate                              *string                                         `json:"mfa_phone_template,omitempty"`
+	MfaPhoneVerifyEnabled                         *bool                                           `json:"mfa_phone_verify_enabled,omitempty"`
+	MfaTotpEnrollEnabled                          *bool                                           `json:"mfa_totp_enroll_enabled,omitempty"`
+	MfaTotpVerifyEnabled                          *bool                                           `json:"mfa_totp_verify_enabled,omitempty"`
 	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                             *float32                                        `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
@@ -1256,11 +1283,15 @@ type UpdateAuthConfigBodyPasswordRequiredCharacters string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
-	BranchName  *string `json:"branch_name,omitempty"`
-	GitBranch   *string `json:"git_branch,omitempty"`
-	Persistent  *bool   `json:"persistent,omitempty"`
-	ResetOnPush *bool   `json:"reset_on_push,omitempty"`
+	BranchName  *string                 `json:"branch_name,omitempty"`
+	GitBranch   *string                 `json:"git_branch,omitempty"`
+	Persistent  *bool                   `json:"persistent,omitempty"`
+	ResetOnPush *bool                   `json:"reset_on_push,omitempty"`
+	Status      *UpdateBranchBodyStatus `json:"status,omitempty"`
 }
+
+// UpdateBranchBodyStatus defines model for UpdateBranchBody.Status.
+type UpdateBranchBodyStatus string
 
 // UpdateCustomHostnameBody defines model for UpdateCustomHostnameBody.
 type UpdateCustomHostnameBody struct {
