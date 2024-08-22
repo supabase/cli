@@ -57,7 +57,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}
 	// 0. Download starter template
 	if len(starter.Url) > 0 {
-		client := utils.GetGtihubClient(ctx)
+		client := utils.GetGitHubClient(ctx)
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}

@@ -16,7 +16,7 @@ var (
 	githubOnce   sync.Once
 )
 
-func GetGtihubClient(ctx context.Context) *github.Client {
+func GetGitHubClient(ctx context.Context) *github.Client {
 	githubOnce.Do(func() {
 		var client *http.Client
 		if token := os.Getenv("GITHUB_TOKEN"); len(token) > 0 {
@@ -36,7 +36,7 @@ const (
 )
 
 func GetLatestRelease(ctx context.Context) (string, error) {
-	client := GetGtihubClient(ctx)
+	client := GetGitHubClient(ctx)
 	release, _, err := client.Repositories.GetLatestRelease(ctx, CLI_OWNER, CLI_REPO)
 	if err != nil {
 		return "", errors.Errorf("Failed to fetch latest release: %w", err)
