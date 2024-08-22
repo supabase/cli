@@ -66,7 +66,7 @@ func publishPackages(ctx context.Context, version string, beta bool) error {
 		config.Description += " (Beta)"
 		filename += "-beta"
 	}
-	client := utils.GetGtihubClient(ctx)
+	client := utils.GetGitHubClient(ctx)
 	if err := updatePackage(ctx, client, HOMEBREW_REPO, filename+".rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}

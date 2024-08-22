@@ -46,7 +46,7 @@ func updateRefDoc(ctx context.Context, path string, stdin io.Reader) error {
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "Updating reference doc: %s\n", path)
-	client := utils.GetGtihubClient(ctx)
+	client := utils.GetGitHubClient(ctx)
 	branch := "cli/ref-doc"
 	master := "master"
 	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, branch, master); err != nil {

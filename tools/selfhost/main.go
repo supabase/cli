@@ -43,7 +43,7 @@ type ComposeFile struct {
 }
 
 func updateSelfHosted(ctx context.Context, branch string) error {
-	client := utils.GetGtihubClient(ctx)
+	client := utils.GetGitHubClient(ctx)
 	master := "master"
 	if err := shared.CreateGitBranch(ctx, client, SUPABASE_OWNER, SUPABASE_REPO, branch, master); err != nil {
 		return err

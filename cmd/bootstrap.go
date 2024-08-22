@@ -37,7 +37,7 @@ var (
 					viper.Set("WORKDIR", workdir)
 				}
 			}
-			client := utils.GetGtihubClient(ctx)
+			client := utils.GetGitHubClient(ctx)
 			templates, err := bootstrap.ListSamples(ctx, client)
 			if err != nil {
 				return err
