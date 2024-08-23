@@ -12,7 +12,7 @@ const (
 	pgmetaImage      = "supabase/postgres-meta:v0.83.2"
 	studioImage      = "supabase/studio:20240729-ce42139"
 	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	edgeRuntimeImage = "supabase/edge-runtime:v1.56.1"
+	edgeRuntimeImage = "supabase/edge-runtime:v1.58.0"
 	vectorImage      = "timberio/vector:0.28.1-alpine"
 	supavisorImage   = "supabase/supavisor:1.1.56"
 	gotrueImage      = "supabase/gotrue:v2.158.1"
