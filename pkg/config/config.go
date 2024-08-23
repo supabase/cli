@@ -145,7 +145,7 @@ type (
 		MaxRows         uint     `toml:"max_rows"`
 		Tls             tlsKong  `toml:"tls"`
 		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"-"`
+		ExternalUrl string `toml:"external_url"`
 	}
 
 	tlsKong struct {
