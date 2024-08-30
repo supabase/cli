@@ -290,6 +290,7 @@ type (
 		EnableSignup         bool                     `toml:"enable_signup"`
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
+		SecurePasswordChange bool                     `toml:"secure_password_change"`
 		Template             map[string]emailTemplate `toml:"template"`
 		Smtp                 smtp                     `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
