@@ -1072,9 +1072,16 @@ func (c *tpaCognito) validate() error {
 	if c.UserPoolID == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
 	}
+	var err error
+	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
+		return err
+	}
 
 	if c.UserPoolRegion == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
+	}
+	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
+		return err
 	}
 
 	return nil
