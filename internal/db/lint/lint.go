@@ -39,7 +39,7 @@ func toEnum(level string) LintLevel {
 	return -1
 }
 
-func Run(ctx context.Context, schema []string, level string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, level string, failOn string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Sanity checks.
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -55,7 +55,7 @@ func Run(ctx context.Context, schema []string, level string, config pgconn.Confi
 		fmt.Fprintln(os.Stderr, "\nNo schema errors found")
 		return nil
 	}
-	return printResultJSON(result, toEnum(level), os.Stdout)
+	return printResultJSON(result, toEnum(level), toEnum(failOn), os.Stdout)
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
@@ -73,7 +73,7 @@ func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
 	return filtered
 }
 
-func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) error {
+func printResultJSON(result []Result, minLevel LintLevel, failOn LintLevel, stdout io.Writer) error {
 	filtered := filterResult(result, minLevel)
 	if len(filtered) == 0 {
 		return nil
@@ -83,6 +83,16 @@ func printResultJSON(result []Result, minLevel LintLevel, stdout io.Writer) erro
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(filtered); err != nil {
 		return errors.Errorf("failed to print result json: %w", err)
+	}
+	// Return an error if fail-on is set and a lint above the level is found
+	if failOn != -1 {
+		for _, r := range filtered {
+			for _, issue := range r.Issues {
+				if toEnum(issue.Level) >= failOn {
+					return errors.New(fmt.Sprintf("failOn is set to %s and the following lint was found: %s", AllowedLevels[failOn], issue.Message))
+				}
+			}
+		}
 	}
 	return nil
 }
