@@ -261,6 +261,9 @@ func TestRestartDatabase(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.Config.Storage.Enabled = true
+		utils.Config.Auth.Enabled = true
+		utils.Config.Realtime.Enabled = true
 		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
@@ -323,10 +326,6 @@ func TestRestartDatabase(t *testing.T) {
 	})
 	t.Run("restarts only enabled services", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		utils.Config.Storage.Enabled = false
-		utils.Config.Auth.Enabled = true
-		utils.Config.Realtime.Enabled = true
-		utils.Config.Db.Pooler.Enabled = false
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -348,10 +347,19 @@ func TestRestartDatabase(t *testing.T) {
 		utils.PoolerId = "test-pooler"
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
+		utils.Config.Auth.Enabled = true
+		utils.Config.Realtime.Enabled = true
+		utils.Config.Db.Pooler.Enabled = false
+		utils.Config.Storage.Enabled = false
 		for _, container := range []string{utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusOK)
+		}
+		for _, container := range []string{utils.StorageId, utils.PoolerId} {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusServiceUnavailable)
 		}
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
