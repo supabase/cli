@@ -196,11 +196,16 @@ var (
 		Value:   lint.AllowedLevels[0],
 	}
 
+	lintFailOn = utils.EnumFlag{
+		Allowed: append([]string{"none"}, lint.AllowedLevels...),
+		Value:   "none",
+	}
+
 	dbLintCmd = &cobra.Command{
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, flags.DbConfig, afero.NewOsFs())
+			return lint.Run(cmd.Context(), schema, level.Value, lintFailOn.Value, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -310,7 +315,7 @@ func init() {
 	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
-	lintFlags.String("fail-on", "none", "Exit with non-zero status on (error|warning|none)")
+	lintFlags.Var(&lintFailOn, "fail-on", "Exit with non-zero status on (none|warning|error)")
 	dbCmd.AddCommand(dbLintCmd)
 	// Build start command
 	dbCmd.AddCommand(dbStartCmd)

@@ -89,7 +89,7 @@ func printResultJSON(result []Result, minLevel LintLevel, failOn LintLevel, stdo
 		for _, r := range filtered {
 			for _, issue := range r.Issues {
 				if toEnum(issue.Level) >= failOn {
-					return errors.New(fmt.Sprintf("failOn is set to %s and the following lint was found: %s", AllowedLevels[failOn], issue.Message))
+					return errors.New(fmt.Sprintf("fail-on is set to %s, non-zero exit", AllowedLevels[failOn]))
 				}
 			}
 		}
