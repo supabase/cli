@@ -1144,7 +1144,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 
 		t := &http.Client{Timeout: 10 * time.Second}
 		client := fetcher.NewFetcher(
-			issuerURL,
+			discoveryURL,
 			fetcher.WithHTTPClient(t),
 			fetcher.WithExpectedStatus(http.StatusOK),
 		)
