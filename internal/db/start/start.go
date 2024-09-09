@@ -311,7 +311,7 @@ func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
 		return err
 	}
-	return apply.MigrateAndSeed(ctx, "", conn, fsys)
+	return apply.MigrateAndSeed(ctx, "", conn, fsys, false)
 }
 
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {

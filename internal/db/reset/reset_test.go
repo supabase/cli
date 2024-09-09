@@ -42,7 +42,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys, false)
 		// Check error
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -52,7 +52,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -67,7 +67,7 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusNotFound)
 		// Run test
-		err := Run(context.Background(), "", dbConfig, fsys)
+		err := Run(context.Background(), "", dbConfig, fsys, false)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -89,7 +89,7 @@ func TestResetCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), "", dbConfig, fsys)
+		err := Run(context.Background(), "", dbConfig, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -352,8 +352,33 @@ func TestResetRemote(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
 		// Run test
-		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		err := resetRemote(context.Background(), "", dbConfig, fsys, false, conn.Intercept)
 		// Check error
+		assert.NoError(t, err)
+	})
+	t.Run("resets remote database with skip-seed flag", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
+		seedPath := filepath.Join(utils.SeedDataPath)
+		// Will raise an error when seeding
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query(migration.DropObjects).
+			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
+		// Run test
+		err := resetRemote(context.Background(), "", dbConfig, fsys, true, conn.Intercept)
+		// No error should be raised since we're skipping the seed
 		assert.NoError(t, err)
 	})
 
@@ -361,7 +386,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := resetRemote(context.Background(), "", pgconn.Config{}, fsys)
+		err := resetRemote(context.Background(), "", pgconn.Config{}, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -377,7 +402,7 @@ func TestResetRemote(t *testing.T) {
 			Query(migration.DropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
-		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		err := resetRemote(context.Background(), "", dbConfig, fsys, false, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})
