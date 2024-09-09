@@ -12,13 +12,16 @@ import (
 	"github.com/supabase/cli/pkg/migration"
 )
 
-func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs, skipSeed bool) error {
 	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
 	}
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
+	}
+	if skipSeed {
+		return nil
 	}
 	return SeedDatabase(ctx, conn, fsys)
 }
