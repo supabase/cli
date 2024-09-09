@@ -54,11 +54,13 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
-		return err
-	}
-	if err := buckets.Run(ctx, "", false, fsys); err != nil {
-		return err
+	if utils.Config.Storage.Enabled {
+		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+			return err
+		}
+		if err := buckets.Run(ctx, "", false, fsys); err != nil {
+			return err
+		}
 	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
