@@ -261,9 +261,6 @@ func TestRestartDatabase(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
-		utils.Config.Storage.Enabled = true
-		utils.Config.Auth.Enabled = true
-		utils.Config.Realtime.Enabled = true
 		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
@@ -322,49 +319,6 @@ func TestRestartDatabase(t *testing.T) {
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "test-reset container is not running: exited")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-	t.Run("restarts only enabled services", func(t *testing.T) {
-		utils.DbId = "test-reset"
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		// Restarts postgres
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
-			Reply(http.StatusOK)
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
-					Running: true,
-					Health:  &types.Health{Status: "healthy"},
-				},
-			}})
-		// Restarts enabled services
-		utils.StorageId = "test-storage"
-		utils.PoolerId = "test-pooler"
-		utils.GotrueId = "test-auth"
-		utils.RealtimeId = "test-realtime"
-		utils.Config.Auth.Enabled = true
-		utils.Config.Realtime.Enabled = true
-		utils.Config.Db.Pooler.Enabled = false
-		utils.Config.Storage.Enabled = false
-		for _, container := range []string{utils.GotrueId, utils.RealtimeId} {
-			gock.New(utils.Docker.DaemonHost()).
-				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
-				Reply(http.StatusOK)
-		}
-		for _, container := range []string{utils.StorageId, utils.PoolerId} {
-			gock.New(utils.Docker.DaemonHost()).
-				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
-				Reply(http.StatusServiceUnavailable)
-		}
-		// Run test
-		err := RestartDatabase(context.Background(), io.Discard)
-		// Check error
-		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

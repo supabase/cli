@@ -220,22 +220,7 @@ func restartServices(ctx context.Context) error {
 }
 
 func listServicesToRestart() []string {
-	var services []string
-
-	if utils.Config.Storage.Enabled {
-		services = append(services, utils.StorageId)
-	}
-	if utils.Config.Realtime.Enabled {
-		services = append(services, utils.RealtimeId)
-	}
-	if utils.Config.Db.Pooler.Enabled {
-		services = append(services, utils.PoolerId)
-	}
-	if utils.Config.Auth.Enabled {
-		services = append(services, utils.GotrueId)
-	}
-
-	return services
+	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId}
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
