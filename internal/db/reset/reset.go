@@ -54,11 +54,13 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
-		return err
-	}
-	if err := buckets.Run(ctx, "", false, fsys); err != nil {
-		return err
+	if utils.Config.Storage.Enabled {
+		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+			return err
+		}
+		if err := buckets.Run(ctx, "", false, fsys); err != nil {
+			return err
+		}
 	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
@@ -204,8 +206,11 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 }
 
 func restartServices(ctx context.Context) error {
+	debug := utils.GetDebugLogger()
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
 	services := listServicesToRestart()
+	fmt.Fprintf(debug, "Enabled services to restart: %v\n", services)
+
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			return errors.Errorf("Failed to restart %s: %w", id, err)
@@ -217,7 +222,22 @@ func restartServices(ctx context.Context) error {
 }
 
 func listServicesToRestart() []string {
-	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId}
+	var services []string
+
+	if utils.Config.Storage.Enabled {
+		services = append(services, utils.StorageId)
+	}
+	if utils.Config.Realtime.Enabled {
+		services = append(services, utils.RealtimeId)
+	}
+	if utils.Config.Db.Pooler.Enabled {
+		services = append(services, utils.PoolerId)
+	}
+	if utils.Config.Auth.Enabled {
+		services = append(services, utils.GotrueId)
+	}
+
+	return services
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
