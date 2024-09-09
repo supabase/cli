@@ -206,10 +206,8 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 }
 
 func restartServices(ctx context.Context) error {
-	debug := utils.GetDebugLogger()
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
 	services := listServicesToRestart()
-	fmt.Fprintf(debug, "Enabled services to restart: %v\n", services)
 
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
