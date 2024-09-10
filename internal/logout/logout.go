@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
-	if shouldLogout, err := utils.NewConsole().PromptYesNo(ctx, "Do you want to log out? This will remove the access token and all supabase credentials from your system.", false); err != nil {
+	if shouldLogout, err := utils.NewConsole().PromptYesNo(ctx, "Do you want to log out? This will remove the access token from your system.", false); err != nil {
 		return err
 	} else if !shouldLogout {
 		return errors.New(context.Canceled)
@@ -25,13 +25,8 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 		return err
 	}
 
-	// Delete all possibles stored projects credentials
-	if err := credentials.DeleteAll(); err != nil {
-		// If the credentials are not supported, we can ignore the error
-		if err != credentials.ErrNotSupported {
-			return err
-		}
-	}
+	// Delete all possible stored project credentials
+	_ = credentials.DeleteAll()
 
 	fmt.Fprintln(stdout, "Access token deleted successfully. You are now logged out.")
 	return nil

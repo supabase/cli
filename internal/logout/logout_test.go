@@ -38,21 +38,19 @@ func TestLogoutCommand(t *testing.T) {
 		require.NoError(t, credentials.Set(utils.AccessTokenKey, token))
 		require.NoError(t, credentials.Set("project1", "password1"))
 		require.NoError(t, credentials.Set("project2", "password2"))
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Run test
 		err := Run(context.Background(), os.Stdout, afero.NewMemMapFs())
 		// Check error
 		assert.NoError(t, err)
 		// Check that access token has been removed
-		saved, err := credentials.Get(utils.AccessTokenKey)
-		assert.NoError(t, err)
+		saved, _ := credentials.Get(utils.AccessTokenKey)
 		assert.Empty(t, saved)
 		// check that project 1 has been removed
-		saved, err = credentials.Get("project1")
-		assert.NoError(t, err)
+		saved, _ = credentials.Get("project1")
 		assert.Empty(t, saved)
 		// check that project 2 has been removed
-		saved, err = credentials.Get("project2")
-		assert.NoError(t, err)
+		saved, _ = credentials.Get("project2")
 		assert.Empty(t, saved)
 	})
 

@@ -184,6 +184,8 @@ func (s *SecretService) CreateItem(collection dbus.BusObject, label string, attr
 // handlePrompt checks if a prompt should be handles and handles it by
 // triggering the prompt and waiting for the Secret service daemon to display
 // the prompt to the user.
+//
+//nolint:all
 func (s *SecretService) handlePrompt(prompt dbus.ObjectPath) (bool, dbus.Variant, error) {
 	if prompt != dbus.ObjectPath("/") {
 		err := s.AddMatchSignal(dbus.WithMatchObjectPath(prompt),

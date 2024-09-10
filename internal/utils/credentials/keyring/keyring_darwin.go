@@ -128,7 +128,6 @@ func (k macOSXKeychain) DeleteAll(service string) error {
 			return err
 		}
 	}
-
 }
 
 func init() {
