@@ -8,6 +8,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
 )
 
 func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
@@ -22,6 +23,14 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 		return nil
 	} else if err != nil {
 		return err
+	}
+
+	// Delete all credentials
+	if err := credentials.DeleteAll(); err != nil {
+		// If the credentials are not supported, we can ignore the error
+		if err != credentials.ErrNotSupported {
+			return err
+		}
 	}
 
 	fmt.Fprintln(stdout, "Access token deleted successfully. You are now logged out.")

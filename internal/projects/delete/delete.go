@@ -11,7 +11,7 @@ import (
 	"github.com/supabase/cli/internal/unlink"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/zalando/go-keyring"
+	"github.com/supabase/cli/internal/utils/credentials/keyring"
 )
 
 func PreRun(ctx context.Context, ref string) error {

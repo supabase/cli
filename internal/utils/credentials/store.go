@@ -6,7 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/go-errors/errors"
-	"github.com/zalando/go-keyring"
+	"github.com/supabase/cli/internal/utils/credentials/keyring"
 )
 
 const namespace = "Supabase CLI"
@@ -49,6 +49,19 @@ func Delete(project string) error {
 		return errors.New(ErrNotSupported)
 	} else if err != nil {
 		return errors.Errorf("failed to delete credentials: %w", err)
+	}
+	return nil
+}
+
+// Deletes all stored credentials for the namespace
+func DeleteAll() error {
+	if err := assertKeyringSupported(); err != nil {
+		return err
+	}
+	if err := keyring.DeleteAll(namespace); errors.Is(err, exec.ErrNotFound) {
+		return errors.New(ErrNotSupported)
+	} else if err != nil {
+		return errors.Errorf("failed to delete all credentials: %w", err)
 	}
 	return nil
 }

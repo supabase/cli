@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials/keyring"
 	"github.com/supabase/cli/pkg/api"
-	"github.com/zalando/go-keyring"
 )
 
 func TestDeleteCommand(t *testing.T) {

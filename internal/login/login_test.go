@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/zalando/go-keyring"
+	"github.com/supabase/cli/internal/utils/credentials/keyring"
 )
 
 type MockEncryption struct {

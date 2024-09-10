@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/zalando/go-keyring"
+	"github.com/supabase/cli/internal/utils/credentials/keyring"
 )
 
 func TestLogoutCommand(t *testing.T) {
@@ -30,6 +30,29 @@ func TestLogoutCommand(t *testing.T) {
 		assert.NoError(t, err)
 		saved, err := utils.LoadAccessTokenFS(fsys)
 		assert.ErrorIs(t, err, utils.ErrMissingToken)
+		assert.Empty(t, saved)
+	})
+
+	t.Run("removes all Supabase CLI credentials", func(t *testing.T) {
+		keyring.MockInit()
+		require.NoError(t, credentials.Set(utils.AccessTokenKey, token))
+		require.NoError(t, credentials.Set("project1", "password1"))
+		require.NoError(t, credentials.Set("project2", "password2"))
+		// Run test
+		err := Run(context.Background(), os.Stdout, afero.NewMemMapFs())
+		// Check error
+		assert.NoError(t, err)
+		// Check that access token has been removed
+		saved, err := credentials.Get(utils.AccessTokenKey)
+		assert.NoError(t, err)
+		assert.Empty(t, saved)
+		// check that project 1 has been removed
+		saved, err = credentials.Get("project1")
+		assert.NoError(t, err)
+		assert.Empty(t, saved)
+		// check that project 2 has been removed
+		saved, err = credentials.Get("project2")
+		assert.NoError(t, err)
 		assert.Empty(t, saved)
 	})
 
