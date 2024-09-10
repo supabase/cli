@@ -25,7 +25,7 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 		return err
 	}
 
-	// Delete all credentials
+	// Delete all possibles stored projects credentials
 	if err := credentials.DeleteAll(); err != nil {
 		// If the credentials are not supported, we can ignore the error
 		if err != credentials.ErrNotSupported {
