@@ -512,6 +512,7 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+			fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
 			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
 			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
 			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
@@ -943,7 +944,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:8080/health').then(r => { if (r.status !== 200) { throw new Error(r.status); } }).catch(err => { process.exit(1); })"`, },
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:8080/health').then(r => {if (r.status !== 200) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -989,7 +990,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/profile').then(r => { if (r.status !== 200) throw new Error(r.status); }).catch(err => { process.exit(1); })"`, },
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/profile').then(r => {if (r.status !== 200) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
