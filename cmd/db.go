@@ -300,7 +300,7 @@ func init() {
 	resetFlags.String("db-url", "", "Resets the database specified by the connection string (must be percent-encoded).")
 	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
 	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
-	resetFlags.Bool("skip-seed", false, "Skip running the seed script after reset")
+	resetFlags.Bool("no-seed", false, "Skip running the seed script after reset")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
