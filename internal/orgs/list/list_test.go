@@ -30,7 +30,8 @@ func TestOrganizationListCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		assert.NoError(t, Run(context.Background()))
+		_, err := Run(context.Background())
+		assert.NoError(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -45,7 +46,8 @@ func TestOrganizationListCommand(t *testing.T) {
 			Get("/v1/organizations").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background()))
+		_, err := Run(context.Background())
+		assert.Error(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -61,7 +63,8 @@ func TestOrganizationListCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(context.Background()))
+		_, err := Run(context.Background())
+		assert.Error(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
