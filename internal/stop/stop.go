@@ -15,12 +15,12 @@ import (
 
 func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afero.Fs) error {
 	if all {
-		return stopAllInstances(ctx, backup, fsys)
+		return stopAllProjects(ctx, backup, fsys)
 	}
-	return stopOneProject(ctx, backup, projectId, fsys)
+	return stopProject(ctx, backup, projectId, fsys)
 }
 
-func stopOneProject(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
+func stopProject(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
 	// Sanity checks.
 	if len(projectId) > 0 {
 		utils.Config.ProjectId = projectId
@@ -46,7 +46,7 @@ func stopOneProject(ctx context.Context, backup bool, projectId string, fsys afe
 	return nil
 }
 
-func stopAllInstances(ctx context.Context, backup bool, fsys afero.Fs) error {
+func stopAllProjects(ctx context.Context, backup bool, fsys afero.Fs) error {
 	// Gather all containers and volumes matching the supabase project label
 	containers, _ := utils.Docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -70,7 +70,7 @@ func stopAllInstances(ctx context.Context, backup bool, fsys afero.Fs) error {
 	// Stop each running Supabase project
 	for projectId := range projectIds {
 		fmt.Printf("Stopping project: %s\n", utils.Aqua(projectId))
-		if err := stopOneProject(ctx, backup, projectId, fsys); err != nil {
+		if err := stopProject(ctx, backup, projectId, fsys); err != nil {
 			fmt.Printf("Error stopping project %s: %v\n", projectId, err)
 		}
 	}
