@@ -183,10 +183,15 @@ var (
 		},
 	}
 
+	noSeed bool
+
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if noSeed {
+				utils.Config.Db.Seed.Enabled = false
+			}
 			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
@@ -304,6 +309,7 @@ func init() {
 	resetFlags.String("db-url", "", "Resets the database specified by the connection string (must be percent-encoded).")
 	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
 	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
+	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)

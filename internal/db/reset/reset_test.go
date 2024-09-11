@@ -357,6 +357,33 @@ func TestResetRemote(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
+		seedPath := filepath.Join(utils.SeedDataPath)
+		// Will raise an error when seeding
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query(migration.DropObjects).
+			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
+		utils.Config.Db.Seed.Enabled = false
+		// Run test
+		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		// No error should be raised since we're skipping the seed
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
