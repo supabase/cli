@@ -42,13 +42,15 @@ func TestProjectCreateCommand(t *testing.T) {
 				CreatedAt:      "2022-04-25T02:14:55.906498Z",
 			})
 		// Run test
-		assert.NoError(t, Run(context.Background(), params, fsys))
+		_, err := Run(context.Background(), params, fsys)
+		assert.NoError(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to load token", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), params, afero.NewMemMapFs()))
+		_, err := Run(context.Background(), params, afero.NewMemMapFs())
+		assert.Error(t, err)
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -65,7 +67,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			JSON(params).
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background(), params, fsys))
+		_, err := Run(context.Background(), params, fsys)
+		assert.Error(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -85,7 +88,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(context.Background(), params, fsys))
+		_, err := Run(context.Background(), params, fsys)
+		assert.Error(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -105,7 +109,8 @@ func TestProjectCreateCommand(t *testing.T) {
 			Reply(200).
 			JSON([]string{})
 		// Run test
-		assert.Error(t, Run(context.Background(), params, fsys))
+		_, err := Run(context.Background(), params, fsys)
+		assert.Error(t, err)
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

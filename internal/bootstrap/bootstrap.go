@@ -81,11 +81,12 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		Name:        filepath.Base(workdir),
 		TemplateUrl: &starter.Url,
 	}
-	if err := create.Run(ctx, params, fsys); err != nil {
+	_, createErr := create.Run(ctx, params, fsys)
+	if err := createErr; err != nil {
 		return err
 	}
 	// 3. Get api keys
-	var keys []api.ApiKeyResponse
+	var keys *[]api.ApiKeyResponse
 	policy := newBackoffPolicy(ctx)
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Linking project...")
@@ -98,7 +99,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
-	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)
+	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(*keys).Anon, fsys)
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
@@ -112,7 +113,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}
 	// 6. Push migrations
 	config := flags.NewDbConfigWithPassword(flags.ProjectRef)
-	if err := writeDotEnv(keys, config, fsys); err != nil {
+	if err := writeDotEnv(*keys, config, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
 	}
 	policy.Reset()

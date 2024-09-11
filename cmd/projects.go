@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	listMigration "github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/delete"
@@ -78,7 +82,16 @@ var (
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
 			}
-			return create.Run(cmd.Context(), body, afero.NewOsFs())
+			project, err := create.Run(cmd.Context(), body, afero.NewOsFs())
+			if err != nil {
+				return err
+			}
+			if viper.GetBool("json") {
+				return json.NewEncoder(os.Stdout).Encode(project)
+			} else {
+				fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Bold(project.Url))
+			}
+			return nil
 		},
 	}
 
@@ -87,7 +100,37 @@ var (
 		Short: "List all Supabase projects",
 		Long:  "List all Supabase projects the logged-in user can access.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), afero.NewOsFs())
+			table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
+|-|-|-|-|-|-|
+`
+
+			projects, err := list.Run(cmd.Context(), afero.NewOsFs())
+			if err != nil {
+				return err
+			}
+
+			for _, project := range *projects {
+				linked := " "
+				if project.Linked {
+					linked = "  ●"
+				}
+				table += fmt.Sprintf(
+					"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+					linked,
+					project.OrganizationId,
+					project.Id,
+					strings.ReplaceAll(project.Name, "|", "\\|"),
+					project.Region,
+					utils.FormatTimestamp(project.CreatedAt),
+				)
+			}
+			if viper.GetBool("json") {
+				json.NewEncoder(os.Stdout).Encode(*projects)
+			} else {
+				listMigration.RenderTable(table)
+			}
+
+			return nil
 		},
 	}
 
@@ -95,7 +138,23 @@ var (
 		Use:   "api-keys",
 		Short: "List all API keys for a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+			keys, err := apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
+			if err != nil {
+				return err
+			}
+
+			if viper.GetBool("json") {
+				json.NewEncoder(os.Stdout).Encode(keys)
+			} else {
+				table := `|NAME|KEY VALUE|
+|-|-|
+`
+				for _, entry := range *keys {
+					table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+				}
+				return listMigration.RenderTable(table)
+			}
+			return nil
 		},
 	}
 

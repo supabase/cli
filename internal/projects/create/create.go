@@ -15,17 +15,22 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) error {
+type CreateProjectResponse struct {
+	api.V1ProjectResponse
+	Url string `json:"url"`
+}
+
+func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) (*CreateProjectResponse, error) {
 	if err := promptMissingParams(ctx, &params); err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := utils.GetSupabase().V1CreateAProjectWithResponse(ctx, params)
 	if err != nil {
-		return errors.Errorf("failed to create project: %w", err)
+		return nil, errors.Errorf("failed to create project: %w", err)
 	}
 	if resp.JSON201 == nil {
-		return errors.New("Unexpected error creating project: " + string(resp.Body))
+		return nil, errors.New("Unexpected error creating project: " + string(resp.Body))
 	}
 
 	flags.ProjectRef = resp.JSON201.Id
@@ -35,8 +40,7 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
-	return nil
+	return &CreateProjectResponse{V1ProjectResponse: *resp.JSON201, Url: projectUrl}, nil
 }
 
 func printKeyValue(key, value string) string {

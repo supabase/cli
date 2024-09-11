@@ -4,24 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, fsys afero.Fs) (*[]Project, error) {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
-		return errors.Errorf("failed to list projects: %w", err)
+		return nil, errors.Errorf("failed to list projects: %w", err)
 	}
 
 	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
+		return nil, errors.New("Unexpected error retrieving projects: " + string(resp.Body))
 	}
 
 	projectRef, err := flags.LoadProjectRef(fsys)
@@ -29,9 +28,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 
-	table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
-|-|-|-|-|-|-|
-`
+	projects := make([]Project, 0)
 	for _, project := range *resp.JSON200 {
 		if t, err := time.Parse(time.RFC3339, project.CreatedAt); err == nil {
 			project.CreatedAt = t.UTC().Format("2006-01-02 15:04:05")
@@ -39,20 +36,19 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		if region, ok := utils.RegionMap[project.Region]; ok {
 			project.Region = region
 		}
-		linked := " "
-		if project.Id == projectRef {
-			linked = "  ●"
-		}
-		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-			linked,
-			project.OrganizationId,
-			project.Id,
-			strings.ReplaceAll(project.Name, "|", "\\|"),
-			project.Region,
-			utils.FormatTimestamp(project.CreatedAt),
-		)
+		projects = append(projects, Project{
+			V1ProjectResponse: project,
+			Linked:            project.Id == projectRef,
+			Url:               fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), project.Id),
+		})
+
 	}
 
-	return list.RenderTable(table)
+	return &projects, nil
+}
+
+type Project struct {
+	api.V1ProjectResponse
+	Linked bool   `json:"linked"`
+	Url    string `json:"url"`
 }
