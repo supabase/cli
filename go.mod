@@ -14,7 +14,7 @@ require (
 	github.com/containers/common v0.59.2
 	github.com/danieljoos/wincred v1.2.1
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
-	github.com/docker/cli v26.1.5+incompatible
+	github.com/docker/cli v27.2.1+incompatible
 	github.com/docker/docker v26.1.5+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
