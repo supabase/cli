@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) error {
+func Run(ctx context.Context, params api.V1CreateProjectBody, format string, fsys afero.Fs) error {
 	if err := promptMissingParams(ctx, &params); err != nil {
 		return err
 	}
@@ -35,8 +35,13 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
-	fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
-	return nil
+
+	if format == utils.OutputPretty {
+		fmt.Printf("Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
+		return nil
+	}
+
+	return utils.EncodeOutput(format, os.Stdout, resp.JSON201)
 }
 
 func printKeyValue(key, value string) string {

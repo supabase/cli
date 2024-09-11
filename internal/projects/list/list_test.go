@@ -35,13 +35,13 @@ func TestProjectListCommand(t *testing.T) {
 				},
 			})
 		// Run test
-		assert.NoError(t, Run(context.Background(), fsys))
+		assert.NoError(t, Run(context.Background(), utils.OutputPretty, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on failure to load token", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), utils.OutputPretty, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {
@@ -56,7 +56,7 @@ func TestProjectListCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys))
+		assert.Error(t, Run(context.Background(), utils.OutputPretty, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -74,7 +74,7 @@ func TestProjectListCommand(t *testing.T) {
 			Reply(500).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys))
+		assert.Error(t, Run(context.Background(), utils.OutputPretty, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -92,7 +92,7 @@ func TestProjectListCommand(t *testing.T) {
 			Reply(200).
 			JSON(map[string]string{})
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys))
+		assert.Error(t, Run(context.Background(), utils.OutputPretty, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

@@ -3,6 +3,7 @@ package apiKeys
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -12,20 +13,24 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, format string, fsys afero.Fs) error {
 	keys, err := RunGetApiKeys(ctx, projectRef)
 	if err != nil {
 		return err
 	}
 
-	table := `|NAME|KEY VALUE|
+	if format == utils.OutputPretty {
+		table := `|NAME|KEY VALUE|
 |-|-|
 `
-	for _, entry := range keys {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+		for _, entry := range keys {
+			table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+		}
+
+		return list.RenderTable(table)
 	}
 
-	return list.RenderTable(table)
+	return utils.EncodeOutput(format, os.Stdout, keys)
 }
 
 func RunGetApiKeys(ctx context.Context, projectRef string) ([]api.ApiKeyResponse, error) {
