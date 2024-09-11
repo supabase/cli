@@ -356,6 +356,7 @@ func TestResetRemote(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
+
 	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
