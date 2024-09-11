@@ -41,7 +41,6 @@ func Run(ctx context.Context, fsys afero.Fs) (*[]Project, error) {
 			Linked:            project.Id == projectRef,
 			Url:               fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), project.Id),
 		})
-
 	}
 
 	return &projects, nil

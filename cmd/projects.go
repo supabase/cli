@@ -86,10 +86,12 @@ var (
 			if err != nil {
 				return err
 			}
-			if viper.GetBool("json") {
-				return json.NewEncoder(os.Stdout).Encode(project)
-			} else {
-				fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Bold(project.Url))
+			if project != nil {
+				if viper.GetBool("json") {
+					return json.NewEncoder(os.Stdout).Encode(project)
+				} else {
+					fmt.Printf("Created a new project %s at %s\n", utils.Aqua(project.Name), utils.Bold(project.Url))
+				}
 			}
 			return nil
 		},
@@ -100,34 +102,35 @@ var (
 		Short: "List all Supabase projects",
 		Long:  "List all Supabase projects the logged-in user can access.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
-|-|-|-|-|-|-|
-`
-
 			projects, err := list.Run(cmd.Context(), afero.NewOsFs())
 			if err != nil {
 				return err
 			}
 
-			for _, project := range *projects {
-				linked := " "
-				if project.Linked {
-					linked = "  ●"
+			if projects != nil {
+				table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
+|-|-|-|-|-|-|
+`
+				for _, project := range *projects {
+					linked := " "
+					if project.Linked {
+						linked = "  ●"
+					}
+					table += fmt.Sprintf(
+						"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+						linked,
+						project.OrganizationId,
+						project.Id,
+						strings.ReplaceAll(project.Name, "|", "\\|"),
+						project.Region,
+						utils.FormatTimestamp(project.CreatedAt),
+					)
 				}
-				table += fmt.Sprintf(
-					"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-					linked,
-					project.OrganizationId,
-					project.Id,
-					strings.ReplaceAll(project.Name, "|", "\\|"),
-					project.Region,
-					utils.FormatTimestamp(project.CreatedAt),
-				)
-			}
-			if viper.GetBool("json") {
-				json.NewEncoder(os.Stdout).Encode(*projects)
-			} else {
-				listMigration.RenderTable(table)
+				if viper.GetBool("json") {
+					json.NewEncoder(os.Stdout).Encode(*projects)
+				} else {
+					listMigration.RenderTable(table)
+				}
 			}
 
 			return nil
@@ -143,16 +146,18 @@ var (
 				return err
 			}
 
-			if viper.GetBool("json") {
-				json.NewEncoder(os.Stdout).Encode(keys)
-			} else {
-				table := `|NAME|KEY VALUE|
-|-|-|
-`
-				for _, entry := range *keys {
-					table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+			if keys != nil {
+				if viper.GetBool("json") {
+					json.NewEncoder(os.Stdout).Encode(keys)
+				} else {
+					table := `|NAME|KEY VALUE|
+	|-|-|
+	`
+					for _, entry := range *keys {
+						table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+					}
+					return listMigration.RenderTable(table)
 				}
-				return listMigration.RenderTable(table)
 			}
 			return nil
 		},

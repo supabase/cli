@@ -29,17 +29,19 @@ var (
 			if err != nil {
 				return err
 			}
-			table := `|ID|NAME|
-			|-|-|
-			`
-			for _, org := range *orgs {
-				table += fmt.Sprintf("|`%s`|`%s`|\n", org.Id, strings.ReplaceAll(org.Name, "|", "\\|"))
-			}
+			if orgs != nil {
+				table := `|ID|NAME|
+|-|-|
+`
+				for _, org := range *orgs {
+					table += fmt.Sprintf("|`%s`|`%s`|\n", org.Id, strings.ReplaceAll(org.Name, "|", "\\|"))
+				}
 
-			if viper.GetBool("json") {
-				json.NewEncoder(os.Stdout).Encode(*orgs)
-			} else {
-				listMigration.RenderTable(table)
+				if viper.GetBool("json") {
+					json.NewEncoder(os.Stdout).Encode(*orgs)
+				} else {
+					listMigration.RenderTable(table)
+				}
 			}
 			return nil
 		},
@@ -55,10 +57,12 @@ var (
 			if err != nil {
 				return err
 			}
-			if viper.GetBool("json") {
-				json.NewEncoder(os.Stdout).Encode(org)
-			} else {
-				fmt.Println("Created organization:", org.Id)
+			if org != nil {
+				if viper.GetBool("json") {
+					json.NewEncoder(os.Stdout).Encode(org)
+				} else {
+					fmt.Println("Created organization:", org.Id)
+				}
 			}
 			return nil
 		},
