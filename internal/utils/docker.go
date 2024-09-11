@@ -20,7 +20,6 @@ import (
 	dockerConfig "github.com/docker/cli/cli/config"
 	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -65,10 +64,7 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, mode container.NetworkM
 	if !isUserDefined(mode) {
 		return nil
 	}
-	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), types.NetworkCreate{
-		CheckDuplicate: true,
-		Labels:         labels,
-	})
+	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), network.CreateOptions{Labels: labels})
 	// if error is network already exists, no need to propagate to user
 	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
@@ -410,19 +406,19 @@ func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stder
 }
 
 // Exec a command once inside a container, returning stdout and throwing error on non-zero exit code.
-func DockerExecOnce(ctx context.Context, container string, env []string, cmd []string) (string, error) {
+func DockerExecOnce(ctx context.Context, containerId string, env []string, cmd []string) (string, error) {
 	stderr := io.Discard
 	if viper.GetBool("DEBUG") {
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerExecOnceWithStream(ctx, container, "", env, cmd, &out, stderr)
+	err := DockerExecOnceWithStream(ctx, containerId, "", env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerExecOnceWithStream(ctx context.Context, container, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
+func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
-	exec, err := Docker.ContainerExecCreate(ctx, container, types.ExecConfig{
+	exec, err := Docker.ContainerExecCreate(ctx, containerId, container.ExecOptions{
 		Env:          env,
 		Cmd:          cmd,
 		WorkingDir:   workdir,
@@ -433,7 +429,7 @@ func DockerExecOnceWithStream(ctx context.Context, container, workdir string, en
 		return errors.Errorf("failed to exec docker create: %w", err)
 	}
 	// Read exec output
-	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return errors.Errorf("failed to exec docker attach: %w", err)
 	}

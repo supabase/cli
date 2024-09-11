@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
@@ -85,7 +86,7 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
-			JSON(types.NetworkCreateResponse{})
+			JSON(network.CreateResponse{})
 		// Caches all dependencies
 		imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 		gock.New(utils.Docker.DaemonHost()).
@@ -201,7 +202,7 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
-			JSON(types.NetworkCreateResponse{})
+			JSON(network.CreateResponse{})
 		// Caches all dependencies
 		imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 		gock.New(utils.Docker.DaemonHost()).
