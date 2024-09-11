@@ -315,7 +315,7 @@ func init() {
 	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
-	lintFlags.Var(&lintFailOn, "fail-on", "Exit with non-zero status on (none|warning|error)")
+	lintFlags.Var(&lintFailOn, "fail-on", "Error level to exit with non-zero status.")
 	dbCmd.AddCommand(dbLintCmd)
 	// Build start command
 	dbCmd.AddCommand(dbStartCmd)

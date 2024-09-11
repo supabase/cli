@@ -221,7 +221,8 @@ func TestPrintResult(t *testing.T) {
 	t.Run("filters warning level", func(t *testing.T) {
 		// Run test
 		var out bytes.Buffer
-		assert.NoError(t, printResultJSON(result, toEnum("warning"), toEnum("none"), &out))
+		filtered := filterResult(result, toEnum("warning"))
+		assert.NoError(t, printResultJSON(filtered, &out))
 		// Validate output
 		var actual []Result
 		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))
@@ -231,7 +232,8 @@ func TestPrintResult(t *testing.T) {
 	t.Run("filters error level", func(t *testing.T) {
 		// Run test
 		var out bytes.Buffer
-		assert.NoError(t, printResultJSON(result, toEnum("error"), toEnum("none"), &out))
+		filtered := filterResult(result, toEnum("error"))
+		assert.NoError(t, printResultJSON(filtered, &out))
 		// Validate output
 		var actual []Result
 		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))

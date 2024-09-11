@@ -55,7 +55,26 @@ func Run(ctx context.Context, schema []string, level string, failOn string, conf
 		fmt.Fprintln(os.Stderr, "\nNo schema errors found")
 		return nil
 	}
-	return printResultJSON(result, toEnum(level), toEnum(failOn), os.Stdout)
+
+	// Apply filtering based on the minimum level
+	minLevel := toEnum(level)
+	filtered := filterResult(result, minLevel)
+	err = printResultJSON(filtered, os.Stdout)
+	if err != nil {
+		return err
+	}
+	// Check for fail-on condition
+	failOnLevel := toEnum(failOn)
+	if failOnLevel != -1 {
+		for _, r := range filtered {
+			for _, issue := range r.Issues {
+				if toEnum(issue.Level) >= failOnLevel {
+					return fmt.Errorf("fail-on is set to %s, non-zero exit", AllowedLevels[failOnLevel])
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
@@ -73,26 +92,15 @@ func filterResult(result []Result, minLevel LintLevel) (filtered []Result) {
 	return filtered
 }
 
-func printResultJSON(result []Result, minLevel LintLevel, failOn LintLevel, stdout io.Writer) error {
-	filtered := filterResult(result, minLevel)
-	if len(filtered) == 0 {
+func printResultJSON(result []Result, stdout io.Writer) error {
+	if len(result) == 0 {
 		return nil
 	}
 	// Pretty print output
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(filtered); err != nil {
+	if err := enc.Encode(result); err != nil {
 		return errors.Errorf("failed to print result json: %w", err)
-	}
-	// Return an error if fail-on is set and a lint above the level is found
-	if failOn != -1 {
-		for _, r := range filtered {
-			for _, issue := range r.Issues {
-				if toEnum(issue.Level) >= failOn {
-					return errors.New(fmt.Sprintf("fail-on is set to %s, non-zero exit", AllowedLevels[failOn]))
-				}
-			}
-		}
 	}
 	return nil
 }
