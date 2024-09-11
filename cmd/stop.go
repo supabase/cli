@@ -12,6 +12,7 @@ import (
 var (
 	noBackup  bool
 	projectId string
+	all       bool
 
 	stopCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -19,7 +20,7 @@ var (
 		Short:   "Stop all local Supabase containers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return stop.Run(ctx, !noBackup, projectId, afero.NewOsFs())
+			return stop.Run(ctx, !noBackup, projectId, all, afero.NewOsFs())
 		},
 	}
 )
@@ -30,5 +31,6 @@ func init() {
 	flags.StringVar(&projectId, "project-id", "", "Local project ID to stop.")
 	cobra.CheckErr(flags.MarkHidden("backup"))
 	flags.BoolVar(&noBackup, "no-backup", false, "Deletes all data volumes after stopping.")
+	flags.BoolVar(&all, "all", false, "Stop all local Supabase instances from all projects across the machine.")
 	rootCmd.AddCommand(stopCmd)
 }

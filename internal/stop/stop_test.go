@@ -3,6 +3,7 @@ package stop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -45,7 +46,87 @@ func TestStopCommand(t *testing.T) {
 				Name: utils.DbId,
 			}}})
 		// Run test
-		err := Run(context.Background(), true, "", fsys)
+		err := Run(context.Background(), true, "", false, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("stops all instances when --all flag is used", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		projects := []string{"project1", "project2"}
+
+		// Mock initial ContainerList for all containers
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v"+utils.Docker.ClientVersion()+"/containers/json").
+			MatchParam("all", "true").
+			Reply(http.StatusOK).
+			JSON([]types.Container{
+				{ID: "container1", Labels: map[string]string{utils.CliProjectLabel: "project1"}},
+				{ID: "container2", Labels: map[string]string{utils.CliProjectLabel: "project2"}},
+			})
+
+		// Mock initial VolumeList
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
+			Reply(http.StatusOK).
+			JSON(volume.ListResponse{
+				Volumes: []*volume.Volume{
+					{Name: "volume1", Labels: map[string]string{utils.CliProjectLabel: "project1"}},
+					{Name: "volume2", Labels: map[string]string{utils.CliProjectLabel: "project2"}},
+				},
+			})
+
+		// Mock stopOneProject for each project
+		for _, projectId := range projects {
+			// Mock ContainerList for each project
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v"+utils.Docker.ClientVersion()+"/containers/json").
+				MatchParam("all", "1").
+				MatchParam("filters", fmt.Sprintf(`{"label":{"com.supabase.cli.project=%s":true}}`, projectId)).
+				Reply(http.StatusOK).
+				JSON([]types.Container{{ID: "container-" + projectId, State: "running"}})
+
+			// Mock container stop
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/container-" + projectId + "/stop").
+				Reply(http.StatusOK)
+
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
+				Reply(http.StatusOK).
+				JSON(types.ContainersPruneReport{})
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
+				Reply(http.StatusOK).
+				JSON(types.NetworksPruneReport{})
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v"+utils.Docker.ClientVersion()+"/volumes").
+				MatchParam("filters", fmt.Sprintf(`{"label":{"com.supabase.cli.project=%s":true}}`, projectId)).
+				Reply(http.StatusOK).
+				JSON(volume.ListResponse{Volumes: []*volume.Volume{{Name: "volume-" + projectId}}})
+		}
+
+		// Mock final ContainerList to verify all containers are stopped
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v"+utils.Docker.ClientVersion()+"/containers/json").
+			MatchParam("all", "true").
+			Reply(http.StatusOK).
+			JSON([]types.Container{})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]types.Container{})
+
+		// Run test
+		err := Run(context.Background(), true, "", true, fsys)
+
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -55,7 +136,7 @@ func TestStopCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, "", fsys)
+		err := Run(context.Background(), false, "", false, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -71,7 +152,7 @@ func TestStopCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), false, "test", afero.NewReadOnlyFs(fsys))
+		err := Run(context.Background(), false, "test", false, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
