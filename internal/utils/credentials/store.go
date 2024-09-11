@@ -53,6 +53,11 @@ func Delete(project string) error {
 	return nil
 }
 
+// Deletes all stored credentials for the namespace
+func DeleteAll() error {
+	return deleteAll(namespace)
+}
+
 func assertKeyringSupported() error {
 	// Suggested check: https://github.com/microsoft/WSL/issues/423
 	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {

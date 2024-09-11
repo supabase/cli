@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.59.2
+	github.com/danieljoos/wincred v1.2.1
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v26.1.5+incompatible
 	github.com/docker/docker v26.1.5+incompatible
@@ -114,7 +115,6 @@ require (
 	github.com/curioswitch/go-reassign v0.2.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.2.5 // indirect
 	github.com/daixiang0/gci v0.13.4 // indirect
-	github.com/danieljoos/wincred v1.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
