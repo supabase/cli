@@ -187,8 +187,9 @@ var (
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			skipSeed, _ := cmd.Flags().GetBool("skip-seed")
-			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs(), skipSeed)
+			noSeed, _ := cmd.Flags().GetBool("no-seed")
+			utils.Config.Db.Seed.Enabled = !noSeed
+			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 

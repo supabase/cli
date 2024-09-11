@@ -82,6 +82,10 @@ type CustomClaims struct {
 	jwt.RegisteredClaims
 }
 
+type DbSeed struct {
+	Enabled bool
+}
+
 const (
 	defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
 	defaultJwtExpiry = 1983812996
@@ -160,6 +164,11 @@ type (
 		Password     string `toml:"-"`
 		RootKey      string `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler `toml:"pooler"`
+		Seed         seed   `toml:"seed"`
+	}
+
+	seed struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	pooler struct {
@@ -456,6 +465,9 @@ func NewConfig(editors ...ConfigEditor) config {
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Seed: seed{
+				Enabled: true,
 			},
 		},
 		Realtime: realtime{

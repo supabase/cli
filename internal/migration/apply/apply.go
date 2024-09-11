@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/pkg/migration"
 )
 
-func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs, skipSeed bool) error {
+func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
 	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
@@ -20,7 +20,7 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
-	if skipSeed {
+	if !utils.Config.Db.Seed.Enabled {
 		return nil
 	}
 	return SeedDatabase(ctx, conn, fsys)
