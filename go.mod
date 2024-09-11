@@ -15,7 +15,7 @@ require (
 	github.com/danieljoos/wincred v1.2.1
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v27.2.1+incompatible
-	github.com/docker/docker v26.1.5+incompatible
+	github.com/docker/docker v27.2.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.28.1
