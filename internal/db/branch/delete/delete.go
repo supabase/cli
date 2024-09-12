@@ -7,7 +7,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -58,7 +58,7 @@ func deleteBranchDir(branch string, fsys afero.Fs) error {
 }
 
 func deleteBranchPG(ctx context.Context, branch string) error {
-	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
+	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, container.ExecOptions{
 		Cmd:          []string{"dropdb", "--username", "postgres", "--host", "127.0.0.1", branch},
 		AttachStderr: true,
 		AttachStdout: true,
@@ -67,7 +67,7 @@ func deleteBranchPG(ctx context.Context, branch string) error {
 		return err
 	}
 	// Read exec output
-	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return err
 	}

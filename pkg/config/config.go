@@ -160,6 +160,11 @@ type (
 		Password     string `toml:"-"`
 		RootKey      string `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler `toml:"pooler"`
+		Seed         seed   `toml:"seed"`
+	}
+
+	seed struct {
+		Enabled bool `toml:"enabled"`
 	}
 
 	pooler struct {
@@ -456,6 +461,9 @@ func NewConfig(editors ...ConfigEditor) config {
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Seed: seed{
+				Enabled: true,
 			},
 		},
 		Realtime: realtime{
@@ -1072,9 +1080,16 @@ func (c *tpaCognito) validate() error {
 	if c.UserPoolID == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
 	}
+	var err error
+	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
+		return err
+	}
 
 	if c.UserPoolRegion == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
+	}
+	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
+		return err
 	}
 
 	return nil
