@@ -51,7 +51,7 @@ require (
 	github.com/zalando/go-keyring v0.2.5
 	go.opentelemetry.io/otel v1.28.0
 	golang.org/x/mod v0.20.0
-	golang.org/x/oauth2 v0.21.0
+	golang.org/x/oauth2 v0.23.0
 	golang.org/x/term v0.22.0
 	google.golang.org/grpc v1.65.0
 	gopkg.in/yaml.v3 v3.0.1
