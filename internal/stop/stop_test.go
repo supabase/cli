@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
@@ -34,11 +36,11 @@ func TestStopCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			Reply(http.StatusOK).
-			JSON(types.ContainersPruneReport{})
+			JSON(container.PruneReport{})
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 			Reply(http.StatusOK).
-			JSON(types.NetworksPruneReport{})
+			JSON(network.PruneReport{})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
 			Reply(http.StatusOK).
@@ -101,11 +103,11 @@ func TestStopCommand(t *testing.T) {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 				Reply(http.StatusOK).
-				JSON(types.ContainersPruneReport{})
+				JSON(container.PruneReport{})
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 				Reply(http.StatusOK).
-				JSON(types.NetworksPruneReport{})
+				JSON(network.PruneReport{})
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v"+utils.Docker.ClientVersion()+"/volumes").
 				MatchParam("filters", fmt.Sprintf(`{"label":{"com.supabase.cli.project=%s":true}}`, projectId)).
@@ -175,11 +177,11 @@ func TestStopServices(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			Reply(http.StatusOK).
-			JSON(types.ContainersPruneReport{})
+			JSON(container.PruneReport{})
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
 			Reply(http.StatusOK).
-			JSON(types.NetworksPruneReport{})
+			JSON(network.PruneReport{})
 		// Run test
 		err := stop(context.Background(), true, io.Discard)
 		// Check error
