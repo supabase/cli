@@ -32,5 +32,6 @@ func init() {
 	cobra.CheckErr(flags.MarkHidden("backup"))
 	flags.BoolVar(&noBackup, "no-backup", false, "Deletes all data volumes after stopping.")
 	flags.BoolVar(&all, "all", false, "Stop all local Supabase instances from all projects across the machine.")
+	stopCmd.MarkFlagsMutuallyExclusive("project-id", "all")
 	rootCmd.AddCommand(stopCmd)
 }
