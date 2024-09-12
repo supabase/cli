@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,8 +31,8 @@ func (suite *DBTestSuite) TestBranchCreate() {
 
 	// check commands in exec calls
 	require.Equal(suite.T(), 2, len(suite.bodies))
-	var execBody types.ExecConfig
+	var execBody container.ExecOptions
 	require.NoError(suite.T(), json.Unmarshal([]byte(suite.bodies[0]), &execBody))
-	var startBody types.ExecStartCheck
+	var startBody container.ExecStartOptions
 	require.NoError(suite.T(), json.Unmarshal([]byte(suite.bodies[1]), &startBody))
 }

@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -70,7 +70,7 @@ func assertNewBranchIsValid(branchPath string, fsys afero.Fs) error {
 }
 
 func createBranch(ctx context.Context, branch string) error {
-	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, types.ExecConfig{
+	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, container.ExecOptions{
 		Cmd:          []string{"/bin/bash", "-c", cloneScript},
 		Env:          []string{"DB_NAME=" + branch},
 		AttachStderr: true,
@@ -80,7 +80,7 @@ func createBranch(ctx context.Context, branch string) error {
 		return err
 	}
 	// Read exec output
-	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, types.ExecStartCheck{})
+	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
 	if err != nil {
 		return err
 	}
