@@ -26,8 +26,8 @@ type KeyringStore struct{}
 var storeProvider Store = &KeyringStore{}
 
 // Get retrieves the password for a project from the keyring.
-func (provider *KeyringStore) Get(project string) (string, error) {
-	if err := provider.assertKeyringSupported(); err != nil {
+func (ks *KeyringStore) Get(project string) (string, error) {
+	if err := ks.assertKeyringSupported(); err != nil {
 		return "", err
 	}
 	val, err := keyring.Get(namespace, project)
