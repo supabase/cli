@@ -15,11 +15,11 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials/keyring"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/zalando/go-keyring"
 )
 
 var dbConfig = pgconn.Config{

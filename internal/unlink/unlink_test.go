@@ -11,7 +11,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/supabase/cli/internal/utils/credentials/keyring"
+	"github.com/zalando/go-keyring"
 )
 
 func TestUnlinkCommand(t *testing.T) {

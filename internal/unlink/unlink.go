@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/supabase/cli/internal/utils/credentials/keyring"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/zalando/go-keyring"
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {

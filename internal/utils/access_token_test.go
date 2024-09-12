@@ -10,7 +10,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/supabase/cli/internal/utils/credentials/keyring"
+	"github.com/zalando/go-keyring"
 )
 
 func TestLoadToken(t *testing.T) {
