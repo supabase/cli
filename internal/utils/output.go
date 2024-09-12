@@ -29,6 +29,11 @@ var (
 		OutputToml,
 		OutputYaml,
 	}
+
+	OutputFormat = EnumFlag{
+		Allowed: append([]string{OutputEnv}, OutputDefaultAllowed...),
+		Value:   OutputPretty,
+	}
 )
 
 func EncodeOutput(format string, w io.Writer, value any) error {

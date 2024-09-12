@@ -7,7 +7,6 @@ import (
 	env "github.com/Netflix/go-env"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/status"
 )
 
@@ -28,7 +27,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return status.Run(ctx, names, viper.GetString("output"), afero.NewOsFs())
+			return status.Run(ctx, names, afero.NewOsFs())
 		},
 		Example: `  supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL
   supabase status -o json`,

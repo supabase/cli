@@ -13,13 +13,13 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectRef string, format string, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	keys, err := RunGetApiKeys(ctx, projectRef)
 	if err != nil {
 		return err
 	}
 
-	if format == utils.OutputPretty {
+	if utils.OutputFormat.Value == utils.OutputPretty {
 		table := `|NAME|KEY VALUE|
 |-|-|
 `
@@ -30,7 +30,7 @@ func Run(ctx context.Context, projectRef string, format string, fsys afero.Fs) e
 		return list.RenderTable(table)
 	}
 
-	return utils.EncodeOutput(format, os.Stdout, keys)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, keys)
 }
 
 func RunGetApiKeys(ctx context.Context, projectRef string) ([]api.ApiKeyResponse, error) {

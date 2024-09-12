@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, format string, fsys afero.Fs) error {
+func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return errors.Errorf("failed to list projects: %w", err)
@@ -30,7 +30,7 @@ func Run(ctx context.Context, format string, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 
-	if format == utils.OutputPretty {
+	if utils.OutputFormat.Value == utils.OutputPretty {
 		table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
 |-|-|-|-|-|-|
 `
@@ -66,7 +66,7 @@ func Run(ctx context.Context, format string, fsys afero.Fs) error {
 			Linked:            project.Id == projectRef,
 		})
 	}
-	return utils.EncodeOutput(format, os.Stdout, projects)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, projects)
 }
 
 type Project struct {

@@ -32,7 +32,7 @@ func TestProjectApiKeysCommand(t *testing.T) {
 				ApiKey: "dummy-api-key-value",
 			}})
 		// Run test
-		err := Run(context.Background(), project, utils.OutputPretty, fsys)
+		err := Run(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -42,7 +42,7 @@ func TestProjectApiKeysCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", utils.OutputPretty, fsys)
+		err := Run(context.Background(), "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error retrieving project api-keys")
 	})
@@ -61,7 +61,7 @@ func TestProjectApiKeysCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/api-keys").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, utils.OutputPretty, fsys)
+		err := Run(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

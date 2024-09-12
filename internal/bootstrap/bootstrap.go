@@ -81,7 +81,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		Name:        filepath.Base(workdir),
 		TemplateUrl: &starter.Url,
 	}
-	if err := create.Run(ctx, params, utils.OutputPretty, fsys); err != nil {
+	if err := create.Run(ctx, params, fsys); err != nil {
 		return err
 	}
 	// 3. Get api keys

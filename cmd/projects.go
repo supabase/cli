@@ -78,7 +78,7 @@ var (
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
 			}
-			return create.Run(cmd.Context(), body, viper.GetString("output"), afero.NewOsFs())
+			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
 	}
 
@@ -87,7 +87,7 @@ var (
 		Short: "List all Supabase projects",
 		Long:  "List all Supabase projects the logged-in user can access.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), viper.GetString("output"), afero.NewOsFs())
+			return list.Run(cmd.Context(), afero.NewOsFs())
 		},
 	}
 
@@ -95,7 +95,7 @@ var (
 		Use:   "api-keys",
 		Short: "List all API keys for a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return apiKeys.Run(cmd.Context(), flags.ProjectRef, viper.GetString("output"), afero.NewOsFs())
+			return apiKeys.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 

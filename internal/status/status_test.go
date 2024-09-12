@@ -42,13 +42,13 @@ func TestStatusCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(running)
 		// Run test
-		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys))
+		assert.NoError(t, Run(context.Background(), CustomName{}, fsys))
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, afero.NewMemMapFs())
+		err := Run(context.Background(), CustomName{}, afero.NewMemMapFs())
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -57,7 +57,7 @@ func TestStatusCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
 	})
@@ -73,7 +73,7 @@ func TestStatusCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
