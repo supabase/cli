@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -14,6 +13,11 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
+
+type linkedProject struct {
+	api.V1ProjectResponse
+	Linked bool `json:"linked"`
+}
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
@@ -30,28 +34,26 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		fmt.Fprintln(os.Stderr, err)
 	}
 
+	var projects []linkedProject
+	for _, project := range *resp.JSON200 {
+		projects = append(projects, linkedProject{
+			V1ProjectResponse: project,
+			Linked:            project.Id == projectRef,
+		})
+	}
+
 	if utils.OutputFormat.Value == utils.OutputPretty {
 		table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
 |-|-|-|-|-|-|
 `
-		for _, project := range *resp.JSON200 {
-			if t, err := time.Parse(time.RFC3339, project.CreatedAt); err == nil {
-				project.CreatedAt = t.UTC().Format("2006-01-02 15:04:05")
-			}
-			if region, ok := utils.RegionMap[project.Region]; ok {
-				project.Region = region
-			}
-			linked := " "
-			if project.Id == projectRef {
-				linked = "  ●"
-			}
+		for _, project := range projects {
 			table += fmt.Sprintf(
 				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-				linked,
+				formatBullet(project.Linked),
 				project.OrganizationId,
 				project.Id,
 				strings.ReplaceAll(project.Name, "|", "\\|"),
-				project.Region,
+				formatRegion(project.Region),
 				utils.FormatTimestamp(project.CreatedAt),
 			)
 		}
@@ -59,17 +61,19 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return list.RenderTable(table)
 	}
 
-	var projects []Project
-	for _, project := range *resp.JSON200 {
-		projects = append(projects, Project{
-			V1ProjectResponse: project,
-			Linked:            project.Id == projectRef,
-		})
-	}
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, projects)
 }
 
-type Project struct {
-	api.V1ProjectResponse
-	Linked bool `json:"linked"`
+func formatBullet(value bool) string {
+	if value {
+		return "  ●"
+	}
+	return " "
+}
+
+func formatRegion(region string) string {
+	if readable, ok := utils.RegionMap[region]; ok {
+		return readable
+	}
+	return region
 }
