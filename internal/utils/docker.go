@@ -151,7 +151,7 @@ func CliProjectFilter(projectId string) filters.Args {
 		)
 	}
 	return filters.NewArgs(
-		filters.Arg("label", CliProjectLabel+"="+Config.ProjectId),
+		filters.Arg("label", CliProjectLabel+"="+projectId),
 	)
 }
 
