@@ -15,8 +15,8 @@ import (
 )
 
 type linkedProject struct {
-	api.V1ProjectResponse
-	Linked bool `json:"linked"`
+	api.V1ProjectResponse `yaml:",inline"`
+	Linked                bool `json:"linked"`
 }
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -57,8 +57,13 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				utils.FormatTimestamp(project.CreatedAt),
 			)
 		}
-
 		return list.RenderTable(table)
+	} else if utils.OutputFormat.Value == utils.OutputToml {
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
+			Projects []linkedProject `toml:"projects"`
+		}{
+			Projects: projects,
+		})
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, projects)
