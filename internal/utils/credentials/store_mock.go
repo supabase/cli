@@ -4,63 +4,65 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-type MockProvider struct {
-	MockStore map[string]map[string]string
-	MockError error
+type mockProvider struct {
+	mockStore map[string]map[string]string
+	mockError error
 }
 
 // Get retrieves the password for a project from the mock store.
-func (m *MockProvider) Get(project string) (string, error) {
-	if m.MockError != nil {
-		return "", m.MockError
+func (m *mockProvider) Get(project string) (string, error) {
+	if m.mockError != nil {
+		return "", m.mockError
 	}
-	if pass, ok := m.MockStore[namespace][project]; ok {
+	if pass, ok := m.mockStore[namespace][project]; ok {
 		return pass, nil
 	}
 	return "", keyring.ErrNotFound
 }
 
 // Set stores the password for a project in the mock store.
-func (m *MockProvider) Set(project, password string) error {
-	if m.MockError != nil {
-		return m.MockError
+func (m *mockProvider) Set(project, password string) error {
+	if m.mockError != nil {
+		return m.mockError
 	}
-	if m.MockStore == nil {
-		m.MockStore = make(map[string]map[string]string)
+	if m.mockStore == nil {
+		m.mockStore = make(map[string]map[string]string)
 	}
-	if m.MockStore[namespace] == nil {
-		m.MockStore[namespace] = make(map[string]string)
+	if m.mockStore[namespace] == nil {
+		m.mockStore[namespace] = make(map[string]string)
 	}
-	m.MockStore[namespace][project] = password
+	m.mockStore[namespace][project] = password
 	return nil
 }
 
 // Delete removes the password for a project from the mock store.
-func (m *MockProvider) Delete(project string) error {
-	if m.MockError != nil {
-		return m.MockError
+func (m *mockProvider) Delete(project string) error {
+	if m.mockError != nil {
+		return m.mockError
 	}
-	if _, ok := m.MockStore[namespace][project]; ok {
-		delete(m.MockStore[namespace], project)
+	if _, ok := m.mockStore[namespace][project]; ok {
+		delete(m.mockStore[namespace], project)
 		return nil
 	}
 	return keyring.ErrNotFound
 }
 
 // DeleteAll removes all passwords from the mock store.
-func (m *MockProvider) DeleteAll() error {
-	if m.MockError != nil {
-		return m.MockError
+func (m *mockProvider) DeleteAll() error {
+	if m.mockError != nil {
+		return m.mockError
 	}
-	delete(m.MockStore, namespace)
+	delete(m.mockStore, namespace)
 	return nil
 }
 
-func MockInit(mockProvider Store) func() {
+func MockInit() func() {
 	oldStore := StoreProvider
 	teardown := func() {
 		StoreProvider = oldStore
 	}
-	StoreProvider = mockProvider
+	StoreProvider = &mockProvider{
+		mockStore: map[string]map[string]string{},
+	}
 	return teardown
 }
