@@ -8,11 +8,16 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/status"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var (
 	override []string
 	names    status.CustomName
+	output   = utils.EnumFlag{
+		Allowed: append([]string{utils.OutputEnv}, utils.OutputDefaultAllowed...),
+		Value:   utils.OutputPretty,
+	}
 
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -27,7 +32,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return status.Run(ctx, names, afero.NewOsFs())
+			return status.Run(ctx, names, output.Value, afero.NewOsFs())
 		},
 		Example: `  supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL
   supabase status -o json`,
@@ -36,6 +41,7 @@ var (
 
 func init() {
 	flags := statusCmd.Flags()
+	flags.VarP(&output, "output", "o", "Output format of status variables.")
 	flags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	rootCmd.AddCommand(statusCmd)
 }
