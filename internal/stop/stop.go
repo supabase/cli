@@ -21,9 +21,6 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 			return err
 		}
 		searchProjectIdFilter = utils.Config.ProjectId
-	} else {
-		// Search for all project ids
-		searchProjectIdFilter = ""
 	}
 
 	// Stop all services
