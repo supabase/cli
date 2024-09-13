@@ -34,7 +34,7 @@ func Unlink(projectRef string, fsys afero.Fs) error {
 		allErrors = append(allErrors, wrapped)
 	}
 	// Remove linked credentials
-	if err := credentials.Delete(projectRef); err != nil &&
+	if err := credentials.StoreProvider.Delete(projectRef); err != nil &&
 		!errors.Is(err, credentials.ErrNotSupported) &&
 		!errors.Is(err, keyring.ErrNotFound) {
 		allErrors = append(allErrors, err)

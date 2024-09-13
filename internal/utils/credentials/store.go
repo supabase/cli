@@ -13,8 +13,19 @@ const namespace = "Supabase CLI"
 
 var ErrNotSupported = errors.New("Keyring is not supported on WSL")
 
-// Retrieves the stored password of a project and username
-func Get(project string) (string, error) {
+type Store interface {
+	Get(key string) (string, error)
+	Set(key, value string) error
+	Delete(project string) error
+	DeleteAll() error
+}
+
+type KeyringStore struct{}
+
+var StoreProvider Store = &KeyringStore{}
+
+// Get retrieves the password for a project from the keyring.
+func (ks *KeyringStore) Get(project string) (string, error) {
 	if err := assertKeyringSupported(); err != nil {
 		return "", err
 	}
@@ -27,34 +38,33 @@ func Get(project string) (string, error) {
 	return val, nil
 }
 
-// Stores the password of a project and username
-func Set(project, password string) error {
+func (ks *KeyringStore) Set(project, password string) error {
 	if err := assertKeyringSupported(); err != nil {
 		return err
 	}
-	if err := keyring.Set(namespace, project, password); errors.Is(err, exec.ErrNotFound) {
-		return errors.New(ErrNotSupported)
-	} else if err != nil {
+	if err := keyring.Set(namespace, project, password); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrNotSupported
+		}
 		return errors.Errorf("failed to set credentials: %w", err)
 	}
 	return nil
 }
 
-// Erases the stored password of a project and username
-func Delete(project string) error {
+func (ks *KeyringStore) Delete(project string) error {
 	if err := assertKeyringSupported(); err != nil {
 		return err
 	}
-	if err := keyring.Delete(namespace, project); errors.Is(err, exec.ErrNotFound) {
-		return errors.New(ErrNotSupported)
-	} else if err != nil {
+	if err := keyring.Delete(namespace, project); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrNotSupported
+		}
 		return errors.Errorf("failed to delete credentials: %w", err)
 	}
 	return nil
 }
 
-// Deletes all stored credentials for the namespace
-func DeleteAll() error {
+func (ks *KeyringStore) DeleteAll() error {
 	return deleteAll(namespace)
 }
 

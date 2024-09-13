@@ -23,7 +23,7 @@ func TestUnlinkCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Save database password
-		require.NoError(t, credentials.Set(project, "test"))
+		require.NoError(t, credentials.StoreProvider.Set(project, "test"))
 		// Run test
 		err := Run(context.Background(), fsys)
 		// Check error
@@ -33,7 +33,7 @@ func TestUnlinkCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, exists)
 		// Check credentials does not exist
-		_, err = credentials.Get(project)
+		_, err = credentials.StoreProvider.Get(project)
 		assert.ErrorIs(t, err, keyring.ErrNotFound)
 	})
 

@@ -43,7 +43,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 			return err
 		}
 		// Save database password
-		if err := credentials.Set(projectRef, config.Password); err != nil {
+		if err := credentials.StoreProvider.Set(projectRef, config.Password); err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 		}
 	}
