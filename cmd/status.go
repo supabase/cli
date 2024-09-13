@@ -18,6 +18,7 @@ var (
 		Allowed: append([]string{utils.OutputEnv}, utils.OutputDefaultAllowed...),
 		Value:   utils.OutputPretty,
 	}
+
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "status",
