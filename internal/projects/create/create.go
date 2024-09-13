@@ -36,6 +36,10 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
 	fmt.Fprintf(os.Stderr, "Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
+	if utils.OutputFormat.Value == utils.OutputPretty {
+		return nil
+	}
+
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, resp.JSON201)
 }
 
