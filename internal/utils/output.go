@@ -31,7 +31,7 @@ var (
 	}
 
 	OutputFormat = EnumFlag{
-		Allowed: append([]string{OutputEnv}, OutputDefaultAllowed...),
+		Allowed: OutputDefaultAllowed,
 		Value:   OutputPretty,
 	}
 )
