@@ -26,7 +26,9 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 	}
 
 	// Delete all possible stored project credentials
-	_ = credentials.DeleteAll()
+	if err := credentials.DeleteAll(); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
 
 	fmt.Fprintln(stdout, "Access token deleted successfully. You are now logged out.")
 	return nil

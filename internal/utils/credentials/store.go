@@ -14,11 +14,10 @@ const namespace = "Supabase CLI"
 var ErrNotSupported = errors.New("Keyring is not supported on WSL")
 
 type Store interface {
-	Get(project string) (string, error)
-	Set(project, password string) error
+	Get(key string) (string, error)
+	Set(key, value string) error
 	Delete(project string) error
 	DeleteAll() error
-	assertKeyringSupported() error
 }
 
 type KeyringStore struct{}
@@ -27,7 +26,7 @@ var storeProvider Store = &KeyringStore{}
 
 // Get retrieves the password for a project from the keyring.
 func (ks *KeyringStore) Get(project string) (string, error) {
-	if err := ks.assertKeyringSupported(); err != nil {
+	if err := assertKeyringSupported(); err != nil {
 		return "", err
 	}
 	val, err := keyring.Get(namespace, project)
@@ -39,12 +38,14 @@ func (ks *KeyringStore) Get(project string) (string, error) {
 	return val, nil
 }
 
+// TODO: Remove global accessors (Get, Set, Delete, DeleteAll) in favor of directly using the Store interface.
+// This will improve testability and dependency injection. Refactor code to pass Store instances where needed.
 func Get(project string) (string, error) {
 	return storeProvider.Get(project)
 }
 
 func (ks *KeyringStore) Set(project, password string) error {
-	if err := ks.assertKeyringSupported(); err != nil {
+	if err := assertKeyringSupported(); err != nil {
 		return err
 	}
 	if err := keyring.Set(namespace, project, password); err != nil {
@@ -61,7 +62,7 @@ func Set(project, password string) error {
 }
 
 func (ks *KeyringStore) Delete(project string) error {
-	if err := ks.assertKeyringSupported(); err != nil {
+	if err := assertKeyringSupported(); err != nil {
 		return err
 	}
 	if err := keyring.Delete(namespace, project); err != nil {
@@ -85,7 +86,7 @@ func DeleteAll() error {
 	return storeProvider.DeleteAll()
 }
 
-func (ks *KeyringStore) assertKeyringSupported() error {
+func assertKeyringSupported() error {
 	// Suggested check: https://github.com/microsoft/WSL/issues/423
 	if f, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
 		if bytes.Contains(f, []byte("WSL")) || bytes.Contains(f, []byte("Microsoft")) {
