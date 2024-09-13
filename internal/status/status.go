@@ -89,7 +89,7 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
 	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
-		Filters: utils.CliProjectFilter(),
+		Filters: utils.CliProjectFilter(utils.Config.ProjectId),
 	})
 	if err != nil {
 		return nil, errors.Errorf("failed to list running containers: %w", err)

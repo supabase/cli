@@ -45,7 +45,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
-		if err := utils.DockerRemoveAll(context.Background(), os.Stderr); err != nil {
+		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}

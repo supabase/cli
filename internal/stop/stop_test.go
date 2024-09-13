@@ -183,7 +183,7 @@ func TestStopServices(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(network.PruneReport{})
 		// Run test
-		err := stop(context.Background(), true, io.Discard)
+		err := stop(context.Background(), true, io.Discard, utils.Config.ProjectId)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -200,7 +200,7 @@ func TestStopServices(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStop(utils.Docker)
 		// Run test
-		err := stop(context.Background(), false, io.Discard)
+		err := stop(context.Background(), false, io.Discard, utils.Config.ProjectId)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -218,7 +218,7 @@ func TestStopServices(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := stop(context.Background(), true, io.Discard)
+		err := stop(context.Background(), true, io.Discard, utils.Config.ProjectId)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
