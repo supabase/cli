@@ -26,7 +26,7 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 	}
 
 	// Delete all possible stored project credentials
-	if err := credentials.DeleteAll(); err != nil {
+	if err := credentials.StoreProvider.DeleteAll(); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 

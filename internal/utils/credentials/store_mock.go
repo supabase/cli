@@ -57,10 +57,10 @@ func (m *MockProvider) DeleteAll() error {
 }
 
 func MockInit(mockProvider Store) func() {
-	oldStore := storeProvider
+	oldStore := StoreProvider
 	teardown := func() {
-		storeProvider = oldStore
+		StoreProvider = oldStore
 	}
-	storeProvider = mockProvider
+	StoreProvider = mockProvider
 	return teardown
 }

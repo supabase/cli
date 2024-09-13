@@ -30,7 +30,7 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 
 	flags.ProjectRef = resp.JSON201.Id
 	viper.Set("DB_PASSWORD", params.DbPass)
-	if err := credentials.Set(flags.ProjectRef, params.DbPass); err != nil {
+	if err := credentials.StoreProvider.Set(flags.ProjectRef, params.DbPass); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 	}
 

@@ -104,7 +104,7 @@ func getPassword(projectRef string) string {
 	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
 		return password
 	}
-	if password, err := credentials.Get(projectRef); err == nil {
+	if password, err := credentials.StoreProvider.Get(projectRef); err == nil {
 		return password
 	}
 	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)

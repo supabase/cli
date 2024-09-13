@@ -22,7 +22,7 @@ type Store interface {
 
 type KeyringStore struct{}
 
-var storeProvider Store = &KeyringStore{}
+var StoreProvider Store = &KeyringStore{}
 
 // Get retrieves the password for a project from the keyring.
 func (ks *KeyringStore) Get(project string) (string, error) {
@@ -38,12 +38,6 @@ func (ks *KeyringStore) Get(project string) (string, error) {
 	return val, nil
 }
 
-// TODO: Remove global accessors (Get, Set, Delete, DeleteAll) in favor of directly using the Store interface.
-// This will improve testability and dependency injection. Refactor code to pass Store instances where needed.
-func Get(project string) (string, error) {
-	return storeProvider.Get(project)
-}
-
 func (ks *KeyringStore) Set(project, password string) error {
 	if err := assertKeyringSupported(); err != nil {
 		return err
@@ -55,10 +49,6 @@ func (ks *KeyringStore) Set(project, password string) error {
 		return errors.Errorf("failed to set credentials: %w", err)
 	}
 	return nil
-}
-
-func Set(project, password string) error {
-	return storeProvider.Set(project, password)
 }
 
 func (ks *KeyringStore) Delete(project string) error {
@@ -74,16 +64,8 @@ func (ks *KeyringStore) Delete(project string) error {
 	return nil
 }
 
-func Delete(project string) error {
-	return storeProvider.Delete(project)
-}
-
 func (ks *KeyringStore) DeleteAll() error {
 	return deleteAll(namespace)
-}
-
-func DeleteAll() error {
-	return storeProvider.DeleteAll()
 }
 
 func assertKeyringSupported() error {

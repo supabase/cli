@@ -38,35 +38,35 @@ func TestLogoutCommand(t *testing.T) {
 			MockStore: map[string]map[string]string{},
 		}
 		t.Cleanup(credentials.MockInit(storeProvider))
-		require.NoError(t, credentials.Set(utils.AccessTokenKey, token))
-		require.NoError(t, credentials.Set("project1", "password1"))
-		require.NoError(t, credentials.Set("project2", "password2"))
+		require.NoError(t, credentials.StoreProvider.Set(utils.AccessTokenKey, token))
+		require.NoError(t, credentials.StoreProvider.Set("project1", "password1"))
+		require.NoError(t, credentials.StoreProvider.Set("project2", "password2"))
 		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Run test
 		err := Run(context.Background(), os.Stdout, afero.NewMemMapFs())
 		// Check error
 		assert.NoError(t, err)
 		// Check that access token has been removed
-		saved, _ := credentials.Get(utils.AccessTokenKey)
+		saved, _ := credentials.StoreProvider.Get(utils.AccessTokenKey)
 		assert.Empty(t, saved)
 		// check that project 1 has been removed
-		saved, _ = credentials.Get("project1")
+		saved, _ = credentials.StoreProvider.Get("project1")
 		assert.Empty(t, saved)
 		// check that project 2 has been removed
-		saved, _ = credentials.Get("project2")
+		saved, _ = credentials.StoreProvider.Get("project2")
 		assert.Empty(t, saved)
 	})
 
 	t.Run("skips logout by default", func(t *testing.T) {
 		keyring.MockInit()
-		require.NoError(t, credentials.Set(utils.AccessTokenKey, token))
+		require.NoError(t, credentials.StoreProvider.Set(utils.AccessTokenKey, token))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
 		err := Run(context.Background(), os.Stdout, fsys)
 		// Check error
 		assert.ErrorIs(t, err, context.Canceled)
-		saved, err := credentials.Get(utils.AccessTokenKey)
+		saved, err := credentials.StoreProvider.Get(utils.AccessTokenKey)
 		assert.NoError(t, err)
 		assert.Equal(t, token, saved)
 	})

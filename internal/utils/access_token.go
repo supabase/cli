@@ -41,7 +41,7 @@ func loadAccessToken(fsys afero.Fs) (string, error) {
 		return accessToken, nil
 	}
 	// Load from native credentials store
-	if accessToken, err := credentials.Get(AccessTokenKey); err == nil {
+	if accessToken, err := credentials.StoreProvider.Get(AccessTokenKey); err == nil {
 		return accessToken, nil
 	}
 	// Fallback to token file
@@ -68,7 +68,7 @@ func SaveAccessToken(accessToken string, fsys afero.Fs) error {
 		return errors.New(ErrInvalidToken)
 	}
 	// Save to native credentials store
-	if err := credentials.Set(AccessTokenKey, accessToken); err == nil {
+	if err := credentials.StoreProvider.Set(AccessTokenKey, accessToken); err == nil {
 		return nil
 	}
 	// Fallback to token file
@@ -94,13 +94,13 @@ func DeleteAccessToken(fsys afero.Fs) error {
 	if err := fallbackDeleteToken(fsys); err == nil {
 		// Typically user system should only have either token file or keyring.
 		// But we delete from both just in case.
-		_ = credentials.Delete(AccessTokenKey)
+		_ = credentials.StoreProvider.Delete(AccessTokenKey)
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	// Fallback not found, delete from native credentials store
-	err := credentials.Delete(AccessTokenKey)
+	err := credentials.StoreProvider.Delete(AccessTokenKey)
 	if errors.Is(err, credentials.ErrNotSupported) || errors.Is(err, keyring.ErrNotFound) {
 		return errors.New(ErrNotLoggedIn)
 	} else if err != nil {
