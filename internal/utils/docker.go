@@ -454,6 +454,10 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 	return err
 }
 
+// GetVolumeBindMode returns the appropriate volume bind mode for Docker.
+// This method must be used for SELinux compatibility, as it appends the
+// necessary ":z" suffix to the bind mode when running on SELinux-enabled systems.
+// This ensures proper labeling and access to mounted volumes in containerized environments.
 func GetVolumeBindMode(mode string) string {
 	return getVolumeBindMode(mode)
 }

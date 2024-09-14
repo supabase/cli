@@ -76,9 +76,9 @@ func TestBindModules(t *testing.T) {
 		mods := importMap.BindHostModules()
 		// Check error
 		assert.ElementsMatch(t, mods, []string{
-			"/tmp/:/tmp/:" + GetVolumeBindMode("ro"),
-			cwd + "/common:" + cwd + "/common:" + GetVolumeBindMode("ro"),
-			cwd + "/supabase/tests:" + cwd + "/supabase/tests:" + GetVolumeBindMode("ro"),
+			"/tmp/:/tmp/" + GetVolumeBindMode(":ro"),
+			cwd + "/common:" + cwd + "/common" + GetVolumeBindMode(":ro"),
+			cwd + "/supabase/tests:" + cwd + "/supabase/tests" + GetVolumeBindMode(":ro"),
 		})
 	})
 
