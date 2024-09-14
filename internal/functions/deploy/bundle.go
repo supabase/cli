@@ -100,8 +100,8 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno" + utils.GetVolumeBindMode(":rw"),
-		hostFuncDir + ":" + dockerFuncDir + utils.GetVolumeBindMode(":ro"),
+		utils.EdgeRuntimeId + ":/root/.cache/deno" + ":" + utils.DockerVolumeReadWrite,
+		hostFuncDir + ":" + dockerFuncDir + ":" + utils.DockerVolumeReadOnly,
 	}
 	if len(hostOutputDir) > 0 {
 		if !filepath.IsAbs(hostOutputDir) {
@@ -112,7 +112,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		}
 		if !strings.HasPrefix(hostOutputDir, hostFuncDir) {
 			dockerOutputDir := utils.ToDockerPath(hostOutputDir)
-			binds = append(binds, hostOutputDir+":"+dockerOutputDir+utils.GetVolumeBindMode(":rw"))
+			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":"+utils.DockerVolumeReadWrite)
 		}
 	}
 	// Allow entrypoints outside the functions directory
@@ -126,7 +126,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		if !strings.HasPrefix(hostEntrypointDir, hostFuncDir) &&
 			!strings.HasPrefix(hostEntrypointDir, hostOutputDir) {
 			dockerEntrypointDir := utils.ToDockerPath(hostEntrypointDir)
-			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+utils.GetVolumeBindMode(":ro"))
+			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":"+utils.DockerVolumeReadOnly)
 		}
 	}
 	// Imports outside of ./supabase/functions will be bound by absolute path
@@ -140,7 +140,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		}
 		modules := importMap.BindHostModules()
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
-		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+utils.GetVolumeBindMode(":ro"))
+		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":"+utils.DockerVolumeReadOnly)
 		// Remove any duplicate mount points
 		for _, mod := range modules {
 			hostPath := strings.Split(mod, ":")[0]
