@@ -43,7 +43,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		return errors.Errorf("failed to resolve absolute path: %w", err)
 	}
 	dstPath := "/tmp"
-	binds := []string{fmt.Sprintf("%s:%s:ro", srcPath, dstPath)}
+	binds := []string{fmt.Sprintf("%s:%s:ro,z", srcPath, dstPath)}
 	// Enable pgTAP if not already exists
 	alreadyExists := false
 	options = append(options, func(cc *pgx.ConnConfig) {
