@@ -316,7 +316,7 @@ EOF
 			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
 			}
-			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s"+":"+utils.DockerVolumeReadOnly, parsed.Host))
+			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:%[2]s", parsed.Host, utils.DockerVolumeReadOnly))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
