@@ -271,7 +271,7 @@ func (m *ImportMap) BindHostModules() []string {
 			continue
 		}
 		dockerPath := ToDockerPath(hostPath)
-		binds = append(binds, hostPath+":"+dockerPath+":ro")
+		binds = append(binds, hostPath+":"+dockerPath+":ro,z")
 	}
 	for _, mapping := range m.Scopes {
 		for _, hostPath := range mapping {
@@ -279,7 +279,7 @@ func (m *ImportMap) BindHostModules() []string {
 				continue
 			}
 			dockerPath := ToDockerPath(hostPath)
-			binds = append(binds, hostPath+":"+dockerPath+":ro")
+			binds = append(binds, hostPath+":"+dockerPath+":ro,z")
 		}
 	}
 	return binds

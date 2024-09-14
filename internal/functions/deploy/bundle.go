@@ -100,8 +100,8 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
 		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
-		hostFuncDir + ":" + dockerFuncDir + ":ro",
+		utils.EdgeRuntimeId + ":/root/.cache/deno:rw,z",
+		hostFuncDir + ":" + dockerFuncDir + ":ro,z",
 	}
 	if len(hostOutputDir) > 0 {
 		if !filepath.IsAbs(hostOutputDir) {
@@ -112,7 +112,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		}
 		if !strings.HasPrefix(hostOutputDir, hostFuncDir) {
 			dockerOutputDir := utils.ToDockerPath(hostOutputDir)
-			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw")
+			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw,z")
 		}
 	}
 	// Allow entrypoints outside the functions directory
@@ -126,7 +126,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		if !strings.HasPrefix(hostEntrypointDir, hostFuncDir) &&
 			!strings.HasPrefix(hostEntrypointDir, hostOutputDir) {
 			dockerEntrypointDir := utils.ToDockerPath(hostEntrypointDir)
-			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
+			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro,z")
 		}
 	}
 	// Imports outside of ./supabase/functions will be bound by absolute path
@@ -140,7 +140,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointDir, hostImpor
 		}
 		modules := importMap.BindHostModules()
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
-		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
+		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro,z")
 		// Remove any duplicate mount points
 		for _, mod := range modules {
 			hostPath := strings.Split(mod, ":")[0]
