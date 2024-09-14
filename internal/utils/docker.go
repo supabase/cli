@@ -454,6 +454,10 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 	return err
 }
 
+func GetVolumeBindMode(mode string) string {
+	return getVolumeBindMode(mode)
+}
+
 var portErrorPattern = regexp.MustCompile("Bind for (.*) failed: port is already allocated")
 
 func parsePortBindError(err error) string {

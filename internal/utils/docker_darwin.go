@@ -9,3 +9,7 @@ var extraHosts []string
 func isUserDefined(mode container.NetworkMode) bool {
 	return mode.IsUserDefined()
 }
+
+func getVolumeBindMode(mode string) string {
+	return mode
+}
