@@ -217,7 +217,10 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	if err != nil {
 		return nil, "", err
 	}
-	functionsConfig = deploy.FilterFunctionsToDeploy(functionsConfig)
+	functionsConfig, skippedFunctions := deploy.FilterFunctionsToDeploy(functionsConfig)
+	if len(skippedFunctions) > 0 {
+		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serve the following functions: %s\n", strings.Join(skippedFunctions, ", "))
+	}
 	binds := []string{}
 	for slug, fc := range functionsConfig {
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)

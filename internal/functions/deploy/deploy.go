@@ -35,7 +35,10 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	if err != nil {
 		return err
 	}
-	functionConfig = FilterFunctionsToDeploy(functionConfig)
+	functionConfig, skippedFunctions := FilterFunctionsToDeploy(functionConfig)
+	if len(skippedFunctions) > 0 {
+		fmt.Fprintf(utils.GetDebugLogger(), "Skipped deploying the following functions: %s\n", strings.Join(skippedFunctions, ", "))
+	}
 	api := function.NewEdgeRuntimeAPI(projectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
 	if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
 		return err
@@ -95,13 +98,16 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	return functionConfig, nil
 }
 
-func FilterFunctionsToDeploy(functionsConfig config.FunctionConfig) config.FunctionConfig {
+func FilterFunctionsToDeploy(functionsConfig config.FunctionConfig) (functionsToDeploy config.FunctionConfig, skippedFunctions []string) {
 	// Filter out all functions with NoDeploy set to true
-	filteredFunctions := make(config.FunctionConfig)
+	functionsToDeploy = make(config.FunctionConfig)
+	skippedFunctions = []string{}
 	for slug, fc := range functionsConfig {
 		if !fc.NoDeploy {
-			filteredFunctions[slug] = fc
+			functionsToDeploy[slug] = fc
+		} else {
+			skippedFunctions = append(skippedFunctions, slug)
 		}
 	}
-	return filteredFunctions
+	return functionsToDeploy, skippedFunctions
 }
