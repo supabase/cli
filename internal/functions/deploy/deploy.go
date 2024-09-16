@@ -35,6 +35,7 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	if err != nil {
 		return err
 	}
+	functionConfig = FilterFunctionsToDeploy(functionConfig)
 	api := function.NewEdgeRuntimeAPI(projectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
 	if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
 		return err
@@ -92,4 +93,15 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		functionConfig[name] = function
 	}
 	return functionConfig, nil
+}
+
+func FilterFunctionsToDeploy(functionsConfig config.FunctionConfig) config.FunctionConfig {
+	// Filter out all functions with NoDeploy set to true
+	filteredFunctions := make(config.FunctionConfig)
+	for slug, fc := range functionsConfig {
+		if !fc.NoDeploy {
+			filteredFunctions[slug] = fc
+		}
+	}
+	return filteredFunctions
 }

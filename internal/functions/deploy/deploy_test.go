@@ -121,6 +121,55 @@ import_map = "./import_map.json"
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("skip deploy functions from config", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.` + slug + `]
+import_map = "./import_map.json"
+no_deploy = true
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		importMapPath, err := filepath.Abs(filepath.Join(utils.SupabaseDirPath, "import_map.json"))
+		require.NoError(t, err)
+		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
+		// Setup function entrypoint
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		ignorePath := filepath.Join(utils.FunctionsDir, "_ignore", "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, ignorePath, []byte{}, 0644))
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err = fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{})
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		// Run test
+		err = Run(context.Background(), nil, project, nil, "", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on malformed slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()

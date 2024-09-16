@@ -217,6 +217,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	if err != nil {
 		return nil, "", err
 	}
+	functionsConfig = deploy.FilterFunctionsToDeploy(functionsConfig)
 	binds := []string{}
 	for slug, fc := range functionsConfig {
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
