@@ -409,10 +409,10 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
+		Enabled    *bool  `toml:"enabled"`
 		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
 		Entrypoint string `json:"-"`
-		NoDeploy   bool   `toml:"no_deploy"`
 	}
 
 	analytics struct {

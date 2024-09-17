@@ -209,17 +209,16 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 }
 
 func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
-	slugs, err := deploy.GetFunctionSlugs(fsys)
+	slugs, skippedFunctions, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
+	}
+	if len(skippedFunctions) > 0 {
+		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serve the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return nil, "", err
-	}
-	functionsConfig, skippedFunctions := deploy.FilterFunctionsToDeploy(functionsConfig)
-	if len(skippedFunctions) > 0 {
-		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serve the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	binds := []string{}
 	for slug, fc := range functionsConfig {

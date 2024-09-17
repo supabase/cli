@@ -16,6 +16,7 @@ import (
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// Load function config and project id
+	var skippedFunctions []string
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	} else if len(slugs) > 0 {
@@ -24,8 +25,11 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 				return err
 			}
 		}
-	} else if slugs, err = GetFunctionSlugs(fsys); err != nil {
+	} else if slugs, skippedFunctions, err = GetFunctionSlugs(fsys); err != nil {
 		return err
+	}
+	if len(skippedFunctions) > 0 {
+		fmt.Fprintf(utils.GetDebugLogger(), "Skipped deploying the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	// TODO: require all functions to be deployed from config for v2
 	if len(slugs) == 0 {
@@ -34,10 +38,6 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	functionConfig, err := GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
-	}
-	functionConfig, skippedFunctions := FilterFunctionsToDeploy(functionConfig)
-	if len(skippedFunctions) > 0 {
-		fmt.Fprintf(utils.GetDebugLogger(), "Skipped deploying the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	api := function.NewEdgeRuntimeAPI(projectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
 	if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
@@ -49,20 +49,25 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	return nil
 }
 
-func GetFunctionSlugs(fsys afero.Fs) ([]string, error) {
+func GetFunctionSlugs(fsys afero.Fs) (slugs []string, disabledSlugs []string, err error) {
 	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
-		return nil, errors.Errorf("failed to glob function slugs: %w", err)
+		return nil, nil, errors.Errorf("failed to glob function slugs: %w", err)
 	}
-	var slugs []string
 	for _, path := range paths {
 		slug := filepath.Base(filepath.Dir(path))
 		if utils.FuncSlugPattern.MatchString(slug) {
-			slugs = append(slugs, slug)
+			functionConfig := utils.Config.Functions[slug]
+			// If the function config Enabled is not defined, or defined and set to true
+			if functionConfig.Enabled == nil || (functionConfig.Enabled != nil && *functionConfig.Enabled) {
+				slugs = append(slugs, slug)
+			} else {
+				disabledSlugs = append(disabledSlugs, slug)
+			}
 		}
 	}
-	return slugs, nil
+	return slugs, disabledSlugs, nil
 }
 
 func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
@@ -96,18 +101,4 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		functionConfig[name] = function
 	}
 	return functionConfig, nil
-}
-
-func FilterFunctionsToDeploy(functionsConfig config.FunctionConfig) (functionsToDeploy config.FunctionConfig, skippedFunctions []string) {
-	// Filter out all functions with NoDeploy set to true
-	functionsToDeploy = make(config.FunctionConfig)
-	skippedFunctions = []string{}
-	for slug, fc := range functionsConfig {
-		if !fc.NoDeploy {
-			functionsToDeploy[slug] = fc
-		} else {
-			skippedFunctions = append(skippedFunctions, slug)
-		}
-	}
-	return functionsToDeploy, skippedFunctions
 }
