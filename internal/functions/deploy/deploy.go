@@ -58,9 +58,8 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, disabledSlugs []string, er
 	for _, path := range paths {
 		slug := filepath.Base(filepath.Dir(path))
 		if utils.FuncSlugPattern.MatchString(slug) {
-			functionConfig := utils.Config.Functions[slug]
 			// If the function config Enabled is not defined, or defined and set to true
-			if functionConfig.Enabled == nil || (functionConfig.Enabled != nil && *functionConfig.Enabled) {
+			if isFunctionEnabled(slug) {
 				slugs = append(slugs, slug)
 			} else {
 				disabledSlugs = append(disabledSlugs, slug)
@@ -101,4 +100,13 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		functionConfig[name] = function
 	}
 	return functionConfig, nil
+}
+
+func isFunctionEnabled(slug string) bool {
+	functionConfig := utils.Config.Functions[slug]
+	// If the function config Enabled is not defined, or defined and set to true
+	if functionConfig.Enabled == nil || (functionConfig.Enabled != nil && *functionConfig.Enabled) {
+		return true
+	}
+	return false
 }
