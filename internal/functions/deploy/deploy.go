@@ -58,7 +58,6 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, disabledSlugs []string, er
 	for _, path := range paths {
 		slug := filepath.Base(filepath.Dir(path))
 		if utils.FuncSlugPattern.MatchString(slug) {
-			// If the function config Enabled is not defined, or defined and set to true
 			if isFunctionEnabled(slug) {
 				slugs = append(slugs, slug)
 			} else {
