@@ -67,7 +67,8 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		}()
 	}
 	// Use custom network when connecting to local database
-	hostConfig := container.HostConfig{Binds: binds}
+	// disable selinux via security-opt to allow pg-tap to work properly
+	hostConfig := container.HostConfig{Binds: binds, SecurityOpt: []string{"label:disable"}}
 	if utils.IsLocalDatabase(config) {
 		config.Host = utils.DbAliases[0]
 		config.Port = 5432
