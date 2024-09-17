@@ -76,9 +76,9 @@ func TestBindModules(t *testing.T) {
 		mods := importMap.BindHostModules()
 		// Check error
 		assert.ElementsMatch(t, mods, []string{
-			"/tmp/:/tmp/:" + DockerVolumeReadOnly,
-			cwd + "/common:" + cwd + "/common:" + DockerVolumeReadOnly,
-			cwd + "/supabase/tests:" + cwd + "/supabase/tests:" + DockerVolumeReadOnly,
+			"/tmp/:/tmp/:ro",
+			cwd + "/common:" + cwd + "/common:ro",
+			cwd + "/supabase/tests:" + cwd + "/supabase/tests:ro",
 		})
 	})
 

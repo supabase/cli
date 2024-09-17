@@ -316,7 +316,7 @@ EOF
 			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
 			}
-			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:%[2]s", parsed.Host, utils.DockerVolumeReadOnly))
+			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", parsed.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -386,7 +386,7 @@ EOF
 				}
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
-			binds = append(binds, fmt.Sprintf("%s:%s:%s", hostPath, dockerPath, utils.DockerVolumeReadWrite))
+			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
 		}
 
 		dockerPort := uint16(8000)

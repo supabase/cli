@@ -37,13 +37,6 @@ import (
 
 var Docker = NewDocker()
 
-// getVolumeBindMode returns the appropriate volume bind mode for Docker.
-// This method must be used for SELinux compatibility, as it appends the
-// necessary ",z" suffix to the bind mode when running on SELinux-enabled systems.
-// This ensures proper labeling and access to mounted volumes in containerized environments.
-var DockerVolumeReadOnly = getVolumeBindMode("ro")
-var DockerVolumeReadWrite = getVolumeBindMode("rw")
-
 func NewDocker() *client.Client {
 	// TODO: refactor to initialize lazily
 	cli, err := command.NewDockerCli()
