@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -139,13 +140,13 @@ func TestServiceHealth(t *testing.T) {
 func TestPrintStatus(t *testing.T) {
 	utils.Config.Db.Port = 0
 	utils.Config.Hostname = "127.0.0.1"
-	*utils.Config.Api.Enabled = false
-	*utils.Config.Auth.Enabled = false
-	*utils.Config.Storage.Enabled = false
-	*utils.Config.Realtime.Enabled = false
-	*utils.Config.Studio.Enabled = false
-	*utils.Config.Analytics.Enabled = false
-	*utils.Config.Inbucket.Enabled = false
+	utils.Config.Api.Enabled = primitives.Ptr(false)
+	utils.Config.Auth.Enabled = primitives.Ptr(false)
+	utils.Config.Storage.Enabled = primitives.Ptr(false)
+	utils.Config.Realtime.Enabled = primitives.Ptr(false)
+	utils.Config.Studio.Enabled = primitives.Ptr(false)
+	utils.Config.Analytics.Enabled = primitives.Ptr(false)
+	utils.Config.Inbucket.Enabled = primitives.Ptr(false)
 
 	t.Run("outputs env var", func(t *testing.T) {
 		utils.Config.Hostname = "127.0.0.1"

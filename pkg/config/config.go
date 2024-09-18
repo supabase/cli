@@ -31,6 +31,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
 
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -447,17 +448,6 @@ type (
 	}
 )
 
-func boolPtr(b bool) *bool {
-	return &b
-}
-
-func SafeBool(b *bool) bool {
-	if b != nil {
-		return *b
-	}
-	return false
-}
-
 type ConfigEditor func(*config)
 
 func WithHostname(hostname string) ConfigEditor {
@@ -484,7 +474,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
 			Seed: seed{
-				Enabled: boolPtr(true),
+				Enabled: primitives.Ptr(true),
 			},
 		},
 		Realtime: realtime{
@@ -503,7 +493,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				Region:          "local",
 			},
 			ImageTransformation: imageTransformation{
-				Enabled: boolPtr(true),
+				Enabled: primitives.Ptr(true),
 				Image:   imageProxyImage,
 			},
 		},
@@ -650,7 +640,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
 		strconv.FormatUint(uint64(c.Api.Port), 10),
 	)}
-	if SafeBool(c.Api.Tls.Enabled) {
+	if primitives.SafeBool(c.Api.Tls.Enabled) {
 		apiUrl.Scheme = "https"
 	} else {
 		apiUrl.Scheme = "http"
@@ -762,7 +752,7 @@ func (c *config) Validate() error {
 		c.ProjectId = sanitized
 	}
 	// Validate api config
-	if SafeBool(c.Api.Enabled) {
+	if primitives.SafeBool(c.Api.Enabled) {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
 		}
@@ -801,14 +791,14 @@ func (c *config) Validate() error {
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
 	}
 	// Validate pooler config
-	if SafeBool(c.Db.Pooler.Enabled) {
+	if primitives.SafeBool(c.Db.Pooler.Enabled) {
 		allowed := []PoolMode{TransactionMode, SessionMode}
 		if !sliceContains(allowed, c.Db.Pooler.PoolMode) {
 			return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 		}
 	}
 	// Validate realtime config
-	if SafeBool(c.Realtime.Enabled) {
+	if primitives.SafeBool(c.Realtime.Enabled) {
 		allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 		if !sliceContains(allowed, c.Realtime.IpVersion) {
 			return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
@@ -821,7 +811,7 @@ func (c *config) Validate() error {
 		}
 	}
 	// Validate studio config
-	if SafeBool(c.Studio.Enabled) {
+	if primitives.SafeBool(c.Studio.Enabled) {
 		if c.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
 		}
@@ -833,13 +823,13 @@ func (c *config) Validate() error {
 		c.Studio.OpenaiApiKey, _ = maybeLoadEnv(c.Studio.OpenaiApiKey)
 	}
 	// Validate smtp config
-	if SafeBool(c.Inbucket.Enabled) {
+	if primitives.SafeBool(c.Inbucket.Enabled) {
 		if c.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
 	}
 	// Validate auth config
-	if SafeBool(c.Auth.Enabled) {
+	if primitives.SafeBool(c.Auth.Enabled) {
 		if c.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
@@ -857,7 +847,7 @@ func (c *config) Validate() error {
 			return err
 		}
 		// Validate sms config
-		if SafeBool(c.Auth.Sms.Twilio.Enabled) {
+		if primitives.SafeBool(c.Auth.Sms.Twilio.Enabled) {
 			if len(c.Auth.Sms.Twilio.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
 			}
@@ -871,7 +861,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if SafeBool(c.Auth.Sms.TwilioVerify.Enabled) {
+		if primitives.SafeBool(c.Auth.Sms.TwilioVerify.Enabled) {
 			if len(c.Auth.Sms.TwilioVerify.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
 			}
@@ -885,7 +875,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if SafeBool(c.Auth.Sms.Messagebird.Enabled) {
+		if primitives.SafeBool(c.Auth.Sms.Messagebird.Enabled) {
 			if len(c.Auth.Sms.Messagebird.Originator) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 			}
@@ -896,7 +886,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if SafeBool(c.Auth.Sms.Textlocal.Enabled) {
+		if primitives.SafeBool(c.Auth.Sms.Textlocal.Enabled) {
 			if len(c.Auth.Sms.Textlocal.Sender) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 			}
@@ -907,7 +897,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if SafeBool(c.Auth.Sms.Vonage.Enabled) {
+		if primitives.SafeBool(c.Auth.Sms.Vonage.Enabled) {
 			if len(c.Auth.Sms.Vonage.From) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.from")
 			}
@@ -941,7 +931,7 @@ func (c *config) Validate() error {
 		}
 		// Validate oauth config
 		for ext, provider := range c.Auth.External {
-			if !SafeBool(provider.Enabled) {
+			if !primitives.SafeBool(provider.Enabled) {
 				continue
 			}
 			if provider.ClientId == "" {
@@ -970,7 +960,7 @@ func (c *config) Validate() error {
 		return err
 	}
 	// Validate functions config
-	if SafeBool(c.EdgeRuntime.Enabled) {
+	if primitives.SafeBool(c.EdgeRuntime.Enabled) {
 		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
 		if !sliceContains(allowed, c.EdgeRuntime.Policy) {
 			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
@@ -982,7 +972,7 @@ func (c *config) Validate() error {
 		}
 	}
 	// Validate logflare config
-	if SafeBool(c.Analytics.Enabled) {
+	if primitives.SafeBool(c.Analytics.Enabled) {
 		switch c.Analytics.Backend {
 		case LogflareBigQuery:
 			if len(c.Analytics.GcpProjectId) == 0 {
@@ -1064,7 +1054,7 @@ func loadEnvIfExists(path string) error {
 
 func (h *hookConfig) HandleHook(hookType string) error {
 	// If not enabled do nothing
-	if !SafeBool(h.Enabled) {
+	if !primitives.SafeBool(h.Enabled) {
 		return nil
 	}
 	if h.URI == "" {

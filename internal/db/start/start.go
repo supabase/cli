@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -42,7 +43,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 	// Skip logflare container in db start
-	*utils.Config.Analytics.Enabled = false
+	utils.Config.Analytics.Enabled = primitives.Ptr(false)
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
 		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
@@ -284,13 +285,13 @@ func initAuthJob(host string) utils.DockerJob {
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	var initJobs []utils.DockerJob
-	if *utils.Config.Realtime.Enabled {
+	if primitives.SafeBool(utils.Config.Realtime.Enabled) {
 		initJobs = append(initJobs, initRealtimeJob(host))
 	}
-	if *utils.Config.Storage.Enabled {
+	if primitives.SafeBool(utils.Config.Storage.Enabled) {
 		initJobs = append(initJobs, initStorageJob(host))
 	}
-	if *utils.Config.Auth.Enabled {
+	if primitives.SafeBool(utils.Config.Auth.Enabled) {
 		initJobs = append(initJobs, initAuthJob(host))
 	}
 	logger := utils.GetDebugLogger()

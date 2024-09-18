@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
@@ -119,10 +120,10 @@ func TestDatabaseStart(t *testing.T) {
 		utils.KongId = "test-kong"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Api.KongImage), utils.KongId)
 		utils.GotrueId = "test-gotrue"
-		*utils.Config.Auth.EnableSignup = true
-		*utils.Config.Auth.Email.EnableSignup = true
-		*utils.Config.Auth.Email.DoubleConfirmChanges = true
-		*utils.Config.Auth.Email.EnableConfirmations = true
+		utils.Config.Auth.EnableSignup = primitives.Ptr(true)
+		utils.Config.Auth.Email.EnableSignup = primitives.Ptr(true)
+		utils.Config.Auth.Email.DoubleConfirmChanges = primitives.Ptr(true)
+		utils.Config.Auth.Email.EnableConfirmations = primitives.Ptr(true)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), utils.GotrueId)
 		utils.InbucketId = "test-inbucket"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Inbucket.Image), utils.InbucketId)

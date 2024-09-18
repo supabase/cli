@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/utils/primitives"
 )
 
 var (
@@ -190,7 +191,7 @@ var (
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if noSeed {
-				*utils.Config.Db.Seed.Enabled = false
+				utils.Config.Db.Seed.Enabled = primitives.Ptr(false)
 			}
 			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},

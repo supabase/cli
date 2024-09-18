@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/pkg/storage"
@@ -18,10 +19,10 @@ import (
 
 var mockFile = storage.ObjectResponse{
 	Name:           "abstract.pdf",
-	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
+	Id:             primitives.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
+	UpdatedAt:      primitives.Ptr("2023-10-13T18:08:22.068Z"),
+	CreatedAt:      primitives.Ptr("2023-10-13T18:08:22.068Z"),
+	LastAccessedAt: primitives.Ptr("2023-10-13T18:08:22.068Z"),
 	Metadata: &storage.ObjectMetadata{
 		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
 		Size:           82702,

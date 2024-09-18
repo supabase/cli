@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
@@ -377,7 +378,7 @@ func TestResetRemote(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
-		*utils.Config.Db.Seed.Enabled = false
+		utils.Config.Db.Seed.Enabled = primitives.Ptr(false)
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// No error should be raised since we're skipping the seed

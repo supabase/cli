@@ -10,6 +10,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/function"
 )
@@ -94,7 +95,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			function.ImportMap = utils.FallbackImportMapPath
 		}
 		if noVerifyJWT != nil {
-			function.VerifyJWT = utils.Ptr(!*noVerifyJWT)
+			function.VerifyJWT = primitives.Ptr(!*noVerifyJWT)
 		}
 		functionConfig[name] = function
 	}

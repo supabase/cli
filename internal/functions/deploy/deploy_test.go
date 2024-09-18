@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
 )
@@ -323,7 +324,7 @@ func TestImportMapPath(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
-		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, utils.Ptr(false), fsys)
+		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, primitives.Ptr(false), fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, utils.FallbackImportMapPath, fc[slug].ImportMap)

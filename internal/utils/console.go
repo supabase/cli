@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"golang.org/x/term"
 )
 
@@ -78,10 +79,10 @@ func (c *Console) PromptYesNo(ctx context.Context, label string, def bool) (bool
 func parseYesNo(s string) *bool {
 	s = strings.ToLower(s)
 	if s == "y" || s == "yes" {
-		return Ptr(true)
+		return primitives.Ptr(true)
 	}
 	if s == "n" || s == "no" {
-		return Ptr(false)
+		return primitives.Ptr(false)
 	}
 	return nil
 }

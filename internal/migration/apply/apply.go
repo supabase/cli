@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -20,7 +21,7 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
-	if !*utils.Config.Db.Seed.Enabled {
+	if !primitives.SafeBool(utils.Config.Db.Seed.Enabled) {
 		return nil
 	}
 	return SeedDatabase(ctx, conn, fsys)

@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
@@ -55,7 +56,7 @@ func TestMigrateDatabase(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
-		*utils.Config.Db.Seed.Enabled = false
+		utils.Config.Db.Seed.Enabled = primitives.Ptr(false)
 		// Run test
 		err := MigrateAndSeed(context.Background(), "", conn.MockClient(t), fsys)
 		// No error should be returned since seeding is skipped

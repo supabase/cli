@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/utils/primitives"
 )
 
 var (
@@ -106,9 +107,9 @@ var (
 			}
 
 			if len(inspectMode.Value) > 0 {
-				runtimeOption.InspectMode = utils.Ptr(serve.InspectMode(inspectMode.Value))
+				runtimeOption.InspectMode = primitives.Ptr(serve.InspectMode(inspectMode.Value))
 			} else if inspectBrk {
-				runtimeOption.InspectMode = utils.Ptr(serve.InspectModeBrk)
+				runtimeOption.InspectMode = primitives.Ptr(serve.InspectModeBrk)
 			}
 			if runtimeOption.InspectMode == nil && runtimeOption.InspectMain {
 				return fmt.Errorf("--inspect-main must be used together with one of these flags: [inspect inspect-mode]")

@@ -30,6 +30,7 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/utils/primitives"
 	"github.com/supabase/cli/pkg/config"
 	"golang.org/x/mod/semver"
 )
@@ -192,7 +193,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
-	if *utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Analytics.Enabled) && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
 			"DB_DATABASE=" + dbConfig.Database,
 			"DB_HOSTNAME=" + dbConfig.Host,
@@ -276,7 +277,7 @@ EOF
 	}
 
 	// Start vector
-	if *utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
+	if primitives.SafeBool(utils.Config.Analytics.Enabled) && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
@@ -390,7 +391,7 @@ EOF
 		}
 
 		dockerPort := uint16(8000)
-		if *utils.Config.Api.Tls.Enabled {
+		if primitives.SafeBool(utils.Config.Api.Tls.Enabled) {
 			dockerPort = 8443
 		}
 		if _, err := utils.DockerStart(
@@ -455,7 +456,7 @@ EOF
 	}
 
 	// Start GoTrue.
-	if *utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Auth.Enabled) && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
 			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
@@ -472,7 +473,7 @@ EOF
 
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
-			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !*utils.Config.Auth.EnableSignup),
+			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !primitives.SafeBool(utils.Config.Auth.EnableSignup)),
 
 			"GOTRUE_JWT_ADMIN_ROLES=service_role",
 			"GOTRUE_JWT_AUD=authenticated",
@@ -483,7 +484,7 @@ EOF
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
-			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !*utils.Config.Auth.Email.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !primitives.SafeBool(utils.Config.Auth.Email.EnableConfirmations)),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
@@ -502,7 +503,7 @@ EOF
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
-			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !*utils.Config.Auth.Sms.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !primitives.SafeBool(utils.Config.Auth.Sms.EnableConfirmations)),
 			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
@@ -545,7 +546,7 @@ EOF
 			}
 		}
 
-		if *utils.Config.Auth.Sms.Twilio.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Sms.Twilio.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio",
@@ -554,7 +555,7 @@ EOF
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
 		}
-		if *utils.Config.Auth.Sms.TwilioVerify.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Sms.TwilioVerify.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio_verify",
@@ -563,7 +564,7 @@ EOF
 				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.TwilioVerify.MessageServiceSid,
 			)
 		}
-		if *utils.Config.Auth.Sms.Messagebird.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Sms.Messagebird.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=messagebird",
@@ -571,7 +572,7 @@ EOF
 				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
 			)
 		}
-		if *utils.Config.Auth.Sms.Textlocal.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Sms.Textlocal.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=textlocal",
@@ -579,7 +580,7 @@ EOF
 				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
 			)
 		}
-		if *utils.Config.Auth.Sms.Vonage.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Sms.Vonage.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=vonage",
@@ -588,7 +589,7 @@ EOF
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
-		if *utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
@@ -597,7 +598,7 @@ EOF
 			)
 		}
 
-		if *utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
@@ -606,7 +607,7 @@ EOF
 			)
 		}
 
-		if *utils.Config.Auth.Hook.CustomAccessToken.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Hook.CustomAccessToken.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
@@ -615,7 +616,7 @@ EOF
 			)
 		}
 
-		if *utils.Config.Auth.Hook.SendSMS.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Hook.SendSMS.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
@@ -624,7 +625,7 @@ EOF
 			)
 		}
 
-		if *utils.Config.Auth.Hook.SendEmail.Enabled {
+		if primitives.SafeBool(utils.Config.Auth.Hook.SendEmail.Enabled) {
 			env = append(
 				env,
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
@@ -632,7 +633,7 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
-		if *utils.Config.Auth.MFA.Phone.EnrollEnabled || *utils.Config.Auth.MFA.Phone.VerifyEnabled {
+		if primitives.SafeBool(utils.Config.Auth.MFA.Phone.EnrollEnabled) || primitives.SafeBool(utils.Config.Auth.MFA.Phone.VerifyEnabled) {
 			env = append(
 				env,
 				"GOTRUE_MFA_PHONE_TEMPLATE="+utils.Config.Auth.MFA.Phone.Template,
@@ -647,7 +648,7 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), *config.SkipNonceCheck),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), primitives.SafeBool(config.SkipNonceCheck)),
 			)
 
 			if config.RedirectUri != "" {
@@ -700,7 +701,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if *utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Inbucket.Enabled) && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -738,7 +739,7 @@ EOF
 	}
 
 	// Start Realtime.
-	if *utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Realtime.Enabled) && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -793,7 +794,7 @@ EOF
 	}
 
 	// Start PostgREST.
-	if *utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Api.Enabled) && !isContainerExcluded(utils.Config.Api.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -827,7 +828,7 @@ EOF
 	}
 
 	// Start Storage.
-	if *utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Storage.Enabled) && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
 		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
@@ -846,7 +847,7 @@ EOF
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", *utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", primitives.SafeBool(utils.Config.Storage.ImageTransformation.Enabled)),
 					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
@@ -885,7 +886,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if *utils.Config.Storage.Enabled && *utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Storage.Enabled) && primitives.SafeBool(utils.Config.Storage.ImageTransformation.Enabled) && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -921,7 +922,7 @@ EOF
 	}
 
 	// Start all functions.
-	if *utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
+	if primitives.SafeBool(utils.Config.EdgeRuntime.Enabled) && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
@@ -930,7 +931,7 @@ EOF
 	}
 
 	// Start pg-meta.
-	if *utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
+	if primitives.SafeBool(utils.Config.Studio.Enabled) && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -968,7 +969,7 @@ EOF
 	}
 
 	// Start Studio.
-	if *utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Studio.Enabled) && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1015,7 +1016,7 @@ EOF
 	}
 
 	// Start pooler.
-	if *utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
+	if primitives.SafeBool(utils.Config.Db.Pooler.Enabled) && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
 		portSession := uint16(5432)
 		portTransaction := uint16(6543)
 		dockerPort := portTransaction
