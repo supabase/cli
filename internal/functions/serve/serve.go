@@ -214,7 +214,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", err
 	}
 	if len(skippedFunctions) > 0 {
-		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serve the following functions: %s\n", strings.Join(skippedFunctions, ", "))
+		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serving the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
