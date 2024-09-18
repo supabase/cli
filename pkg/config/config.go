@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -259,7 +260,7 @@ type (
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
-		EnableSignup           bool  `toml:"enable_signup"`
+		EnableSignup           *bool `toml:"enable_signup"`
 		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
 		Email                  email `toml:"email"`
 		Sms                    sms   `toml:"sms"`
@@ -709,9 +710,33 @@ func (c *config) LoadRemoteConfigOverrides(currentRemoteName string) error {
 	return nil
 }
 
+type pointerTransformer struct{}
+
+func (t pointerTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
+	if typ.Kind() == reflect.Pointer {
+		return func(dst, src reflect.Value) error {
+			if dst.CanSet() {
+				if !src.IsNil() {
+					if dst.IsNil() {
+						dst.Set(reflect.New(typ.Elem()))
+					}
+					dst.Elem().Set(src.Elem())
+				}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func mergeConfigs(base, override *baseConfig) error {
 	mergedConfig := *base
-	if err := mergo.Merge(&mergedConfig, override, mergo.WithOverride); err != nil {
+	if err := mergo.Merge(
+		&mergedConfig, override, mergo.WithOverride,
+		// Will override value = true by value = false but won't override anything if value is not mentioned
+		// since it's value will be nil
+		mergo.WithTransformers(pointerTransformer{}),
+	); err != nil {
 		return err
 	}
 	*base = mergedConfig

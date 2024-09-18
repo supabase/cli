@@ -15,6 +15,9 @@ import (
 //go:embed testdata/config.toml
 var testInitConfigEmbed []byte
 
+//go:embed testdata/config-remotes-overrides.toml
+var testInitRemotesConfigEmbed []byte
+
 func TestConfigParsing(t *testing.T) {
 	t.Run("classic config file", func(t *testing.T) {
 		config := NewConfig()
@@ -55,6 +58,32 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+
+	t.Run("config file with remotes branch config", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check the default value in the config
+		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
+		assert.Equal(t, true, *config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
+		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+		// Check the values for the remote feature-auth-branch override
+		assert.Equal(t, "http://feature-auth-branch.com/", config.Remotes["feature-auth-branch"].Auth.SiteUrl)
+		assert.Equal(t, false, *config.Remotes["feature-auth-branch"].Auth.EnableSignup)
+		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.External["azure"].Enabled)
+		assert.Equal(t, "nope", config.Remotes["feature-auth-branch"].Auth.External["azure"].ClientId)
+
+		// Check the values for the remote feature-storage-branch override
+		assert.Equal(t, []string{"image/png", "image/jpeg", "image/svg+xml"}, config.Remotes["feature-storage-branch"].Storage.Buckets["images"].AllowedMimeTypes)
+	})
+
 }
 
 func TestFileSizeLimitConfigParsing(t *testing.T) {
@@ -156,6 +185,61 @@ func TestSigningJWT(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, defaultServiceRoleKey, signed)
 	})
+}
+
+func TestValidateHookURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		uri       string
+		hookName  string
+		shouldErr bool
+		errorMsg  string
+	}{
+		{
+			name:      "valid http URL",
+			uri:       "http://example.com",
+			hookName:  "testHook",
+			shouldErr: false,
+		},
+		{
+			name:      "valid https URL",
+			uri:       "https://example.com",
+			hookName:  "testHook",
+			shouldErr: false,
+		},
+		{
+			name:      "valid pg-functions URI",
+			uri:       "pg-functions://functionName",
+			hookName:  "pgHook",
+			shouldErr: false,
+		},
+		{
+			name:      "invalid URI with unsupported scheme",
+			uri:       "ftp://example.com",
+			hookName:  "malformedHook",
+			shouldErr: true,
+			errorMsg:  "Invalid HTTP hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
+		},
+		{
+			name:      "invalid URI with parsing error",
+			uri:       "http://a b.com",
+			hookName:  "errorHook",
+			shouldErr: true,
+			errorMsg:  "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHookURI(tt.uri, tt.hookName)
+			if tt.shouldErr {
+				assert.Error(t, err, "Expected an error for %v", tt.name)
+				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
+			} else {
+				assert.NoError(t, err, "Expected no error for %v", tt.name)
+			}
+		})
+	}
 }
 
 func TestLoadRemoteConfigOverrides(t *testing.T) {
@@ -266,6 +350,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, "config", config.ProjectId)
 		assert.Equal(t, uint16(54321), config.Api.Port)
 	})
+
 	t.Run("override with invalid config", func(t *testing.T) {
 		config := NewConfig()
 		// Run test
@@ -284,59 +369,45 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		err := config.LoadRemoteConfigOverrides("feature-branch")
 		assert.Error(t, err, "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects")
 	})
-}
 
-func TestValidateHookURI(t *testing.T) {
-	tests := []struct {
-		name      string
-		uri       string
-		hookName  string
-		shouldErr bool
-		errorMsg  string
-	}{
-		{
-			name:      "valid http URL",
-			uri:       "http://example.com",
-			hookName:  "testHook",
-			shouldErr: false,
-		},
-		{
-			name:      "valid https URL",
-			uri:       "https://example.com",
-			hookName:  "testHook",
-			shouldErr: false,
-		},
-		{
-			name:      "valid pg-functions URI",
-			uri:       "pg-functions://functionName",
-			hookName:  "pgHook",
-			shouldErr: false,
-		},
-		{
-			name:      "invalid URI with unsupported scheme",
-			uri:       "ftp://example.com",
-			hookName:  "malformedHook",
-			shouldErr: true,
-			errorMsg:  "Invalid HTTP hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
-		},
-		{
-			name:      "invalid URI with parsing error",
-			uri:       "http://a b.com",
-			hookName:  "errorHook",
-			shouldErr: true,
-			errorMsg:  "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateHookURI(tt.uri, tt.hookName)
-			if tt.shouldErr {
-				assert.Error(t, err, "Expected an error for %v", tt.name)
-				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
-			} else {
-				assert.NoError(t, err, "Expected no error for %v", tt.name)
-			}
-		})
-	}
+	t.Run("can load feature-auth-branch", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		assert.NoError(t, config.LoadRemoteConfigOverrides("feature-auth-branch"))
+		// Check that feature-auth-branch config replaced default config
+		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
+		assert.Equal(t, false, *config.Auth.EnableSignup)
+		assert.Equal(t, false, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "nope", config.Auth.External["azure"].ClientId)
+		// Verify that other config values remain unchanged
+		assert.Equal(t, "test", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+	})
+	t.Run("can load feature-storage-branch", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		assert.NoError(t, config.LoadRemoteConfigOverrides("feature-storage-branch"))
+		// Check that feature-storage-branch config replaced default config
+		assert.Equal(t, []string{"image/png", "image/jpeg", "image/svg+xml"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+		// Verify that other config values remain unchanged
+		assert.Equal(t, "test", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
+		assert.Equal(t, true, *config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
+	})
 }
