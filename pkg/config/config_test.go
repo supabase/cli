@@ -71,13 +71,13 @@ func TestConfigParsing(t *testing.T) {
 		// Check the default value in the config
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
 		assert.Equal(t, true, *config.Auth.EnableSignup)
-		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, true, *config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
 		// Check the values for the remote feature-auth-branch override
 		assert.Equal(t, "http://feature-auth-branch.com/", config.Remotes["feature-auth-branch"].Auth.SiteUrl)
 		assert.Equal(t, false, *config.Remotes["feature-auth-branch"].Auth.EnableSignup)
-		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.External["azure"].Enabled)
+		assert.Equal(t, false, *config.Remotes["feature-auth-branch"].Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", config.Remotes["feature-auth-branch"].Auth.External["azure"].ClientId)
 
 		// Check the values for the remote feature-storage-branch override
@@ -407,7 +407,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, uint16(54321), config.Api.Port)
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
 		assert.Equal(t, true, *config.Auth.EnableSignup)
-		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, true, *config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 	})
 }
