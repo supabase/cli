@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
@@ -263,6 +265,24 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	config.Labels[composeProjectLabel] = Config.ProjectId
 	// Configure container network
 	hostConfig.ExtraHosts = append(hostConfig.ExtraHosts, extraHosts...)
+	// For containers with required NOFILE limit environment ensure
+	// the container ulimit is a match
+	for _, env := range config.Env {
+		if strings.HasPrefix(env, "RLIMIT_NOFILE=") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) == 2 {
+				if rlimitNofile, err := strconv.Atoi(parts[1]); err == nil {
+					hostConfig.Resources.Ulimits = append(hostConfig.Resources.Ulimits, &units.Ulimit{
+						Name: "nofile",
+						Soft: int64(rlimitNofile),
+						Hard: int64(rlimitNofile),
+					})
+				}
+			}
+			break
+		}
+	}
+
 	if networkId := viper.GetString("network-id"); len(networkId) > 0 {
 		hostConfig.NetworkMode = container.NetworkMode(networkId)
 	} else if len(hostConfig.NetworkMode) == 0 {
