@@ -1155,7 +1155,7 @@ func (c *tpaCognito) validate() error {
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
-	if *tpa.Firebase.Enabled {
+	if primitives.SafeBool(tpa.Firebase.Enabled) {
 		enabled += 1
 
 		if err := tpa.Firebase.validate(); err != nil {
@@ -1163,7 +1163,7 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
-	if *tpa.Auth0.Enabled {
+	if primitives.SafeBool(tpa.Auth0.Enabled) {
 		enabled += 1
 
 		if err := tpa.Auth0.validate(); err != nil {
@@ -1171,7 +1171,7 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
-	if *tpa.Cognito.Enabled {
+	if primitives.SafeBool(tpa.Cognito.Enabled) {
 		enabled += 1
 
 		if err := tpa.Cognito.validate(); err != nil {
@@ -1187,15 +1187,15 @@ func (tpa *thirdParty) validate() error {
 }
 
 func (tpa *thirdParty) IssuerURL() string {
-	if *tpa.Firebase.Enabled {
+	if primitives.SafeBool(tpa.Firebase.Enabled) {
 		return tpa.Firebase.issuerURL()
 	}
 
-	if *tpa.Auth0.Enabled {
+	if primitives.SafeBool(tpa.Auth0.Enabled) {
 		return tpa.Auth0.issuerURL()
 	}
 
-	if *tpa.Cognito.Enabled {
+	if primitives.SafeBool(tpa.Cognito.Enabled) {
 		return tpa.Cognito.issuerURL()
 	}
 

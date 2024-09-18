@@ -482,11 +482,11 @@ EOF
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
 
-			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
-			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
+			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.Email.EnableSignup)),
+			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.Email.DoubleConfirmChanges)),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !primitives.SafeBool(utils.Config.Auth.Email.EnableConfirmations)),
 
-			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
+			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.EnableAnonymousSignIns)),
 
 			fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 			fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
@@ -502,7 +502,7 @@ EOF
 			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
-			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
+			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.Sms.EnableSignup)),
 			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !primitives.SafeBool(utils.Config.Auth.Sms.EnableConfirmations)),
 			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
 			"GOTRUE_SMS_OTP_EXP=6000",
@@ -510,14 +510,14 @@ EOF
 			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
 			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
-			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
+			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.EnableRefreshTokenRotation)),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
-			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
-			fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
-			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
-			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
-			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
-			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.EnableManualLinking)),
+			fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", primitives.SafeBool(utils.Config.Auth.Email.SecurePasswordChange)),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.MFA.Phone.EnrollEnabled)),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.MFA.Phone.VerifyEnabled)),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.MFA.TOTP.EnrollEnabled)),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", primitives.SafeBool(utils.Config.Auth.MFA.TOTP.VerifyEnabled)),
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
@@ -645,7 +645,7 @@ EOF
 		for name, config := range utils.Config.Auth.External {
 			env = append(
 				env,
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), primitives.SafeBool(config.Enabled)),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), primitives.SafeBool(config.SkipNonceCheck)),
@@ -985,7 +985,7 @@ EOF
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
-					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
+					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", primitives.SafeBool(utils.Config.Analytics.Enabled)),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
