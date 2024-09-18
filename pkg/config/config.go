@@ -738,7 +738,7 @@ func mergeConfigs(base, override *baseConfig) error {
 	if err := mergo.Merge(
 		&mergedConfig, override, mergo.WithOverride,
 		// Will override value = true by value = false but won't override anything if value is not mentioned
-		// since it's value will be nil
+		// for *bool fields since it's value will be nil
 		mergo.WithTransformers(pointerTransformer{}),
 	); err != nil {
 		return err
