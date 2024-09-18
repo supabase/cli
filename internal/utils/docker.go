@@ -249,7 +249,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
 
 func getUlimitFromEnvRlimit(envVariable string) *units.Ulimit {
-	if !strings.HasPrefix(envVariable, "RLIMIT_NOFILE=") {
+	if strings.HasPrefix(envVariable, "RLIMIT_NOFILE=") {
 		parts := strings.SplitN(envVariable, "=", 2)
 		if len(parts) == 2 {
 			if rlimitNofile, err := strconv.Atoi(parts[1]); err == nil {
