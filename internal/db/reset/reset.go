@@ -54,7 +54,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if utils.Config.Storage.Enabled {
+	if *utils.Config.Storage.Enabled {
 		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	}
 	// Skip syslog if vector container is not started
 	if _, err := utils.Docker.ContainerInspect(ctx, utils.VectorId); err != nil {
-		utils.Config.Analytics.Enabled = false
+		*utils.Config.Analytics.Enabled = false
 	}
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()

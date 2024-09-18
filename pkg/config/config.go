@@ -145,7 +145,7 @@ type (
 	}
 
 	api struct {
-		Enabled         bool     `toml:"enabled"`
+		Enabled         *bool    `toml:"enabled"`
 		Image           string   `toml:"-"`
 		KongImage       string   `toml:"-"`
 		Port            uint16   `toml:"port"`
@@ -158,7 +158,7 @@ type (
 	}
 
 	tlsKong struct {
-		Enabled bool `toml:"enabled"`
+		Enabled *bool `toml:"enabled"`
 	}
 
 	db struct {
@@ -173,11 +173,11 @@ type (
 	}
 
 	seed struct {
-		Enabled bool `toml:"enabled"`
+		Enabled *bool `toml:"enabled"`
 	}
 
 	pooler struct {
-		Enabled          bool     `toml:"enabled"`
+		Enabled          *bool    `toml:"enabled"`
 		Image            string   `toml:"-"`
 		Port             uint16   `toml:"port"`
 		PoolMode         PoolMode `toml:"pool_mode"`
@@ -190,7 +190,7 @@ type (
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled"`
+		Enabled         *bool         `toml:"enabled"`
 		Image           string        `toml:"-"`
 		IpVersion       AddressFamily `toml:"ip_version"`
 		MaxHeaderLength uint          `toml:"max_header_length"`
@@ -200,7 +200,7 @@ type (
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
+		Enabled      *bool  `toml:"enabled"`
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
@@ -209,7 +209,7 @@ type (
 	}
 
 	inbucket struct {
-		Enabled  bool   `toml:"enabled"`
+		Enabled  *bool  `toml:"enabled"`
 		Image    string `toml:"-"`
 		Port     uint16 `toml:"port"`
 		SmtpPort uint16 `toml:"smtp_port"`
@@ -217,7 +217,7 @@ type (
 	}
 
 	storage struct {
-		Enabled             bool                 `toml:"enabled"`
+		Enabled             *bool                `toml:"enabled"`
 		Image               string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		S3Credentials       storageS3Credentials `toml:"-"`
@@ -235,7 +235,7 @@ type (
 	}
 
 	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
+		Enabled *bool  `toml:"enabled"`
 		Image   string `toml:"-"`
 	}
 
@@ -246,22 +246,22 @@ type (
 	}
 
 	auth struct {
-		Enabled                bool     `toml:"enabled"`
+		Enabled                *bool    `toml:"enabled"`
 		Image                  string   `toml:"-"`
 		SiteUrl                string   `toml:"site_url"`
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
 
-		JwtExpiry                  uint `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		JwtExpiry                  uint  `toml:"jwt_expiry"`
+		EnableRefreshTokenRotation *bool `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint  `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        *bool `toml:"enable_manual_linking"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
 		EnableSignup           *bool `toml:"enable_signup"`
-		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
+		EnableAnonymousSignIns *bool `toml:"enable_anonymous_sign_ins"`
 		Email                  email `toml:"email"`
 		Sms                    sms   `toml:"sms"`
 		External               map[string]provider
@@ -281,30 +281,30 @@ type (
 	}
 
 	tpaFirebase struct {
-		Enabled bool `toml:"enabled"`
+		Enabled *bool `toml:"enabled"`
 
 		ProjectID string `toml:"project_id"`
 	}
 
 	tpaAuth0 struct {
-		Enabled bool `toml:"enabled"`
+		Enabled *bool `toml:"enabled"`
 
 		Tenant       string `toml:"tenant"`
 		TenantRegion string `toml:"tenant_region"`
 	}
 
 	tpaCognito struct {
-		Enabled bool `toml:"enabled"`
+		Enabled *bool `toml:"enabled"`
 
 		UserPoolID     string `toml:"user_pool_id"`
 		UserPoolRegion string `toml:"user_pool_region"`
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup"`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
-		EnableConfirmations  bool                     `toml:"enable_confirmations"`
-		SecurePasswordChange bool                     `toml:"secure_password_change"`
+		EnableSignup         *bool                    `toml:"enable_signup"`
+		DoubleConfirmChanges *bool                    `toml:"double_confirm_changes"`
+		EnableConfirmations  *bool                    `toml:"enable_confirmations"`
+		SecurePasswordChange *bool                    `toml:"secure_password_change"`
 		Template             map[string]emailTemplate `toml:"template"`
 		Smtp                 smtp                     `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
@@ -325,8 +325,8 @@ type (
 	}
 
 	sms struct {
-		EnableSignup        bool              `toml:"enable_signup"`
-		EnableConfirmations bool              `toml:"enable_confirmations"`
+		EnableSignup        *bool             `toml:"enable_signup"`
+		EnableConfirmations *bool             `toml:"enable_confirmations"`
 		Template            string            `toml:"template"`
 		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
 		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
@@ -345,8 +345,8 @@ type (
 		SendEmail                   hookConfig `toml:"send_email"`
 	}
 	factorTypeConfiguration struct {
-		EnrollEnabled bool `toml:"enroll_enabled"`
-		VerifyEnabled bool `toml:"verify_enabled"`
+		EnrollEnabled *bool `toml:"enroll_enabled"`
+		VerifyEnabled *bool `toml:"verify_enabled"`
 	}
 
 	phoneFactorTypeConfiguration struct {
@@ -363,7 +363,7 @@ type (
 	}
 
 	hookConfig struct {
-		Enabled bool   `toml:"enabled"`
+		Enabled *bool  `toml:"enabled"`
 		URI     string `toml:"uri"`
 		Secrets string `toml:"secrets"`
 	}
@@ -374,42 +374,42 @@ type (
 	}
 
 	twilioConfig struct {
-		Enabled           bool   `toml:"enabled"`
+		Enabled           *bool  `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`
 		MessageServiceSid string `toml:"message_service_sid"`
 		AuthToken         string `toml:"auth_token" mapstructure:"auth_token"`
 	}
 
 	messagebirdConfig struct {
-		Enabled    bool   `toml:"enabled"`
+		Enabled    *bool  `toml:"enabled"`
 		Originator string `toml:"originator"`
 		AccessKey  string `toml:"access_key" mapstructure:"access_key"`
 	}
 
 	textlocalConfig struct {
-		Enabled bool   `toml:"enabled"`
+		Enabled *bool  `toml:"enabled"`
 		Sender  string `toml:"sender"`
 		ApiKey  string `toml:"api_key" mapstructure:"api_key"`
 	}
 
 	vonageConfig struct {
-		Enabled   bool   `toml:"enabled"`
+		Enabled   *bool  `toml:"enabled"`
 		From      string `toml:"from"`
 		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
 		ApiSecret string `toml:"api_secret" mapstructure:"api_secret"`
 	}
 
 	provider struct {
-		Enabled        bool   `toml:"enabled"`
+		Enabled        *bool  `toml:"enabled"`
 		ClientId       string `toml:"client_id"`
 		Secret         string `toml:"secret"`
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
-		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+		SkipNonceCheck *bool  `toml:"skip_nonce_check"`
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
+		Enabled       *bool         `toml:"enabled"`
 		Image         string        `toml:"-"`
 		Policy        RequestPolicy `toml:"policy"`
 		InspectorPort uint16        `toml:"inspector_port"`
@@ -425,7 +425,7 @@ type (
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled"`
+		Enabled          *bool           `toml:"enabled"`
 		Image            string          `toml:"-"`
 		VectorImage      string          `toml:"-"`
 		Port             uint16          `toml:"port"`
@@ -446,6 +446,10 @@ type (
 		S3SecretKey     string `toml:"s3_secret_key"`
 	}
 )
+
+func boolPtr(b bool) *bool {
+	return &b
+}
 
 type ConfigEditor func(*config)
 
@@ -473,7 +477,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
 			Seed: seed{
-				Enabled: true,
+				Enabled: boolPtr(true),
 			},
 		},
 		Realtime: realtime{
@@ -492,7 +496,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				Region:          "local",
 			},
 			ImageTransformation: imageTransformation{
-				Enabled: true,
+				Enabled: boolPtr(true),
 				Image:   imageProxyImage,
 			},
 		},
@@ -639,7 +643,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
 		strconv.FormatUint(uint64(c.Api.Port), 10),
 	)}
-	if c.Api.Tls.Enabled {
+	if *c.Api.Tls.Enabled {
 		apiUrl.Scheme = "https"
 	} else {
 		apiUrl.Scheme = "http"
@@ -751,7 +755,7 @@ func (c *config) Validate() error {
 		c.ProjectId = sanitized
 	}
 	// Validate api config
-	if c.Api.Enabled {
+	if *c.Api.Enabled {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
 		}
@@ -790,14 +794,14 @@ func (c *config) Validate() error {
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
 	}
 	// Validate pooler config
-	if c.Db.Pooler.Enabled {
+	if *c.Db.Pooler.Enabled {
 		allowed := []PoolMode{TransactionMode, SessionMode}
 		if !sliceContains(allowed, c.Db.Pooler.PoolMode) {
 			return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
 		}
 	}
 	// Validate realtime config
-	if c.Realtime.Enabled {
+	if *c.Realtime.Enabled {
 		allowed := []AddressFamily{AddressIPv6, AddressIPv4}
 		if !sliceContains(allowed, c.Realtime.IpVersion) {
 			return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
@@ -810,7 +814,7 @@ func (c *config) Validate() error {
 		}
 	}
 	// Validate studio config
-	if c.Studio.Enabled {
+	if *c.Studio.Enabled {
 		if c.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
 		}
@@ -822,13 +826,13 @@ func (c *config) Validate() error {
 		c.Studio.OpenaiApiKey, _ = maybeLoadEnv(c.Studio.OpenaiApiKey)
 	}
 	// Validate smtp config
-	if c.Inbucket.Enabled {
+	if *c.Inbucket.Enabled {
 		if c.Inbucket.Port == 0 {
 			return errors.New("Missing required field in config: inbucket.port")
 		}
 	}
 	// Validate auth config
-	if c.Auth.Enabled {
+	if *c.Auth.Enabled {
 		if c.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
@@ -846,7 +850,7 @@ func (c *config) Validate() error {
 			return err
 		}
 		// Validate sms config
-		if c.Auth.Sms.Twilio.Enabled {
+		if *c.Auth.Sms.Twilio.Enabled {
 			if len(c.Auth.Sms.Twilio.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
 			}
@@ -860,7 +864,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if c.Auth.Sms.TwilioVerify.Enabled {
+		if *c.Auth.Sms.TwilioVerify.Enabled {
 			if len(c.Auth.Sms.TwilioVerify.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
 			}
@@ -874,7 +878,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if c.Auth.Sms.Messagebird.Enabled {
+		if *c.Auth.Sms.Messagebird.Enabled {
 			if len(c.Auth.Sms.Messagebird.Originator) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 			}
@@ -885,7 +889,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if c.Auth.Sms.Textlocal.Enabled {
+		if *c.Auth.Sms.Textlocal.Enabled {
 			if len(c.Auth.Sms.Textlocal.Sender) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 			}
@@ -896,7 +900,7 @@ func (c *config) Validate() error {
 				return err
 			}
 		}
-		if c.Auth.Sms.Vonage.Enabled {
+		if *c.Auth.Sms.Vonage.Enabled {
 			if len(c.Auth.Sms.Vonage.From) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.from")
 			}
@@ -930,7 +934,7 @@ func (c *config) Validate() error {
 		}
 		// Validate oauth config
 		for ext, provider := range c.Auth.External {
-			if !provider.Enabled {
+			if !*provider.Enabled {
 				continue
 			}
 			if provider.ClientId == "" {
@@ -959,7 +963,7 @@ func (c *config) Validate() error {
 		return err
 	}
 	// Validate functions config
-	if c.EdgeRuntime.Enabled {
+	if *c.EdgeRuntime.Enabled {
 		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
 		if !sliceContains(allowed, c.EdgeRuntime.Policy) {
 			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
@@ -971,7 +975,7 @@ func (c *config) Validate() error {
 		}
 	}
 	// Validate logflare config
-	if c.Analytics.Enabled {
+	if *c.Analytics.Enabled {
 		switch c.Analytics.Backend {
 		case LogflareBigQuery:
 			if len(c.Analytics.GcpProjectId) == 0 {
@@ -1053,7 +1057,7 @@ func loadEnvIfExists(path string) error {
 
 func (h *hookConfig) HandleHook(hookType string) error {
 	// If not enabled do nothing
-	if !h.Enabled {
+	if !*h.Enabled {
 		return nil
 	}
 	if h.URI == "" {
@@ -1154,7 +1158,7 @@ func (c *tpaCognito) validate() error {
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
-	if tpa.Firebase.Enabled {
+	if *tpa.Firebase.Enabled {
 		enabled += 1
 
 		if err := tpa.Firebase.validate(); err != nil {
@@ -1162,7 +1166,7 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
-	if tpa.Auth0.Enabled {
+	if *tpa.Auth0.Enabled {
 		enabled += 1
 
 		if err := tpa.Auth0.validate(); err != nil {
@@ -1170,7 +1174,7 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
-	if tpa.Cognito.Enabled {
+	if *tpa.Cognito.Enabled {
 		enabled += 1
 
 		if err := tpa.Cognito.validate(); err != nil {
@@ -1186,15 +1190,15 @@ func (tpa *thirdParty) validate() error {
 }
 
 func (tpa *thirdParty) IssuerURL() string {
-	if tpa.Firebase.Enabled {
+	if *tpa.Firebase.Enabled {
 		return tpa.Firebase.issuerURL()
 	}
 
-	if tpa.Auth0.Enabled {
+	if *tpa.Auth0.Enabled {
 		return tpa.Auth0.issuerURL()
 	}
 
-	if tpa.Cognito.Enabled {
+	if *tpa.Cognito.Enabled {
 		return tpa.Cognito.issuerURL()
 	}
 

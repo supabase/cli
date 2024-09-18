@@ -139,13 +139,13 @@ func TestServiceHealth(t *testing.T) {
 func TestPrintStatus(t *testing.T) {
 	utils.Config.Db.Port = 0
 	utils.Config.Hostname = "127.0.0.1"
-	utils.Config.Api.Enabled = false
-	utils.Config.Auth.Enabled = false
-	utils.Config.Storage.Enabled = false
-	utils.Config.Realtime.Enabled = false
-	utils.Config.Studio.Enabled = false
-	utils.Config.Analytics.Enabled = false
-	utils.Config.Inbucket.Enabled = false
+	*utils.Config.Api.Enabled = false
+	*utils.Config.Auth.Enabled = false
+	*utils.Config.Storage.Enabled = false
+	*utils.Config.Realtime.Enabled = false
+	*utils.Config.Studio.Enabled = false
+	*utils.Config.Analytics.Enabled = false
+	*utils.Config.Inbucket.Enabled = false
 
 	t.Run("outputs env var", func(t *testing.T) {
 		utils.Config.Hostname = "127.0.0.1"

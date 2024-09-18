@@ -55,7 +55,7 @@ func TestMigrateDatabase(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
-		utils.Config.Db.Seed.Enabled = false
+		*utils.Config.Db.Seed.Enabled = false
 		// Run test
 		err := MigrateAndSeed(context.Background(), "", conn.MockClient(t), fsys)
 		// No error should be returned since seeding is skipped

@@ -377,7 +377,7 @@ func TestResetRemote(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
-		utils.Config.Db.Seed.Enabled = false
+		*utils.Config.Db.Seed.Enabled = false
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// No error should be raised since we're skipping the seed

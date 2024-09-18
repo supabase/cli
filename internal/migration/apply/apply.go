@@ -20,7 +20,7 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
-	if !utils.Config.Db.Seed.Enabled {
+	if !*utils.Config.Db.Seed.Enabled {
 		return nil
 	}
 	return SeedDatabase(ctx, conn, fsys)
