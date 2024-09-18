@@ -104,5 +104,5 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 func isFunctionEnabled(slug string) bool {
 	functionConfig := utils.Config.Functions[slug]
 	// If the function config Enabled is not defined, or defined and set to true
-	return functionConfig.Enabled == nil || functionConfig.Enabled
+	return functionConfig.Enabled == nil || *functionConfig.Enabled
 }
