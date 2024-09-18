@@ -83,7 +83,6 @@ func TestConfigParsing(t *testing.T) {
 		// Check the values for the remote feature-storage-branch override
 		assert.Equal(t, []string{"image/png", "image/jpeg", "image/svg+xml"}, config.Remotes["feature-storage-branch"].Storage.Buckets["images"].AllowedMimeTypes)
 	})
-
 }
 
 func TestFileSizeLimitConfigParsing(t *testing.T) {
