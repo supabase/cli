@@ -248,6 +248,22 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
 
+func getUlimitFromEnvRlimit(envVariable string) *units.Ulimit {
+	if !strings.HasPrefix(envVariable, "RLIMIT_NOFILE=") {
+		parts := strings.SplitN(envVariable, "=", 2)
+		if len(parts) == 2 {
+			if rlimitNofile, err := strconv.Atoi(parts[1]); err == nil {
+				return &units.Ulimit{
+					Name: "nofile",
+					Soft: int64(rlimitNofile),
+					Hard: int64(rlimitNofile),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
@@ -268,17 +284,8 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	// For containers with required NOFILE limit environment ensure
 	// the container ulimit is a match
 	for _, env := range config.Env {
-		if strings.HasPrefix(env, "RLIMIT_NOFILE=") {
-			parts := strings.SplitN(env, "=", 2)
-			if len(parts) == 2 {
-				if rlimitNofile, err := strconv.Atoi(parts[1]); err == nil {
-					hostConfig.Resources.Ulimits = append(hostConfig.Resources.Ulimits, &units.Ulimit{
-						Name: "nofile",
-						Soft: int64(rlimitNofile),
-						Hard: int64(rlimitNofile),
-					})
-				}
-			}
+		if ulimit := getUlimitFromEnvRlimit(env); ulimit != nil {
+			hostConfig.Resources.Ulimits = append(hostConfig.Resources.Ulimits, ulimit)
 			break
 		}
 	}
