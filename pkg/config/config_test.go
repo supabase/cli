@@ -382,7 +382,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		// Check that feature-auth-branch config replaced default config
 		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
 		assert.Equal(t, false, *config.Auth.EnableSignup)
-		assert.Equal(t, false, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, false, *config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", config.Auth.External["azure"].ClientId)
 		// Verify that other config values remain unchanged
 		assert.Equal(t, "test", config.ProjectId)
