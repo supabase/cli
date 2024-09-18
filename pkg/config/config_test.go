@@ -158,6 +158,134 @@ func TestSigningJWT(t *testing.T) {
 	})
 }
 
+func TestLoadRemoteConfigOverrides(t *testing.T) {
+	t.Run("no remote config load non exitent branch", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		err := config.LoadRemoteConfigOverrides("non-existent-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, "config", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+	})
+
+	t.Run("override project id", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {
+				ProjectId: "feature-project",
+			},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, "feature-project", config.ProjectId)
+	})
+
+	t.Run("override nested field", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {
+				Api: api{Port: 9000},
+			},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, uint16(9000), config.Api.Port)
+	})
+
+	t.Run("partial override", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {
+				Api: api{Port: 9000},
+			},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, "config", config.ProjectId)
+		assert.Equal(t, uint16(9000), config.Api.Port)
+	})
+
+	t.Run("multiple nested overrides", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {
+				ProjectId: "feature-project",
+				Api:       api{Port: 9000},
+				Auth:      auth{SiteUrl: "http://feature.com"},
+			},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, "feature-project", config.ProjectId)
+		assert.Equal(t, uint16(9000), config.Api.Port)
+		assert.Equal(t, "http://feature.com", config.Auth.SiteUrl)
+	})
+
+	t.Run("override with empty remote config", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.NoError(t, err)
+		assert.Equal(t, "config", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+	})
+	t.Run("override with invalid config", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		file := fs.MapFile{Data: buf.Bytes()}
+		fsys := fs.MapFS{"config.toml": &file}
+		assert.NoError(t, config.Load("config.toml", fsys))
+		config.Remotes = map[string]baseConfig{
+			"feature-branch": {
+				Db: db{
+					MajorVersion: 12,
+				},
+			},
+		}
+		err := config.LoadRemoteConfigOverrides("feature-branch")
+		assert.Error(t, err, "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects")
+	})
+}
+
 func TestValidateHookURI(t *testing.T) {
 	tests := []struct {
 		name      string

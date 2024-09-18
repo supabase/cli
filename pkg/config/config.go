@@ -20,6 +20,8 @@ import (
 	"text/template"
 	"time"
 
+	"dario.cat/mergo"
+
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
@@ -119,7 +121,8 @@ func (c CustomClaims) NewToken() *jwt.Token {
 //
 // Default values for internal configs should be added to `var Config` initializer.
 type (
-	config struct {
+	// Common config fields between our "base" config and any "remote" branch specific
+	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
@@ -133,6 +136,11 @@ type (
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+	}
+
+	config struct {
+		baseConfig
+		Remotes map[string]baseConfig `toml:"remotes"`
 	}
 
 	api struct {
@@ -447,7 +455,7 @@ func WithHostname(hostname string) ConfigEditor {
 }
 
 func NewConfig(editors ...ConfigEditor) config {
-	initial := config{
+	base := baseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
 			Image:     postgrestImage,
@@ -544,6 +552,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			Image: edgeRuntimeImage,
 		},
 	}
+	initial := config{baseConfig: base}
 	for _, apply := range editors {
 		apply(&initial)
 	}
@@ -686,6 +695,27 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Functions[slug] = function
 	}
 	return c.Validate()
+}
+
+func (c *config) LoadRemoteConfigOverrides(currentRemoteName string) error {
+	// Check if there's a branch specific configuration
+	if remoteConfig, ok := c.Remotes[currentRemoteName]; ok {
+		// Override the base configuration with the branch-specific values
+		if err := mergeConfigs(&c.baseConfig, &remoteConfig); err != nil {
+			return err
+		}
+		return c.Validate()
+	}
+	return nil
+}
+
+func mergeConfigs(base, override *baseConfig) error {
+	mergedConfig := *base
+	if err := mergo.Merge(&mergedConfig, override, mergo.WithOverride); err != nil {
+		return err
+	}
+	*base = mergedConfig
+	return nil
 }
 
 func (c *config) Validate() error {
