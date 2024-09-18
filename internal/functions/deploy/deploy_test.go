@@ -121,6 +121,58 @@ import_map = "./import_map.json"
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("skip disabled functions from config", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.disabled-func]
+enabled = false
+import_map = "./import_map.json"
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		importMapPath, err := filepath.Abs(filepath.Join(utils.SupabaseDirPath, "import_map.json"))
+		require.NoError(t, err)
+		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
+		// Setup function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "enabled-func", "index.ts"), []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "disabled-func", "index.ts"), []byte{}, 0644))
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err = fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+project+"/functions").
+			MatchParam("slug", "enabled-func").
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		// Run test
+		err = Run(context.Background(), nil, project, nil, "", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on malformed slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
