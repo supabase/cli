@@ -108,6 +108,12 @@ func LoadConfigFS(fsys afero.Fs) error {
 		}
 		return err
 	}
+	if branch, err := GetCurrentBranchFS(fsys); err != nil {
+		fmt.Fprintf(GetDebugLogger(), "Current branch %s detected, attempt config overridde with [remotes.%[1]s.<scopes>] values\n", branch)
+		if err := Config.LoadRemoteConfigOverrides("", branch, NewRootFS(fsys)); err != nil {
+			return err
+		}
+	}
 	UpdateDockerIds()
 	return nil
 }
