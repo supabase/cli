@@ -14,13 +14,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
+	"dario.cat/mergo"
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
@@ -695,104 +695,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	return c.Validate()
 }
 
-// Merges the map representation into the struct
-// This is necessary to distinguish between user override values
-// like boolean = false, and user unspecified values that would have default
-// values (boolean = false if unmentioned) due to Go unmarshaling behavior
-func mergeMapIntoStruct(dst interface{}, src map[string]interface{}) error {
-	dstVal := reflect.ValueOf(dst).Elem()
-	dstType := dstVal.Type()
-
-	for key, val := range src {
-		// Find the struct field with the matching toml tag or field name
-		var fieldVal reflect.Value
-		found := false
-		for i := 0; i < dstVal.NumField(); i++ {
-			field := dstType.Field(i)
-			tomlTag := field.Tag.Get("toml")
-			if tomlTag == "" || tomlTag == "-" {
-				tomlTag = strings.ToLower(field.Name)
-			}
-			if tomlTag == key {
-				fieldVal = dstVal.Field(i)
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			continue // Skip fields not found in the struct
-		}
-
-		if !fieldVal.CanSet() {
-			continue // Cannot set unexported fields
-		}
-
-		switch fieldVal.Kind() {
-		case reflect.Struct:
-			// Recurse into nested structs
-			valMap := val.(map[string]interface{})
-			if err := mergeMapIntoStruct(fieldVal.Addr().Interface(), valMap); err != nil {
-				return err
-			}
-		case reflect.Slice:
-			// Handle slices
-			valSlice := val.([]interface{})
-			sliceVal := reflect.MakeSlice(fieldVal.Type(), len(valSlice), len(valSlice))
-			for i, elem := range valSlice {
-				elemVal := reflect.ValueOf(elem)
-				if elemVal.Type().ConvertibleTo(fieldVal.Type().Elem()) {
-					sliceVal.Index(i).Set(elemVal.Convert(fieldVal.Type().Elem()))
-				}
-			}
-			fieldVal.Set(sliceVal)
-		case reflect.Map:
-			// Handle maps
-			srcMap := val.(map[string]interface{})
-			if fieldVal.IsNil() {
-				fieldVal.Set(reflect.MakeMap(fieldVal.Type()))
-			}
-			for mapKey, mapVal := range srcMap {
-				// Create a new value for the map value type
-				mapValType := fieldVal.Type().Elem()
-				destMapVal := reflect.New(mapValType).Elem()
-
-				if mapValType.Kind() == reflect.Struct {
-					// If the map value is a struct, recursively merge
-					mapValMap, ok := mapVal.(map[string]interface{})
-					if !ok {
-						return fmt.Errorf("expected map for map field %s[%s]", key, mapKey)
-					}
-					if err := mergeMapIntoStruct(destMapVal.Addr().Interface(), mapValMap); err != nil {
-						return err
-					}
-				} else {
-					// For basic types, set the value directly
-					valValue := reflect.ValueOf(mapVal)
-					if valValue.Type().ConvertibleTo(mapValType) {
-						destMapVal.Set(valValue.Convert(mapValType))
-					}
-				}
-
-				// Set the key-value pair in the destination map
-				fieldVal.SetMapIndex(reflect.ValueOf(mapKey), destMapVal)
-			}
-		default:
-			// Set the value directly
-			valValue := reflect.ValueOf(val)
-			if valValue.Type().ConvertibleTo(fieldVal.Type()) {
-				fieldVal.Set(valValue.Convert(fieldVal.Type()))
-			}
-		}
-	}
-
-	return nil
-}
-
 // Will override the current config values with the ones presents in the [remotes.remoteName]
-// definitions.
+// definitions if there is some.
 func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) error {
-	// Load the entire config as a map
+	// Load the entire config as a map so we can distinguish between unset and "default"
+	// fields filled with false/empty string/0 values
 	var configMap map[string]interface{}
 	builder := NewPathBuilder(path)
 	if _, err := toml.DecodeFS(fsys, builder.ConfigPath, &configMap); err != nil {
@@ -805,19 +712,31 @@ func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) 
 		// No remotes defined
 		return nil
 	}
-
-	// Extract the remote configuration for the current branch
+	// Extract the remote configuration for the current branch into an abstact structure
 	remoteConfigMap, ok := remotes[remoteName].(map[string]interface{})
 	if !ok {
 		// No configuration for the current remote
 		return nil
 	}
 
-	// Merge the remote configuration into the base config
-	if err := mergeMapIntoStruct(&c.BaseConfig, remoteConfigMap); err != nil {
-		return err
-	}
+	// Remove the remotes from our configMap
+	delete(configMap, "remotes")
 
+	// We merge our remotes configuration to our original config, overriding the original
+	// with all the values set in the remote config
+	if err := mergo.Merge(&configMap, remoteConfigMap, mergo.WithOverride); err != nil {
+		return errors.Errorf("failed to merge config and %s config: %w", remoteName, err)
+	}
+	// We use this buffer and encode/decode trick to convert our arbitrary structure
+	// back to our original c.BaseConfig structure with the new overriden values
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(configMap); err != nil {
+		return errors.Errorf("faild to encode map to TOML: %w", err)
+	}
+	if _, err := toml.Decode(buf.String(), &c.BaseConfig); err != nil {
+		return errors.Errorf("faild to decode TOML into struct: %w", err)
+	}
+	// We validate that the overriden config is still valid
 	return c.Validate()
 }
 
