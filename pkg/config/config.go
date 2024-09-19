@@ -14,13 +14,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
-	"dario.cat/mergo"
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
@@ -595,7 +595,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if _, err := dec.Decode(c); err != nil {
 		return errors.Errorf("failed to decode config template: %w", err)
 	}
-	// Load user defined config
 	if metadata, err := toml.DecodeFS(fsys, builder.ConfigPath, c); err != nil {
 		cwd, osErr := os.Getwd()
 		if osErr != nil {
@@ -696,19 +695,130 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	return c.Validate()
 }
 
-func (c *config) LoadRemoteConfigOverrides(currentRemoteName string) error {
-	// Check if there's a branch-specific configuration
-	if remoteConfig, ok := c.Remotes[currentRemoteName]; ok {
-		if err := mergo.Merge(
-			&c.BaseConfig,
-			remoteConfig,
-			mergo.WithOverride,
-		); err != nil {
-			return err
+// Merges the map representation into the struct
+// This is necessary to distinguish between user override values
+// like boolean = false, and user unspecified values that would have default
+// values (boolean = false if unmentioned) due to Go unmarshaling behavior
+func mergeMapIntoStruct(dst interface{}, src map[string]interface{}) error {
+	dstVal := reflect.ValueOf(dst).Elem()
+	dstType := dstVal.Type()
+
+	for key, val := range src {
+		// Find the struct field with the matching toml tag or field name
+		var fieldVal reflect.Value
+		found := false
+		for i := 0; i < dstVal.NumField(); i++ {
+			field := dstType.Field(i)
+			tomlTag := field.Tag.Get("toml")
+			if tomlTag == "" || tomlTag == "-" {
+				tomlTag = strings.ToLower(field.Name)
+			}
+			if tomlTag == key {
+				fieldVal = dstVal.Field(i)
+				found = true
+				break
+			}
 		}
-		return c.Validate()
+
+		if !found {
+			continue // Skip fields not found in the struct
+		}
+
+		if !fieldVal.CanSet() {
+			continue // Cannot set unexported fields
+		}
+
+		switch fieldVal.Kind() {
+		case reflect.Struct:
+			// Recurse into nested structs
+			valMap := val.(map[string]interface{})
+			if err := mergeMapIntoStruct(fieldVal.Addr().Interface(), valMap); err != nil {
+				return err
+			}
+		case reflect.Slice:
+			// Handle slices
+			valSlice := val.([]interface{})
+			sliceVal := reflect.MakeSlice(fieldVal.Type(), len(valSlice), len(valSlice))
+			for i, elem := range valSlice {
+				elemVal := reflect.ValueOf(elem)
+				if elemVal.Type().ConvertibleTo(fieldVal.Type().Elem()) {
+					sliceVal.Index(i).Set(elemVal.Convert(fieldVal.Type().Elem()))
+				}
+			}
+			fieldVal.Set(sliceVal)
+		case reflect.Map:
+			// Handle maps
+			srcMap := val.(map[string]interface{})
+			if fieldVal.IsNil() {
+				fieldVal.Set(reflect.MakeMap(fieldVal.Type()))
+			}
+			for mapKey, mapVal := range srcMap {
+				// Create a new value for the map value type
+				mapValType := fieldVal.Type().Elem()
+				destMapVal := reflect.New(mapValType).Elem()
+
+				if mapValType.Kind() == reflect.Struct {
+					// If the map value is a struct, recursively merge
+					mapValMap, ok := mapVal.(map[string]interface{})
+					if !ok {
+						return fmt.Errorf("expected map for map field %s[%s]", key, mapKey)
+					}
+					if err := mergeMapIntoStruct(destMapVal.Addr().Interface(), mapValMap); err != nil {
+						return err
+					}
+				} else {
+					// For basic types, set the value directly
+					valValue := reflect.ValueOf(mapVal)
+					if valValue.Type().ConvertibleTo(mapValType) {
+						destMapVal.Set(valValue.Convert(mapValType))
+					}
+				}
+
+				// Set the key-value pair in the destination map
+				fieldVal.SetMapIndex(reflect.ValueOf(mapKey), destMapVal)
+			}
+		default:
+			// Set the value directly
+			valValue := reflect.ValueOf(val)
+			if valValue.Type().ConvertibleTo(fieldVal.Type()) {
+				fieldVal.Set(valValue.Convert(fieldVal.Type()))
+			}
+		}
 	}
+
 	return nil
+}
+
+// Will override the current config values with the ones presents in the [remotes.remoteName]
+// definitions.
+func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) error {
+	// Load the entire config as a map
+	var configMap map[string]interface{}
+	builder := NewPathBuilder(path)
+	if _, err := toml.DecodeFS(fsys, builder.ConfigPath, &configMap); err != nil {
+		return errors.Errorf("failed to load config.toml: %w", err)
+	}
+
+	// Extract the remotes section
+	remotes, ok := configMap["remotes"].(map[string]interface{})
+	if !ok {
+		// No remotes defined
+		return nil
+	}
+
+	// Extract the remote configuration for the current branch
+	remoteConfigMap, ok := remotes[remoteName].(map[string]interface{})
+	if !ok {
+		// No configuration for the current remote
+		return nil
+	}
+
+	// Merge the remote configuration into the base config
+	if err := mergeMapIntoStruct(&c.BaseConfig, remoteConfigMap); err != nil {
+		return err
+	}
+
+	return c.Validate()
 }
 
 func (c *config) Validate() error {
