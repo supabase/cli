@@ -728,7 +728,7 @@ func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) 
 		return errors.Errorf("failed to merge config and %s config: %w", remoteName, err)
 	}
 	// We use this buffer and encode/decode trick to convert our arbitrary structure
-	// back to our original c.BaseConfig structure with the new overriden values
+	// back to our original c.BaseConfig structure with the new overridden values
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(configMap); err != nil {
 		return errors.Errorf("faild to encode map to TOML: %w", err)
@@ -736,7 +736,7 @@ func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) 
 	if _, err := toml.Decode(buf.String(), &c.BaseConfig); err != nil {
 		return errors.Errorf("faild to decode TOML into struct: %w", err)
 	}
-	// We validate that the overriden config is still valid
+	// We validate that the overridden config is still valid
 	return c.Validate()
 }
 
