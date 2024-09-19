@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -43,9 +44,39 @@ func suggestUpdateCmd(serviceImages map[string]string) string {
 	return cmd
 }
 
+func validateExcludedContainers(excludedContainers []string) {
+	// Validate excluded containers
+	validContainers := ExcludableContainers()
+	var invalidContainers []string
+
+	for _, e := range excludedContainers {
+		found := false
+		for _, v := range validContainers {
+			if strings.EqualFold(e, v) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			invalidContainers = append(invalidContainers, e)
+		}
+	}
+
+	if len(invalidContainers) > 0 {
+		// Sort the names list so it's easier to visually spot the one you looking for
+		sort.Strings(validContainers)
+		warning := fmt.Sprintf("%s The following container names are not valid to exclude: %s\nValid containers to exclude are: %s\n",
+			utils.Yellow("Warning:"),
+			utils.Aqua(strings.Join(invalidContainers, ", ")),
+			utils.Aqua(strings.Join(validContainers, ", ")))
+		fmt.Fprint(os.Stderr, warning)
+	}
+}
+
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
+		validateExcludedContainers(excludedContainers)
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
@@ -189,6 +220,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	var started []string
+	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
@@ -827,7 +859,7 @@ EOF
 	}
 
 	// Start Storage.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
+	if isStorageEnabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
 		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
@@ -885,7 +917,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
+	if isStorageEnabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
