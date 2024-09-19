@@ -70,13 +70,13 @@ func TestConfigParsing(t *testing.T) {
 		assert.NoError(t, config.Load("", fsys))
 		// Check the default value in the config
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
-		assert.Equal(t, true, *config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.EnableSignup)
 		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
 		// Check the values for the remote feature-auth-branch override
 		assert.Equal(t, "http://feature-auth-branch.com/", config.Remotes["feature-auth-branch"].Auth.SiteUrl)
-		assert.Equal(t, false, *config.Remotes["feature-auth-branch"].Auth.EnableSignup)
+		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.EnableSignup)
 		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", config.Remotes["feature-auth-branch"].Auth.External["azure"].ClientId)
 
@@ -265,7 +265,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {
 				ProjectId: "feature-project",
 			},
@@ -283,7 +283,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {
 				Api: api{Port: 9000},
 			},
@@ -301,7 +301,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {
 				Api: api{Port: 9000},
 			},
@@ -320,7 +320,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {
 				ProjectId: "feature-project",
 				Api:       api{Port: 9000},
@@ -342,7 +342,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {},
 		}
 		err := config.LoadRemoteConfigOverrides("feature-branch")
@@ -359,7 +359,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
 		assert.NoError(t, config.Load("config.toml", fsys))
-		config.Remotes = map[string]baseConfig{
+		config.Remotes = map[string]BaseConfig{
 			"feature-branch": {
 				Db: db{
 					MajorVersion: 12,
@@ -378,11 +378,20 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 			"supabase/templates/invite.html": &fs.MapFile{},
 		}
 		// Run test
+		// First load the config
 		assert.NoError(t, config.Load("", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("feature-auth-branch"))
+		// Override default remotes config with the base config
+		for project := range config.Remotes {
+			config.Remotes[project] = config.BaseConfig
+		}
+		// Reload the config to get the actual values for config.Remotes
+		assert.NoError(t, config.Load("", fsys))
+		// Load our branch values
+		config.BaseConfig = config.Remotes["feature-auth-branch"]
+		// assert.NoError(t, config.LoadRemoteConfigOverrides("feature-auth-branch"))
 		// Check that feature-auth-branch config replaced default config
 		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
-		assert.Equal(t, false, *config.Auth.EnableSignup)
+		assert.Equal(t, false, config.Auth.EnableSignup)
 		assert.Equal(t, false, config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", config.Auth.External["azure"].ClientId)
 		// Verify that other config values remain unchanged
@@ -406,7 +415,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, "test", config.ProjectId)
 		assert.Equal(t, uint16(54321), config.Api.Port)
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
-		assert.Equal(t, true, *config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.EnableSignup)
 		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 	})

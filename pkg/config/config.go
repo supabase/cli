@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,7 +21,6 @@ import (
 	"time"
 
 	"dario.cat/mergo"
-
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
@@ -123,7 +121,7 @@ func (c CustomClaims) NewToken() *jwt.Token {
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
-	baseConfig struct {
+	BaseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
@@ -140,8 +138,8 @@ type (
 	}
 
 	config struct {
-		baseConfig
-		Remotes map[string]baseConfig `toml:"remotes"`
+		BaseConfig
+		Remotes map[string]BaseConfig `toml:"remotes"`
 	}
 
 	api struct {
@@ -260,7 +258,7 @@ type (
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
-		EnableSignup           *bool `toml:"enable_signup"`
+		EnableSignup           bool  `toml:"enable_signup"`
 		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
 		Email                  email `toml:"email"`
 		Sms                    sms   `toml:"sms"`
@@ -456,7 +454,7 @@ func WithHostname(hostname string) ConfigEditor {
 }
 
 func NewConfig(editors ...ConfigEditor) config {
-	base := baseConfig{
+	base := BaseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
 			Image:     postgrestImage,
@@ -553,7 +551,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			Image: edgeRuntimeImage,
 		},
 	}
-	initial := config{baseConfig: base}
+	initial := config{BaseConfig: base}
 	for _, apply := range editors {
 		apply(&initial)
 	}
@@ -699,47 +697,17 @@ func (c *config) Load(path string, fsys fs.FS) error {
 }
 
 func (c *config) LoadRemoteConfigOverrides(currentRemoteName string) error {
-	// Check if there's a branch specific configuration
+	// Check if there's a branch-specific configuration
 	if remoteConfig, ok := c.Remotes[currentRemoteName]; ok {
-		// Override the base configuration with the branch-specific values
-		if err := mergeConfigs(&c.baseConfig, &remoteConfig); err != nil {
+		if err := mergo.Merge(
+			&c.BaseConfig,
+			remoteConfig,
+			mergo.WithOverride,
+		); err != nil {
 			return err
 		}
 		return c.Validate()
 	}
-	return nil
-}
-
-type pointerTransformer struct{}
-
-func (t pointerTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
-	if typ.Kind() == reflect.Pointer {
-		return func(dst, src reflect.Value) error {
-			if dst.CanSet() {
-				if !src.IsNil() {
-					if dst.IsNil() {
-						dst.Set(reflect.New(typ.Elem()))
-					}
-					dst.Elem().Set(src.Elem())
-				}
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-func mergeConfigs(base, override *baseConfig) error {
-	mergedConfig := *base
-	if err := mergo.Merge(
-		&mergedConfig, override, mergo.WithOverride,
-		// Will override value = true by value = false but won't override anything if value is not mentioned
-		// since it's value will be nil
-		mergo.WithTransformers(pointerTransformer{}),
-	); err != nil {
-		return err
-	}
-	*base = mergedConfig
 	return nil
 }
 
