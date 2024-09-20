@@ -1,3 +1,11 @@
 #:schema ./config.schema.json
 
 project_id = "project_id"
+
+[api]
+enabled = false
+port = 54321
+
+[auth]
+[auth.email]
+smtp.host = "smtp.example.com"

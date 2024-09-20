@@ -18,13 +18,16 @@
     "analytics": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local Logflare service."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to the local Logflare service."
         },
         "backend": {
-          "type": "string"
+          "type": "string",
+          "description": "Configure one of the supported backends: `postgres`"
         },
         "gcp_project_id": {
           "type": "string"
@@ -36,7 +39,8 @@
           "type": "string"
         },
         "vector_port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to the local syslog ingest service."
         }
       },
       "additionalProperties": false,
@@ -45,25 +49,30 @@
     "api": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local PostgREST service."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the API URL."
         },
         "schemas": {
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Schemas to expose in your API. Tables"
         },
         "extra_search_path": {
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": "array",
+          "description": "Extra schemas to add to the search_path of every request. public is always included."
         },
         "max_rows": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The maximum number of rows returned from a view"
         },
         "tls": {
           "$ref": "#/$defs/tlsKong"
@@ -78,25 +87,31 @@
     "auth": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local GoTrue service."
         },
         "site_url": {
-          "type": "string"
+          "type": "string",
+          "description": "The base URL of your website. Used as an allow-list for redirects and for constructing URLs used in emails."
         },
         "additional_redirect_urls": {
           "items": {
             "type": "string"
           },
-          "type": "array"
+          "type": "array",
+          "description": "A list of _exact_ URLs that auth providers are permitted to redirect to post authentication."
         },
         "jwt_expiry": {
-          "type": "integer"
+          "type": "integer",
+          "description": "How long tokens are valid for"
         },
         "enable_refresh_token_rotation": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If disabled"
         },
         "refresh_token_reuse_interval": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Allows refresh tokens to be reused after expiry"
         },
         "enable_manual_linking": {
           "type": "boolean"
@@ -111,10 +126,12 @@
           "$ref": "#/$defs/sessions"
         },
         "enable_signup": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Allow/disallow new user signups to your project."
         },
         "enable_anonymous_sign_ins": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Allow/disallow anonymous sign-ins to your project."
         },
         "email": {
           "$ref": "#/$defs/email"
@@ -159,40 +176,52 @@
     "config": {
       "properties": {
         "project_id": {
-          "type": "string"
+          "type": "string",
+          "description": "A string used to distinguish different Supabase projects on the same host. Defaults to the working directory name when running `supabase init`."
         },
         "api": {
-          "$ref": "#/$defs/api"
+          "$ref": "#/$defs/api",
+          "description": "Configuration for the API service."
         },
         "db": {
-          "$ref": "#/$defs/db"
+          "$ref": "#/$defs/db",
+          "description": "Configuration for the database service."
         },
         "realtime": {
-          "$ref": "#/$defs/realtime"
+          "$ref": "#/$defs/realtime",
+          "description": "Configuration for the Realtime service."
         },
         "studio": {
-          "$ref": "#/$defs/studio"
+          "$ref": "#/$defs/studio",
+          "description": "Configuration for the Studio dashboard."
         },
         "inbucket": {
-          "$ref": "#/$defs/inbucket"
+          "$ref": "#/$defs/inbucket",
+          "description": "Configuration for the email testing server."
         },
         "storage": {
-          "$ref": "#/$defs/storage"
+          "$ref": "#/$defs/storage",
+          "description": "Configuration for the Storage service."
         },
         "auth": {
-          "$ref": "#/$defs/auth"
+          "$ref": "#/$defs/auth",
+          "description": "Configuration for the Auth service."
         },
         "edge_runtime": {
-          "$ref": "#/$defs/edgeRuntime"
+          "$ref": "#/$defs/edgeRuntime",
+          "description": "Configuration for Edge Functions."
         },
         "functions": {
-          "$ref": "#/$defs/FunctionConfig"
+          "$ref": "#/$defs/FunctionConfig",
+          "description": "Configuration for individual functions."
         },
         "analytics": {
-          "$ref": "#/$defs/analytics"
+          "$ref": "#/$defs/analytics",
+          "description": "Configuration for the Analytics service."
         },
         "experimental": {
-          "$ref": "#/$defs/experimental"
+          "$ref": "#/$defs/experimental",
+          "description": "Experimental features configuration."
         }
       },
       "additionalProperties": false,
@@ -204,13 +233,16 @@
     "db": {
       "properties": {
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the local database URL."
         },
         "shadow_port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the local shadow database."
         },
         "major_version": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The database major version to use. This has to be the same as your remote database's. Run `SHOW server_version;` on the remote database to check."
         },
         "pooler": {
           "$ref": "#/$defs/pooler"
@@ -225,10 +257,12 @@
     "edgeRuntime": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local Edge Functions service."
         },
         "policy": {
-          "type": "string"
+          "type": "string",
+          "description": "Configure one of the supported policies: `per_worker`"
         },
         "inspector_port": {
           "type": "integer"
@@ -240,16 +274,20 @@
     "email": {
       "properties": {
         "enable_signup": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Allow/disallow new user signups via email to your project."
         },
         "double_confirm_changes": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If enabled"
         },
         "enable_confirmations": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If enabled"
         },
         "secure_password_change": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If enabled"
         },
         "template": {
           "additionalProperties": {
@@ -315,13 +353,16 @@
     "function": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Controls whether a function is deployed or served. When set to false"
         },
         "verifyJWT": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "By default"
         },
         "importMapPath": {
-          "type": "string"
+          "type": "string",
+          "description": "Specify the Deno import map file to use for the Function."
         }
       },
       "additionalProperties": false,
@@ -351,13 +392,16 @@
     "hookConfig": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local hook service."
         },
         "uri": {
-          "type": "string"
+          "type": "string",
+          "description": "The URL of the hook service."
         },
         "secrets": {
-          "type": "string"
+          "type": "string",
+          "description": "The secrets for the hook service."
         }
       },
       "additionalProperties": false,
@@ -375,16 +419,20 @@
     "inbucket": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local InBucket service."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the email testing server web interface."
         },
         "smtp_port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the email testing server SMTP port."
         },
         "pop3_port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the email testing server POP3 port."
         }
       },
       "additionalProperties": false,
@@ -393,10 +441,12 @@
     "messagebirdConfig": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable MessageBird for sending SMS messages."
         },
         "originator": {
-          "type": "string"
+          "type": "string",
+          "description": "The MessageBird originator."
         }
       },
       "additionalProperties": false,
@@ -441,19 +491,24 @@
     "pooler": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local PgBouncer service."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for the local connection pooler."
         },
         "pool_mode": {
-          "type": "string"
+          "type": "string",
+          "description": "Specifies when a server connection can be reused by other clients. Configure one of the supported pooler modes: `transaction`"
         },
         "default_pool_size": {
-          "type": "integer"
+          "type": "integer",
+          "description": "How many server connections to allow per user/database pair."
         },
         "max_client_conn": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Maximum number of client connections allowed."
         }
       },
       "additionalProperties": false,
@@ -462,22 +517,28 @@
     "provider": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the provider for authentication."
         },
         "client_id": {
-          "type": "string"
+          "type": "string",
+          "description": "The provider client ID."
         },
         "secret": {
-          "type": "string"
+          "type": "string",
+          "description": "The provider secret."
         },
         "url": {
-          "type": "string"
+          "type": "string",
+          "description": "The provider URL."
         },
         "redirect_uri": {
-          "type": "string"
+          "type": "string",
+          "description": "The provider redirect URI."
         },
         "skip_nonce_check": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Skip nonce check for the provider."
         }
       },
       "additionalProperties": false,
@@ -486,10 +547,12 @@
     "realtime": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local Realtime service."
         },
         "ip_version": {
-          "type": "string"
+          "type": "string",
+          "description": "Bind realtime via either IPv4 or IPv6. (default: IPv6)"
         },
         "max_header_length": {
           "type": "integer"
@@ -510,10 +573,12 @@
     "sessions": {
       "properties": {
         "timebox": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The maximum duration of a session."
         },
         "inactivity_timeout": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The maximum duration of inactivity before a session is terminated."
         }
       },
       "additionalProperties": false,
@@ -522,13 +587,16 @@
     "sms": {
       "properties": {
         "enable_signup": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Allow/disallow new user signups via SMS to your project."
         },
         "enable_confirmations": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If enabled"
         },
         "template": {
-          "type": "string"
+          "type": "string",
+          "description": "The template to use for SMS messages."
         },
         "twilio": {
           "$ref": "#/$defs/twilioConfig"
@@ -549,10 +617,12 @@
           "additionalProperties": {
             "type": "string"
           },
-          "type": "object"
+          "type": "object",
+          "description": "Test OTP codes for development."
         },
         "max_frequency": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The maximum frequency of SMS messages that can be sent."
         }
       },
       "additionalProperties": false,
@@ -561,22 +631,28 @@
     "smtp": {
       "properties": {
         "host": {
-          "type": "string"
+          "type": "string",
+          "description": "Hostname or IP address of the SMTP server."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port number of the SMTP server."
         },
         "user": {
-          "type": "string"
+          "type": "string",
+          "description": "Username for authenticating with the SMTP server."
         },
         "pass": {
-          "type": "string"
+          "type": "string",
+          "description": "Password for authenticating with the SMTP server."
         },
         "admin_email": {
-          "type": "string"
+          "type": "string",
+          "description": "Email address of the administrator."
         },
         "sender_name": {
-          "type": "string"
+          "type": "string",
+          "description": "Name used as the sender for emails sent from the application."
         }
       },
       "additionalProperties": false,
@@ -585,10 +661,12 @@
     "storage": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local Storage service."
         },
         "file_size_limit": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The maximum file size allowed (e.g. `5MB`"
         },
         "image_transformation": {
           "$ref": "#/$defs/imageTransformation"
@@ -603,13 +681,16 @@
     "studio": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable the local Supabase Studio dashboard."
         },
         "port": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Port to use for Supabase Studio."
         },
         "api_url": {
-          "type": "string"
+          "type": "string",
+          "description": "External URL of the API server that frontend connects to."
         },
         "openai_api_key": {
           "type": "string"
@@ -621,10 +702,12 @@
     "textlocalConfig": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable Textlocal for sending SMS messages."
         },
         "sender": {
-          "type": "string"
+          "type": "string",
+          "description": "The Textlocal sender."
         }
       },
       "additionalProperties": false,
@@ -699,13 +782,16 @@
     "twilioConfig": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable Twilio for sending SMS messages."
         },
         "account_sid": {
-          "type": "string"
+          "type": "string",
+          "description": "The Twilio account SID."
         },
         "message_service_sid": {
-          "type": "string"
+          "type": "string",
+          "description": "The Twilio message service SID."
         }
       },
       "additionalProperties": false,
@@ -714,10 +800,12 @@
     "vonageConfig": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable Vonage for sending SMS messages."
         },
         "from": {
-          "type": "string"
+          "type": "string",
+          "description": "The Vonage sender."
         }
       },
       "additionalProperties": false,
