@@ -25,12 +25,12 @@
         "port": {
           "type": "integer",
           "description": "Port to the local Logflare service.",
-          "default": 54326
+          "default": 54327
         },
         "backend": {
           "type": "string",
           "description": "Configure one of the supported backends: `postgres`",
-          "default": "bigquery"
+          "default": "postgres"
         },
         "gcp_project_id": {
           "type": "string"
@@ -44,7 +44,7 @@
         "vector_port": {
           "type": "integer",
           "description": "Port to the local syslog ingest service.",
-          "default": 54327
+          "default": 54328
         }
       },
       "additionalProperties": false,
@@ -67,14 +67,16 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Schemas to expose in your API. Tables"
+          "description": "Schemas to expose in your API. Tables",
+          "default": ["[\"public\""]
         },
         "extra_search_path": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Extra schemas to add to the search_path of every request. public is always included."
+          "description": "Extra schemas to add to the search_path of every request. public is always included.",
+          "default": ["[\"public\""]
         },
         "max_rows": {
           "type": "integer",
@@ -100,14 +102,16 @@
         },
         "site_url": {
           "type": "string",
-          "description": "The base URL of your website. Used as an allow-list for redirects and for constructing URLs used in emails."
+          "description": "The base URL of your website. Used as an allow-list for redirects and for constructing URLs used in emails.",
+          "default": "http://localhost:3000"
         },
         "additional_redirect_urls": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "A list of _exact_ URLs that auth providers are permitted to redirect to post authentication."
+          "description": "A list of _exact_ URLs that auth providers are permitted to redirect to post authentication.",
+          "default": ["[\"https://localhost:3000\"]"]
         },
         "jwt_expiry": {
           "type": "integer",
@@ -117,12 +121,12 @@
         "enable_refresh_token_rotation": {
           "type": "boolean",
           "description": "If disabled",
-          "default": false
+          "default": true
         },
         "refresh_token_reuse_interval": {
           "type": "integer",
           "description": "Allows refresh tokens to be reused after expiry",
-          "default": 0
+          "default": 10
         },
         "enable_manual_linking": {
           "type": "boolean",
@@ -240,9 +244,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "project_id"
-      ]
+      "required": ["project_id"]
     },
     "db": {
       "properties": {
@@ -306,7 +308,7 @@
         "enable_confirmations": {
           "type": "boolean",
           "description": "If enabled",
-          "default": true
+          "default": false
         },
         "secure_password_change": {
           "type": "boolean",
@@ -451,17 +453,17 @@
         "port": {
           "type": "integer",
           "description": "Port to use for the email testing server web interface.",
-          "default": 2501
+          "default": 54324
         },
         "smtp_port": {
           "type": "integer",
           "description": "Port to use for the email testing server SMTP port.",
-          "default": 2500
+          "default": 54325
         },
         "pop3_port": {
           "type": "integer",
           "description": "Port to use for the email testing server POP3 port.",
-          "default": 1100
+          "default": 54326
         }
       },
       "additionalProperties": false,
@@ -522,12 +524,12 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable the local PgBouncer service.",
-          "default": true
+          "default": false
         },
         "port": {
           "type": "integer",
           "description": "Port to use for the local connection pooler.",
-          "default": 54323
+          "default": 54329
         },
         "pool_mode": {
           "type": "string",
@@ -537,7 +539,7 @@
         "default_pool_size": {
           "type": "integer",
           "description": "How many server connections to allow per user/database pair.",
-          "default": 50
+          "default": 20
         },
         "max_client_conn": {
           "type": "integer",
@@ -588,7 +590,7 @@
         "ip_version": {
           "type": "string",
           "description": "Bind realtime via either IPv4 or IPv6. (default: IPv6)",
-          "default": "IPv4"
+          "default": "IPv6"
         },
         "max_header_length": {
           "type": "integer",
@@ -631,7 +633,7 @@
         "enable_confirmations": {
           "type": "boolean",
           "description": "If enabled",
-          "default": true
+          "default": false
         },
         "template": {
           "type": "string",
@@ -731,11 +733,12 @@
         "port": {
           "type": "integer",
           "description": "Port to use for Supabase Studio.",
-          "default": 54324
+          "default": 54323
         },
         "api_url": {
           "type": "string",
-          "description": "External URL of the API server that frontend connects to."
+          "description": "External URL of the API server that frontend connects to.",
+          "default": "http://localhost"
         },
         "openai_api_key": {
           "type": "string"
