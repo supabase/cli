@@ -759,6 +759,7 @@ EOF
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 					"DNS_NODES=''",
+					"RLIMIT_NOFILE=",
 					"SEED_SELF_HOST=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
