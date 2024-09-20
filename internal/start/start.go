@@ -189,6 +189,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	var started []string
+	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
@@ -827,7 +828,7 @@ EOF
 	}
 
 	// Start Storage.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
+	if isStorageEnabled {
 		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
@@ -885,7 +886,7 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
+	if isStorageEnabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
