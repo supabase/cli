@@ -21,6 +21,17 @@ var testInitRemotesConfigEmbed []byte
 //go:embed testdata/config-remotes-env-overrides.toml
 var testInitRemotesConfigWithEnvOverrideEmbed []byte
 
+func setEnvForTestTemplate(t *testing.T) {
+	// Run test
+	t.Setenv("TWILIO_AUTH_TOKEN", "token")
+	t.Setenv("AZURE_CLIENT_ID", "hello")
+	t.Setenv("AZURE_SECRET", "this is cool")
+	t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+	t.Setenv("SENDGRID_API_KEY", "sendgrid")
+	t.Setenv("S3_HOST", "some-host")
+	t.Setenv("OPENAI_API_KEY", "open-api-key")
+}
+
 func TestConfigParsing(t *testing.T) {
 	t.Run("classic config file", func(t *testing.T) {
 		config := NewConfig()
@@ -29,6 +40,7 @@ func TestConfigParsing(t *testing.T) {
 		require.NoError(t, config.Eject(&buf))
 		file := fs.MapFile{Data: buf.Bytes()}
 		fsys := fs.MapFS{"config.toml": &file}
+		setEnvForTestTemplate(t)
 		// Check error
 		assert.NoError(t, config.Load("config.toml", fsys))
 	})
@@ -40,14 +52,10 @@ func TestConfigParsing(t *testing.T) {
 			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
 			"supabase/templates/invite.html": &fs.MapFile{},
 		}
-		// Run test
-		t.Setenv("TWILIO_AUTH_TOKEN", "token")
-		t.Setenv("AZURE_CLIENT_ID", "hello")
-		t.Setenv("AZURE_SECRET", "this is cool")
-		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
-		t.Setenv("SENDGRID_API_KEY", "sendgrid")
+		setEnvForTestTemplate(t)
 		assert.NoError(t, config.Load("", fsys))
 		// Check error
+		assert.Equal(t, "test", config.ProjectId)
 		assert.Equal(t, "hello", config.Auth.External["azure"].ClientId)
 		assert.Equal(t, "this is cool", config.Auth.External["azure"].Secret)
 	})

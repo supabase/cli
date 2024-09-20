@@ -567,6 +567,127 @@ var (
 	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 )
 
+// maybeLoadEnv replaces "env(SOMETHING)" with the value of the environment variable SOMETHING.
+func maybeLoadEnv(s string) (string, error) {
+	matches := envPattern.FindStringSubmatch(s)
+	if len(matches) != 2 {
+		// If the string doesn't match "env(SOMETHING)", return it as is
+		return s, nil
+	}
+
+	envName := matches[1]
+	value, exists := os.LookupEnv(envName)
+	if !exists {
+		return "", errors.Errorf("environment variable for: %s but %s is not set", s, envName)
+	}
+
+	return value, nil
+}
+
+// replaceEnvVariables recursively traverses the config map and replaces
+// any "env(SOMETHING)" strings with the actual environment variable values.
+func replaceEnvVariables(data interface{}) (interface{}, error) {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		for key, value := range v {
+			replaced, err := replaceEnvVariables(value)
+			if err != nil {
+				return nil, err
+			}
+			v[key] = replaced
+		}
+		return v, nil
+	case []interface{}:
+		for i, item := range v {
+			replaced, err := replaceEnvVariables(item)
+			if err != nil {
+				return nil, err
+			}
+			v[i] = replaced
+		}
+		return v, nil
+	case string:
+		return maybeLoadEnv(v)
+	default:
+		return v, nil
+	}
+}
+
+func (c *config) loadConfigAsMap(path string, fsys fs.FS) (map[string]interface{}, error) {
+	var configMap map[string]interface{}
+	builder := NewPathBuilder(path)
+	if _, err := toml.DecodeFS(fsys, builder.ConfigPath, &configMap); err != nil {
+		return nil, errors.Errorf("failed to load config.toml: %w", err)
+	}
+	return configMap, nil
+}
+
+func (c *config) loadMapInConfig(configMap map[string]interface{}) error {
+	// We use this buffer and encode/decode trick to convert our arbitrary structure
+	// back to our original config structure with the new overridden values
+	var buf bytes.Buffer
+	// Encode the map back to TOML
+	if err := toml.NewEncoder(&buf).Encode(configMap); err != nil {
+		return errors.Errorf("faild to encode map to TOML: %w", err)
+	}
+	// Decode the TOML into the config struct
+	if _, err := toml.Decode(buf.String(), c); err != nil {
+		return errors.Errorf("failed to decode TOML into struct: %w", err)
+	}
+	return nil
+}
+
+func (c *config) loadConfigAsMapFromTemplate() (map[string]interface{}, error) {
+	var buf bytes.Buffer
+	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
+		return nil, errors.Errorf("failed to execute config template: %w", err)
+	}
+
+	var configMap map[string]interface{}
+	if _, err := toml.Decode(buf.String(), &configMap); err != nil {
+		return nil, errors.Errorf("failed to decode config template into map: %w", err)
+	}
+
+	return configMap, nil
+}
+
+func (c *config) loadConfigAsMapWithEnvOverride(path string, fsys fs.FS) (map[string]interface{}, error) {
+	// Step 1: Load default config as map from template
+	defaultMap, err := c.loadConfigAsMapFromTemplate()
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Load user config as map from config.toml
+	userConfigMap, err := c.loadConfigAsMap(path, fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load secrets from .env file
+	if err := loadDefaultEnv(); err != nil {
+		return nil, err
+	}
+
+	// Step 4: Replace env variables in the user defined config map
+	replacedMap, err := replaceEnvVariables(userConfigMap)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 6: Assert that replacedMap is of type map[string]interface{}
+	finalUserConfigMap, ok := replacedMap.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("failed to assert replacedMap to map[string]interface{}")
+	}
+
+	// Step 3: Merge user config into default config
+	if err := mergo.Merge(&defaultMap, finalUserConfigMap, mergo.WithOverride); err != nil {
+		return nil, errors.Errorf("failed to merge default and user config: %w", err)
+	}
+	return defaultMap, nil
+}
+
 func (c *config) Eject(w io.Writer) error {
 	// Defaults to current directory name as project id
 	if len(c.ProjectId) == 0 {
@@ -586,31 +707,16 @@ func (c *config) Eject(w io.Writer) error {
 
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
-	// Load default values
-	var buf bytes.Buffer
-	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
-		return errors.Errorf("failed to initialise config template: %w", err)
-	}
-	dec := toml.NewDecoder(&buf)
-	if _, err := dec.Decode(c); err != nil {
-		return errors.Errorf("failed to decode config template: %w", err)
-	}
-	if metadata, err := toml.DecodeFS(fsys, builder.ConfigPath, c); err != nil {
-		cwd, osErr := os.Getwd()
-		if osErr != nil {
-			cwd = "current directory"
-		}
-		return errors.Errorf("cannot read config in %s: %w", cwd, err)
-	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
-	}
-	// Load secrets from .env file
-	if err := loadDefaultEnv(); err != nil {
+
+	if configMap, err := c.loadConfigAsMapWithEnvOverride(path, fsys); err != nil {
 		return err
+	} else {
+		// Step 5: Load the replaced map back into the config struct
+		if err := c.loadMapInConfig(configMap); err != nil {
+			return err
+		}
 	}
-	if err := viper.Unmarshal(c); err != nil {
-		return errors.Errorf("failed to parse env to config: %w", err)
-	}
+
 	// Generate JWT tokens
 	if len(c.Auth.AnonKey) == 0 {
 		anonToken := CustomClaims{Role: "anon"}.NewToken()
@@ -700,44 +806,36 @@ func (c *config) Load(path string, fsys fs.FS) error {
 func (c *config) LoadRemoteConfigOverrides(path, remoteName string, fsys fs.FS) error {
 	// Load the entire config as a map so we can distinguish between unset and "default"
 	// fields filled with false/empty string/0 values
-	var configMap map[string]interface{}
-	builder := NewPathBuilder(path)
-	if _, err := toml.DecodeFS(fsys, builder.ConfigPath, &configMap); err != nil {
-		return errors.Errorf("failed to load config.toml: %w", err)
-	}
+	if configMap, err := c.loadConfigAsMapWithEnvOverride(path, fsys); err != nil {
+		return err
+	} else {
+		// Extract the remotes section
+		remotes, ok := configMap["remotes"].(map[string]interface{})
+		if !ok {
+			// No remotes defined
+			return nil
+		}
+		// Extract the remote configuration for the current branch into an abstact structure
+		remoteConfigMap, ok := remotes[remoteName].(map[string]interface{})
+		if !ok {
+			// No configuration for the current remote
+			return nil
+		}
 
-	// Extract the remotes section
-	remotes, ok := configMap["remotes"].(map[string]interface{})
-	if !ok {
-		// No remotes defined
-		return nil
-	}
-	// Extract the remote configuration for the current branch into an abstact structure
-	remoteConfigMap, ok := remotes[remoteName].(map[string]interface{})
-	if !ok {
-		// No configuration for the current remote
-		return nil
-	}
+		// Remove the remotes from our configMap
+		delete(configMap, "remotes")
 
-	// Remove the remotes from our configMap
-	delete(configMap, "remotes")
-
-	// We merge our remotes configuration to our original config, overriding the original
-	// with all the values set in the remote config
-	if err := mergo.Merge(&configMap, remoteConfigMap, mergo.WithOverride); err != nil {
-		return errors.Errorf("failed to merge config and %s config: %w", remoteName, err)
+		// We merge our remotes configuration to our original config, overriding the original
+		// with all the values set in the remote config
+		if err := mergo.Merge(&configMap, remoteConfigMap, mergo.WithOverride); err != nil {
+			return errors.Errorf("failed to merge config and %s config: %w", remoteName, err)
+		}
+		if err := c.loadMapInConfig(configMap); err != nil {
+			return err
+		}
+		// We validate that the overridden config is still valid
+		return c.Validate()
 	}
-	// We use this buffer and encode/decode trick to convert our arbitrary structure
-	// back to our original c.BaseConfig structure with the new overridden values
-	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(configMap); err != nil {
-		return errors.Errorf("faild to encode map to TOML: %w", err)
-	}
-	if _, err := toml.Decode(buf.String(), &c.BaseConfig); err != nil {
-		return errors.Errorf("faild to decode TOML into struct: %w", err)
-	}
-	// We validate that the overridden config is still valid
-	return c.Validate()
 }
 
 func (c *config) Validate() error {
@@ -769,19 +867,6 @@ func (c *config) Validate() error {
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
-			var err error
-			if c.Experimental.S3Host, err = maybeLoadEnv(c.Experimental.S3Host); err != nil {
-				return err
-			}
-			if c.Experimental.S3Region, err = maybeLoadEnv(c.Experimental.S3Region); err != nil {
-				return err
-			}
-			if c.Experimental.S3AccessKey, err = maybeLoadEnv(c.Experimental.S3AccessKey); err != nil {
-				return err
-			}
-			if c.Experimental.S3SecretKey, err = maybeLoadEnv(c.Experimental.S3SecretKey); err != nil {
-				return err
-			}
 		}
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
@@ -816,7 +901,6 @@ func (c *config) Validate() error {
 		} else if parsed.Host == "" || parsed.Host == c.Hostname {
 			c.Studio.ApiUrl = c.Api.ExternalUrl
 		}
-		c.Studio.OpenaiApiKey, _ = maybeLoadEnv(c.Studio.OpenaiApiKey)
 	}
 	// Validate smtp config
 	if c.Inbucket.Enabled {
@@ -829,18 +913,12 @@ func (c *config) Validate() error {
 		if c.Auth.SiteUrl == "" {
 			return errors.New("Missing required field in config: auth.site_url")
 		}
-		var err error
-		if c.Auth.SiteUrl, err = maybeLoadEnv(c.Auth.SiteUrl); err != nil {
-			return err
-		}
+
 		// Validate email config
 		for name, tmpl := range c.Auth.Email.Template {
 			if len(tmpl.ContentPath) > 0 && !fs.ValidPath(filepath.Clean(tmpl.ContentPath)) {
 				return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
 			}
-		}
-		if c.Auth.Email.Smtp.Pass, err = maybeLoadEnv(c.Auth.Email.Smtp.Pass); err != nil {
-			return err
 		}
 		// Validate sms config
 		if c.Auth.Sms.Twilio.Enabled {
@@ -853,9 +931,7 @@ func (c *config) Validate() error {
 			if len(c.Auth.Sms.Twilio.AuthToken) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 			}
-			if c.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(c.Auth.Sms.Twilio.AuthToken); err != nil {
-				return err
-			}
+
 		}
 		if c.Auth.Sms.TwilioVerify.Enabled {
 			if len(c.Auth.Sms.TwilioVerify.AccountSid) == 0 {
@@ -867,9 +943,7 @@ func (c *config) Validate() error {
 			if len(c.Auth.Sms.TwilioVerify.AuthToken) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
 			}
-			if c.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(c.Auth.Sms.TwilioVerify.AuthToken); err != nil {
-				return err
-			}
+
 		}
 		if c.Auth.Sms.Messagebird.Enabled {
 			if len(c.Auth.Sms.Messagebird.Originator) == 0 {
@@ -878,9 +952,7 @@ func (c *config) Validate() error {
 			if len(c.Auth.Sms.Messagebird.AccessKey) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
 			}
-			if c.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(c.Auth.Sms.Messagebird.AccessKey); err != nil {
-				return err
-			}
+
 		}
 		if c.Auth.Sms.Textlocal.Enabled {
 			if len(c.Auth.Sms.Textlocal.Sender) == 0 {
@@ -889,9 +961,7 @@ func (c *config) Validate() error {
 			if len(c.Auth.Sms.Textlocal.ApiKey) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
 			}
-			if c.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(c.Auth.Sms.Textlocal.ApiKey); err != nil {
-				return err
-			}
+
 		}
 		if c.Auth.Sms.Vonage.Enabled {
 			if len(c.Auth.Sms.Vonage.From) == 0 {
@@ -903,12 +973,7 @@ func (c *config) Validate() error {
 			if len(c.Auth.Sms.Vonage.ApiSecret) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
 			}
-			if c.Auth.Sms.Vonage.ApiKey, err = maybeLoadEnv(c.Auth.Sms.Vonage.ApiKey); err != nil {
-				return err
-			}
-			if c.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(c.Auth.Sms.Vonage.ApiSecret); err != nil {
-				return err
-			}
+
 		}
 		if err := c.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
 			return err
@@ -936,18 +1001,7 @@ func (c *config) Validate() error {
 			if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
 				return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 			}
-			if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
-				return err
-			}
-			if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
-				return err
-			}
-			if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
-				return err
-			}
-			if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
-				return err
-			}
+
 			c.Auth.External[ext] = provider
 		}
 	}
@@ -988,20 +1042,6 @@ func (c *config) Validate() error {
 		}
 	}
 	return nil
-}
-
-func maybeLoadEnv(s string) (string, error) {
-	matches := envPattern.FindStringSubmatch(s)
-	if len(matches) == 0 {
-		return s, nil
-	}
-
-	envName := matches[1]
-	if value := os.Getenv(envName); value != "" {
-		return value, nil
-	}
-
-	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
 }
 
 func truncateText(text string, maxLen int) string {
@@ -1058,10 +1098,6 @@ func (h *hookConfig) HandleHook(hookType string) error {
 	}
 	if err := validateHookURI(h.URI, hookType); err != nil {
 		return err
-	}
-	var err error
-	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
 	}
 	return nil
 }
@@ -1133,16 +1169,8 @@ func (c *tpaCognito) validate() error {
 	if c.UserPoolID == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
 	}
-	var err error
-	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
-		return err
-	}
-
 	if c.UserPoolRegion == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
-	}
-	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
-		return err
 	}
 
 	return nil

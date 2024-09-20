@@ -53,7 +53,7 @@ port = 54323
 # External URL of the API server that frontend connects to.
 api_url = "http://127.0.0.1"
 # OpenAI API Key to use for Supabase AI in the Supabase Studio.
-openai_api_key = "env(OPENAI_API_KEY)"
+# openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
@@ -160,7 +160,7 @@ enabled = false
 account_sid = ""
 message_service_sid = ""
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
-auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
+# auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
 [auth.mfa]
 # Control how many MFA factors can be enrolled at once per user.
@@ -186,7 +186,7 @@ verify_enabled = true
 enabled = false
 client_id = ""
 # DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
-secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
+# secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 # Overrides the default auth redirectUrl.
 redirect_uri = ""
 # Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
@@ -230,10 +230,10 @@ backend = "postgres"
 # Configures Postgres storage engine to use OrioleDB (S3)
 orioledb_version = "{{ .Experimental.OrioleDBVersion }}"
 # Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
-s3_host = "env(S3_HOST)"
+# s3_host = "env(S3_HOST)"
 # Configures S3 bucket region, eg. us-east-1
-s3_region = "env(S3_REGION)"
+# s3_region = "env(S3_REGION)"
 # Configures AWS_ACCESS_KEY_ID for S3 bucket
-s3_access_key = "env(S3_ACCESS_KEY)"
+# s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
-s3_secret_key = "env(S3_SECRET_KEY)"
+# s3_secret_key = "env(S3_SECRET_KEY)"
