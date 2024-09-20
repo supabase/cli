@@ -18,6 +18,9 @@ var testInitConfigEmbed []byte
 //go:embed testdata/config-remotes-overrides.toml
 var testInitRemotesConfigEmbed []byte
 
+//go:embed testdata/config-remotes-env-overrides.toml
+var testInitRemotesConfigWithEnvOverrideEmbed []byte
+
 func TestConfigParsing(t *testing.T) {
 	t.Run("classic config file", func(t *testing.T) {
 		config := NewConfig()
@@ -421,6 +424,7 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, uint16(54321), config.Api.Port)
 		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
 	})
+
 	t.Run("can load feature-storage-branch", func(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
@@ -440,5 +444,32 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, true, config.Auth.EnableSignup)
 		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
+	})
+
+	t.Run("can load feature-auth-branch with env override value", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigWithEnvOverrideEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		t.Setenv("AZURE_CLIENT_ID", "this-is-a-env-value")
+		// Run test
+		// First load the config
+		assert.NoError(t, config.Load("", fsys))
+		assert.Equal(t, "AZURE_CLIENT_ID_ORIGINAL_VALUE", config.Auth.External["azure"].ClientId)
+		assert.Equal(t, "https://login.microsoftonline.com/tenant", config.Auth.External["azure"].Url)
+		// Load our branch values
+		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-auth-branch", fsys))
+		// Check that feature-auth-branch config replaced default config
+		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
+		assert.Equal(t, false, config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "http://overriden-url.com/tenant", config.Auth.External["azure"].Url)
+		assert.Equal(t, "this-is-a-env-value", config.Auth.External["azure"].ClientId)
+		// Verify that other config values remain unchanged
+		assert.Equal(t, "test", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
 	})
 }
