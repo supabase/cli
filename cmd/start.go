@@ -18,14 +18,7 @@ func validateExcludedContainers(excludedContainers []string) {
 	var invalidContainers []string
 
 	for _, e := range excludedContainers {
-		found := false
-		for _, v := range validContainers {
-			if strings.EqualFold(e, v) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !utils.SliceContains(validContainers, e) {
 			invalidContainers = append(invalidContainers, e)
 		}
 	}
