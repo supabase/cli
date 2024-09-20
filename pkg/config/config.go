@@ -141,7 +141,7 @@ type (
 		Image           string   `toml:"-" json:"-" jsonschema:"default=postgrest/postgrest:v12.2.0"`
 		KongImage       string   `toml:"-" json:"-" jsonschema:"default=library/kong:2.8.1"`
 		Port            uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the API URL.,default=54321"`
-		Schemas         []string `toml:"schemas" json:"schemas" jsonschema:"description=Schemas to expose in your API. Tables, views and functions in this schema will get API endpoints. \u0060public\u0060 and \u0060storage\u0060 are always included.,default=public,default=storage,default=graphql_public"`
+		Schemas         []string `toml:"schemas" json:"schemas" jsonschema:"description=Schemas to expose in your API. Tables\\, views and functions in this schema will get API endpoints. \u0060public\u0060 and \u0060storage\u0060 are always included.,default=public,default=storage,default=graphql_public"`
 		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path" jsonschema:"description=Extra schemas to add to the search_path of every request. public is always included.,default=public,default=extensions"`
 		MaxRows         uint     `toml:"max_rows" json:"max_rows" jsonschema:"description=The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.,default=1000"`
 		Tls             tlsKong  `toml:"tls" json:"tls"`

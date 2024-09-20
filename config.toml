@@ -13,4 +13,4 @@ smtp.host = "inbucket"
 smtp.admin_email = "admin@email.com"
 
 [analytics]
-port = 54326
+port = 54327

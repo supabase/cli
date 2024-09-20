@@ -67,7 +67,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Schemas to expose in your API. Tables",
+          "description": "Schemas to expose in your API. Tables, views and functions in this schema will get API endpoints. `public` and `storage` are always included.",
           "default": [
             "public",
             "storage",
