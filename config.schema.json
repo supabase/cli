@@ -68,7 +68,11 @@
           },
           "type": "array",
           "description": "Schemas to expose in your API. Tables",
-          "default": ["[\"public\""]
+          "default": [
+            "public",
+            "storage",
+            "graphql_public"
+          ]
         },
         "extra_search_path": {
           "items": {
@@ -76,7 +80,10 @@
           },
           "type": "array",
           "description": "Extra schemas to add to the search_path of every request. public is always included.",
-          "default": ["[\"public\""]
+          "default": [
+            "public",
+            "extensions"
+          ]
         },
         "max_rows": {
           "type": "integer",
@@ -111,7 +118,9 @@
           },
           "type": "array",
           "description": "A list of _exact_ URLs that auth providers are permitted to redirect to post authentication.",
-          "default": ["[\"https://localhost:3000\"]"]
+          "default": [
+            "https://localhost:3000"
+          ]
         },
         "jwt_expiry": {
           "type": "integer",
@@ -244,7 +253,9 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": ["project_id"]
+      "required": [
+        "project_id"
+      ]
     },
     "db": {
       "properties": {

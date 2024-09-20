@@ -5,6 +5,7 @@ project_id = "project_id"
 [api]
 enabled = false
 port = 54321
+schemas = ["public", "storage", "graphql_public"]
 
 [auth]
 [auth.email]

@@ -141,8 +141,8 @@ type (
 		Image           string   `toml:"-" json:"-" jsonschema:"default=postgrest/postgrest:v12.2.0"`
 		KongImage       string   `toml:"-" json:"-" jsonschema:"default=library/kong:2.8.1"`
 		Port            uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the API URL.,default=54321"`
-		Schemas         []string `toml:"schemas" json:"schemas" jsonschema:"description=Schemas to expose in your API. Tables, views and functions in this schema will get API endpoints. \u0060public\u0060 and \u0060storage\u0060 are always included.,default=[\"public\",\"storage\",\"graphql_public\"]"`
-		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path" jsonschema:"description=Extra schemas to add to the search_path of every request. public is always included.,default=[\"public\",\"extensions\"]"`
+		Schemas         []string `toml:"schemas" json:"schemas" jsonschema:"description=Schemas to expose in your API. Tables, views and functions in this schema will get API endpoints. \u0060public\u0060 and \u0060storage\u0060 are always included.,default=public,default=storage,default=graphql_public"`
+		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path" jsonschema:"description=Extra schemas to add to the search_path of every request. public is always included.,default=public,default=extensions"`
 		MaxRows         uint     `toml:"max_rows" json:"max_rows" jsonschema:"description=The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.,default=1000"`
 		Tls             tlsKong  `toml:"tls" json:"tls"`
 		ExternalUrl     string   `toml:"external_url" json:"external_url"`
@@ -240,7 +240,7 @@ type (
 		Enabled                bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local GoTrue service.,default=true"`
 		Image                  string   `toml:"-" json:"-" jsonschema:"default=supabase/gotrue:v2.158.1"`
 		SiteUrl                string   `toml:"site_url" json:"site_url" jsonschema:"description=The base URL of your website. Used as an allow-list for redirects and for constructing URLs used in emails.,default=http://localhost:3000"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls" json:"additional_redirect_urls" jsonschema:"description=A list of _exact_ URLs that auth providers are permitted to redirect to post authentication.,default=[\"https://localhost:3000\"]"`
+		AdditionalRedirectUrls []string `toml:"additional_redirect_urls" json:"additional_redirect_urls" jsonschema:"description=A list of _exact_ URLs that auth providers are permitted to redirect to post authentication.,default=https://localhost:3000"`
 
 		JwtExpiry                  uint `toml:"jwt_expiry" json:"jwt_expiry" jsonschema:"description=How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week).,default=3600"`
 		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation" json:"enable_refresh_token_rotation" jsonschema:"description=If disabled, the refresh token will never expire.,default=true"`
