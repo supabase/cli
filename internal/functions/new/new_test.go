@@ -15,6 +15,8 @@ func TestNewCommand(t *testing.T) {
 	t.Run("creates new function", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		err := afero.WriteFile(fsys, "supabase/config.toml", []byte{}, 0644)
+		require.NoError(t, err)
 		// Run test
 		assert.NoError(t, Run(context.Background(), "test-func", fsys))
 		// Validate output
