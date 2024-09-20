@@ -24,6 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/invopop/jsonschema"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
@@ -120,321 +121,316 @@ func (c CustomClaims) NewToken() *jwt.Token {
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	config struct {
-		ProjectId    string         `toml:"project_id"`
-		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
-		Db           db             `toml:"db" mapstructure:"db"`
-		Realtime     realtime       `toml:"realtime"`
-		Studio       studio         `toml:"studio"`
-		Inbucket     inbucket       `toml:"inbucket"`
-		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth" mapstructure:"auth"`
-		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
-		Functions    FunctionConfig `toml:"functions"`
-		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+		ProjectId    string         `toml:"project_id" json:"project_id" jsonschema:"required"`
+		Hostname     string         `toml:"-" json:"-"`
+		Api          api            `toml:"api" json:"api"`
+		Db           db             `toml:"db" json:"db" mapstructure:"db"`
+		Realtime     realtime       `toml:"realtime" json:"realtime"`
+		Studio       studio         `toml:"studio" json:"studio"`
+		Inbucket     inbucket       `toml:"inbucket" json:"inbucket"`
+		Storage      storage        `toml:"storage" json:"storage"`
+		Auth         auth           `toml:"auth" json:"auth" mapstructure:"auth"`
+		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
+		Functions    FunctionConfig `toml:"functions" json:"functions"`
+		Analytics    analytics      `toml:"analytics" json:"analytics"`
+		Experimental experimental   `toml:"experimental" json:"experimental" mapstructure:"-"`
 	}
 
 	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Image           string   `toml:"-"`
-		KongImage       string   `toml:"-"`
-		Port            uint16   `toml:"port"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
-		Tls             tlsKong  `toml:"tls"`
-		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
+		Enabled         bool     `toml:"enabled" json:"enabled"`
+		Image           string   `toml:"-" json:"-"`
+		KongImage       string   `toml:"-" json:"-"`
+		Port            uint16   `toml:"port" json:"port"`
+		Schemas         []string `toml:"schemas" json:"schemas"`
+		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path"`
+		MaxRows         uint     `toml:"max_rows" json:"max_rows"`
+		Tls             tlsKong  `toml:"tls" json:"tls"`
+		ExternalUrl     string   `toml:"external_url" json:"external_url"`
 	}
 
 	tlsKong struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" json:"enabled"`
 	}
 
 	db struct {
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ShadowPort   uint16 `toml:"shadow_port"`
-		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-"`
-		RootKey      string `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler `toml:"pooler"`
-		Seed         seed   `toml:"seed"`
+		Image        string `toml:"-" json:"-"`
+		Port         uint16 `toml:"port" json:"port"`
+		ShadowPort   uint16 `toml:"shadow_port" json:"shadow_port"`
+		MajorVersion uint   `toml:"major_version" json:"major_version"`
+		Password     string `toml:"-" json:"-"`
+		RootKey      string `toml:"-" json:"-" mapstructure:"root_key"`
+		Pooler       pooler `toml:"pooler" json:"pooler"`
+		Seed         seed   `toml:"seed" json:"seed"`
 	}
 
 	seed struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" json:"enabled"`
 	}
 
 	pooler struct {
-		Enabled          bool     `toml:"enabled"`
-		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
-		ConnectionString string   `toml:"-"`
-		TenantId         string   `toml:"-"`
-		EncryptionKey    string   `toml:"-"`
-		SecretKeyBase    string   `toml:"-"`
+		Enabled          bool     `toml:"enabled" json:"enabled"`
+		Image            string   `toml:"-" json:"-"`
+		Port             uint16   `toml:"port" json:"port"`
+		PoolMode         PoolMode `toml:"pool_mode" json:"pool_mode"`
+		DefaultPoolSize  uint     `toml:"default_pool_size" json:"default_pool_size"`
+		MaxClientConn    uint     `toml:"max_client_conn" json:"max_client_conn"`
+		ConnectionString string   `toml:"-" json:"-"`
+		TenantId         string   `toml:"-" json:"-"`
+		EncryptionKey    string   `toml:"-" json:"-"`
+		SecretKeyBase    string   `toml:"-" json:"-"`
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled"`
-		Image           string        `toml:"-"`
-		IpVersion       AddressFamily `toml:"ip_version"`
-		MaxHeaderLength uint          `toml:"max_header_length"`
-		TenantId        string        `toml:"-"`
-		EncryptionKey   string        `toml:"-"`
-		SecretKeyBase   string        `toml:"-"`
+		Enabled         bool          `toml:"enabled" json:"enabled"`
+		Image           string        `toml:"-" json:"-"`
+		IpVersion       AddressFamily `toml:"ip_version" json:"ip_version"`
+		MaxHeaderLength uint          `toml:"max_header_length" json:"max_header_length"`
+		TenantId        string        `toml:"-" json:"-"`
+		EncryptionKey   string        `toml:"-" json:"-"`
+		SecretKeyBase   string        `toml:"-" json:"-"`
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
-		PgmetaImage  string `toml:"-"`
+		Enabled      bool   `toml:"enabled" json:"enabled"`
+		Image        string `toml:"-" json:"-"`
+		Port         uint16 `toml:"port" json:"port"`
+		ApiUrl       string `toml:"api_url" json:"api_url"`
+		OpenaiApiKey string `toml:"openai_api_key" json:"openai_api_key"`
+		PgmetaImage  string `toml:"-" json:"-"`
 	}
 
 	inbucket struct {
-		Enabled  bool   `toml:"enabled"`
-		Image    string `toml:"-"`
-		Port     uint16 `toml:"port"`
-		SmtpPort uint16 `toml:"smtp_port"`
-		Pop3Port uint16 `toml:"pop3_port"`
+		Enabled  bool   `toml:"enabled" json:"enabled"`
+		Image    string `toml:"-" json:"-"`
+		Port     uint16 `toml:"port" json:"port"`
+		SmtpPort uint16 `toml:"smtp_port" json:"smtp_port"`
+		Pop3Port uint16 `toml:"pop3_port" json:"pop3_port"`
 	}
 
 	storage struct {
-		Enabled             bool                 `toml:"enabled"`
-		Image               string               `toml:"-"`
-		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
-		S3Credentials       storageS3Credentials `toml:"-"`
-		ImageTransformation imageTransformation  `toml:"image_transformation"`
-		Buckets             BucketConfig         `toml:"buckets"`
+		Enabled             bool                 `toml:"enabled" json:"enabled"`
+		Image               string               `toml:"-" json:"-"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit" json:"file_size_limit"`
+		S3Credentials       storageS3Credentials `toml:"-" json:"-"`
+		ImageTransformation imageTransformation  `toml:"image_transformation" json:"image_transformation"`
+		Buckets             BucketConfig         `toml:"buckets" json:"buckets"`
 	}
 
 	BucketConfig map[string]bucket
 
 	bucket struct {
-		Public           *bool       `toml:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
+		Public           *bool       `toml:"public" json:"public"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit" json:"file_size_limit"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types" json:"allowed_mime_types"`
+		ObjectsPath      string      `toml:"objects_path" json:"objects_path"`
 	}
 
 	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
+		Enabled bool   `toml:"enabled" json:"enabled"`
+		Image   string `toml:"-" json:"-"`
 	}
 
 	storageS3Credentials struct {
-		AccessKeyId     string `toml:"-"`
-		SecretAccessKey string `toml:"-"`
-		Region          string `toml:"-"`
+		AccessKeyId     string `toml:"-" json:"-"`
+		SecretAccessKey string `toml:"-" json:"-"`
+		Region          string `toml:"-" json:"-"`
 	}
 
 	auth struct {
-		Enabled                bool     `toml:"enabled"`
-		Image                  string   `toml:"-"`
-		SiteUrl                string   `toml:"site_url"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
+		Enabled                bool     `toml:"enabled" json:"enabled"`
+		Image                  string   `toml:"-" json:"-"`
+		SiteUrl                string   `toml:"site_url" json:"site_url"`
+		AdditionalRedirectUrls []string `toml:"additional_redirect_urls" json:"additional_redirect_urls"`
 
-		JwtExpiry                  uint `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		JwtExpiry                  uint `toml:"jwt_expiry" json:"jwt_expiry"`
+		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation" json:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval" json:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool `toml:"enable_manual_linking" json:"enable_manual_linking"`
 
-		Hook     hook     `toml:"hook"`
-		MFA      mfa      `toml:"mfa"`
-		Sessions sessions `toml:"sessions"`
+		Hook     hook     `toml:"hook" json:"hook"`
+		MFA      mfa      `toml:"mfa" json:"mfa"`
+		Sessions sessions `toml:"sessions" json:"sessions"`
 
-		EnableSignup           bool  `toml:"enable_signup"`
-		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
-		Email                  email `toml:"email"`
-		Sms                    sms   `toml:"sms"`
-		External               map[string]provider
+		EnableSignup           bool                `toml:"enable_signup" json:"enable_signup"`
+		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins" json:"enable_anonymous_sign_ins"`
+		Email                  email               `toml:"email" json:"email"`
+		Sms                    sms                 `toml:"sms" json:"sms"`
+		External               map[string]provider `json:"external"`
 
-		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
-		AnonKey        string `toml:"-" mapstructure:"anon_key"`
-		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+		JwtSecret      string `toml:"-" json:"-" mapstructure:"jwt_secret"`
+		AnonKey        string `toml:"-" json:"-" mapstructure:"anon_key"`
+		ServiceRoleKey string `toml:"-" json:"-" mapstructure:"service_role_key"`
 
-		ThirdParty thirdParty `toml:"third_party"`
+		ThirdParty thirdParty `toml:"third_party" json:"third_party"`
 	}
 
 	thirdParty struct {
-		Firebase tpaFirebase `toml:"firebase"`
-		Auth0    tpaAuth0    `toml:"auth0"`
-		Cognito  tpaCognito  `toml:"aws_cognito"`
+		Firebase tpaFirebase `toml:"firebase" json:"firebase"`
+		Auth0    tpaAuth0    `toml:"auth0" json:"auth0"`
+		Cognito  tpaCognito  `toml:"aws_cognito" json:"aws_cognito"`
 	}
 
 	tpaFirebase struct {
-		Enabled bool `toml:"enabled"`
-
-		ProjectID string `toml:"project_id"`
+		Enabled   bool   `toml:"enabled" json:"enabled"`
+		ProjectID string `toml:"project_id" json:"project_id"`
 	}
 
 	tpaAuth0 struct {
-		Enabled bool `toml:"enabled"`
-
-		Tenant       string `toml:"tenant"`
-		TenantRegion string `toml:"tenant_region"`
+		Enabled      bool   `toml:"enabled" json:"enabled"`
+		Tenant       string `toml:"tenant" json:"tenant"`
+		TenantRegion string `toml:"tenant_region" json:"tenant_region"`
 	}
 
 	tpaCognito struct {
-		Enabled bool `toml:"enabled"`
-
-		UserPoolID     string `toml:"user_pool_id"`
-		UserPoolRegion string `toml:"user_pool_region"`
+		Enabled        bool   `toml:"enabled" json:"enabled"`
+		UserPoolID     string `toml:"user_pool_id" json:"user_pool_id"`
+		UserPoolRegion string `toml:"user_pool_region" json:"user_pool_region"`
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup"`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
-		EnableConfirmations  bool                     `toml:"enable_confirmations"`
-		SecurePasswordChange bool                     `toml:"secure_password_change"`
-		Template             map[string]emailTemplate `toml:"template"`
-		Smtp                 smtp                     `toml:"smtp"`
-		MaxFrequency         time.Duration            `toml:"max_frequency"`
+		EnableSignup         bool                     `toml:"enable_signup" json:"enable_signup"`
+		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" json:"double_confirm_changes"`
+		EnableConfirmations  bool                     `toml:"enable_confirmations" json:"enable_confirmations"`
+		SecurePasswordChange bool                     `toml:"secure_password_change" json:"secure_password_change"`
+		Template             map[string]emailTemplate `toml:"template" json:"template"`
+		Smtp                 smtp                     `toml:"smtp" json:"smtp"`
+		MaxFrequency         time.Duration            `toml:"max_frequency" json:"max_frequency"`
 	}
 
 	smtp struct {
-		Host       string `toml:"host"`
-		Port       uint16 `toml:"port"`
-		User       string `toml:"user"`
-		Pass       string `toml:"pass"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Host       string `toml:"host" json:"host"`
+		Port       uint16 `toml:"port" json:"port"`
+		User       string `toml:"user" json:"user"`
+		Pass       string `toml:"pass" json:"pass"`
+		AdminEmail string `toml:"admin_email" json:"admin_email"`
+		SenderName string `toml:"sender_name" json:"sender_name"`
 	}
 
 	emailTemplate struct {
-		Subject     string `toml:"subject"`
-		ContentPath string `toml:"content_path"`
+		Subject     string `toml:"subject" json:"subject"`
+		ContentPath string `toml:"content_path" json:"content_path"`
 	}
 
 	sms struct {
-		EnableSignup        bool              `toml:"enable_signup"`
-		EnableConfirmations bool              `toml:"enable_confirmations"`
-		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
-		TestOTP             map[string]string `toml:"test_otp"`
-		MaxFrequency        time.Duration     `toml:"max_frequency"`
+		EnableSignup        bool              `toml:"enable_signup" json:"enable_signup"`
+		EnableConfirmations bool              `toml:"enable_confirmations" json:"enable_confirmations"`
+		Template            string            `toml:"template" json:"template"`
+		Twilio              twilioConfig      `toml:"twilio" json:"twilio" mapstructure:"twilio"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify" json:"twilio_verify" mapstructure:"twilio_verify"`
+		Messagebird         messagebirdConfig `toml:"messagebird" json:"messagebird" mapstructure:"messagebird"`
+		Textlocal           textlocalConfig   `toml:"textlocal" json:"textlocal" mapstructure:"textlocal"`
+		Vonage              vonageConfig      `toml:"vonage" json:"vonage" mapstructure:"vonage"`
+		TestOTP             map[string]string `toml:"test_otp" json:"test_otp"`
+		MaxFrequency        time.Duration     `toml:"max_frequency" json:"max_frequency"`
 	}
 
 	hook struct {
-		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
-		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
-		CustomAccessToken           hookConfig `toml:"custom_access_token"`
-		SendSMS                     hookConfig `toml:"send_sms"`
-		SendEmail                   hookConfig `toml:"send_email"`
+		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt" json:"mfa_verification_attempt"`
+		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt" json:"password_verification_attempt"`
+		CustomAccessToken           hookConfig `toml:"custom_access_token" json:"custom_access_token"`
+		SendSMS                     hookConfig `toml:"send_sms" json:"send_sms"`
+		SendEmail                   hookConfig `toml:"send_email" json:"send_email"`
 	}
 	factorTypeConfiguration struct {
-		EnrollEnabled bool `toml:"enroll_enabled"`
-		VerifyEnabled bool `toml:"verify_enabled"`
+		EnrollEnabled bool `toml:"enroll_enabled" json:"enroll_enabled"`
+		VerifyEnabled bool `toml:"verify_enabled" json:"verify_enabled"`
 	}
 
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
-		OtpLength    uint          `toml:"otp_length"`
-		Template     string        `toml:"template"`
-		MaxFrequency time.Duration `toml:"max_frequency"`
+		OtpLength    uint          `toml:"otp_length" json:"otp_length"`
+		Template     string        `toml:"template" json:"template"`
+		MaxFrequency time.Duration `toml:"max_frequency" json:"max_frequency"`
 	}
 
 	mfa struct {
-		TOTP               factorTypeConfiguration      `toml:"totp"`
-		Phone              phoneFactorTypeConfiguration `toml:"phone"`
-		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
+		TOTP               factorTypeConfiguration      `toml:"totp" json:"totp"`
+		Phone              phoneFactorTypeConfiguration `toml:"phone" json:"phone"`
+		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors" json:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
-		Enabled bool   `toml:"enabled"`
-		URI     string `toml:"uri"`
-		Secrets string `toml:"secrets"`
+		Enabled bool   `toml:"enabled" json:"enabled"`
+		URI     string `toml:"uri" json:"uri"`
+		Secrets string `toml:"secrets" json:"secrets"`
 	}
 
 	sessions struct {
-		Timebox           time.Duration `toml:"timebox"`
-		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
+		Timebox           time.Duration `toml:"timebox" json:"timebox"`
+		InactivityTimeout time.Duration `toml:"inactivity_timeout" json:"inactivity_timeout"`
 	}
 
 	twilioConfig struct {
-		Enabled           bool   `toml:"enabled"`
-		AccountSid        string `toml:"account_sid"`
-		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         string `toml:"auth_token" mapstructure:"auth_token"`
+		Enabled           bool   `toml:"enabled" json:"enabled"`
+		AccountSid        string `toml:"account_sid" json:"account_sid"`
+		MessageServiceSid string `toml:"message_service_sid" json:"message_service_sid"`
+		AuthToken         string `toml:"-" json:"-" mapstructure:"auth_token"`
 	}
 
 	messagebirdConfig struct {
-		Enabled    bool   `toml:"enabled"`
-		Originator string `toml:"originator"`
-		AccessKey  string `toml:"access_key" mapstructure:"access_key"`
+		Enabled    bool   `toml:"enabled" json:"enabled"`
+		Originator string `toml:"originator" json:"originator"`
+		AccessKey  string `toml:"-" json:"-" mapstructure:"access_key"`
 	}
 
 	textlocalConfig struct {
-		Enabled bool   `toml:"enabled"`
-		Sender  string `toml:"sender"`
-		ApiKey  string `toml:"api_key" mapstructure:"api_key"`
+		Enabled bool   `toml:"enabled" json:"enabled"`
+		Sender  string `toml:"sender" json:"sender"`
+		ApiKey  string `toml:"-" json:"-" mapstructure:"api_key"`
 	}
 
 	vonageConfig struct {
-		Enabled   bool   `toml:"enabled"`
-		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret string `toml:"api_secret" mapstructure:"api_secret"`
+		Enabled   bool   `toml:"enabled" json:"enabled"`
+		From      string `toml:"from" json:"from"`
+		ApiKey    string `toml:"-" json:"-" mapstructure:"api_key"`
+		ApiSecret string `toml:"-" json:"-" mapstructure:"api_secret"`
 	}
 
 	provider struct {
-		Enabled        bool   `toml:"enabled"`
-		ClientId       string `toml:"client_id"`
-		Secret         string `toml:"secret"`
-		Url            string `toml:"url"`
-		RedirectUri    string `toml:"redirect_uri"`
-		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+		Enabled        bool   `toml:"enabled" json:"enabled"`
+		ClientId       string `toml:"client_id" json:"client_id"`
+		Secret         string `toml:"secret" json:"secret"`
+		Url            string `toml:"url" json:"url"`
+		RedirectUri    string `toml:"redirect_uri" json:"redirect_uri"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check" json:"skip_nonce_check"`
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
+		Enabled       bool          `toml:"enabled" json:"enabled"`
+		Image         string        `toml:"-" json:"-"`
+		Policy        RequestPolicy `toml:"policy" json:"policy"`
+		InspectorPort uint16        `toml:"inspector_port" json:"inspector_port"`
 	}
 
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled    *bool  `toml:"enabled"`
+		Enabled    *bool  `toml:"enabled" json:"enabled"`
 		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
 		Entrypoint string `json:"-"`
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled"`
-		Image            string          `toml:"-"`
-		VectorImage      string          `toml:"-"`
-		Port             uint16          `toml:"port"`
-		Backend          LogflareBackend `toml:"backend"`
-		GcpProjectId     string          `toml:"gcp_project_id"`
-		GcpProjectNumber string          `toml:"gcp_project_number"`
-		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		Enabled          bool            `toml:"enabled" json:"enabled"`
+		Image            string          `toml:"-" json:"-"`
+		VectorImage      string          `toml:"-" json:"-"`
+		Port             uint16          `toml:"port" json:"port"`
+		Backend          LogflareBackend `toml:"backend" json:"backend"`
+		GcpProjectId     string          `toml:"gcp_project_id" json:"gcp_project_id"`
+		GcpProjectNumber string          `toml:"gcp_project_number" json:"gcp_project_number"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path" json:"gcp_jwt_path"`
+		ApiKey           string          `toml:"-" json:"-" mapstructure:"api_key"`
 		// Deprecated together with syslog
-		VectorPort uint16 `toml:"vector_port"`
+		VectorPort uint16 `toml:"vector_port" json:"vector_port"`
 	}
 
 	experimental struct {
-		OrioleDBVersion string `toml:"orioledb_version"`
-		S3Host          string `toml:"s3_host"`
-		S3Region        string `toml:"s3_region"`
-		S3AccessKey     string `toml:"s3_access_key"`
-		S3SecretKey     string `toml:"s3_secret_key"`
+		OrioleDBVersion string `toml:"orioledb_version" json:"orioledb_version"`
+		S3Host          string `toml:"s3_host" json:"s3_host"`
+		S3Region        string `toml:"s3_region" json:"s3_region"`
+		S3AccessKey     string `toml:"s3_access_key" json:"s3_access_key"`
+		S3SecretKey     string `toml:"s3_secret_key" json:"s3_secret_key"`
 	}
 )
 
@@ -1231,4 +1227,25 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+func GenerateConfigJSONSchema() (string, error) {
+	// Create a new reflector
+	r := &jsonschema.Reflector{
+		RequiredFromJSONSchemaTags: true,
+		// Set any custom options here if needed
+		// For example:
+		// ExpandedStruct: true,
+	}
+
+	// Generate the schema for the config struct
+	schema := r.Reflect(&config{})
+
+	// Marshal the schema to JSON
+	schemaJSON, err := json.MarshalIndent(schema, "", "  ")
+	if err != nil {
+		return "", errors.Errorf("failed to marshal JSON schema: %w", err)
+	}
+
+	return string(schemaJSON), nil
 }

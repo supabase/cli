@@ -1,0 +1,727 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/supabase/cli/pkg/config/config",
+  "$ref": "#/$defs/config",
+  "$defs": {
+    "BucketConfig": {
+      "additionalProperties": {
+        "$ref": "#/$defs/bucket"
+      },
+      "type": "object"
+    },
+    "FunctionConfig": {
+      "additionalProperties": {
+        "$ref": "#/$defs/function"
+      },
+      "type": "object"
+    },
+    "analytics": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "gcp_project_id": {
+          "type": "string"
+        },
+        "gcp_project_number": {
+          "type": "string"
+        },
+        "gcp_jwt_path": {
+          "type": "string"
+        },
+        "vector_port": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "api": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "schemas": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra_search_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_rows": {
+          "type": "integer"
+        },
+        "tls": {
+          "$ref": "#/$defs/tlsKong"
+        },
+        "external_url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "auth": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "site_url": {
+          "type": "string"
+        },
+        "additional_redirect_urls": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "jwt_expiry": {
+          "type": "integer"
+        },
+        "enable_refresh_token_rotation": {
+          "type": "boolean"
+        },
+        "refresh_token_reuse_interval": {
+          "type": "integer"
+        },
+        "enable_manual_linking": {
+          "type": "boolean"
+        },
+        "hook": {
+          "$ref": "#/$defs/hook"
+        },
+        "mfa": {
+          "$ref": "#/$defs/mfa"
+        },
+        "sessions": {
+          "$ref": "#/$defs/sessions"
+        },
+        "enable_signup": {
+          "type": "boolean"
+        },
+        "enable_anonymous_sign_ins": {
+          "type": "boolean"
+        },
+        "email": {
+          "$ref": "#/$defs/email"
+        },
+        "sms": {
+          "$ref": "#/$defs/sms"
+        },
+        "external": {
+          "additionalProperties": {
+            "$ref": "#/$defs/provider"
+          },
+          "type": "object"
+        },
+        "third_party": {
+          "$ref": "#/$defs/thirdParty"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "bucket": {
+      "properties": {
+        "public": {
+          "type": "boolean"
+        },
+        "file_size_limit": {
+          "type": "integer"
+        },
+        "allowed_mime_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "objects_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "config": {
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "api": {
+          "$ref": "#/$defs/api"
+        },
+        "db": {
+          "$ref": "#/$defs/db"
+        },
+        "realtime": {
+          "$ref": "#/$defs/realtime"
+        },
+        "studio": {
+          "$ref": "#/$defs/studio"
+        },
+        "inbucket": {
+          "$ref": "#/$defs/inbucket"
+        },
+        "storage": {
+          "$ref": "#/$defs/storage"
+        },
+        "auth": {
+          "$ref": "#/$defs/auth"
+        },
+        "edge_runtime": {
+          "$ref": "#/$defs/edgeRuntime"
+        },
+        "functions": {
+          "$ref": "#/$defs/FunctionConfig"
+        },
+        "analytics": {
+          "$ref": "#/$defs/analytics"
+        },
+        "experimental": {
+          "$ref": "#/$defs/experimental"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "project_id"
+      ]
+    },
+    "db": {
+      "properties": {
+        "port": {
+          "type": "integer"
+        },
+        "shadow_port": {
+          "type": "integer"
+        },
+        "major_version": {
+          "type": "integer"
+        },
+        "pooler": {
+          "$ref": "#/$defs/pooler"
+        },
+        "seed": {
+          "$ref": "#/$defs/seed"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "edgeRuntime": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "inspector_port": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "email": {
+      "properties": {
+        "enable_signup": {
+          "type": "boolean"
+        },
+        "double_confirm_changes": {
+          "type": "boolean"
+        },
+        "enable_confirmations": {
+          "type": "boolean"
+        },
+        "secure_password_change": {
+          "type": "boolean"
+        },
+        "template": {
+          "additionalProperties": {
+            "$ref": "#/$defs/emailTemplate"
+          },
+          "type": "object"
+        },
+        "smtp": {
+          "$ref": "#/$defs/smtp"
+        },
+        "max_frequency": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "emailTemplate": {
+      "properties": {
+        "subject": {
+          "type": "string"
+        },
+        "content_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "experimental": {
+      "properties": {
+        "orioledb_version": {
+          "type": "string"
+        },
+        "s3_host": {
+          "type": "string"
+        },
+        "s3_region": {
+          "type": "string"
+        },
+        "s3_access_key": {
+          "type": "string"
+        },
+        "s3_secret_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "factorTypeConfiguration": {
+      "properties": {
+        "enroll_enabled": {
+          "type": "boolean"
+        },
+        "verify_enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "function": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "verifyJWT": {
+          "type": "boolean"
+        },
+        "importMapPath": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "hook": {
+      "properties": {
+        "mfa_verification_attempt": {
+          "$ref": "#/$defs/hookConfig"
+        },
+        "password_verification_attempt": {
+          "$ref": "#/$defs/hookConfig"
+        },
+        "custom_access_token": {
+          "$ref": "#/$defs/hookConfig"
+        },
+        "send_sms": {
+          "$ref": "#/$defs/hookConfig"
+        },
+        "send_email": {
+          "$ref": "#/$defs/hookConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "hookConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "secrets": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "imageTransformation": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "inbucket": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "smtp_port": {
+          "type": "integer"
+        },
+        "pop3_port": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "messagebirdConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "originator": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "mfa": {
+      "properties": {
+        "totp": {
+          "$ref": "#/$defs/factorTypeConfiguration"
+        },
+        "phone": {
+          "$ref": "#/$defs/phoneFactorTypeConfiguration"
+        },
+        "max_enrolled_factors": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "phoneFactorTypeConfiguration": {
+      "properties": {
+        "enroll_enabled": {
+          "type": "boolean"
+        },
+        "verify_enabled": {
+          "type": "boolean"
+        },
+        "otp_length": {
+          "type": "integer"
+        },
+        "template": {
+          "type": "string"
+        },
+        "max_frequency": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "pooler": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "pool_mode": {
+          "type": "string"
+        },
+        "default_pool_size": {
+          "type": "integer"
+        },
+        "max_client_conn": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "provider": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "secret": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "redirect_uri": {
+          "type": "string"
+        },
+        "skip_nonce_check": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "realtime": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ip_version": {
+          "type": "string"
+        },
+        "max_header_length": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "seed": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "sessions": {
+      "properties": {
+        "timebox": {
+          "type": "integer"
+        },
+        "inactivity_timeout": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "sms": {
+      "properties": {
+        "enable_signup": {
+          "type": "boolean"
+        },
+        "enable_confirmations": {
+          "type": "boolean"
+        },
+        "template": {
+          "type": "string"
+        },
+        "twilio": {
+          "$ref": "#/$defs/twilioConfig"
+        },
+        "twilio_verify": {
+          "$ref": "#/$defs/twilioConfig"
+        },
+        "messagebird": {
+          "$ref": "#/$defs/messagebirdConfig"
+        },
+        "textlocal": {
+          "$ref": "#/$defs/textlocalConfig"
+        },
+        "vonage": {
+          "$ref": "#/$defs/vonageConfig"
+        },
+        "test_otp": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "max_frequency": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "smtp": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "user": {
+          "type": "string"
+        },
+        "pass": {
+          "type": "string"
+        },
+        "admin_email": {
+          "type": "string"
+        },
+        "sender_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "storage": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "file_size_limit": {
+          "type": "integer"
+        },
+        "image_transformation": {
+          "$ref": "#/$defs/imageTransformation"
+        },
+        "buckets": {
+          "$ref": "#/$defs/BucketConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "studio": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "api_url": {
+          "type": "string"
+        },
+        "openai_api_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "textlocalConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "sender": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "thirdParty": {
+      "properties": {
+        "firebase": {
+          "$ref": "#/$defs/tpaFirebase"
+        },
+        "auth0": {
+          "$ref": "#/$defs/tpaAuth0"
+        },
+        "aws_cognito": {
+          "$ref": "#/$defs/tpaCognito"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "tlsKong": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "tpaAuth0": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "tenant_region": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "tpaCognito": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "user_pool_id": {
+          "type": "string"
+        },
+        "user_pool_region": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "tpaFirebase": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "twilioConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "account_sid": {
+          "type": "string"
+        },
+        "message_service_sid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "vonageConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  }
+}

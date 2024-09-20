@@ -1,0 +1,3 @@
+#:schema ./config.schema.json
+
+project_id = "project_id"

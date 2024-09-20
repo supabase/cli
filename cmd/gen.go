@@ -8,6 +8,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/gen/autocomplete"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
@@ -98,6 +99,14 @@ var (
   supabase gen types --project-id abc-def-123 --schema public --schema private
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
+
+	genAutocompletionCmd = &cobra.Command{
+		Use:   "autocomplete",
+		Short: "Generate autocomplete JSON schema",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return autocomplete.Run(cmd.Context())
+		},
+	}
 )
 
 func init() {
@@ -118,4 +127,5 @@ func init() {
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
 	rootCmd.AddCommand(genCmd)
+	genCmd.AddCommand(genAutocompletionCmd)
 }
