@@ -80,7 +80,7 @@ func toTomlBytes(config any) []byte {
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
@@ -99,25 +99,26 @@ func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
-	api := tenant.NewTenantAPI(ctx, projectRef, anonKey)
-	go func() {
-		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
+	api := tenant.NewTenantAPI(projectRef, anonKey)
+	version, err := api.GetServiceVersions(ctx)
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	if len(version.PostgREST) > 0 {
+		if err := utils.WriteFile(utils.RestVersionPath, []byte(version.PostgREST), fsys); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrueVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
+	}
+	if len(version.Auth) > 0 {
+		if err := utils.WriteFile(utils.GotrueVersionPath, []byte(version.Auth), fsys); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkStorageVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
+	}
+	if len(version.Storage) > 0 {
+		if err := utils.WriteFile(utils.StorageVersionPath, []byte(version.Storage), fsys); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
-	}()
+	}
 	wg.Wait()
 }
 
@@ -131,14 +132,6 @@ func linkPostgrest(ctx context.Context, projectRef string) error {
 	}
 	updateApiConfig(*resp.JSON200)
 	return nil
-}
-
-func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
-	version, err := api.GetPostgrestVersion(ctx)
-	if err != nil {
-		return err
-	}
-	return utils.WriteFile(utils.RestVersionPath, []byte(version), fsys)
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
@@ -157,22 +150,6 @@ func readCsv(line string) []string {
 		}
 	}
 	return result
-}
-
-func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
-	version, err := api.GetGotrueVersion(ctx)
-	if err != nil {
-		return err
-	}
-	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
-}
-
-func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
-	version, err := api.GetStorageVersion(ctx)
-	if err != nil {
-		return err
-	}
-	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {

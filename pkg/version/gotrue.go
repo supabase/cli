@@ -1,4 +1,4 @@
-package tenant
+package version
 
 import (
 	"context"
@@ -16,7 +16,7 @@ type HealthResponse struct {
 	Description string `json:"description"`
 }
 
-func (t *TenantAPI) GetGotrueVersion(ctx context.Context) (string, error) {
+func (t *ServiceGateway) GetGotrueVersion(ctx context.Context) (string, error) {
 	resp, err := t.Send(ctx, http.MethodGet, "/auth/v1/health", nil)
 	if err != nil {
 		return "", err

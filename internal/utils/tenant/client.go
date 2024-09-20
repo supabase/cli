@@ -2,13 +2,12 @@ package tenant
 
 import (
 	"context"
-	"net/http"
-	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/pkg/version"
 )
 
 var (
@@ -53,24 +52,11 @@ func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
 	return keys, nil
 }
 
-type TenantAPI struct {
-	*fetcher.Fetcher
-}
-
-func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
+func NewTenantAPI(projectRef, anonKey string) version.ServiceGateway {
 	server := "https://" + utils.GetSupabaseHost(projectRef)
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-	header := func(req *http.Request) {
-		req.Header.Add("apikey", anonKey)
-	}
-	api := TenantAPI{Fetcher: fetcher.NewFetcher(
+	return version.NewServiceGateway(
 		server,
-		fetcher.WithHTTPClient(client),
-		fetcher.WithRequestEditor(header),
+		anonKey,
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
-		fetcher.WithExpectedStatus(http.StatusOK),
-	)}
-	return api
+	)
 }

@@ -1,4 +1,4 @@
-package tenant
+package version
 
 import (
 	"context"
@@ -22,7 +22,9 @@ type SwaggerResponse struct {
 	Info    SwaggerInfo `json:"info"`
 }
 
-func (t *TenantAPI) GetPostgrestVersion(ctx context.Context) (string, error) {
+func (t *ServiceGateway) GetPostgrestVersion(ctx context.Context) (string, error) {
+	// Cannot use admin endpoint because cloudflare overwrites server response header
+	// Ref: https://postgrest.org/en/v11/references/admin.html#server-version
 	resp, err := t.Send(ctx, http.MethodGet, "/rest/v1/", nil)
 	if err != nil {
 		return "", err

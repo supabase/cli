@@ -19,6 +19,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/pkg/version"
 	"github.com/zalando/go-keyring"
 )
 
@@ -62,12 +63,12 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
 		// Link versions
-		auth := tenant.HealthResponse{Version: "v2.74.2"}
+		auth := version.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
 			Reply(200).
 			JSON(auth)
-		rest := tenant.SwaggerResponse{Info: tenant.SwaggerInfo{Version: "11.1.0"}}
+		rest := version.SwaggerResponse{Info: version.SwaggerInfo{Version: "11.1.0"}}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
 			Reply(200).

@@ -1,4 +1,4 @@
-package tenant
+package version
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 var errStorageVersion = errors.New("Storage version not found.")
 
-func (t *TenantAPI) GetStorageVersion(ctx context.Context) (string, error) {
+func (t *ServiceGateway) GetStorageVersion(ctx context.Context) (string, error) {
 	resp, err := t.Send(ctx, http.MethodGet, "/storage/v1/version", nil)
 	if err != nil {
 		return "", err

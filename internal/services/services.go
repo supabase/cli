@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
@@ -58,39 +57,26 @@ func GetServiceImages() []string {
 
 func GetRemoteImages(ctx context.Context, projectRef string) map[string]string {
 	linked := make(map[string]string, 4)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
-			linked[utils.Config.Db.Image] = version
-		}
-	}()
+	if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
+		linked[utils.Config.Db.Image] = version
+	}
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
-		wg.Wait()
 		return linked
 	}
-	api := tenant.NewTenantAPI(ctx, projectRef, keys.Anon)
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetGotrueVersion(ctx); err == nil {
-			linked[utils.Config.Auth.Image] = version
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetPostgrestVersion(ctx); err == nil {
-			linked[utils.Config.Api.Image] = version
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetStorageVersion(ctx); err == nil {
-			linked[utils.Config.Storage.Image] = version
-		}
-	}()
-	wg.Wait()
+	api := tenant.NewTenantAPI(projectRef, keys.Anon)
+	version, err := api.GetServiceVersions(ctx)
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	if len(version.Auth) > 0 {
+		linked[utils.Config.Auth.Image] = version.Auth
+	}
+	if len(version.PostgREST) > 0 {
+		linked[utils.Config.Api.Image] = version.PostgREST
+	}
+	if len(version.Storage) > 0 {
+		linked[utils.Config.Storage.Image] = version.Storage
+	}
 	return linked
 }
