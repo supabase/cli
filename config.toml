@@ -8,4 +8,8 @@ port = 54321
 
 [auth]
 [auth.email]
-smtp.host = "smtp.example.com"
+smtp.host = "inbucket"
+smtp.admin_email = "admin@email.com"
+
+[analytics]
+port = 54326

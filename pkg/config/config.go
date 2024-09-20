@@ -122,7 +122,7 @@ func (c CustomClaims) NewToken() *jwt.Token {
 type (
 	config struct {
 		ProjectId    string         `toml:"project_id" json:"project_id" jsonschema:"required,description=A string used to distinguish different Supabase projects on the same host. Defaults to the working directory name when running \u0060supabase init\u0060."`
-		Hostname     string         `toml:"-" json:"-"`
+		Hostname     string         `toml:"-" json:"-" jsonschema:"default=127.0.0.1"`
 		Api          api            `toml:"api" json:"api" jsonschema:"description=Configuration for the API service."`
 		Db           db             `toml:"db" json:"db" mapstructure:"db" jsonschema:"description=Configuration for the database service."`
 		Realtime     realtime       `toml:"realtime" json:"realtime" jsonschema:"description=Configuration for the Realtime service."`
@@ -137,13 +137,13 @@ type (
 	}
 
 	api struct {
-		Enabled         bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local PostgREST service."`
-		Image           string   `toml:"-" json:"-"`
-		KongImage       string   `toml:"-" json:"-"`
-		Port            uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the API URL."`
+		Enabled         bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local PostgREST service.,default=true"`
+		Image           string   `toml:"-" json:"-" jsonschema:"default=postgrest/postgrest:v12.2.0"`
+		KongImage       string   `toml:"-" json:"-" jsonschema:"default=library/kong:2.8.1"`
+		Port            uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the API URL.,default=54321"`
 		Schemas         []string `toml:"schemas" json:"schemas" jsonschema:"description=Schemas to expose in your API. Tables, views and functions in this schema will get API endpoints. \u0060public\u0060 and \u0060storage\u0060 are always included."`
 		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path" jsonschema:"description=Extra schemas to add to the search_path of every request. public is always included."`
-		MaxRows         uint     `toml:"max_rows" json:"max_rows" jsonschema:"description=The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests."`
+		MaxRows         uint     `toml:"max_rows" json:"max_rows" jsonschema:"description=The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.,default=1000"`
 		Tls             tlsKong  `toml:"tls" json:"tls"`
 		ExternalUrl     string   `toml:"external_url" json:"external_url"`
 	}
@@ -153,12 +153,12 @@ type (
 	}
 
 	db struct {
-		Image        string `toml:"-" json:"-"`
-		Port         uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for the local database URL."`
-		ShadowPort   uint16 `toml:"shadow_port" json:"shadow_port" jsonschema:"description=Port to use for the local shadow database."`
-		MajorVersion uint   `toml:"major_version" json:"major_version" jsonschema:"description=The database major version to use. This has to be the same as your remote database's. Run \u0060SHOW server_version;\u0060 on the remote database to check."`
-		Password     string `toml:"-" json:"-"`
-		RootKey      string `toml:"-" json:"-" mapstructure:"root_key"`
+		Image        string `toml:"-" json:"-" jsonschema:"default=supabase/postgres:15.1.1.78"`
+		Port         uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for the local database URL.,default=54322"`
+		ShadowPort   uint16 `toml:"shadow_port" json:"shadow_port" jsonschema:"description=Port to use for the local shadow database.,default=54320"`
+		MajorVersion uint   `toml:"major_version" json:"major_version" jsonschema:"description=The database major version to use. This has to be the same as your remote database's. Run \u0060SHOW server_version;\u0060 on the remote database to check.,default=15"`
+		Password     string `toml:"-" json:"-" jsonschema:"default=postgres"`
+		RootKey      string `toml:"-" json:"-" mapstructure:"root_key" jsonschema:"default=d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275"`
 		Pooler       pooler `toml:"pooler" json:"pooler"`
 		Seed         seed   `toml:"seed" json:"seed"`
 	}
@@ -168,48 +168,48 @@ type (
 	}
 
 	pooler struct {
-		Enabled          bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local PgBouncer service."`
-		Image            string   `toml:"-" json:"-"`
-		Port             uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the local connection pooler."`
-		PoolMode         PoolMode `toml:"pool_mode" json:"pool_mode" jsonschema:"description=Specifies when a server connection can be reused by other clients. Configure one of the supported pooler modes: \u0060transaction\u0060, \u0060session\u0060."`
-		DefaultPoolSize  uint     `toml:"default_pool_size" json:"default_pool_size" jsonschema:"description=How many server connections to allow per user/database pair."`
-		MaxClientConn    uint     `toml:"max_client_conn" json:"max_client_conn" jsonschema:"description=Maximum number of client connections allowed."`
+		Enabled          bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local PgBouncer service.,default=true"`
+		Image            string   `toml:"-" json:"-" jsonschema:"default=supabase/supavisor:1.1.56"`
+		Port             uint16   `toml:"port" json:"port" jsonschema:"description=Port to use for the local connection pooler.,default=54323"`
+		PoolMode         PoolMode `toml:"pool_mode" json:"pool_mode" jsonschema:"description=Specifies when a server connection can be reused by other clients. Configure one of the supported pooler modes: \u0060transaction\u0060, \u0060session\u0060.,default=transaction"`
+		DefaultPoolSize  uint     `toml:"default_pool_size" json:"default_pool_size" jsonschema:"description=How many server connections to allow per user/database pair.,default=50"`
+		MaxClientConn    uint     `toml:"max_client_conn" json:"max_client_conn" jsonschema:"description=Maximum number of client connections allowed.,default=100"`
 		ConnectionString string   `toml:"-" json:"-"`
-		TenantId         string   `toml:"-" json:"-"`
-		EncryptionKey    string   `toml:"-" json:"-"`
-		SecretKeyBase    string   `toml:"-" json:"-"`
+		TenantId         string   `toml:"-" json:"-" jsonschema:"default=pooler-dev"`
+		EncryptionKey    string   `toml:"-" json:"-" jsonschema:"default=12345678901234567890123456789032"`
+		SecretKeyBase    string   `toml:"-" json:"-" jsonschema:"default=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG"`
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Realtime service."`
-		Image           string        `toml:"-" json:"-"`
-		IpVersion       AddressFamily `toml:"ip_version" json:"ip_version" jsonschema:"description=Bind realtime via either IPv4 or IPv6. (default: IPv6)"`
-		MaxHeaderLength uint          `toml:"max_header_length" json:"max_header_length"`
-		TenantId        string        `toml:"-" json:"-"`
-		EncryptionKey   string        `toml:"-" json:"-"`
-		SecretKeyBase   string        `toml:"-" json:"-"`
+		Enabled         bool          `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Realtime service.,default=true"`
+		Image           string        `toml:"-" json:"-" jsonschema:"default=supabase/realtime:v2.30.34"`
+		IpVersion       AddressFamily `toml:"ip_version" json:"ip_version" jsonschema:"description=Bind realtime via either IPv4 or IPv6. (default: IPv6),default=IPv4"`
+		MaxHeaderLength uint          `toml:"max_header_length" json:"max_header_length" jsonschema:"default=4096"`
+		TenantId        string        `toml:"-" json:"-" jsonschema:"default=realtime-dev"`
+		EncryptionKey   string        `toml:"-" json:"-" jsonschema:"default=supabaserealtime"`
+		SecretKeyBase   string        `toml:"-" json:"-" jsonschema:"default=EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG"`
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Supabase Studio dashboard."`
-		Image        string `toml:"-" json:"-"`
-		Port         uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for Supabase Studio."`
+		Enabled      bool   `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Supabase Studio dashboard.,default=true"`
+		Image        string `toml:"-" json:"-" jsonschema:"default=supabase/studio:20240729-ce42139"`
+		Port         uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for Supabase Studio.,default=54324"`
 		ApiUrl       string `toml:"api_url" json:"api_url" jsonschema:"description=External URL of the API server that frontend connects to."`
 		OpenaiApiKey string `toml:"openai_api_key" json:"openai_api_key"`
-		PgmetaImage  string `toml:"-" json:"-"`
+		PgmetaImage  string `toml:"-" json:"-" jsonschema:"default=supabase/postgres-meta:v0.83.2"`
 	}
 
 	inbucket struct {
-		Enabled  bool   `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local InBucket service."`
-		Image    string `toml:"-" json:"-"`
-		Port     uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for the email testing server web interface."`
-		SmtpPort uint16 `toml:"smtp_port" json:"smtp_port" jsonschema:"description=Port to use for the email testing server SMTP port."`
-		Pop3Port uint16 `toml:"pop3_port" json:"pop3_port" jsonschema:"description=Port to use for the email testing server POP3 port."`
+		Enabled  bool   `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local InBucket service.,default=true"`
+		Image    string `toml:"-" json:"-" jsonschema:"default=inbucket/inbucket:3.0.3"`
+		Port     uint16 `toml:"port" json:"port" jsonschema:"description=Port to use for the email testing server web interface.,default=2501"`
+		SmtpPort uint16 `toml:"smtp_port" json:"smtp_port" jsonschema:"description=Port to use for the email testing server SMTP port.,default=2500"`
+		Pop3Port uint16 `toml:"pop3_port" json:"pop3_port" jsonschema:"description=Port to use for the email testing server POP3 port.,default=1100"`
 	}
 
 	storage struct {
-		Enabled             bool                 `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Storage service."`
-		Image               string               `toml:"-" json:"-"`
+		Enabled             bool                 `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Storage service.,default=true"`
+		Image               string               `toml:"-" json:"-" jsonschema:"default=supabase/storage-api:v1.10.1"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit" json:"file_size_limit" jsonschema:"description=The maximum file size allowed (e.g. \u00605MB\u0060, \u0060500KB\u0060)."`
 		S3Credentials       storageS3Credentials `toml:"-" json:"-"`
 		ImageTransformation imageTransformation  `toml:"image_transformation" json:"image_transformation"`
@@ -226,38 +226,38 @@ type (
 	}
 
 	imageTransformation struct {
-		Enabled bool   `toml:"enabled" json:"enabled"`
-		Image   string `toml:"-" json:"-"`
+		Enabled bool   `toml:"enabled" json:"enabled" jsonschema:"default=true"`
+		Image   string `toml:"-" json:"-" jsonschema:"default=imageProxyImage"`
 	}
 
 	storageS3Credentials struct {
-		AccessKeyId     string `toml:"-" json:"-"`
-		SecretAccessKey string `toml:"-" json:"-"`
-		Region          string `toml:"-" json:"-"`
+		AccessKeyId     string `toml:"-" json:"-" jsonschema:"default=625729a08b95bf1b7ff351a663f3a23c"`
+		SecretAccessKey string `toml:"-" json:"-" jsonschema:"default=850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907"`
+		Region          string `toml:"-" json:"-" jsonschema:"default=local"`
 	}
 
 	auth struct {
-		Enabled                bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local GoTrue service."`
-		Image                  string   `toml:"-" json:"-"`
+		Enabled                bool     `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local GoTrue service.,default=true"`
+		Image                  string   `toml:"-" json:"-" jsonschema:"default=supabase/gotrue:v2.158.1"`
 		SiteUrl                string   `toml:"site_url" json:"site_url" jsonschema:"description=The base URL of your website. Used as an allow-list for redirects and for constructing URLs used in emails."`
 		AdditionalRedirectUrls []string `toml:"additional_redirect_urls" json:"additional_redirect_urls" jsonschema:"description=A list of _exact_ URLs that auth providers are permitted to redirect to post authentication."`
 
-		JwtExpiry                  uint `toml:"jwt_expiry" json:"jwt_expiry" jsonschema:"description=How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week)."`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation" json:"enable_refresh_token_rotation" jsonschema:"description=If disabled, the refresh token will never expire."`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval" json:"refresh_token_reuse_interval" jsonschema:"description=Allows refresh tokens to be reused after expiry, up to the specified interval in seconds. Requires enable_refresh_token_rotation = true."`
-		EnableManualLinking        bool `toml:"enable_manual_linking" json:"enable_manual_linking"`
+		JwtExpiry                  uint `toml:"jwt_expiry" json:"jwt_expiry" jsonschema:"description=How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week).,default=3600"`
+		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation" json:"enable_refresh_token_rotation" jsonschema:"description=If disabled, the refresh token will never expire.,default=false"`
+		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval" json:"refresh_token_reuse_interval" jsonschema:"description=Allows refresh tokens to be reused after expiry, up to the specified interval in seconds. Requires enable_refresh_token_rotation = true.,default=0"`
+		EnableManualLinking        bool `toml:"enable_manual_linking" json:"enable_manual_linking" jsonschema:"default=false"`
 
 		Hook     hook     `toml:"hook" json:"hook"`
 		MFA      mfa      `toml:"mfa" json:"mfa"`
 		Sessions sessions `toml:"sessions" json:"sessions"`
 
-		EnableSignup           bool                `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups to your project."`
-		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins" json:"enable_anonymous_sign_ins" jsonschema:"description=Allow/disallow anonymous sign-ins to your project."`
+		EnableSignup           bool                `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups to your project.,default=true"`
+		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins" json:"enable_anonymous_sign_ins" jsonschema:"description=Allow/disallow anonymous sign-ins to your project.,default=true"`
 		Email                  email               `toml:"email" json:"email"`
 		Sms                    sms                 `toml:"sms" json:"sms"`
 		External               map[string]provider `json:"external"`
 
-		JwtSecret      string `toml:"-" json:"-" mapstructure:"jwt_secret"`
+		JwtSecret      string `toml:"-" json:"-" mapstructure:"jwt_secret" jsonschema:"default=super-secret-jwt-token-with-at-least-32-characters-long"`
 		AnonKey        string `toml:"-" json:"-" mapstructure:"anon_key"`
 		ServiceRoleKey string `toml:"-" json:"-" mapstructure:"service_role_key"`
 
@@ -288,21 +288,21 @@ type (
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups via email to your project."`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" json:"double_confirm_changes" jsonschema:"description=If enabled, a user will be required to confirm any email change on both the old, and new email addresses. If disabled, only the new email is required to confirm."`
-		EnableConfirmations  bool                     `toml:"enable_confirmations" json:"enable_confirmations" jsonschema:"description=If enabled, users need to confirm their email address before signing in."`
-		SecurePasswordChange bool                     `toml:"secure_password_change" json:"secure_password_change" jsonschema:"description=If enabled, users need to confirm their email address before changing their password."`
+		EnableSignup         bool                     `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups via email to your project.,default=true"`
+		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" json:"double_confirm_changes" jsonschema:"description=If enabled, a user will be required to confirm any email change on both the old, and new email addresses. If disabled, only the new email is required to confirm.,default=true"`
+		EnableConfirmations  bool                     `toml:"enable_confirmations" json:"enable_confirmations" jsonschema:"description=If enabled, users need to confirm their email address before signing in.,default=true"`
+		SecurePasswordChange bool                     `toml:"secure_password_change" json:"secure_password_change" jsonschema:"description=If enabled, users need to confirm their email address before changing their password.,default=true"`
 		Template             map[string]emailTemplate `toml:"template" json:"template"`
 		Smtp                 smtp                     `toml:"smtp" json:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency" json:"max_frequency"`
 	}
 
 	smtp struct {
-		Host       string `toml:"host" json:"host" jsonschema:"description=Hostname or IP address of the SMTP server."`
-		Port       uint16 `toml:"port" json:"port" jsonschema:"description=Port number of the SMTP server."`
+		Host       string `toml:"host" json:"host" jsonschema:"description=Hostname or IP address of the SMTP server.,default=inbucket"`
+		Port       uint16 `toml:"port" json:"port" jsonschema:"description=Port number of the SMTP server.,default=2500"`
 		User       string `toml:"user" json:"user" jsonschema:"description=Username for authenticating with the SMTP server."`
 		Pass       string `toml:"pass" json:"pass" jsonschema:"description=Password for authenticating with the SMTP server."`
-		AdminEmail string `toml:"admin_email" json:"admin_email" jsonschema:"description=Email address of the administrator."`
+		AdminEmail string `toml:"admin_email" json:"admin_email" jsonschema:"description=Email address of the administrator.,default=admin@email.com"`
 		SenderName string `toml:"sender_name" json:"sender_name" jsonschema:"description=Name used as the sender for emails sent from the application."`
 	}
 
@@ -312,8 +312,8 @@ type (
 	}
 
 	sms struct {
-		EnableSignup        bool              `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups via SMS to your project."`
-		EnableConfirmations bool              `toml:"enable_confirmations" json:"enable_confirmations" jsonschema:"description=If enabled, users need to confirm their phone number before signing in."`
+		EnableSignup        bool              `toml:"enable_signup" json:"enable_signup" jsonschema:"description=Allow/disallow new user signups via SMS to your project.,default=true"`
+		EnableConfirmations bool              `toml:"enable_confirmations" json:"enable_confirmations" jsonschema:"description=If enabled, users need to confirm their phone number before signing in.,default=true"`
 		Template            string            `toml:"template" json:"template" jsonschema:"description=The template to use for SMS messages."`
 		Twilio              twilioConfig      `toml:"twilio" json:"twilio" mapstructure:"twilio"`
 		TwilioVerify        twilioConfig      `toml:"twilio_verify" json:"twilio_verify" mapstructure:"twilio_verify"`
@@ -396,10 +396,10 @@ type (
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Edge Functions service."`
-		Image         string        `toml:"-" json:"-"`
-		Policy        RequestPolicy `toml:"policy" json:"policy" jsonschema:"description=Configure one of the supported policies: \u0060per_worker\u0060, \u0060oneshot\u0060."`
-		InspectorPort uint16        `toml:"inspector_port" json:"inspector_port"`
+		Enabled       bool          `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Edge Functions service.,default=true"`
+		Image         string        `toml:"-" json:"-" jsonschema:"default=supabase/edge-runtime:v1.58.3"`
+		Policy        RequestPolicy `toml:"policy" json:"policy" jsonschema:"description=Configure one of the supported policies: \u0060per_worker\u0060, \u0060oneshot\u0060.,default=per_worker"`
+		InspectorPort uint16        `toml:"inspector_port" json:"inspector_port" jsonschema:"default=54325"`
 	}
 
 	FunctionConfig map[string]function
@@ -412,16 +412,16 @@ type (
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Logflare service."`
-		Image            string          `toml:"-" json:"-"`
-		VectorImage      string          `toml:"-" json:"-"`
-		Port             uint16          `toml:"port" json:"port" jsonschema:"description=Port to the local Logflare service."`
-		Backend          LogflareBackend `toml:"backend" json:"backend" jsonschema:"description=Configure one of the supported backends: \u0060postgres\u0060, \u0060bigquery\u0060."`
+		Enabled          bool            `toml:"enabled" json:"enabled" jsonschema:"description=Enable the local Logflare service.,default=true"`
+		Image            string          `toml:"-" json:"-" jsonschema:"default=supabase/logflare:1.4.0"`
+		VectorImage      string          `toml:"-" json:"-" jsonschema:"default=timberio/vector:0.28.1-alpine"`
+		Port             uint16          `toml:"port" json:"port" jsonschema:"description=Port to the local Logflare service.,default=54326"`
+		Backend          LogflareBackend `toml:"backend" json:"backend" jsonschema:"description=Configure one of the supported backends: \u0060postgres\u0060, \u0060bigquery\u0060.,default=bigquery"`
 		GcpProjectId     string          `toml:"gcp_project_id" json:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number" json:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path" json:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-" json:"-" mapstructure:"api_key"`
-		VectorPort       uint16          `toml:"vector_port" json:"vector_port" jsonschema:"description=Port to the local syslog ingest service."`
+		ApiKey           string          `toml:"-" json:"-" mapstructure:"api_key" jsonschema:"default=api-key"`
+		VectorPort       uint16          `toml:"vector_port" json:"vector_port" jsonschema:"description=Port to the local syslog ingest service.,default=54327"`
 	}
 
 	experimental struct {

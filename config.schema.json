@@ -19,15 +19,18 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Logflare service."
+          "description": "Enable the local Logflare service.",
+          "default": true
         },
         "port": {
           "type": "integer",
-          "description": "Port to the local Logflare service."
+          "description": "Port to the local Logflare service.",
+          "default": 54326
         },
         "backend": {
           "type": "string",
-          "description": "Configure one of the supported backends: `postgres`"
+          "description": "Configure one of the supported backends: `postgres`",
+          "default": "bigquery"
         },
         "gcp_project_id": {
           "type": "string"
@@ -40,7 +43,8 @@
         },
         "vector_port": {
           "type": "integer",
-          "description": "Port to the local syslog ingest service."
+          "description": "Port to the local syslog ingest service.",
+          "default": 54327
         }
       },
       "additionalProperties": false,
@@ -50,11 +54,13 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local PostgREST service."
+          "description": "Enable the local PostgREST service.",
+          "default": true
         },
         "port": {
           "type": "integer",
-          "description": "Port to use for the API URL."
+          "description": "Port to use for the API URL.",
+          "default": 54321
         },
         "schemas": {
           "items": {
@@ -72,7 +78,8 @@
         },
         "max_rows": {
           "type": "integer",
-          "description": "The maximum number of rows returned from a view"
+          "description": "The maximum number of rows returned from a view",
+          "default": 1000
         },
         "tls": {
           "$ref": "#/$defs/tlsKong"
@@ -88,7 +95,8 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local GoTrue service."
+          "description": "Enable the local GoTrue service.",
+          "default": true
         },
         "site_url": {
           "type": "string",
@@ -103,18 +111,22 @@
         },
         "jwt_expiry": {
           "type": "integer",
-          "description": "How long tokens are valid for"
+          "description": "How long tokens are valid for",
+          "default": 3600
         },
         "enable_refresh_token_rotation": {
           "type": "boolean",
-          "description": "If disabled"
+          "description": "If disabled",
+          "default": false
         },
         "refresh_token_reuse_interval": {
           "type": "integer",
-          "description": "Allows refresh tokens to be reused after expiry"
+          "description": "Allows refresh tokens to be reused after expiry",
+          "default": 0
         },
         "enable_manual_linking": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false
         },
         "hook": {
           "$ref": "#/$defs/hook"
@@ -127,11 +139,13 @@
         },
         "enable_signup": {
           "type": "boolean",
-          "description": "Allow/disallow new user signups to your project."
+          "description": "Allow/disallow new user signups to your project.",
+          "default": true
         },
         "enable_anonymous_sign_ins": {
           "type": "boolean",
-          "description": "Allow/disallow anonymous sign-ins to your project."
+          "description": "Allow/disallow anonymous sign-ins to your project.",
+          "default": true
         },
         "email": {
           "$ref": "#/$defs/email"
@@ -234,15 +248,18 @@
       "properties": {
         "port": {
           "type": "integer",
-          "description": "Port to use for the local database URL."
+          "description": "Port to use for the local database URL.",
+          "default": 54322
         },
         "shadow_port": {
           "type": "integer",
-          "description": "Port to use for the local shadow database."
+          "description": "Port to use for the local shadow database.",
+          "default": 54320
         },
         "major_version": {
           "type": "integer",
-          "description": "The database major version to use. This has to be the same as your remote database's. Run `SHOW server_version;` on the remote database to check."
+          "description": "The database major version to use. This has to be the same as your remote database's. Run `SHOW server_version;` on the remote database to check.",
+          "default": 15
         },
         "pooler": {
           "$ref": "#/$defs/pooler"
@@ -258,14 +275,17 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Edge Functions service."
+          "description": "Enable the local Edge Functions service.",
+          "default": true
         },
         "policy": {
           "type": "string",
-          "description": "Configure one of the supported policies: `per_worker`"
+          "description": "Configure one of the supported policies: `per_worker`",
+          "default": "per_worker"
         },
         "inspector_port": {
-          "type": "integer"
+          "type": "integer",
+          "default": 54325
         }
       },
       "additionalProperties": false,
@@ -275,19 +295,23 @@
       "properties": {
         "enable_signup": {
           "type": "boolean",
-          "description": "Allow/disallow new user signups via email to your project."
+          "description": "Allow/disallow new user signups via email to your project.",
+          "default": true
         },
         "double_confirm_changes": {
           "type": "boolean",
-          "description": "If enabled"
+          "description": "If enabled",
+          "default": true
         },
         "enable_confirmations": {
           "type": "boolean",
-          "description": "If enabled"
+          "description": "If enabled",
+          "default": true
         },
         "secure_password_change": {
           "type": "boolean",
-          "description": "If enabled"
+          "description": "If enabled",
+          "default": true
         },
         "template": {
           "additionalProperties": {
@@ -410,7 +434,8 @@
     "imageTransformation": {
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false,
@@ -420,19 +445,23 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local InBucket service."
+          "description": "Enable the local InBucket service.",
+          "default": true
         },
         "port": {
           "type": "integer",
-          "description": "Port to use for the email testing server web interface."
+          "description": "Port to use for the email testing server web interface.",
+          "default": 2501
         },
         "smtp_port": {
           "type": "integer",
-          "description": "Port to use for the email testing server SMTP port."
+          "description": "Port to use for the email testing server SMTP port.",
+          "default": 2500
         },
         "pop3_port": {
           "type": "integer",
-          "description": "Port to use for the email testing server POP3 port."
+          "description": "Port to use for the email testing server POP3 port.",
+          "default": 1100
         }
       },
       "additionalProperties": false,
@@ -492,23 +521,28 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local PgBouncer service."
+          "description": "Enable the local PgBouncer service.",
+          "default": true
         },
         "port": {
           "type": "integer",
-          "description": "Port to use for the local connection pooler."
+          "description": "Port to use for the local connection pooler.",
+          "default": 54323
         },
         "pool_mode": {
           "type": "string",
-          "description": "Specifies when a server connection can be reused by other clients. Configure one of the supported pooler modes: `transaction`"
+          "description": "Specifies when a server connection can be reused by other clients. Configure one of the supported pooler modes: `transaction`",
+          "default": "transaction"
         },
         "default_pool_size": {
           "type": "integer",
-          "description": "How many server connections to allow per user/database pair."
+          "description": "How many server connections to allow per user/database pair.",
+          "default": 50
         },
         "max_client_conn": {
           "type": "integer",
-          "description": "Maximum number of client connections allowed."
+          "description": "Maximum number of client connections allowed.",
+          "default": 100
         }
       },
       "additionalProperties": false,
@@ -548,14 +582,17 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Realtime service."
+          "description": "Enable the local Realtime service.",
+          "default": true
         },
         "ip_version": {
           "type": "string",
-          "description": "Bind realtime via either IPv4 or IPv6. (default: IPv6)"
+          "description": "Bind realtime via either IPv4 or IPv6. (default: IPv6)",
+          "default": "IPv4"
         },
         "max_header_length": {
-          "type": "integer"
+          "type": "integer",
+          "default": 4096
         }
       },
       "additionalProperties": false,
@@ -588,11 +625,13 @@
       "properties": {
         "enable_signup": {
           "type": "boolean",
-          "description": "Allow/disallow new user signups via SMS to your project."
+          "description": "Allow/disallow new user signups via SMS to your project.",
+          "default": true
         },
         "enable_confirmations": {
           "type": "boolean",
-          "description": "If enabled"
+          "description": "If enabled",
+          "default": true
         },
         "template": {
           "type": "string",
@@ -632,11 +671,13 @@
       "properties": {
         "host": {
           "type": "string",
-          "description": "Hostname or IP address of the SMTP server."
+          "description": "Hostname or IP address of the SMTP server.",
+          "default": "inbucket"
         },
         "port": {
           "type": "integer",
-          "description": "Port number of the SMTP server."
+          "description": "Port number of the SMTP server.",
+          "default": 2500
         },
         "user": {
           "type": "string",
@@ -648,7 +689,8 @@
         },
         "admin_email": {
           "type": "string",
-          "description": "Email address of the administrator."
+          "description": "Email address of the administrator.",
+          "default": "admin@email.com"
         },
         "sender_name": {
           "type": "string",
@@ -662,7 +704,8 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Storage service."
+          "description": "Enable the local Storage service.",
+          "default": true
         },
         "file_size_limit": {
           "type": "integer",
@@ -682,11 +725,13 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Supabase Studio dashboard."
+          "description": "Enable the local Supabase Studio dashboard.",
+          "default": true
         },
         "port": {
           "type": "integer",
-          "description": "Port to use for Supabase Studio."
+          "description": "Port to use for Supabase Studio.",
+          "default": 54324
         },
         "api_url": {
           "type": "string",
