@@ -52,11 +52,11 @@ func TestSeedData(t *testing.T) {
 	})
 }
 
-//go:embed testdata/globals.sql
+//go:embed testdata/1_globals.sql
 var testGlobals string
 
 func TestSeedGlobals(t *testing.T) {
-	pending := []string{"testdata/globals.sql"}
+	pending := []string{"testdata/1_globals.sql"}
 
 	t.Run("seeds from file", func(t *testing.T) {
 		// Setup mock postgres

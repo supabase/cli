@@ -28,9 +28,13 @@ func SeedGlobals(ctx context.Context, pending []string, conn *pgx.Conn, fsys fs.
 	for _, path := range pending {
 		filename := filepath.Base(path)
 		fmt.Fprintf(os.Stderr, "Seeding globals from %s...\n", filename)
-		if globals, err := NewMigrationFromFile(path, fsys); err != nil {
+		globals, err := NewMigrationFromFile(path, fsys)
+		if err != nil {
 			return err
-		} else if err := globals.ExecBatch(ctx, conn); err != nil {
+		}
+		// Skip inserting to migration history
+		globals.Version = ""
+		if err := globals.ExecBatch(ctx, conn); err != nil {
 			return err
 		}
 	}
