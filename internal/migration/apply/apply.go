@@ -27,11 +27,15 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 }
 
 func SeedDatabase(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	err := migration.SeedData(ctx, []string{utils.DefaultSeedDataPath}, conn, afero.NewIOFS(fsys))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	if seedPaths, err := utils.GetSeedFiles(fsys); err != nil {
+		return err
+	} else {
+		err := migration.SeedData(ctx, seedPaths, conn, afero.NewIOFS(fsys))
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	return err
 }
 
 func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

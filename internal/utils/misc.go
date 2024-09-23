@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -156,6 +157,28 @@ var (
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
+
+func GetSeedsFilepaths() string {
+	if seedPaths, _ := GetSeedFiles(afero.NewOsFs()); seedPaths != nil {
+		return fmt.Sprintf("%v", seedPaths)
+	}
+	return DefaultSeedDataPath
+}
+
+func GetSeedFiles(fsys afero.Fs) ([]string, error) {
+	seedPaths := Config.Db.Seed.Path
+	var files []string
+	for _, pattern := range seedPaths {
+		patternWithBase := SupabaseDirPath + pattern
+		matches, err := afero.Glob(fsys, patternWithBase)
+		if err != nil {
+			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
+		}
+		sort.Strings(matches)
+		files = append(files, matches...)
+	}
+	return files, nil
+}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
