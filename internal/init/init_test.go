@@ -73,7 +73,7 @@ func TestInitCommand(t *testing.T) {
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.DefaultSeedDataPath}
-		fsys.Create(utils.DefaultSeedDataPath)
+		_, _ = fsys.Create(utils.DefaultSeedDataPath)
 		// Run test
 		err := Run(context.Background(), fsys, nil, nil, utils.InitParams{})
 		// Check error

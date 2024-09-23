@@ -103,7 +103,7 @@ func TestSeedDatabase(t *testing.T) {
 		errorFs := &fstest.OpenErrorFs{
 			DenyPath: utils.DefaultSeedDataPath,
 		}
-		errorFs.Create(utils.DefaultSeedDataPath)
+		_, _ = errorFs.Create(utils.DefaultSeedDataPath)
 
 		// Run test
 		err := SeedDatabase(context.Background(), nil, errorFs)
