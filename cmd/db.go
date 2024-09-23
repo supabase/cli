@@ -276,7 +276,7 @@ func init() {
 	pushFlags := dbPushCmd.Flags()
 	pushFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
 	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
-	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from "+utils.GetSeedsFilepaths()+".")
+	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from your config.")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	pushFlags.String("db-url", "", "Pushes to the database specified by the connection string (must be percent-encoded).")
 	pushFlags.Bool("linked", true, "Pushes to the linked project.")
