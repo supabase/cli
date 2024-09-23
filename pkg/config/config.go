@@ -164,7 +164,8 @@ type (
 	}
 
 	seed struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool     `toml:"enabled"`
+		Path    []string `toml:"path"`
 	}
 
 	pooler struct {
@@ -465,6 +466,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			},
 			Seed: seed{
 				Enabled: true,
+				Path:    []string{"./seed.sql"},
 			},
 		},
 		Realtime: realtime{

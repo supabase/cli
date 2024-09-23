@@ -78,7 +78,7 @@ func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntelli
 }
 
 func initSeed(fsys afero.Fs) error {
-	f, err := fsys.OpenFile(utils.SeedDataPath, os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := fsys.OpenFile(utils.DefaultSeedDataPath, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create seed file: %w", err)
 	}

@@ -41,7 +41,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		fmt.Fprintln(os.Stderr, "Would push these migrations:")
 		fmt.Fprint(os.Stderr, utils.Bold(confirmPushAll(pending)))
 		if includeSeed {
-			fmt.Fprintln(os.Stderr, "Would seed data "+utils.Bold(utils.SeedDataPath)+"...")
+			fmt.Fprintln(os.Stderr, "Would seed data "+utils.Bold(utils.DefaultSeedDataPath)+"...")
 		}
 	} else {
 		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))

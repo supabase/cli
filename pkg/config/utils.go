@@ -29,7 +29,7 @@ type pathBuilder struct {
 	FallbackImportMapPath string
 	FallbackEnvFilePath   string
 	DbTestsDir            string
-	SeedDataPath          string
+	DefaultSeedDataPath   string
 	CustomRolesPath       string
 }
 
@@ -63,7 +63,7 @@ func NewPathBuilder(configPath string) pathBuilder {
 		FallbackImportMapPath: filepath.Join(base, "functions", "import_map.json"),
 		FallbackEnvFilePath:   filepath.Join(base, "functions", ".env"),
 		DbTestsDir:            filepath.Join(base, "tests"),
-		SeedDataPath:          filepath.Join(base, "seed.sql"),
+		DefaultSeedDataPath:   filepath.Join(base, "seed.sql"),
 		CustomRolesPath:       filepath.Join(base, "roles.sql"),
 	}
 }

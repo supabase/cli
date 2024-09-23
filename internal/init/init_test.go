@@ -29,7 +29,7 @@ func TestInitCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate generated seed.sql
-		exists, err = afero.Exists(fsys, utils.SeedDataPath)
+		exists, err = afero.Exists(fsys, utils.DefaultSeedDataPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate vscode settings file isn't generated
@@ -72,7 +72,7 @@ func TestInitCommand(t *testing.T) {
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.SeedDataPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.DefaultSeedDataPath}
 		// Run test
 		err := Run(context.Background(), fsys, nil, nil, utils.InitParams{})
 		// Check error
