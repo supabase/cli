@@ -99,10 +99,15 @@ func TestSeedDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on read failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.DefaultSeedDataPath}
+		// Wrap the fs with OpenErrorFs
+		errorFs := &fstest.OpenErrorFs{
+			DenyPath: utils.DefaultSeedDataPath,
+		}
+		errorFs.Create(utils.DefaultSeedDataPath)
+
 		// Run test
-		err := SeedDatabase(context.Background(), nil, fsys)
+		err := SeedDatabase(context.Background(), nil, errorFs)
+
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})

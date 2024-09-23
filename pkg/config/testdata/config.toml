@@ -39,6 +39,14 @@ default_pool_size = 20
 # Maximum number of client connections allowed.
 max_client_conn = 100
 
+[db.seed]
+# Allow to decide if db reset should seed your database after migrations or not
+enabled = true
+# A list of glob patterns where base path is supabase folder allowing to load 
+# specific seeds scripts at reset time
+# example: path = ['./seeds/*.sql', '../project-src/seeds/.*-load-testing.sql']
+path = ['./seed.sql']
+
 [realtime]
 enabled = true
 # Bind realtime via either IPv4 or IPv6. (default: IPv6)

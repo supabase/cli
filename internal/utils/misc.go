@@ -175,15 +175,20 @@ func GetSeedFiles(fsys afero.Fs) ([]string, error) {
 	fileSet := make(map[string]struct{})
 	var files []string
 	for _, pattern := range seedPaths {
-		matches, err := afero.Glob(fsys, pattern)
+		fullPattern := filepath.Join(SupabaseDirPath, pattern)
+		matches, err := afero.Glob(fsys, fullPattern)
 		if err != nil {
 			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
 		}
 		sort.Strings(matches)
+		// Dedup the new matches with previously matched seeds to avoid duplication
+		// between matching patterns
 		for _, match := range matches {
 			if _, exists := fileSet[match]; !exists {
 				fileSet[match] = struct{}{}
 				files = append(files, match)
+			} else {
+				fmt.Fprintf(GetDebugLogger(), "Duplicate seed file found skipping: %s\n", match)
 			}
 		}
 	}

@@ -81,11 +81,11 @@ func TestGetSeedFiles(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Create seed files
-		require.NoError(t, afero.WriteFile(fsys, "seeds/seed1.sql", []byte("INSERT INTO table1 VALUES (1);"), 0644))
-		require.NoError(t, afero.WriteFile(fsys, "seeds/seed2.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
-		require.NoError(t, afero.WriteFile(fsys, "seeds/seed3.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
-		require.NoError(t, afero.WriteFile(fsys, "seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
-		require.NoError(t, afero.WriteFile(fsys, "seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed1.sql", []byte("INSERT INTO table1 VALUES (1);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed2.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed3.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
 		// Mock config patterns
 		Config.Db.Seed.Path = []string{"seeds/seed[12].sql", "seeds/ano*.sql"}
 
@@ -95,14 +95,34 @@ func TestGetSeedFiles(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		// Validate files
-		assert.ElementsMatch(t, []string{"seeds/seed1.sql", "seeds/seed2.sql", "seeds/another.sql"}, files)
+		assert.ElementsMatch(t, []string{"supabase/seeds/seed1.sql", "supabase/seeds/seed2.sql", "supabase/seeds/another.sql"}, files)
+	})
+	t.Run("returns seed files matching patterns skip duplicates", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create seed files
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed1.sql", []byte("INSERT INTO table1 VALUES (1);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed2.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed3.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
+		// Mock config patterns
+		Config.Db.Seed.Path = []string{"seeds/seed[12].sql", "seeds/ano*.sql", "seeds/seed*.sql"}
+
+		// Run test
+		files, err := GetSeedFiles(fsys)
+
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.ElementsMatch(t, []string{"supabase/seeds/seed1.sql", "supabase/seeds/seed2.sql", "supabase/seeds/another.sql", "supabase/seeds/seed3.sql"}, files)
 	})
 
 	t.Run("returns error on invalid pattern", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Mock config patterns
-		Config.Db.Seed.Path = []string{"[invalid pattern"}
+		Config.Db.Seed.Path = []string{"[*!#@D#"}
 
 		// Run test
 		files, err := GetSeedFiles(fsys)
