@@ -104,7 +104,6 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 		if err != nil {
 			return "", errors.Errorf("failed to deserialize body: %w", err)
 		}
-		owner := res.Result.OwnershipVerification
 		ssl := res.Result.Ssl.ValidationRecords
 		if res.Result.Ssl.Status == "initializing" {
 			return appendRawOutputIfNeeded("Custom hostname setup is being initialized; please request re-verification in a few seconds.\n", response, includeRawOutput), nil
@@ -124,11 +123,8 @@ Please ensure that your custom domain is set up as a CNAME record to your Supaba
 			return "", errors.Errorf("expected a single SSL verification record, received: %+v", ssl)
 		}
 		records := ""
-		if owner.Name != "" {
-			records = fmt.Sprintf("\n\t%s TXT -> %s", owner.Name, owner.Value)
-		}
 		if ssl[0].TxtName != "" {
-			records = fmt.Sprintf("%s\n\t%s TXT -> %s (replace any existing CNAME records)", records, ssl[0].TxtName, ssl[0].TxtValue)
+			records = fmt.Sprintf("%s\n\t%s TXT -> %s", records, ssl[0].TxtName, ssl[0].TxtValue)
 		}
 		status := fmt.Sprintf("Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n"+
 			"Required outstanding validation records: %s\n",
