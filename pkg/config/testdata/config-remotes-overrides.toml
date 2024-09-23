@@ -228,3 +228,6 @@ client_id = "nope"
 
 [remotes.feature-storage-branch.storage.buckets.images]
 allowed_mime_types = ["image/png", "image/jpeg", "image/svg+xml"]
+
+[remotes.feature-storage-with-less-elemens-in-array.storage.buckets.images]
+allowed_mime_types = ["image/png"]

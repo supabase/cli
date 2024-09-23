@@ -446,6 +446,27 @@ func TestLoadRemoteConfigOverrides(t *testing.T) {
 		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 	})
 
+	t.Run("can load feature-storage-with-less-elemens-in-array", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-storage-with-less-elemens-in-array", fsys))
+		// Check that feature-storage-branch config replaced default config
+		assert.Equal(t, []string{"image/png"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+		// Verify that other config values remain unchanged
+		assert.Equal(t, "test", config.ProjectId)
+		assert.Equal(t, uint16(54321), config.Api.Port)
+		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
+		assert.Equal(t, true, config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
+	})
+
 	t.Run("can load feature-auth-branch with env override value", func(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
