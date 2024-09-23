@@ -165,17 +165,27 @@ func GetSeedsFilepaths() string {
 	return DefaultSeedDataPath
 }
 
+/*
+** Match the glob patterns from the config to get
+** a deduplicated array of all migrations files to apply
+** in the declared order
+ */
 func GetSeedFiles(fsys afero.Fs) ([]string, error) {
 	seedPaths := Config.Db.Seed.Path
+	fileSet := make(map[string]struct{})
 	var files []string
 	for _, pattern := range seedPaths {
-		patternWithBase := SupabaseDirPath + pattern
-		matches, err := afero.Glob(fsys, patternWithBase)
+		matches, err := afero.Glob(fsys, pattern)
 		if err != nil {
 			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
 		}
 		sort.Strings(matches)
-		files = append(files, matches...)
+		for _, match := range matches {
+			if _, exists := fileSet[match]; !exists {
+				fileSet[match] = struct{}{}
+				files = append(files, match)
+			}
+		}
 	}
 	return files, nil
 }
