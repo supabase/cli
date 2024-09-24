@@ -44,8 +44,8 @@ max_client_conn = 100
 enabled = true
 # Specifies seed files to load during db reset using glob patterns
 # Base path is the Supabase project folder
-# Example: path = ['./seeds/*.sql', '../project-src/seeds/*-load-testing.sql']
-path = ['./seed.sql']
+# Example: sql_paths = ['./seeds/*.sql', '../project-src/seeds/*-load-testing.sql']
+sql_paths = ['./seed.sql']
 
 [realtime]
 enabled = true

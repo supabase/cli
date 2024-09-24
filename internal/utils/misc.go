@@ -162,7 +162,7 @@ func GetSeedsFilepaths() string {
 	if seedPaths, _ := GetSeedFiles(afero.NewOsFs()); seedPaths != nil {
 		return fmt.Sprintf("%v", seedPaths)
 	}
-	return DefaultSeedDataPath
+	return ""
 }
 
 /*
@@ -171,8 +171,7 @@ func GetSeedsFilepaths() string {
 ** in the declared order
  */
 func GetSeedFiles(fsys afero.Fs) ([]string, error) {
-	seedPaths := Config.Db.Seed.Path
-	fileSet := make(map[string]struct{})
+	seedPaths := Config.Db.Seed.SqlPaths
 	var files []string
 	for _, pattern := range seedPaths {
 		fullPattern := filepath.Join(SupabaseDirPath, pattern)
@@ -180,19 +179,13 @@ func GetSeedFiles(fsys afero.Fs) ([]string, error) {
 		if err != nil {
 			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
 		}
-		sort.Strings(matches)
-		// Dedup the new matches with previously matched seeds to avoid duplication
-		// between matching patterns
-		for _, match := range matches {
-			if _, exists := fileSet[match]; !exists {
-				fileSet[match] = struct{}{}
-				files = append(files, match)
-			} else {
-				fmt.Fprintf(GetDebugLogger(), "Duplicate seed file found skipping: %s\n", match)
-			}
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("Warning:"), pattern)
 		}
+		sort.Strings(matches)
+		files = append(files, matches...)
 	}
-	return files, nil
+	return RemoveDuplicates(files), nil
 }
 
 func GetCurrentTimestamp() string {
