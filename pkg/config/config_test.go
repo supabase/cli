@@ -81,11 +81,13 @@ func TestConfigParsing(t *testing.T) {
 		staging, ok := config.Remotes["staging"]
 		assert.True(t, ok)
 		// Check the values for production override
+		assert.Equal(t, config.ProjectId, production.ProjectId)
 		assert.Equal(t, "http://feature-auth-branch.com/", production.Auth.SiteUrl)
 		assert.Equal(t, false, production.Auth.EnableSignup)
 		assert.Equal(t, false, production.Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", production.Auth.External["azure"].ClientId)
 		// Check the values for the staging override
+		assert.Equal(t, "staging-project", staging.ProjectId)
 		assert.Equal(t, []string{"image/png"}, staging.Storage.Buckets["images"].AllowedMimeTypes)
 	})
 }
