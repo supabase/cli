@@ -100,9 +100,6 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		// "storage",
 		// "supabase_functions",
 		"supabase_migrations",
-		"_analytics",
-		"_realtime",
-		"_supavisor",
 	}
 	var env []string
 	if len(schema) > 0 {

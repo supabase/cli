@@ -12,14 +12,22 @@ ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_read_only_user WITH PASSWORD :'pgpass';
 
-create schema if not exists _realtime;
-alter schema _realtime owner to postgres;
+CREATE DATABASE _supabase WITH OWNER postgres;
+-- Connect to the _supabase database
+\c _supabase
+-- Create schemas in _supabase database for
+-- internals tools and reports to not overload user database
+-- with non-user activity
+CREATE SCHEMA IF NOT EXISTS _realtime;
+ALTER SCHEMA _realtime OWNER TO postgres;
 
-create schema if not exists _analytics;
-alter schema _analytics owner to postgres;
+CREATE SCHEMA IF NOT EXISTS _analytics;
+ALTER SCHEMA _analytics OWNER TO postgres;
 
-create schema if not exists _supavisor;
-alter schema _supavisor owner to postgres;
+CREATE SCHEMA IF NOT EXISTS _supavisor;
+ALTER SCHEMA _supavisor OWNER TO postgres;
+-- Switch back to the main database
+\c postgres
 
 BEGIN;
 

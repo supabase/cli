@@ -195,7 +195,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
-			"DB_DATABASE=" + dbConfig.Database,
+			"DB_DATABASE=_supabase",
 			"DB_HOSTNAME=" + dbConfig.Host,
 			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 			"DB_SCHEMA=_analytics",
@@ -228,7 +228,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			)
 		case config.LogflarePostgres:
 			env = append(env,
-				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, "_supabase"),
 				"POSTGRES_BACKEND_SCHEMA=_analytics",
 			)
 		}
@@ -750,7 +750,7 @@ EOF
 					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 					"DB_USER=supabase_admin",
 					"DB_PASSWORD=" + dbConfig.Password,
-					"DB_NAME=" + dbConfig.Database,
+					"DB_NAME=_supabase",
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
@@ -1045,7 +1045,7 @@ EOF
 					"PORT=4000",
 					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),
 					fmt.Sprintf("PROXY_PORT_TRANSACTION=%d", portTransaction),
-					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, "_supabase"),
 					"CLUSTER_POSTGRES=true",
 					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
 					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
