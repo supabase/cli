@@ -87,7 +87,7 @@ func TestGetSeedFiles(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
 		// Mock config patterns
-		Config.Db.Seed.Path = []string{"seeds/seed[12].sql", "seeds/ano*.sql"}
+		Config.Db.Seed.SqlPaths = []string{"seeds/seed[12].sql", "seeds/ano*.sql"}
 
 		// Run test
 		files, err := GetSeedFiles(fsys)
@@ -107,7 +107,7 @@ func TestGetSeedFiles(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
 		// Mock config patterns
-		Config.Db.Seed.Path = []string{"seeds/seed[12].sql", "seeds/ano*.sql", "seeds/seed*.sql"}
+		Config.Db.Seed.SqlPaths = []string{"seeds/seed[12].sql", "seeds/ano*.sql", "seeds/seed*.sql"}
 
 		// Run test
 		files, err := GetSeedFiles(fsys)
@@ -122,7 +122,7 @@ func TestGetSeedFiles(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Mock config patterns
-		Config.Db.Seed.Path = []string{"[*!#@D#"}
+		Config.Db.Seed.SqlPaths = []string{"[*!#@D#"}
 
 		// Run test
 		files, err := GetSeedFiles(fsys)
@@ -137,7 +137,7 @@ func TestGetSeedFiles(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Mock config patterns
-		Config.Db.Seed.Path = []string{"seeds/*.sql"}
+		Config.Db.Seed.SqlPaths = []string{"seeds/*.sql"}
 
 		// Run test
 		files, err := GetSeedFiles(fsys)
