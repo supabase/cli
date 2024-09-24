@@ -145,6 +145,10 @@ func TestRecreateDatabase(t *testing.T) {
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
+			Reply("CREATE DATABASE").
+			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
+			Reply("DROP DATABASE").
+			Query("CREATE DATABASE _supabase WITH OWNER postgres").
 			Reply("CREATE DATABASE")
 		// Run test
 		assert.NoError(t, recreateDatabase(context.Background(), conn.Intercept))
@@ -194,8 +198,11 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
-			Query("CREATE DATABASE postgres WITH OWNER postgres")
-		// Run test
+			Query("CREATE DATABASE postgres WITH OWNER postgres").
+			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
+			Reply("DROP DATABASE").
+			Query("CREATE DATABASE _supabase WITH OWNER postgres").
+			Reply("CREATE DATABASE")
 		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" is used by an active logical replication slot (SQLSTATE 55006)`)

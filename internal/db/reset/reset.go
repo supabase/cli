@@ -170,8 +170,8 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	sql := migration.MigrationFile{
 		Statements: []string{
 			"DROP DATABASE IF EXISTS postgres WITH (FORCE)",
-			"DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
 			"CREATE DATABASE postgres WITH OWNER postgres",
+			"DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
 			"CREATE DATABASE _supabase WITH OWNER postgres",
 		},
 	}
