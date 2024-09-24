@@ -715,11 +715,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		// Encode a toml file with only config overrides
 		var buf bytes.Buffer
 		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
-			return errors.Errorf("faild to encode map to TOML: %w", err)
+			return errors.Errorf("failed to encode map to TOML: %w", err)
 		}
 		// Decode overrides using base config as defaults
 		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
-			return errors.Errorf("faild to decode remote config: %w", err)
+			return errors.Errorf("failed to decode remote config: %w", err)
 		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
 			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 		}
