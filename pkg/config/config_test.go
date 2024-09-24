@@ -15,12 +15,6 @@ import (
 //go:embed testdata/config.toml
 var testInitConfigEmbed []byte
 
-//go:embed testdata/config-remotes-overrides.toml
-var testInitRemotesConfigEmbed []byte
-
-//go:embed testdata/config-remotes-env-overrides.toml
-var testInitRemotesConfigWithEnvOverrideEmbed []byte
-
 func TestConfigParsing(t *testing.T) {
 	t.Run("classic config file", func(t *testing.T) {
 		config := NewConfig()
@@ -62,29 +56,37 @@ func TestConfigParsing(t *testing.T) {
 		assert.Error(t, config.Load("", fsys))
 	})
 
-	t.Run("config file with remotes branch config", func(t *testing.T) {
+	t.Run("config file with remotes", func(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
 			"supabase/templates/invite.html": &fs.MapFile{},
 		}
 		// Run test
+		t.Setenv("TWILIO_AUTH_TOKEN", "token")
+		t.Setenv("AZURE_CLIENT_ID", "hello")
+		t.Setenv("AZURE_SECRET", "this is cool")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		t.Setenv("SENDGRID_API_KEY", "sendgrid")
 		assert.NoError(t, config.Load("", fsys))
 		// Check the default value in the config
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
 		assert.Equal(t, true, config.Auth.EnableSignup)
 		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
-		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
 		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
-		// Check the values for the remote feature-auth-branch override
-		assert.Equal(t, "http://feature-auth-branch.com/", config.Remotes["feature-auth-branch"].Auth.SiteUrl)
-		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.EnableSignup)
-		assert.Equal(t, false, config.Remotes["feature-auth-branch"].Auth.External["azure"].Enabled)
-		assert.Equal(t, "nope", config.Remotes["feature-auth-branch"].Auth.External["azure"].ClientId)
-
-		// Check the values for the remote feature-storage-branch override
-		assert.Equal(t, []string{"image/png", "image/jpeg", "image/svg+xml"}, config.Remotes["feature-storage-branch"].Storage.Buckets["images"].AllowedMimeTypes)
+		// Check the values for remotes override
+		production, ok := config.Remotes["production"]
+		assert.True(t, ok)
+		staging, ok := config.Remotes["staging"]
+		assert.True(t, ok)
+		// Check the values for production override
+		assert.Equal(t, "http://feature-auth-branch.com/", production.Auth.SiteUrl)
+		assert.Equal(t, false, production.Auth.EnableSignup)
+		assert.Equal(t, false, production.Auth.External["azure"].Enabled)
+		assert.Equal(t, "nope", production.Auth.External["azure"].ClientId)
+		// Check the values for the staging override
+		assert.Equal(t, []string{"image/png"}, staging.Storage.Buckets["images"].AllowedMimeTypes)
 	})
 }
 
@@ -242,255 +244,4 @@ func TestValidateHookURI(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLoadRemoteConfigOverrides(t *testing.T) {
-	t.Run("no remote config load non-existent branch", func(t *testing.T) {
-		const configToml = `
-		project_id = "config"
-		[api]
-		port = 54321
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-
-		// Attempt to load a non-existent remote branch
-		err := config.LoadRemoteConfigOverrides("config.toml", "non-existent-branch", fsys)
-		assert.NoError(t, err)
-
-		// Ensure the config remains unchanged
-		assert.Equal(t, "config", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-	})
-
-	t.Run("override project id", func(t *testing.T) {
-		const configToml = `
-		project_id = "original-project"
-
-		[remotes.feature-branch]
-		project_id = "feature-project"
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-		// Load the remote configuration overrides
-		assert.NoError(t, config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys))
-		// Assert that the project_id has been overridden
-		assert.Equal(t, "feature-project", config.ProjectId)
-	})
-
-	t.Run("override nested field", func(t *testing.T) {
-		const configToml = `
-		project_id = "config"
-		[api]
-		port = 54321
-
-		[remotes.feature-branch.api]
-		port = 9000
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys))
-
-		// Assert that the API port has been overridden
-		assert.Equal(t, uint16(9000), config.Api.Port)
-	})
-
-	t.Run("partial override", func(t *testing.T) {
-		const configToml = `
-		project_id = "config"
-		[api]
-		port = 54321
-
-		[remotes.feature-branch.api]
-		port = 9000
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys))
-
-		// Assert that only the API port is overridden
-		assert.Equal(t, "config", config.ProjectId)
-		assert.Equal(t, uint16(9000), config.Api.Port)
-	})
-
-	t.Run("multiple nested overrides", func(t *testing.T) {
-		const configToml = `
-		project_id = "original-project"
-		[api]
-		port = 54321
-		[auth]
-		site_url = "http://original.com"
-
-		[remotes.feature-branch]
-		project_id = "feature-project"
-		[remotes.feature-branch.api]
-		port = 9000
-		[remotes.feature-branch.auth]
-		site_url = "http://feature.com"
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys))
-
-		// Assert that all specified fields are overridden
-		assert.Equal(t, "feature-project", config.ProjectId)
-		assert.Equal(t, uint16(9000), config.Api.Port)
-		assert.Equal(t, "http://feature.com", config.Auth.SiteUrl)
-	})
-
-	t.Run("override with empty remote config", func(t *testing.T) {
-		const configToml = `
-		project_id = "config"
-		[api]
-		port = 54321
-
-		[remotes.feature-branch]
-		# Empty remote config
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys))
-
-		// Assert that the config remains unchanged
-		assert.Equal(t, "config", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-	})
-
-	t.Run("override with invalid config", func(t *testing.T) {
-		const configToml = `
-		project_id = "config"
-		[db]
-		major_version = 15
-
-		[remotes.feature-branch.db]
-		major_version = 12
-		`
-
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"config.toml": &fs.MapFile{Data: []byte(configToml)},
-		}
-		assert.NoError(t, config.Load("config.toml", fsys))
-
-		// Attempt to load the invalid remote config
-		err := config.LoadRemoteConfigOverrides("config.toml", "feature-branch", fsys)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "Postgres version 12.x is unsupported")
-	})
-
-	t.Run("can load feature-auth-branch", func(t *testing.T) {
-		config := NewConfig()
-		// Setup in-memory fs
-		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
-		}
-		// Run test
-		// First load the config
-		assert.NoError(t, config.Load("", fsys))
-		// Load our branch values
-		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-auth-branch", fsys))
-		// Check that feature-auth-branch config replaced default config
-		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
-		assert.Equal(t, false, config.Auth.EnableSignup)
-		assert.Equal(t, false, config.Auth.External["azure"].Enabled)
-		assert.Equal(t, "nope", config.Auth.External["azure"].ClientId)
-		// Verify that other config values remain unchanged
-		assert.Equal(t, "test", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
-	})
-
-	t.Run("can load feature-storage-branch", func(t *testing.T) {
-		config := NewConfig()
-		// Setup in-memory fs
-		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
-		}
-		// Run test
-		assert.NoError(t, config.Load("", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-storage-branch", fsys))
-		// Check that feature-storage-branch config replaced default config
-		assert.Equal(t, []string{"image/png", "image/jpeg", "image/svg+xml"}, config.Storage.Buckets["images"].AllowedMimeTypes)
-		// Verify that other config values remain unchanged
-		assert.Equal(t, "test", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
-		assert.Equal(t, true, config.Auth.EnableSignup)
-		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
-		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
-	})
-
-	t.Run("can load feature-storage-with-less-elemens-in-array", func(t *testing.T) {
-		config := NewConfig()
-		// Setup in-memory fs
-		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
-		}
-		// Run test
-		assert.NoError(t, config.Load("", fsys))
-		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-storage-with-less-elemens-in-array", fsys))
-		// Check that feature-storage-branch config replaced default config
-		assert.Equal(t, []string{"image/png"}, config.Storage.Buckets["images"].AllowedMimeTypes)
-		// Verify that other config values remain unchanged
-		assert.Equal(t, "test", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
-		assert.Equal(t, true, config.Auth.EnableSignup)
-		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
-		assert.Equal(t, "AZURE_CLIENT_ID", config.Auth.External["azure"].ClientId)
-	})
-
-	t.Run("can load feature-auth-branch with env override value", func(t *testing.T) {
-		config := NewConfig()
-		// Setup in-memory fs
-		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitRemotesConfigWithEnvOverrideEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
-		}
-		t.Setenv("AZURE_CLIENT_ID", "this-is-a-env-value")
-		// Run test
-		// First load the config
-		assert.NoError(t, config.Load("", fsys))
-		assert.Equal(t, "AZURE_CLIENT_ID_ORIGINAL_VALUE", config.Auth.External["azure"].ClientId)
-		assert.Equal(t, "https://login.microsoftonline.com/tenant", config.Auth.External["azure"].Url)
-		// Load our branch values
-		assert.NoError(t, config.LoadRemoteConfigOverrides("", "feature-auth-branch", fsys))
-		// Check that feature-auth-branch config replaced default config
-		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
-		assert.Equal(t, false, config.Auth.EnableSignup)
-		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
-		assert.Equal(t, "http://overriden-url.com/tenant", config.Auth.External["azure"].Url)
-		assert.Equal(t, "this-is-a-env-value", config.Auth.External["azure"].ClientId)
-		// Verify that other config values remain unchanged
-		assert.Equal(t, "test", config.ProjectId)
-		assert.Equal(t, uint16(54321), config.Api.Port)
-		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
-	})
 }

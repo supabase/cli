@@ -217,3 +217,17 @@ s3_region = "ap-southeast-1"
 s3_access_key = ""
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = ""
+
+[remotes.production.auth]
+site_url = "http://feature-auth-branch.com/"
+enable_signup = false
+
+[remotes.production.auth.external.azure]
+enabled = false
+client_id = "nope"
+
+[remotes.staging]
+project_id = "staging-project"
+
+[remotes.staging.storage.buckets.images]
+allowed_mime_types = ["image/png"]
