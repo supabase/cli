@@ -55,6 +55,41 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+
+	t.Run("config file with remotes", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		t.Setenv("TWILIO_AUTH_TOKEN", "token")
+		t.Setenv("AZURE_CLIENT_ID", "hello")
+		t.Setenv("AZURE_SECRET", "this is cool")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		t.Setenv("SENDGRID_API_KEY", "sendgrid")
+		assert.NoError(t, config.Load("", fsys))
+		// Check the default value in the config
+		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
+		assert.Equal(t, true, config.Auth.EnableSignup)
+		assert.Equal(t, true, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, []string{"image/png", "image/jpeg"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+		// Check the values for remotes override
+		production, ok := config.Remotes["production"]
+		assert.True(t, ok)
+		staging, ok := config.Remotes["staging"]
+		assert.True(t, ok)
+		// Check the values for production override
+		assert.Equal(t, config.ProjectId, production.ProjectId)
+		assert.Equal(t, "http://feature-auth-branch.com/", production.Auth.SiteUrl)
+		assert.Equal(t, false, production.Auth.EnableSignup)
+		assert.Equal(t, false, production.Auth.External["azure"].Enabled)
+		assert.Equal(t, "nope", production.Auth.External["azure"].ClientId)
+		// Check the values for the staging override
+		assert.Equal(t, "staging-project", staging.ProjectId)
+		assert.Equal(t, []string{"image/png"}, staging.Storage.Buckets["images"].AllowedMimeTypes)
+	})
 }
 
 func TestFileSizeLimitConfigParsing(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -119,7 +120,8 @@ func (c CustomClaims) NewToken() *jwt.Token {
 //
 // Default values for internal configs should be added to `var Config` initializer.
 type (
-	config struct {
+	// Common config fields between our "base" config and any "remote" branch specific
+	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
@@ -133,6 +135,12 @@ type (
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+	}
+
+	config struct {
+		baseConfig
+		Overrides map[string]interface{} `toml:"remotes"`
+		Remotes   map[string]baseConfig  `toml:"-"`
 	}
 
 	api struct {
@@ -439,6 +447,16 @@ type (
 	}
 )
 
+func (c *baseConfig) Clone() baseConfig {
+	copy := *c
+	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
+	copy.Functions = maps.Clone(c.Functions)
+	copy.Auth.External = maps.Clone(c.Auth.External)
+	copy.Auth.Email.Template = maps.Clone(c.Auth.Email.Template)
+	copy.Auth.Sms.TestOTP = maps.Clone(c.Auth.Sms.TestOTP)
+	return copy
+}
+
 type ConfigEditor func(*config)
 
 func WithHostname(hostname string) ConfigEditor {
@@ -448,7 +466,7 @@ func WithHostname(hostname string) ConfigEditor {
 }
 
 func NewConfig(editors ...ConfigEditor) config {
-	initial := config{
+	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
 			Image:     postgrestImage,
@@ -544,7 +562,7 @@ func NewConfig(editors ...ConfigEditor) config {
 		EdgeRuntime: edgeRuntime{
 			Image: edgeRuntimeImage,
 		},
-	}
+	}}
 	for _, apply := range editors {
 		apply(&initial)
 	}
@@ -588,7 +606,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if _, err := dec.Decode(c); err != nil {
 		return errors.Errorf("failed to decode config template: %w", err)
 	}
-	// Load user defined config
 	if metadata, err := toml.DecodeFS(fsys, builder.ConfigPath, c); err != nil {
 		cwd, osErr := os.Getwd()
 		if osErr != nil {
@@ -596,7 +613,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		return errors.Errorf("cannot read config in %s: %w", cwd, err)
 	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
+		for _, key := range undecoded {
+			if key[0] != "remotes" {
+				fmt.Fprintf(os.Stderr, "Unknown config field: [%s]\n", key)
+			}
+		}
 	}
 	// Load secrets from .env file
 	if err := loadDefaultEnv(); err != nil {
@@ -686,10 +707,32 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Functions[slug] = function
 	}
-	return c.Validate()
+	if err := c.baseConfig.Validate(); err != nil {
+		return err
+	}
+	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
+	for name, remote := range c.Overrides {
+		base := c.baseConfig.Clone()
+		// Encode a toml file with only config overrides
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
+			return errors.Errorf("failed to encode map to TOML: %w", err)
+		}
+		// Decode overrides using base config as defaults
+		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
+			return errors.Errorf("failed to decode remote config: %w", err)
+		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
+		}
+		if err := base.Validate(); err != nil {
+			return err
+		}
+		c.Remotes[name] = base
+	}
+	return nil
 }
 
-func (c *config) Validate() error {
+func (c *baseConfig) Validate() error {
 	if c.ProjectId == "" {
 		return errors.New("Missing required field in config: project_id")
 	} else if sanitized := sanitizeProjectId(c.ProjectId); sanitized != c.ProjectId {
