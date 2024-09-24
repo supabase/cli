@@ -179,7 +179,7 @@ func GetSeedFiles(fsys afero.Fs) ([]string, error) {
 			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
 		}
 		if len(matches) == 0 {
-			fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("Warning:"), pattern)
+			fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("WARNING:"), pattern)
 		}
 		sort.Strings(matches)
 		files = append(files, matches...)
