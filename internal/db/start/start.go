@@ -29,6 +29,8 @@ var (
 	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
+	//go:embed templates/_supabase.sql
+	_supabaseSchema string
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -82,7 +84,7 @@ func NewContainerConfig() container.Config {
 			Retries:  3,
 		},
 		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && docker-entrypoint.sh postgres -D /etc/postgresql
-` + initialSchema + `
+` + initialSchema + "\n" + _supabaseSchema + "\n" + `
 EOF
 ` + utils.Config.Db.RootKey + `
 EOF
@@ -122,7 +124,12 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 		},
 	}
 	if utils.Config.Db.MajorVersion <= 14 {
-		config.Entrypoint = nil
+		config.Entrypoint = []string{"sh", "-c", `
+			cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql
+` + _supabaseSchema + `
+EOF
+			docker-entrypoint.sh postgres -D /etc/postgresql
+		`}
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
