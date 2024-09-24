@@ -287,6 +287,9 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	// Skip named volume for BitBucket pipeline
 	if os.Getenv("BITBUCKET_CLONE_DIR") != "" {
 		hostConfig.Binds = binds
+		// Bitbucket doesn't allow for --security-opt option to be set
+		// https://support.atlassian.com/bitbucket-cloud/docs/run-docker-commands-in-bitbucket-pipelines/#Full-list-of-restricted-commands
+		hostConfig.SecurityOpt = nil
 	} else {
 		// Create named volumes with labels
 		for _, name := range sources {
