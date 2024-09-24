@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -60,7 +61,7 @@ func TestStartDatabase(t *testing.T) {
 		roles := "create role test"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
 		seed := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, utils.DefaultSeedDataPath, []byte(seed), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.SupabaseDirPath, "seed.sql"), []byte(seed), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

@@ -162,8 +162,8 @@ func TestPushAll(t *testing.T) {
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.DefaultSeedDataPath}
-		_, _ = fsys.Create(utils.DefaultSeedDataPath)
+		fsys := &fstest.OpenErrorFs{DenyPath: filepath.Join(utils.SupabaseDirPath, "seed.sql")}
+		_, _ = fsys.Create(filepath.Join(utils.SupabaseDirPath, "seed.sql"))
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres

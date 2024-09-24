@@ -28,10 +28,6 @@ func TestInitCommand(t *testing.T) {
 		exists, err = afero.Exists(fsys, utils.GitIgnorePath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
-		// Validate generated seed.sql
-		exists, err = afero.Exists(fsys, utils.DefaultSeedDataPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
 		// Validate vscode settings file isn't generated
 		exists, err = afero.Exists(fsys, settingsPath)
 		assert.NoError(t, err)
@@ -68,16 +64,6 @@ func TestInitCommand(t *testing.T) {
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
 		assert.Error(t, Run(context.Background(), fsys, nil, nil, utils.InitParams{}))
-	})
-
-	t.Run("throws error on seed failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.DefaultSeedDataPath}
-		_, _ = fsys.Create(utils.DefaultSeedDataPath)
-		// Run test
-		err := Run(context.Background(), fsys, nil, nil, utils.InitParams{})
-		// Check error
-		assert.ErrorIs(t, err, os.ErrPermission)
 	})
 
 	t.Run("creates vscode settings file", func(t *testing.T) {
