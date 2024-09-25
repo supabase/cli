@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -148,7 +149,6 @@ var (
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
-	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 
 	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
@@ -156,6 +156,26 @@ var (
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
+
+// Match the glob patterns from the config to get a deduplicated
+// array of all migrations files to apply in the declared order.
+func GetSeedFiles(fsys afero.Fs) ([]string, error) {
+	seedPaths := Config.Db.Seed.SqlPaths
+	var files []string
+	for _, pattern := range seedPaths {
+		fullPattern := filepath.Join(SupabaseDirPath, pattern)
+		matches, err := afero.Glob(fsys, fullPattern)
+		if err != nil {
+			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
+		}
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("WARNING:"), pattern)
+		}
+		sort.Strings(matches)
+		files = append(files, matches...)
+	}
+	return RemoveDuplicates(files), nil
+}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.

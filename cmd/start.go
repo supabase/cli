@@ -27,7 +27,7 @@ func validateExcludedContainers(excludedContainers []string) {
 		// Sort the names list so it's easier to visually spot the one you looking for
 		sort.Strings(validContainers)
 		warning := fmt.Sprintf("%s The following container names are not valid to exclude: %s\nValid containers to exclude are: %s\n",
-			utils.Yellow("Warning:"),
+			utils.Yellow("WARNING:"),
 			utils.Aqua(strings.Join(invalidContainers, ", ")),
 			utils.Aqua(strings.Join(validContainers, ", ")))
 		fmt.Fprint(os.Stderr, warning)
