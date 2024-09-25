@@ -157,18 +157,8 @@ var (
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
 
-func GetSeedsFilepaths() string {
-	if seedPaths, _ := GetSeedFiles(afero.NewOsFs()); seedPaths != nil {
-		return fmt.Sprintf("%v", seedPaths)
-	}
-	return ""
-}
-
-/*
-** Match the glob patterns from the config to get
-** a deduplicated array of all migrations files to apply
-** in the declared order
- */
+// Match the glob patterns from the config to get a deduplicated
+// array of all migrations files to apply in the declared order.
 func GetSeedFiles(fsys afero.Fs) ([]string, error) {
 	seedPaths := Config.Db.Seed.SqlPaths
 	var files []string
