@@ -12,8 +12,7 @@ import (
 
 func SeedData(ctx context.Context, pending []string, conn *pgx.Conn, fsys fs.FS) error {
 	for _, path := range pending {
-		filename := filepath.Base(path)
-		fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", filename)
+		fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", path)
 		// Batch seed commands, safe to use statement cache
 		if seed, err := NewMigrationFromFile(path, fsys); err != nil {
 			return err

@@ -369,7 +369,7 @@ func TestResetRemote(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
-		seedPath := filepath.Join(utils.SeedDataPath)
+		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
 		// Will raise an error when seeding
 		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
 		// Setup mock postgres

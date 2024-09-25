@@ -75,3 +75,76 @@ func TestProjectRoot(t *testing.T) {
 		assert.Equal(t, cwd, path)
 	})
 }
+
+func TestGetSeedFiles(t *testing.T) {
+	t.Run("returns seed files matching patterns", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create seed files
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed1.sql", []byte("INSERT INTO table1 VALUES (1);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed2.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed3.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
+		// Mock config patterns
+		Config.Db.Seed.SqlPaths = []string{"seeds/seed[12].sql", "seeds/ano*.sql"}
+
+		// Run test
+		files, err := GetSeedFiles(fsys)
+
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.ElementsMatch(t, []string{"supabase/seeds/seed1.sql", "supabase/seeds/seed2.sql", "supabase/seeds/another.sql"}, files)
+	})
+	t.Run("returns seed files matching patterns skip duplicates", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create seed files
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed1.sql", []byte("INSERT INTO table1 VALUES (1);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed2.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/seed3.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/another.sql", []byte("INSERT INTO table2 VALUES (2);"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seeds/ignore.sql", []byte("INSERT INTO table3 VALUES (3);"), 0644))
+		// Mock config patterns
+		Config.Db.Seed.SqlPaths = []string{"seeds/seed[12].sql", "seeds/ano*.sql", "seeds/seed*.sql"}
+
+		// Run test
+		files, err := GetSeedFiles(fsys)
+
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.ElementsMatch(t, []string{"supabase/seeds/seed1.sql", "supabase/seeds/seed2.sql", "supabase/seeds/another.sql", "supabase/seeds/seed3.sql"}, files)
+	})
+
+	t.Run("returns error on invalid pattern", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Mock config patterns
+		Config.Db.Seed.SqlPaths = []string{"[*!#@D#"}
+
+		// Run test
+		files, err := GetSeedFiles(fsys)
+
+		// Check error
+		assert.Nil(t, err)
+		// The resuling seed list should be empty
+		assert.ElementsMatch(t, []string{}, files)
+	})
+
+	t.Run("returns empty list if no files match", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Mock config patterns
+		Config.Db.Seed.SqlPaths = []string{"seeds/*.sql"}
+
+		// Run test
+		files, err := GetSeedFiles(fsys)
+
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.Empty(t, files)
+	})
+}

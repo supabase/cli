@@ -40,19 +40,14 @@ func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntelli
 		return err
 	}
 
-	// 2. Create `seed.sql`.
-	if err := initSeed(fsys); err != nil {
-		return err
-	}
-
-	// 3. Append to `.gitignore`.
+	// 2. Append to `.gitignore`.
 	if utils.IsGitRepo() {
 		if err := updateGitIgnore(utils.GitIgnorePath, fsys); err != nil {
 			return err
 		}
 	}
 
-	// 4. Generate VS Code settings.
+	// 3. Generate VS Code settings.
 	if createVscodeSettings != nil {
 		if *createVscodeSettings {
 			return writeVscodeConfig(fsys)
@@ -74,15 +69,6 @@ func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntelli
 			return writeIntelliJConfig(fsys)
 		}
 	}
-	return nil
-}
-
-func initSeed(fsys afero.Fs) error {
-	f, err := fsys.OpenFile(utils.SeedDataPath, os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return errors.Errorf("failed to create seed file: %w", err)
-	}
-	defer f.Close()
 	return nil
 }
 
