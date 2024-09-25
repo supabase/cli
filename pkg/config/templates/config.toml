@@ -40,11 +40,11 @@ default_pool_size = 20
 max_client_conn = 100
 
 [db.seed]
-# Determines whether to seed the database after migrations during a db reset
+# If enabled, seeds the database after migrations during a db reset.
 enabled = true
-# Specifies seed files to load during db reset using glob patterns
-# Base path is the Supabase project folder
-# Example: sql_paths = ['./seeds/*.sql', '../project-src/seeds/*-load-testing.sql']
+# Specifies an ordered list of seed files to load during db reset.
+# Supports glob patterns relative to supabase directory. For example:
+# sql_paths = ['./seeds/*.sql', '../project-src/seeds/*-load-testing.sql']
 sql_paths = ['./seed.sql']
 
 [realtime]
