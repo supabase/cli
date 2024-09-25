@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -160,21 +160,16 @@ var (
 // Match the glob patterns from the config to get a deduplicated
 // array of all migrations files to apply in the declared order.
 func GetSeedFiles(fsys afero.Fs) ([]string, error) {
-	seedPaths := Config.Db.Seed.SqlPaths
-	var files []string
-	for _, pattern := range seedPaths {
+	var globs []string
+	for _, pattern := range Config.Db.Seed.SqlPaths {
 		fullPattern := filepath.Join(SupabaseDirPath, pattern)
-		matches, err := afero.Glob(fsys, fullPattern)
-		if err != nil {
-			return nil, errors.Errorf("failed to apply glob pattern for %w", err)
-		}
-		if len(matches) == 0 {
-			fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("WARNING:"), pattern)
-		}
-		sort.Strings(matches)
-		files = append(files, matches...)
+		globs = append(globs, fullPattern)
 	}
-	return RemoveDuplicates(files), nil
+	files, err := migration.FindSeedFiles(globs, afero.NewIOFS(fsys))
+	if err == nil && len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "%s Your pattern %s matched 0 seed files.\n", Yellow("WARNING:"), Config.Db.Seed.SqlPaths)
+	}
+	return files, err
 }
 
 func GetCurrentTimestamp() string {
