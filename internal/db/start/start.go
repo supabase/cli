@@ -84,7 +84,8 @@ func NewContainerConfig() container.Config {
 			Retries:  3,
 		},
 		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && docker-entrypoint.sh postgres -D /etc/postgresql
-` + initialSchema + "\n" + _supabaseSchema + "\n" + `
+` + initialSchema + `
+` + _supabaseSchema + `
 EOF
 ` + utils.Config.Db.RootKey + `
 EOF
