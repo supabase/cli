@@ -750,7 +750,7 @@ EOF
 					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 					"DB_USER=supabase_admin",
 					"DB_PASSWORD=" + dbConfig.Password,
-					"DB_NAME=_supabase",
+					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
