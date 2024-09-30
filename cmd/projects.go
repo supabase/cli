@@ -11,11 +11,23 @@ import (
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/delete"
 	"github.com/supabase/cli/internal/projects/list"
+	"github.com/supabase/cli/internal/projects/unpause"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"golang.org/x/term"
 )
+
+// Custom filter to list only projects with status 'INACTIVE'
+func filterInactiveProjects(items []api.V1ProjectResponse) []api.V1ProjectResponse {
+	var inactiveProjects []api.V1ProjectResponse
+	for _, project := range items {
+		if project.Status == api.V1ProjectResponseStatusINACTIVE {
+			inactiveProjects = append(inactiveProjects, project)
+		}
+	}
+	return inactiveProjects
+}
 
 var (
 	projectsCmd = &cobra.Command{
@@ -113,7 +125,7 @@ var (
 			ctx := cmd.Context()
 			if len(args) == 0 {
 				title := "Which project do you want to delete?"
-				cobra.CheckErr(flags.PromptProjectRef(ctx, title))
+				cobra.CheckErr(flags.PromptProjectRef(ctx, title, nil))
 			} else {
 				flags.ProjectRef = args[0]
 			}
@@ -121,6 +133,30 @@ var (
 				return err
 			}
 			return delete.Run(ctx, flags.ProjectRef, afero.NewOsFs())
+		},
+	}
+	projectsUnpauseCmd = &cobra.Command{
+		Use:   "unpause <ref>",
+		Short: "Unpause a Supabase project",
+		Args:  cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return cobra.ExactArgs(1)(cmd, args)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if len(args) == 0 {
+				title := "Which project do you want to unpause?"
+				cobra.CheckErr(flags.PromptProjectRef(ctx, title, filterInactiveProjects))
+			} else {
+				flags.ProjectRef = args[0]
+			}
+			if err := unpause.PreRun(ctx, flags.ProjectRef); err != nil {
+				return err
+			}
+			return unpause.Run(ctx, flags.ProjectRef)
 		},
 	}
 )
@@ -146,6 +182,7 @@ func init() {
 	projectsCmd.AddCommand(projectsDeleteCmd)
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
+	projectsCmd.AddCommand(projectsUnpauseCmd)
 	rootCmd.AddCommand(projectsCmd)
 }
 

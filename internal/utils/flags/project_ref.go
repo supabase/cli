@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"golang.org/x/term"
 )
 
@@ -29,12 +30,12 @@ func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 	}
 	// Prompt as the last resort
 	if term.IsTerminal(int(os.Stdin.Fd())) {
-		return PromptProjectRef(ctx, "Select a project:")
+		return PromptProjectRef(ctx, "Select a project:", nil)
 	}
 	return errors.New(utils.ErrNotLinked)
 }
 
-func PromptProjectRef(ctx context.Context, title string) error {
+func PromptProjectRef(ctx context.Context, title string, filterFunc func([]api.V1ProjectResponse) []api.V1ProjectResponse) error {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return errors.Errorf("failed to retrieve projects: %w", err)
@@ -42,8 +43,12 @@ func PromptProjectRef(ctx context.Context, title string) error {
 	if resp.JSON200 == nil {
 		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
 	}
-	items := make([]utils.PromptItem, len(*resp.JSON200))
-	for i, project := range *resp.JSON200 {
+	projects := *resp.JSON200
+	if filterFunc != nil {
+		projects = filterFunc(projects)
+	}
+	items := make([]utils.PromptItem, len(projects))
+	for i, project := range projects {
 		items[i] = utils.PromptItem{
 			Summary: project.Id,
 			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),

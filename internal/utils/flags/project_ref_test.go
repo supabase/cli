@@ -80,7 +80,7 @@ func TestProjectPrompt(t *testing.T) {
 				OrganizationId: "test-org",
 			}})
 		// Run test
-		err := PromptProjectRef(context.Background(), "")
+		err := PromptProjectRef(context.Background(), "", nil)
 		// Check error
 		assert.ErrorContains(t, err, "failed to prompt choice:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -94,7 +94,7 @@ func TestProjectPrompt(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errNetwork)
 		// Run test
-		err := PromptProjectRef(context.Background(), "")
+		err := PromptProjectRef(context.Background(), "", nil)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 	})
@@ -106,7 +106,7 @@ func TestProjectPrompt(t *testing.T) {
 			Get("/v1/projects").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := PromptProjectRef(context.Background(), "")
+		err := PromptProjectRef(context.Background(), "", nil)
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error retrieving projects:")
 	})

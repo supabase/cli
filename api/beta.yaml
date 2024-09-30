@@ -1726,6 +1726,28 @@ paths:
         - Auth
       security:
         - bearer: []
+  /v1/projects/{ref}/unpause:
+    post:
+      operationId: v1-unpause-a-project
+      summary: Unpause the given project
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '201':
+          description: ''
+        '403':
+          description: ''
+      tags:
+        - Projects
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/query:
     post:
       operationId: v1-run-a-query

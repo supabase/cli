@@ -43,18 +43,19 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	if utils.OutputFormat.Value == utils.OutputPretty {
-		table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
-|-|-|-|-|-|-|
+		table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)|STATUS
+|-|-|-|-|-|-|-|
 `
 		for _, project := range projects {
 			table += fmt.Sprintf(
-				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 				formatBullet(project.Linked),
 				project.OrganizationId,
 				project.Id,
 				strings.ReplaceAll(project.Name, "|", "\\|"),
 				formatRegion(project.Region),
 				utils.FormatTimestamp(project.CreatedAt),
+				project.Status,
 			)
 		}
 		return list.RenderTable(table)

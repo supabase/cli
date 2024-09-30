@@ -343,6 +343,9 @@ type ClientInterface interface {
 	// V1GenerateTypescriptTypes request
 	V1GenerateTypescriptTypes(ctx context.Context, ref string, params *V1GenerateTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1UnpauseAProject request
+	V1UnpauseAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1UpgradePostgresVersionWithBody request with any body
 	V1UpgradePostgresVersionWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1483,6 +1486,18 @@ func (c *Client) V1ListAllBuckets(ctx context.Context, ref string, reqEditors ..
 
 func (c *Client) V1GenerateTypescriptTypes(ctx context.Context, ref string, params *V1GenerateTypescriptTypesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GenerateTypescriptTypesRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UnpauseAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UnpauseAProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -4677,6 +4692,40 @@ func NewV1GenerateTypescriptTypesRequest(server string, ref string, params *V1Ge
 	return req, nil
 }
 
+// NewV1UnpauseAProjectRequest generates requests for V1UnpauseAProject
+func NewV1UnpauseAProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/unpause", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1UpgradePostgresVersionRequest calls the generic V1UpgradePostgresVersion builder with application/json body
 func NewV1UpgradePostgresVersionRequest(server string, ref string, body V1UpgradePostgresVersionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -5333,6 +5382,9 @@ type ClientWithResponsesInterface interface {
 
 	// V1GenerateTypescriptTypesWithResponse request
 	V1GenerateTypescriptTypesWithResponse(ctx context.Context, ref string, params *V1GenerateTypescriptTypesParams, reqEditors ...RequestEditorFn) (*V1GenerateTypescriptTypesResponse, error)
+
+	// V1UnpauseAProjectWithResponse request
+	V1UnpauseAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1UnpauseAProjectResponse, error)
 
 	// V1UpgradePostgresVersionWithBodyWithResponse request with any body
 	V1UpgradePostgresVersionWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpgradePostgresVersionResponse, error)
@@ -6852,6 +6904,27 @@ func (r V1GenerateTypescriptTypesResponse) StatusCode() int {
 	return 0
 }
 
+type V1UnpauseAProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UnpauseAProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UnpauseAProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1UpgradePostgresVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7859,6 +7932,15 @@ func (c *ClientWithResponses) V1GenerateTypescriptTypesWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseV1GenerateTypescriptTypesResponse(rsp)
+}
+
+// V1UnpauseAProjectWithResponse request returning *V1UnpauseAProjectResponse
+func (c *ClientWithResponses) V1UnpauseAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1UnpauseAProjectResponse, error) {
+	rsp, err := c.V1UnpauseAProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UnpauseAProjectResponse(rsp)
 }
 
 // V1UpgradePostgresVersionWithBodyWithResponse request with arbitrary body returning *V1UpgradePostgresVersionResponse
@@ -9609,6 +9691,22 @@ func ParseV1GenerateTypescriptTypesResponse(rsp *http.Response) (*V1GenerateType
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1UnpauseAProjectResponse parses an HTTP response from a V1UnpauseAProjectWithResponse call
+func ParseV1UnpauseAProjectResponse(rsp *http.Response) (*V1UnpauseAProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UnpauseAProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
