@@ -11,7 +11,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
-	github.com/containers/common v0.60.2
+	github.com/containers/common v0.60.4
 	github.com/danieljoos/wincred v1.2.1
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v27.2.1+incompatible
