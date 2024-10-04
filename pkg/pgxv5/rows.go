@@ -104,17 +104,10 @@ func appendScanTargets(dstElemValue reflect.Value, scanTargets []any, fldDescs [
 				return nil, err
 			}
 		} else {
-			dbTag, dbTagPresent := sf.Tag.Lookup(structTagKey)
-			if dbTagPresent {
-				dbTag = strings.Split(dbTag, ",")[0]
-			}
-			if dbTag == "-" {
+			colName := GetColumnName(sf)
+			if len(colName) == 0 {
 				// Field is ignored, skip it.
 				continue
-			}
-			colName := dbTag
-			if !dbTagPresent {
-				colName = sf.Name
 			}
 			fpos := fieldPosByName(fldDescs, colName)
 			if fpos == -1 || fpos >= len(scanTargets) {
@@ -125,4 +118,15 @@ func appendScanTargets(dstElemValue reflect.Value, scanTargets []any, fldDescs [
 	}
 
 	return scanTargets, err
+}
+
+func GetColumnName(sf reflect.StructField) string {
+	dbTag, dbTagPresent := sf.Tag.Lookup(structTagKey)
+	if !dbTagPresent {
+		return sf.Name
+	}
+	if dbTag = strings.Split(dbTag, ",")[0]; dbTag != "-" {
+		return dbTag
+	}
+	return ""
 }
