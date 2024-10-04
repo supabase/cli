@@ -710,10 +710,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Functions[slug] = function
 	}
+
 	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
 		return err
 	}
-	if err := c.baseConfig.Validate(); err != nil {
+	if err := c.baseConfig.Validate(fsys); err != nil {
 		return err
 	}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
@@ -730,7 +731,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
 			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 		}
-		if err := base.Validate(); err != nil {
+		if err := base.Validate(fsys); err != nil {
 			return err
 		}
 		c.Remotes[name] = base
@@ -738,7 +739,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	return nil
 }
 
-func (c *baseConfig) Validate() error {
+func (c *baseConfig) Validate(fsys fs.FS) error {
 	if c.ProjectId == "" {
 		return errors.New("Missing required field in config: project_id")
 	} else if sanitized := sanitizeProjectId(c.ProjectId); sanitized != c.ProjectId {
@@ -833,8 +834,10 @@ func (c *baseConfig) Validate() error {
 		}
 		// Validate email config
 		for name, tmpl := range c.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 && !fs.ValidPath(filepath.Clean(tmpl.ContentPath)) {
-				return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
+			if len(tmpl.ContentPath) > 0 {
+				if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+					return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
+				}
 			}
 		}
 		if c.Auth.Email.Smtp.Pass, err = maybeLoadEnv(c.Auth.Email.Smtp.Pass); err != nil {
