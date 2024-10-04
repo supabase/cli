@@ -835,7 +835,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 		// Validate email config
 		for name, tmpl := range c.Auth.Email.Template {
 			if len(tmpl.ContentPath) > 0 {
-				if _, err = fs.Stat(fsys, tmpl.ContentPath); err != nil {
+				if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
 					return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
 				}
 			}
