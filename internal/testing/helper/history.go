@@ -14,6 +14,8 @@ func MockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
 		Query(migration.ADD_STATEMENTS_COLUMN).
 		Reply("ALTER TABLE").
 		Query(migration.ADD_NAME_COLUMN).
-		Reply("ALTER TABLE")
+		Reply("ALTER TABLE").
+		Query(migration.CREATE_SEED_TABLE).
+		Reply("CREATE TABLE")
 	return conn
 }

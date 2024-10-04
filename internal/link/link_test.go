@@ -313,7 +313,8 @@ func TestLinkDatabase(t *testing.T) {
 			Query(migration.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
 			Query(migration.ADD_STATEMENTS_COLUMN).
-			Query(migration.ADD_NAME_COLUMN)
+			Query(migration.ADD_NAME_COLUMN).
+			Query(migration.CREATE_SEED_TABLE)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
