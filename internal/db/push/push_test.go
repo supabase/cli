@@ -161,8 +161,9 @@ func TestPushAll(t *testing.T) {
 	})
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
-		// Setup in-memory fs
 		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
+		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: seedPath}
 		_, _ = fsys.Create(seedPath)
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")

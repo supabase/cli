@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -172,8 +173,9 @@ type (
 	}
 
 	seed struct {
-		Enabled  bool     `toml:"enabled"`
-		SqlPaths []string `toml:"sql_paths"`
+		Enabled      bool     `toml:"enabled"`
+		GlobPatterns []string `toml:"sql_paths"`
+		SqlPaths     []string `toml:"-"`
 	}
 
 	pooler struct {
@@ -483,8 +485,8 @@ func NewConfig(editors ...ConfigEditor) config {
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
 			Seed: seed{
-				Enabled:  true,
-				SqlPaths: []string{"./seed.sql"},
+				Enabled:      true,
+				GlobPatterns: []string{"./seed.sql"},
 			},
 		},
 		Realtime: realtime{
@@ -707,6 +709,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 		c.Functions[slug] = function
+	}
+
+	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
+		return err
 	}
 	if err := c.baseConfig.Validate(fsys); err != nil {
 		return err
@@ -1039,6 +1045,40 @@ func loadDefaultEnv() error {
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to load %s: %w", ".env", err)
+	}
+	return nil
+}
+
+// Match the glob patterns from the config to get a deduplicated
+// array of all migrations files to apply in the declared order.
+func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.SqlPaths != nil {
+		// Reuse already allocated array
+		c.SqlPaths = c.SqlPaths[:0]
+	}
+	set := make(map[string]struct{})
+	for _, pattern := range c.GlobPatterns {
+		if !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(basePath, pattern)
+		}
+		matches, err := fs.Glob(fsys, pattern)
+		if err != nil {
+			return errors.Errorf("failed to apply glob pattern: %w", err)
+		}
+		if len(matches) == 0 {
+			fmt.Fprintln(os.Stderr, "No seed files matched pattern:", pattern)
+		}
+		sort.Strings(matches)
+		// Remove duplicates
+		for _, item := range matches {
+			if _, exists := set[item]; !exists {
+				set[item] = struct{}{}
+				c.SqlPaths = append(c.SqlPaths, item)
+			}
+		}
 	}
 	return nil
 }

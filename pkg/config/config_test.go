@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	_ "embed"
+	"path"
 	"strings"
 	"testing"
 	fs "testing/fstest"
@@ -246,4 +247,91 @@ func TestValidateHookURI(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadSeedPaths(t *testing.T) {
+	t.Run("returns seed files matching patterns", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/seeds/seed1.sql":   &fs.MapFile{Data: []byte("INSERT INTO table1 VALUES (1);")},
+			"supabase/seeds/seed2.sql":   &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/seed3.sql":   &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/another.sql": &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/ignore.sql":  &fs.MapFile{Data: []byte("INSERT INTO table3 VALUES (3);")},
+		}
+		// Mock config patterns
+		config := seed{
+			Enabled: true,
+			GlobPatterns: []string{
+				"seeds/seed[12].sql",
+				"seeds/ano*.sql",
+			},
+		}
+		// Run test
+		err := config.loadSeedPaths("supabase", fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.ElementsMatch(t, []string{
+			"supabase/seeds/seed1.sql",
+			"supabase/seeds/seed2.sql",
+			"supabase/seeds/another.sql",
+		}, config.SqlPaths)
+	})
+	t.Run("returns seed files matching patterns skip duplicates", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/seeds/seed1.sql":   &fs.MapFile{Data: []byte("INSERT INTO table1 VALUES (1);")},
+			"supabase/seeds/seed2.sql":   &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/seed3.sql":   &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/another.sql": &fs.MapFile{Data: []byte("INSERT INTO table2 VALUES (2);")},
+			"supabase/seeds/ignore.sql":  &fs.MapFile{Data: []byte("INSERT INTO table3 VALUES (3);")},
+		}
+		// Mock config patterns
+		config := seed{
+			Enabled: true,
+			GlobPatterns: []string{
+				"seeds/seed[12].sql",
+				"seeds/ano*.sql",
+				"seeds/seed*.sql",
+			},
+		}
+		// Run test
+		err := config.loadSeedPaths("supabase", fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.ElementsMatch(t, []string{
+			"supabase/seeds/seed1.sql",
+			"supabase/seeds/seed2.sql",
+			"supabase/seeds/another.sql",
+			"supabase/seeds/seed3.sql",
+		}, config.SqlPaths)
+	})
+
+	t.Run("returns error on invalid pattern", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{}
+		// Mock config patterns
+		config := seed{Enabled: true, GlobPatterns: []string{"[*!#@D#"}}
+		// Run test
+		err := config.loadSeedPaths("", fsys)
+		// Check error
+		assert.ErrorIs(t, err, path.ErrBadPattern)
+		// The resuling seed list should be empty
+		assert.Empty(t, config.SqlPaths)
+	})
+
+	t.Run("returns empty list if no files match", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{}
+		// Mock config patterns
+		config := seed{Enabled: true, GlobPatterns: []string{"seeds/*.sql"}}
+		// Run test
+		err := config.loadSeedPaths("", fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.Empty(t, config.SqlPaths)
+	})
 }
