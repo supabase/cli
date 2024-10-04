@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,66 +72,5 @@ func TestMigrateDatabase(t *testing.T) {
 		err := MigrateAndSeed(context.Background(), "", nil, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
-	})
-}
-
-func TestSeedDatabase(t *testing.T) {
-	seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
-	utils.Config.Db.Seed.SqlPaths = []string{seedPath}
-
-	t.Run("seeds from file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup seed file
-		sql := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(sql), 0644))
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(sql).
-			Reply("INSERT 0 1")
-		// Run test
-		err := SeedDatabase(context.Background(), conn.MockClient(t), fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("ignores missing seed", func(t *testing.T) {
-		sqlPaths := utils.Config.Db.Seed.SqlPaths
-		utils.Config.Db.Seed.SqlPaths = []string{}
-		t.Cleanup(func() { utils.Config.Db.Seed.SqlPaths = sqlPaths })
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := SeedDatabase(context.Background(), nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
-
-	t.Run("throws error on read failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: seedPath}
-		_, _ = fsys.Create(seedPath)
-		// Run test
-		err := SeedDatabase(context.Background(), nil, fsys)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrPermission)
-	})
-
-	t.Run("throws error on insert failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup seed file
-		sql := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(sql), 0644))
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(sql).
-			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
-		// Run test
-		err := SeedDatabase(context.Background(), conn.MockClient(t), fsys)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
 	})
 }

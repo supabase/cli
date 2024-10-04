@@ -21,6 +21,9 @@ const (
 	TRUNCATE_VERSION_TABLE   = "TRUNCATE supabase_migrations.schema_migrations"
 	SELECT_VERSION_TABLE     = "SELECT * FROM supabase_migrations.schema_migrations"
 	LIST_MIGRATION_VERSION   = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
+	CREATE_SEED_TABLE        = "CREATE TABLE IF NOT EXISTS supabase_migrations.seed_files (path text NOT NULL PRIMARY KEY, hash text NOT NULL)"
+	UPSERT_SEED_FILE         = "INSERT INTO supabase_migrations.seed_files(path, hash) VALUES($1, $2) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash"
+	SELECT_SEED_TABLE        = "SELECT path, hash FROM supabase_migrations.seed_files"
 )
 
 // TODO: support overriding `supabase_migrations.schema_migrations` with user defined <schema>.<table>
@@ -33,6 +36,7 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
 	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
 	batch.ExecParams(ADD_NAME_COLUMN, nil, nil, nil, nil)
+	batch.ExecParams(CREATE_SEED_TABLE, nil, nil, nil, nil)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		return errors.Errorf("failed to create migration table: %w", err)
 	}
@@ -45,4 +49,12 @@ func ReadMigrationTable(ctx context.Context, conn *pgx.Conn) ([]MigrationFile, e
 		return nil, errors.Errorf("failed to read migration table: %w", err)
 	}
 	return pgxv5.CollectRows[MigrationFile](rows)
+}
+
+func ReadSeedTable(ctx context.Context, conn *pgx.Conn) ([]SeedFile, error) {
+	rows, err := conn.Query(ctx, SELECT_SEED_TABLE)
+	if err != nil {
+		return nil, errors.Errorf("failed to read seed table: %w", err)
+	}
+	return pgxv5.CollectRows[SeedFile](rows)
 }

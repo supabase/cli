@@ -153,7 +153,10 @@ func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
 		} else if t := reflect.TypeOf(rows[0]); t.Kind() == reflect.Struct {
 			s := reflect.ValueOf(rows[0])
 			for i := 0; i < s.NumField(); i++ {
-				name := t.Field(i).Name
+				name := pgxv5.GetColumnName(t.Field(i))
+				if len(name) == 0 {
+					continue
+				}
 				v := s.Field(i).Interface()
 				if fd := toFieldDescription(v); fd != nil {
 					fd.Name = []byte(name)
@@ -182,6 +185,9 @@ func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
 		} else if t := reflect.TypeOf(data); t.Kind() == reflect.Struct {
 			s := reflect.ValueOf(rows[0])
 			for i := 0; i < s.NumField(); i++ {
+				if name := pgxv5.GetColumnName(t.Field(i)); len(name) == 0 {
+					continue
+				}
 				v := s.Field(i).Interface()
 				if value, oid := r.encodeValueArg(v); oid > 0 {
 					dr.Values = append(dr.Values, value)

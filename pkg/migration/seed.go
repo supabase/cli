@@ -7,16 +7,62 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 )
 
-func SeedData(ctx context.Context, pending []string, conn *pgx.Conn, fsys fs.FS) error {
-	for _, path := range pending {
-		fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", path)
+func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
+	remotes, err := ReadSeedTable(ctx, conn)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
+			// If seed table is undefined, the remote project has no migrations
+			return map[string]string{}, nil
+		}
+		return map[string]string{}, err
+	}
+	applied := make(map[string]string, len(remotes))
+	for _, seed := range remotes {
+		applied[seed.Path] = seed.Hash
+	}
+	return applied, nil
+}
+
+func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys fs.FS) ([]SeedFile, error) {
+	applied, err := getRemoteSeeds(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	var pending []SeedFile
+	for _, path := range locals {
+		seed, err := NewSeedFile(path, fsys)
+		if err != nil {
+			return nil, err
+		}
+		if hash, exists := applied[seed.Path]; exists {
+			// Skip seed files that already exist
+			if hash == seed.Hash {
+				continue
+			}
+			// Mark seed file as dirty
+			seed.Dirty = true
+		}
+		pending = append(pending, *seed)
+	}
+	return pending, nil
+}
+
+func SeedData(ctx context.Context, pending []SeedFile, conn *pgx.Conn, fsys fs.FS) error {
+	for _, seed := range pending {
+		if seed.Dirty {
+			fmt.Fprintf(os.Stderr, "Updating seed file hash %s...\n", seed.Path)
+		} else {
+			fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", seed.Path)
+		}
 		// Batch seed commands, safe to use statement cache
-		if seed, err := NewMigrationFromFile(path, fsys); err != nil {
-			return err
-		} else if err := seed.ExecBatchWithCache(ctx, conn); err != nil {
+		if err := seed.ExecBatchWithCache(ctx, conn, fsys); err != nil {
 			return err
 		}
 	}
