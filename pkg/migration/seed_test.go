@@ -65,7 +65,7 @@ func TestPendingSeeds(t *testing.T) {
 		require.Empty(t, seeds)
 	})
 
-	t.Run("throws error on missing seed table", func(t *testing.T) {
+	t.Run("ignores missing seed table", func(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -74,7 +74,7 @@ func TestPendingSeeds(t *testing.T) {
 		// Run test
 		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "seed_files" does not exist (SQLSTATE 42P01)`)
+		assert.NoError(t, err)
 	})
 
 	t.Run("throws error on missing file", func(t *testing.T) {

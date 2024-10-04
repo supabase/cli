@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -52,8 +51,6 @@ func TestInitBranch(t *testing.T) {
 
 func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
-		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
@@ -62,8 +59,6 @@ func TestStartDatabase(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		roles := "create role test"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
-		seed := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(seed), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -91,9 +86,7 @@ func TestStartDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(roles).
-			Reply("CREATE ROLE").
-			Query(seed).
-			Reply("INSERT 0 1")
+			Reply("CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -274,6 +267,7 @@ func TestSetupDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on init failure", func(t *testing.T) {
+		utils.Config.Realtime.Enabled = true
 		utils.Config.Db.Port = 5432
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))

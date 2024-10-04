@@ -19,9 +19,9 @@ func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, err
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
 			// If seed table is undefined, the remote project has no migrations
-			return map[string]string{}, nil
+			return nil, nil
 		}
-		return map[string]string{}, err
+		return nil, err
 	}
 	applied := make(map[string]string, len(remotes))
 	for _, seed := range remotes {
@@ -31,6 +31,9 @@ func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, err
 }
 
 func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys fs.FS) ([]SeedFile, error) {
+	if len(locals) == 0 {
+		return nil, nil
+	}
 	applied, err := getRemoteSeeds(ctx, conn)
 	if err != nil {
 		return nil, err
