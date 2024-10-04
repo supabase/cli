@@ -29,6 +29,11 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
+
+	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
+		return err
+	}
+
 	// 1. Check service config
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
@@ -232,4 +237,21 @@ func updatePoolerConfig(config api.SupavisorConfigResponse) {
 	if config.MaxClientConn != nil {
 		utils.Config.Db.Pooler.MaxClientConn = uint(*config.MaxClientConn)
 	}
+}
+
+func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetProjectStatusWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to retrieve remote project status: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
+	}
+	if resp.JSON200.Status == api.StatusResponseStatusINACTIVE {
+		return errors.New(fmt.Sprintf("Project is paused. An admin must unpause it from the Supabase dashboard at %s/project/%s", utils.Aqua(utils.GetSupabaseDashboardURL()), projectRef))
+	}
+	if resp.JSON200.Status != api.StatusResponseStatusACTIVEHEALTHY {
+		fmt.Fprintf(os.Stderr, "%s: Project status is %s instead of Active Healthy. Some operations might fail.\n", utils.Yellow("Warning"), resp.JSON200.Status)
+	}
+	return nil
 }
