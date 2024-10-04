@@ -52,6 +52,8 @@ func TestInitBranch(t *testing.T) {
 
 func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
+		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
@@ -61,7 +63,7 @@ func TestStartDatabase(t *testing.T) {
 		roles := "create role test"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
 		seed := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.SupabaseDirPath, "seed.sql"), []byte(seed), 0644))
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(seed), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

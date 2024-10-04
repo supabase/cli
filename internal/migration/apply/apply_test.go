@@ -77,12 +77,15 @@ func TestMigrateDatabase(t *testing.T) {
 }
 
 func TestSeedDatabase(t *testing.T) {
+	seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+	utils.Config.Db.Seed.SqlPaths = []string{seedPath}
+
 	t.Run("seeds from file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup seed file
 		sql := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.SupabaseDirPath, "seed.sql"), []byte(sql), 0644))
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(sql), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -95,12 +98,19 @@ func TestSeedDatabase(t *testing.T) {
 	})
 
 	t.Run("ignores missing seed", func(t *testing.T) {
-		assert.NoError(t, SeedDatabase(context.Background(), nil, afero.NewMemMapFs()))
+		sqlPaths := utils.Config.Db.Seed.SqlPaths
+		utils.Config.Db.Seed.SqlPaths = []string{}
+		t.Cleanup(func() { utils.Config.Db.Seed.SqlPaths = sqlPaths })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := SeedDatabase(context.Background(), nil, fsys)
+		// Check error
+		assert.NoError(t, err)
 	})
 
 	t.Run("throws error on read failure", func(t *testing.T) {
 		// Setup in-memory fs
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
 		fsys := &fstest.OpenErrorFs{DenyPath: seedPath}
 		_, _ = fsys.Create(seedPath)
 		// Run test
@@ -114,7 +124,7 @@ func TestSeedDatabase(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup seed file
 		sql := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.SupabaseDirPath, "seed.sql"), []byte(sql), 0644))
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(sql), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
