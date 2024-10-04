@@ -259,7 +259,7 @@ func TestSetupDatabase(t *testing.T) {
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
-		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -268,7 +268,7 @@ func TestSetupDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
 		// Run test
-		err := setupDatabase(context.Background(), nil, io.Discard)
+		err := SetupLocalDatabase(context.Background(), "", nil, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -285,7 +285,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := setupDatabase(context.Background(), nil, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", nil, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -308,7 +308,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

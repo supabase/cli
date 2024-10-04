@@ -100,11 +100,6 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 		return err
 	}
 	defer conn.Close(context.Background())
-	if utils.Config.Db.MajorVersion > 14 {
-		if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-			return err
-		}
-	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
@@ -131,15 +126,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-		return err
-	}
-	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
+	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Restarting containers...")
