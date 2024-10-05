@@ -136,6 +136,9 @@ type ClientInterface interface {
 	// V1DeleteAProject request
 	V1DeleteAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetProject request
+	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetProjectApiKeys request
 	V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -336,9 +339,6 @@ type ClientInterface interface {
 	V1UpdateSslEnforcementConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1UpdateSslEnforcementConfig(ctx context.Context, ref string, body V1UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// V1GetProjectStatus request
-	V1GetProjectStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ListAllBuckets request
 	V1ListAllBuckets(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -574,6 +574,18 @@ func (c *Client) V1CreateAProject(ctx context.Context, body V1CreateAProjectJSON
 
 func (c *Client) V1DeleteAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DeleteAProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,18 +1484,6 @@ func (c *Client) V1UpdateSslEnforcementConfig(ctx context.Context, ref string, b
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetProjectStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetProjectStatusRequest(c.Server, ref)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) V1ListAllBuckets(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListAllBucketsRequest(c.Server, ref)
 	if err != nil {
@@ -2219,6 +2219,40 @@ func NewV1DeleteAProjectRequest(server string, ref string) (*http.Request, error
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectRequest generates requests for V1GetProject
+func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4602,40 +4636,6 @@ func NewV1UpdateSslEnforcementConfigRequestWithBody(server string, ref string, c
 	return req, nil
 }
 
-// NewV1GetProjectStatusRequest generates requests for V1GetProjectStatus
-func NewV1GetProjectStatusRequest(server string, ref string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/status", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewV1ListAllBucketsRequest generates requests for V1ListAllBuckets
 func NewV1ListAllBucketsRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -5176,6 +5176,9 @@ type ClientWithResponsesInterface interface {
 	// V1DeleteAProjectWithResponse request
 	V1DeleteAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteAProjectResponse, error)
 
+	// V1GetProjectWithResponse request
+	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
+
 	// V1GetProjectApiKeysWithResponse request
 	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
 
@@ -5376,9 +5379,6 @@ type ClientWithResponsesInterface interface {
 	V1UpdateSslEnforcementConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateSslEnforcementConfigResponse, error)
 
 	V1UpdateSslEnforcementConfigWithResponse(ctx context.Context, ref string, body V1UpdateSslEnforcementConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateSslEnforcementConfigResponse, error)
-
-	// V1GetProjectStatusWithResponse request
-	V1GetProjectStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectStatusResponse, error)
 
 	// V1ListAllBucketsWithResponse request
 	V1ListAllBucketsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllBucketsResponse, error)
@@ -5699,6 +5699,28 @@ func (r V1DeleteAProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1DeleteAProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProjectResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6860,28 +6882,6 @@ func (r V1UpdateSslEnforcementConfigResponse) StatusCode() int {
 	return 0
 }
 
-type V1GetProjectStatusResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *StatusResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r V1GetProjectStatusResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1GetProjectStatusResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type V1ListAllBucketsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7270,6 +7270,15 @@ func (c *ClientWithResponses) V1DeleteAProjectWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseV1DeleteAProjectResponse(rsp)
+}
+
+// V1GetProjectWithResponse request returning *V1GetProjectResponse
+func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error) {
+	rsp, err := c.V1GetProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectResponse(rsp)
 }
 
 // V1GetProjectApiKeysWithResponse request returning *V1GetProjectApiKeysResponse
@@ -7917,15 +7926,6 @@ func (c *ClientWithResponses) V1UpdateSslEnforcementConfigWithResponse(ctx conte
 	return ParseV1UpdateSslEnforcementConfigResponse(rsp)
 }
 
-// V1GetProjectStatusWithResponse request returning *V1GetProjectStatusResponse
-func (c *ClientWithResponses) V1GetProjectStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectStatusResponse, error) {
-	rsp, err := c.V1GetProjectStatus(ctx, ref, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1GetProjectStatusResponse(rsp)
-}
-
 // V1ListAllBucketsWithResponse request returning *V1ListAllBucketsResponse
 func (c *ClientWithResponses) V1ListAllBucketsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllBucketsResponse, error) {
 	rsp, err := c.V1ListAllBuckets(ctx, ref, reqEditors...)
@@ -8367,6 +8367,32 @@ func ParseV1DeleteAProjectResponse(rsp *http.Response) (*V1DeleteAProjectRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectRefResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectResponse parses an HTTP response from a V1GetProjectWithResponse call
+func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9635,32 +9661,6 @@ func ParseV1UpdateSslEnforcementConfigResponse(rsp *http.Response) (*V1UpdateSsl
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest SslEnforcementResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseV1GetProjectStatusResponse parses an HTTP response from a V1GetProjectStatusWithResponse call
-func ParseV1GetProjectStatusResponse(rsp *http.Response) (*V1GetProjectStatusResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1GetProjectStatusResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest StatusResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

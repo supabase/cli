@@ -817,6 +817,31 @@ paths:
       security:
         - bearer: []
   /v1/projects/{ref}:
+    get:
+      operationId: v1-get-project
+      summary: Gets a specific project status that belongs to the authenticated user
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ProjectResponse'
+        '500':
+          description: Failed to retrieve project status
+      tags:
+        - Projects
+      security:
+        - bearer: []
     delete:
       operationId: v1-delete-a-project
       summary: Deletes the given project
@@ -1724,32 +1749,6 @@ paths:
           description: ''
       tags:
         - Auth
-      security:
-        - bearer: []
-  /v1/projects/{ref}/status:
-    get:
-      operationId: v1-get-project-status
-      summary: Gets a specific project status that belongs to the authenticated user
-      parameters:
-        - name: ref
-          required: true
-          in: path
-          description: Project ref
-          schema:
-            minLength: 20
-            maxLength: 20
-            type: string
-      responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusResponse'
-        '500':
-          description: Failed to retrieve project status
-      tags:
-        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/database/query:
@@ -3129,37 +3128,6 @@ components:
         - id
         - ref
         - name
-    StatusResponse:
-      type: object
-      properties:
-        id:
-          type: number
-        ref:
-          type: string
-        name:
-          type: string
-        status:
-          enum:
-            - ACTIVE_HEALTHY
-            - ACTIVE_UNHEALTHY
-            - COMING_UP
-            - GOING_DOWN
-            - INACTIVE
-            - INIT_FAILED
-            - REMOVED
-            - RESTARTING
-            - UNKNOWN
-            - UPGRADING
-            - PAUSING
-            - RESTORING
-            - RESTORE_FAILED
-            - PAUSE_FAILED
-          type: string
-      required:
-        - id
-        - ref
-        - name
-        - status
     SecretResponse:
       type: object
       properties:

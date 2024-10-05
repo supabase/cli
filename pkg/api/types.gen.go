@@ -193,24 +193,6 @@ const (
 	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
 )
 
-// Defines values for StatusResponseStatus.
-const (
-	StatusResponseStatusACTIVEHEALTHY   StatusResponseStatus = "ACTIVE_HEALTHY"
-	StatusResponseStatusACTIVEUNHEALTHY StatusResponseStatus = "ACTIVE_UNHEALTHY"
-	StatusResponseStatusCOMINGUP        StatusResponseStatus = "COMING_UP"
-	StatusResponseStatusGOINGDOWN       StatusResponseStatus = "GOING_DOWN"
-	StatusResponseStatusINACTIVE        StatusResponseStatus = "INACTIVE"
-	StatusResponseStatusINITFAILED      StatusResponseStatus = "INIT_FAILED"
-	StatusResponseStatusPAUSEFAILED     StatusResponseStatus = "PAUSE_FAILED"
-	StatusResponseStatusPAUSING         StatusResponseStatus = "PAUSING"
-	StatusResponseStatusREMOVED         StatusResponseStatus = "REMOVED"
-	StatusResponseStatusRESTARTING      StatusResponseStatus = "RESTARTING"
-	StatusResponseStatusRESTOREFAILED   StatusResponseStatus = "RESTORE_FAILED"
-	StatusResponseStatusRESTORING       StatusResponseStatus = "RESTORING"
-	StatusResponseStatusUNKNOWN         StatusResponseStatus = "UNKNOWN"
-	StatusResponseStatusUPGRADING       StatusResponseStatus = "UPGRADING"
-)
-
 // Defines values for SupavisorConfigResponseDatabaseType.
 const (
 	PRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
@@ -346,9 +328,9 @@ const (
 
 // Defines values for V1ServiceHealthResponseStatus.
 const (
-	ACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	COMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
-	UNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
+	V1ServiceHealthResponseStatusACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	V1ServiceHealthResponseStatusCOMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
+	V1ServiceHealthResponseStatusUNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -1080,17 +1062,6 @@ type SslValidation struct {
 	ValidationErrors  *[]ValidationError `json:"validation_errors,omitempty"`
 	ValidationRecords []ValidationRecord `json:"validation_records"`
 }
-
-// StatusResponse defines model for StatusResponse.
-type StatusResponse struct {
-	Id     float32              `json:"id"`
-	Name   string               `json:"name"`
-	Ref    string               `json:"ref"`
-	Status StatusResponseStatus `json:"status"`
-}
-
-// StatusResponseStatus defines model for StatusResponse.Status.
-type StatusResponseStatus string
 
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
 type SubdomainAvailabilityResponse struct {

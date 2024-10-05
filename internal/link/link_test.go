@@ -50,9 +50,9 @@ func TestLinkCommand(t *testing.T) {
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/status").
+			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.StatusResponse{Status: api.StatusResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -126,9 +126,9 @@ func TestLinkCommand(t *testing.T) {
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/status").
+			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.StatusResponse{Status: api.StatusResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -171,9 +171,9 @@ func TestLinkCommand(t *testing.T) {
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/status").
+			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.StatusResponse{Status: api.StatusResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -215,9 +215,9 @@ func TestLinkCommand(t *testing.T) {
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/status").
+			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.StatusResponse{Status: api.StatusResponseStatusINACTIVE})
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusINACTIVE})
 		// Run test
 		err := Run(context.Background(), project, fsys)
 		// Check error
