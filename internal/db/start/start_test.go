@@ -78,7 +78,7 @@ func TestStartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
@@ -126,7 +126,7 @@ func TestStartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Run test

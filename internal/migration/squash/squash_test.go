@@ -61,7 +61,7 @@ func TestSquashCommand(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
@@ -251,7 +251,7 @@ func TestSquashMigrations(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
@@ -286,7 +286,7 @@ func TestSquashMigrations(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
