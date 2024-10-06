@@ -148,7 +148,7 @@ func TestPushAll(t *testing.T) {
 
 	t.Run("throws error on roles failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		fsys := &fstest.StatErrorFs{DenyPath: utils.CustomRolesPath}
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres

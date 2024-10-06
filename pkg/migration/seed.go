@@ -60,7 +60,7 @@ func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys 
 func SeedData(ctx context.Context, pending []SeedFile, conn *pgx.Conn, fsys fs.FS) error {
 	for _, seed := range pending {
 		if seed.Dirty {
-			fmt.Fprintf(os.Stderr, "Updating seed file hash %s...\n", seed.Path)
+			fmt.Fprintf(os.Stderr, "Updating seed hash to %s...\n", seed.Path)
 		} else {
 			fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", seed.Path)
 		}
