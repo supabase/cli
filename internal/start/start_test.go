@@ -160,7 +160,7 @@ func TestDatabaseStart(t *testing.T) {
 				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 					State: &types.ContainerState{
 						Running: true,
-						Health:  &types.Health{Status: "healthy"},
+						Health:  &types.Health{Status: types.Healthy},
 					},
 				}})
 		}
@@ -177,7 +177,7 @@ func TestDatabaseStart(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Config.Api.ExternalUrl).
@@ -225,7 +225,7 @@ func TestDatabaseStart(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Run test
