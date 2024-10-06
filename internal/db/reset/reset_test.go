@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 func TestResetCommand(t *testing.T) {
@@ -37,6 +38,69 @@ func TestResetCommand(t *testing.T) {
 		Password: "password",
 		Database: "postgres",
 	}
+
+	t.Run("seeds storage after reset", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		utils.ConfigId = "test-config"
+		utils.Config.Db.MajorVersion = 15
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{})
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
+			Reply(http.StatusOK)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), utils.DbId)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: types.Healthy},
+				},
+			}})
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		for _, container := range listServicesToRestart() {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
+		}
+		// Seeds storage
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: types.Healthy},
+				},
+			}})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		// Run test
+		err := Run(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 
 	t.Run("throws error on context canceled", func(t *testing.T) {
 		// Setup in-memory fs
@@ -225,7 +289,7 @@ func TestRestartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
@@ -260,7 +324,7 @@ func TestRestartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
@@ -279,9 +343,9 @@ func TestRestartDatabase(t *testing.T) {
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to restart "+utils.StorageId)
-		assert.ErrorContains(t, err, "Failed to restart "+utils.GotrueId)
-		assert.ErrorContains(t, err, "Failed to restart "+utils.RealtimeId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.StorageId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.GotrueId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.RealtimeId)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
