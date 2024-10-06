@@ -115,10 +115,6 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
 		return errors.Errorf("failed to remove volume: %w", err)
 	}
-	// Skip syslog if vector container is not started
-	if _, err := utils.Docker.ContainerInspect(ctx, utils.VectorId); err != nil {
-		utils.Config.Analytics.Enabled = false
-	}
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()
 	networkingConfig := network.NetworkingConfig{

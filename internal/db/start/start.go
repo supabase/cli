@@ -43,8 +43,6 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	} else if !errors.Is(err, utils.ErrNotRunning) {
 		return err
 	}
-	// Skip logflare container in db start
-	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
 		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
