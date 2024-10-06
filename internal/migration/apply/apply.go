@@ -2,9 +2,7 @@ package apply
 
 import (
 	"context"
-	"os"
 
-	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
@@ -32,12 +30,4 @@ func applySeedFiles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 		return err
 	}
 	return migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys))
-}
-
-func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
-	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
 }
