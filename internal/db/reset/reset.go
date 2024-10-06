@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -54,9 +55,11 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if utils.Config.Storage.Enabled {
-		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
-			return err
+	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); err == nil {
+		if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
+			if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+				return err
+			}
 		}
 		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
@@ -212,7 +215,7 @@ func restartServices(ctx context.Context) error {
 	services := listServicesToRestart()
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			return errors.Errorf("Failed to restart %s: %w", id, err)
+			return errors.Errorf("failed to restart %s: %w", id, err)
 		}
 		return nil
 	})
