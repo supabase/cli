@@ -46,6 +46,7 @@ func TestLinkCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -279,6 +280,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -294,6 +296,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -313,8 +316,7 @@ func TestLinkDatabase(t *testing.T) {
 			Query(migration.CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
 			Query(migration.ADD_STATEMENTS_COLUMN).
-			Query(migration.ADD_NAME_COLUMN).
-			Query(migration.CREATE_SEED_TABLE)
+			Query(migration.ADD_NAME_COLUMN)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error

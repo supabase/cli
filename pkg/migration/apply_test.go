@@ -130,8 +130,7 @@ func TestApplyMigrations(t *testing.T) {
 			Query(CREATE_VERSION_TABLE).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
 			Query(ADD_STATEMENTS_COLUMN).
-			Query(ADD_NAME_COLUMN).
-			Query(CREATE_SEED_TABLE)
+			Query(ADD_NAME_COLUMN)
 		// Run test
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), fsys)
 		// Check error
@@ -176,8 +175,6 @@ func mockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
 		Query(ADD_STATEMENTS_COLUMN).
 		Reply("ALTER TABLE").
 		Query(ADD_NAME_COLUMN).
-		Reply("ALTER TABLE").
-		Query(CREATE_SEED_TABLE).
-		Reply("CREATE TABLE")
+		Reply("ALTER TABLE")
 	return conn
 }

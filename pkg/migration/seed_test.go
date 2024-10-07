@@ -102,7 +102,8 @@ func TestSeedData(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(UPSERT_SEED_FILE, seed.Path, seed.Hash).
+		mockSeedHistory(conn).
+			Query(UPSERT_SEED_FILE, seed.Path, seed.Hash).
 			Reply("INSERT 0 1")
 		// Run test
 		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t), testMigrations)
@@ -118,7 +119,8 @@ func TestSeedData(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(testSeed+`;INSERT INTO supabase_migrations.seed_files(path, hash) VALUES( 'testdata/seed.sql' ,  '61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3' ) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash`).
+		mockSeedHistory(conn).
+			Query(testSeed+`;INSERT INTO supabase_migrations.seed_files(path, hash) VALUES( 'testdata/seed.sql' ,  '61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3' ) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash`).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "age" of relation "employees"`)
 		// Run test
 		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t, func(cc *pgx.ConnConfig) {
@@ -127,6 +129,15 @@ func TestSeedData(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
 	})
+}
+
+func mockSeedHistory(conn *pgtest.MockConn) *pgtest.MockConn {
+	conn.Query(SET_LOCK_TIMEOUT).
+		Query(CREATE_VERSION_SCHEMA).
+		Reply("CREATE SCHEMA").
+		Query(CREATE_SEED_TABLE).
+		Reply("CREATE TABLE")
+	return conn
 }
 
 //go:embed testdata/1_globals.sql
