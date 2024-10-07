@@ -36,7 +36,6 @@ func CreateMigrationTable(ctx context.Context, conn *pgx.Conn) error {
 	batch.ExecParams(CREATE_VERSION_TABLE, nil, nil, nil, nil)
 	batch.ExecParams(ADD_STATEMENTS_COLUMN, nil, nil, nil, nil)
 	batch.ExecParams(ADD_NAME_COLUMN, nil, nil, nil, nil)
-	batch.ExecParams(CREATE_SEED_TABLE, nil, nil, nil, nil)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
 		return errors.Errorf("failed to create migration table: %w", err)
 	}
@@ -49,6 +48,19 @@ func ReadMigrationTable(ctx context.Context, conn *pgx.Conn) ([]MigrationFile, e
 		return nil, errors.Errorf("failed to read migration table: %w", err)
 	}
 	return pgxv5.CollectRows[MigrationFile](rows)
+}
+
+func CreateSeedTable(ctx context.Context, conn *pgx.Conn) error {
+	// This must be run without prepared statements because each statement in the batch depends on
+	// the previous schema change. The lock timeout will be reset when implicit transaction ends.
+	batch := pgconn.Batch{}
+	batch.ExecParams(SET_LOCK_TIMEOUT, nil, nil, nil, nil)
+	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
+	batch.ExecParams(CREATE_SEED_TABLE, nil, nil, nil, nil)
+	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
+		return errors.Errorf("failed to create migration table: %w", err)
+	}
+	return nil
 }
 
 func ReadSeedTable(ctx context.Context, conn *pgx.Conn) ([]SeedFile, error) {

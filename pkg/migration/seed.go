@@ -58,6 +58,11 @@ func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys 
 }
 
 func SeedData(ctx context.Context, pending []SeedFile, conn *pgx.Conn, fsys fs.FS) error {
+	if len(pending) > 0 {
+		if err := CreateSeedTable(ctx, conn); err != nil {
+			return err
+		}
+	}
 	for _, seed := range pending {
 		if seed.Dirty {
 			fmt.Fprintf(os.Stderr, "Updating seed hash to %s...\n", seed.Path)

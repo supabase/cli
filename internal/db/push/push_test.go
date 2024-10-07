@@ -180,7 +180,8 @@ func TestPushAll(t *testing.T) {
 			Reply("SELECT 0")
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
-			Reply("INSERT 0 1").
+			Reply("INSERT 0 1")
+		helper.MockSeedHistory(conn).
 			Query(migration.UPSERT_SEED_FILE, seedPath, digest).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "hash" of relation "seed_files"`)
 		// Run test
