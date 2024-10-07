@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -54,9 +55,11 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if utils.Config.Storage.Enabled {
-		if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
-			return err
+	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); err == nil {
+		if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
+			if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+				return err
+			}
 		}
 		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
@@ -97,11 +100,6 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 		return err
 	}
 	defer conn.Close(context.Background())
-	if utils.Config.Db.MajorVersion > 14 {
-		if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-			return err
-		}
-	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
@@ -111,10 +109,6 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	}
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
 		return errors.Errorf("failed to remove volume: %w", err)
-	}
-	// Skip syslog if vector container is not started
-	if _, err := utils.Docker.ContainerInspect(ctx, utils.VectorId); err != nil {
-		utils.Config.Analytics.Enabled = false
 	}
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()
@@ -132,15 +126,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-		return err
-	}
-	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
+	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Restarting containers...")
@@ -212,7 +198,7 @@ func restartServices(ctx context.Context) error {
 	services := listServicesToRestart()
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			return errors.Errorf("Failed to restart %s: %w", id, err)
+			return errors.Errorf("failed to restart %s: %w", id, err)
 		}
 		return nil
 	})

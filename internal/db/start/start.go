@@ -43,8 +43,6 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	} else if !errors.Is(err, utils.ErrNotRunning) {
 		return err
 	}
-	// Skip logflare container in db start
-	utils.Config.Analytics.Enabled = false
 	err := StartDatabase(ctx, fsys, os.Stderr)
 	if err != nil {
 		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
@@ -149,7 +147,7 @@ EOF
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
 	if utils.NoBackupVolume {
-		if err := setupDatabase(ctx, fsys, w, options...); err != nil {
+		if err := SetupLocalDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}
 	}
@@ -310,7 +308,7 @@ func initSchema15(ctx context.Context, host string) error {
 	return nil
 }
 
-func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
@@ -319,12 +317,16 @@ func setupDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
 		return err
 	}
-	return apply.MigrateAndSeed(ctx, "", conn, fsys)
+	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
-	return apply.CreateCustomRoles(ctx, conn, fsys)
+	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }

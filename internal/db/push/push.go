@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -29,39 +28,75 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	if err != nil {
 		return err
 	}
-	if len(pending) == 0 {
+	var seeds []migration.SeedFile
+	if includeSeed {
+		seeds, err = migration.GetPendingSeeds(ctx, utils.Config.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
+		if err != nil {
+			return err
+		}
+	}
+	var globals []string
+	if includeRoles {
+		if exists, err := afero.Exists(fsys, utils.CustomRolesPath); err != nil {
+			return errors.Errorf("failed to find custom roles: %w", err)
+		} else if exists {
+			globals = append(globals, utils.CustomRolesPath)
+		}
+	}
+	if len(pending) == 0 && len(seeds) == 0 && len(globals) == 0 {
 		fmt.Println("Remote database is up to date.")
 		return nil
 	}
 	// Push pending migrations
 	if dryRun {
-		if includeRoles {
-			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
+		if len(globals) > 0 {
+			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(globals[0])+"...")
 		}
-		fmt.Fprintln(os.Stderr, "Would push these migrations:")
-		fmt.Fprint(os.Stderr, utils.Bold(confirmPushAll(pending)))
-		if includeSeed {
-			fmt.Fprintf(os.Stderr, "Would seed data %v...\n", utils.Config.Db.Seed.SqlPaths)
+		if len(pending) > 0 {
+			fmt.Fprintln(os.Stderr, "Would push these migrations:")
+			fmt.Fprint(os.Stderr, confirmPushAll(pending))
+		}
+		if len(seeds) > 0 {
+			fmt.Fprintln(os.Stderr, "Would seed these files:")
+			fmt.Fprint(os.Stderr, confirmSeedAll(seeds))
 		}
 	} else {
-		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))
-		if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
-			return err
-		} else if !shouldPush {
-			return errors.New(context.Canceled)
-		}
-		if includeRoles {
-			if err := apply.CreateCustomRoles(ctx, conn, fsys); err != nil {
+		if len(globals) > 0 {
+			msg := "Do you want to create custom roles in the database cluster?"
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.SeedGlobals(ctx, globals, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
 		}
-		if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
-			return err
-		}
-		if includeSeed {
-			if err := apply.SeedDatabase(ctx, conn, fsys); err != nil {
+		if len(pending) > 0 {
+			msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
+		} else {
+			fmt.Fprintln(os.Stderr, "Schema migrations are up to date.")
+		}
+		if len(seeds) > 0 {
+			msg := fmt.Sprintf("Do you want to seed the remote database with these files?\n%s\n", confirmSeedAll(seeds))
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys)); err != nil {
+				return err
+			}
+		} else if includeSeed {
+			fmt.Fprintln(os.Stderr, "Seed files are up to date.")
 		}
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
@@ -71,7 +106,18 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 func confirmPushAll(pending []string) (msg string) {
 	for _, path := range pending {
 		filename := filepath.Base(path)
-		msg += fmt.Sprintf(" • %s\n", filename)
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(filename))
+	}
+	return msg
+}
+
+func confirmSeedAll(pending []migration.SeedFile) (msg string) {
+	for _, seed := range pending {
+		notice := seed.Path
+		if seed.Dirty {
+			notice += " (hash update)"
+		}
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(notice))
 	}
 	return msg
 }

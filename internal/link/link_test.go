@@ -46,6 +46,7 @@ func TestLinkCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
@@ -310,6 +311,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -325,6 +327,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, conn.Intercept)
 		// Check error

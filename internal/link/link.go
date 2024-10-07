@@ -188,7 +188,10 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	return migration.CreateMigrationTable(ctx, conn)
+	if err := migration.CreateMigrationTable(ctx, conn); err != nil {
+		return err
+	}
+	return migration.CreateSeedTable(ctx, conn)
 }
 
 func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {

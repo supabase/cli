@@ -17,3 +17,12 @@ func MockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {
 		Reply("ALTER TABLE")
 	return conn
 }
+
+func MockSeedHistory(conn *pgtest.MockConn) *pgtest.MockConn {
+	conn.Query(migration.SET_LOCK_TIMEOUT).
+		Query(migration.CREATE_VERSION_SCHEMA).
+		Reply("CREATE SCHEMA").
+		Query(migration.CREATE_SEED_TABLE).
+		Reply("CREATE TABLE")
+	return conn
+}

@@ -2,6 +2,8 @@ package push
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,7 +148,7 @@ func TestPushAll(t *testing.T) {
 
 	t.Run("throws error on roles failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		fsys := &fstest.StatErrorFs{DenyPath: utils.CustomRolesPath}
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
@@ -161,24 +163,30 @@ func TestPushAll(t *testing.T) {
 	})
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
+		digest := hex.EncodeToString(sha256.New().Sum(nil))
 		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
 		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: seedPath}
-		_, _ = fsys.Create(seedPath)
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte{}, 0644))
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0").
+			Query(migration.SELECT_SEED_TABLE).
 			Reply("SELECT 0")
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
+		helper.MockSeedHistory(conn).
+			Query(migration.UPSERT_SEED_FILE, seedPath, digest).
+			ReplyError(pgerrcode.NotNullViolation, `null value in column "hash" of relation "seed_files"`)
 		// Run test
 		err := Run(context.Background(), false, false, false, true, dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrPermission)
+		assert.ErrorContains(t, err, `ERROR: null value in column "hash" of relation "seed_files" (SQLSTATE 23502)`)
 	})
 }

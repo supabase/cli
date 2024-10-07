@@ -2,6 +2,8 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"io/fs"
 	"path/filepath"
@@ -24,6 +26,22 @@ type MigrationFile struct {
 var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
+	lines, err := parseFile(path, fsys)
+	if err != nil {
+		return nil, err
+	}
+	file := MigrationFile{Statements: lines}
+	// Parse version from file name
+	filename := filepath.Base(path)
+	matches := migrateFilePattern.FindStringSubmatch(filename)
+	if len(matches) > 2 {
+		file.Version = matches[1]
+		file.Name = matches[2]
+	}
+	return &file, nil
+}
+
+func parseFile(path string, fsys fs.FS) ([]string, error) {
 	sql, err := fsys.Open(path)
 	if err != nil {
 		return nil, errors.Errorf("failed to open migration file: %w", err)
@@ -37,17 +55,7 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 			}
 		}
 	}
-	file, err := NewMigrationFromReader(sql)
-	if err == nil {
-		// Parse version from file name
-		filename := filepath.Base(path)
-		matches := migrateFilePattern.FindStringSubmatch(filename)
-		if len(matches) > 2 {
-			file.Version = matches[1]
-			file.Name = matches[2]
-		}
-	}
-	return file, err
+	return parser.SplitAndTrim(sql)
 }
 
 func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
@@ -112,12 +120,40 @@ func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) er
 	return nil
 }
 
-func (m *MigrationFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn) error {
+type SeedFile struct {
+	Path  string
+	Hash  string
+	Dirty bool `db:"-"`
+}
+
+func NewSeedFile(path string, fsys fs.FS) (*SeedFile, error) {
+	sql, err := fsys.Open(path)
+	if err != nil {
+		return nil, errors.Errorf("failed to open seed file: %w", err)
+	}
+	defer sql.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, sql); err != nil {
+		return nil, errors.Errorf("failed to hash file: %w", err)
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	return &SeedFile{Path: path, Hash: digest}, nil
+}
+
+func (m *SeedFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn, fsys fs.FS) error {
+	// Parse each file individually to reduce memory usage
+	lines, err := parseFile(m.Path, fsys)
+	if err != nil {
+		return err
+	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := pgx.Batch{}
-	for _, line := range m.Statements {
-		batch.Queue(line)
+	if !m.Dirty {
+		for _, line := range lines {
+			batch.Queue(line)
+		}
 	}
+	batch.Queue(UPSERT_SEED_FILE, m.Path, m.Hash)
 	// No need to track version here because there are no schema changes
 	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
 		return errors.Errorf("failed to send batch: %w", err)

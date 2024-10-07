@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -52,8 +51,6 @@ func TestInitBranch(t *testing.T) {
 
 func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
-		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
@@ -62,8 +59,6 @@ func TestStartDatabase(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		roles := "create role test"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
-		seed := "INSERT INTO employees(name) VALUES ('Alice')"
-		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte(seed), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -78,7 +73,7 @@ func TestStartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
@@ -91,9 +86,7 @@ func TestStartDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(roles).
-			Reply("CREATE ROLE").
-			Query(seed).
-			Reply("INSERT 0 1")
+			Reply("CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -126,7 +119,7 @@ func TestStartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Run test
@@ -259,7 +252,7 @@ func TestSetupDatabase(t *testing.T) {
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
-		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -268,12 +261,13 @@ func TestSetupDatabase(t *testing.T) {
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
 		// Run test
-		err := setupDatabase(context.Background(), nil, io.Discard)
+		err := SetupLocalDatabase(context.Background(), "", nil, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
 	t.Run("throws error on init failure", func(t *testing.T) {
+		utils.Config.Realtime.Enabled = true
 		utils.Config.Db.Port = 5432
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
@@ -285,7 +279,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := setupDatabase(context.Background(), nil, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", nil, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -308,7 +302,7 @@ func TestSetupDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		err := setupDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

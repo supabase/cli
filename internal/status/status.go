@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -114,7 +115,7 @@ func assertContainerHealthy(ctx context.Context, container string) error {
 		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
 		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
-	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
+	} else if resp.State.Health != nil && resp.State.Health.Status != types.Healthy {
 		return errors.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
 	}
 	return nil
