@@ -221,7 +221,7 @@ func TestLinkCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Project is paused. An admin must unpause it from the Supabase dashboard")
+		assert.ErrorContains(t, err, "project is paused")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

@@ -819,7 +819,7 @@ paths:
   /v1/projects/{ref}:
     get:
       operationId: v1-get-project
-      summary: Gets a specific project status that belongs to the authenticated user
+      summary: Gets a specific project that belongs to the authenticated user
       parameters:
         - name: ref
           required: true
@@ -837,7 +837,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/V1ProjectResponse'
         '500':
-          description: Failed to retrieve project status
+          description: Failed to retrieve project
       tags:
         - Projects
       security:
