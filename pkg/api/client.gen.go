@@ -136,6 +136,9 @@ type ClientInterface interface {
 	// V1DeleteAProject request
 	V1DeleteAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetProject request
+	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetProjectApiKeys request
 	V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -571,6 +574,18 @@ func (c *Client) V1CreateAProject(ctx context.Context, body V1CreateAProjectJSON
 
 func (c *Client) V1DeleteAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DeleteAProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -2204,6 +2219,40 @@ func NewV1DeleteAProjectRequest(server string, ref string) (*http.Request, error
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectRequest generates requests for V1GetProject
+func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -5127,6 +5176,9 @@ type ClientWithResponsesInterface interface {
 	// V1DeleteAProjectWithResponse request
 	V1DeleteAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteAProjectResponse, error)
 
+	// V1GetProjectWithResponse request
+	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
+
 	// V1GetProjectApiKeysWithResponse request
 	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
 
@@ -5647,6 +5699,28 @@ func (r V1DeleteAProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1DeleteAProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProjectResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7198,6 +7272,15 @@ func (c *ClientWithResponses) V1DeleteAProjectWithResponse(ctx context.Context, 
 	return ParseV1DeleteAProjectResponse(rsp)
 }
 
+// V1GetProjectWithResponse request returning *V1GetProjectResponse
+func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error) {
+	rsp, err := c.V1GetProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectResponse(rsp)
+}
+
 // V1GetProjectApiKeysWithResponse request returning *V1GetProjectApiKeysResponse
 func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error) {
 	rsp, err := c.V1GetProjectApiKeys(ctx, ref, reqEditors...)
@@ -8284,6 +8367,32 @@ func ParseV1DeleteAProjectResponse(rsp *http.Response) (*V1DeleteAProjectRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectRefResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectResponse parses an HTTP response from a V1GetProjectWithResponse call
+func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProjectResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

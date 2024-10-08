@@ -49,6 +49,11 @@ func TestLinkCommand(t *testing.T) {
 		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(200).
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -120,6 +125,11 @@ func TestLinkCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(200).
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -160,6 +170,11 @@ func TestLinkCommand(t *testing.T) {
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(200).
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -193,6 +208,22 @@ func TestLinkCommand(t *testing.T) {
 		exists, err := afero.Exists(fsys, utils.ProjectRefPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
+	})
+	t.Run("throws error on project inactive", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(200).
+			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusINACTIVE})
+		// Run test
+		err := Run(context.Background(), project, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "project is paused")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 

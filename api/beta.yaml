@@ -817,6 +817,31 @@ paths:
       security:
         - bearer: []
   /v1/projects/{ref}:
+    get:
+      operationId: v1-get-project
+      summary: Gets a specific project that belongs to the authenticated user
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ProjectResponse'
+        '500':
+          description: Failed to retrieve project
+      tags:
+        - Projects
+      security:
+        - bearer: []
     delete:
       operationId: v1-delete-a-project
       summary: Deletes the given project
