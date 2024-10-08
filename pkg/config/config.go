@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -1061,8 +1062,10 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 	}
 	set := make(map[string]struct{})
 	for _, pattern := range c.GlobPatterns {
+		// Glob expects / as path separator on windows
+		pattern = filepath.ToSlash(pattern)
 		if !filepath.IsAbs(pattern) {
-			pattern = filepath.Join(basePath, pattern)
+			pattern = path.Join(basePath, pattern)
 		}
 		matches, err := fs.Glob(fsys, pattern)
 		if err != nil {
