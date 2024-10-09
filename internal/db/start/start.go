@@ -150,6 +150,8 @@ EOF
 		if err := SetupLocalDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}
+	} else {
+		SetupDatabaseInterCliVersionsMigration(ctx)
 	}
 	return initCurrentBranch(fsys)
 }
@@ -330,4 +332,24 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 		return nil
 	}
 	return err
+}
+
+// Used to run migrations in a indempotent way when the volume of the local database is between two versions
+func SetupDatabaseInterCliVersionsMigration(ctx context.Context) error {
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{})
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	conn.Exec(ctx, "CREATE DATABASE _supabase WITH OWNER postgres;")
+	supabase_conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Database: "_supabase"})
+	if err != nil {
+		return nil
+	}
+	defer supabase_conn.Close(context.Background())
+	supabase_conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS _analytics;")
+	supabase_conn.Exec(ctx, "ALTER SCHEMA _analytics OWNER TO postgres;")
+	supabase_conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS _supavisor;")
+	supabase_conn.Exec(ctx, "ALTER SCHEMA _supavisor OWNER TO postgres;")
+	return nil
 }
