@@ -19,7 +19,7 @@ const (
 	DELETE_MIGRATION_VERSION = "DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY($1)"
 	DELETE_MIGRATION_BEFORE  = "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1"
 	TRUNCATE_VERSION_TABLE   = "TRUNCATE supabase_migrations.schema_migrations"
-	SELECT_VERSION_TABLE     = "SELECT * FROM supabase_migrations.schema_migrations"
+	SELECT_VERSION_TABLE     = "SELECT version, coalesce(name, '') as name, statements FROM supabase_migrations.schema_migrations"
 	LIST_MIGRATION_VERSION   = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
 	CREATE_SEED_TABLE        = "CREATE TABLE IF NOT EXISTS supabase_migrations.seed_files (path text NOT NULL PRIMARY KEY, hash text NOT NULL)"
 	UPSERT_SEED_FILE         = "INSERT INTO supabase_migrations.seed_files(path, hash) VALUES($1, $2) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash"
