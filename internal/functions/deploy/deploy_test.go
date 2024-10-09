@@ -28,6 +28,8 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test-func", "index.ts"), []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test-func-2", "index.js"), []byte("{}"), 0644))
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Setup valid access token
@@ -290,6 +292,7 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
 		// Check error
@@ -306,6 +309,7 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "hello", "index.ts"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
 		// Check error
@@ -322,6 +326,7 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "hello", "index.ts"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, utils.Ptr(false), fsys)
 		// Check error
@@ -332,6 +337,7 @@ func TestImportMapPath(t *testing.T) {
 	t.Run("returns empty string if no fallback", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
 		// Check error
@@ -344,6 +350,7 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, path, nil, fsys)
 		// Check error
