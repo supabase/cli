@@ -263,6 +263,7 @@ func initStorageJob(host string) utils.DockerJob {
 			fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 			fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 			"STORAGE_BACKEND=file",
+			"STORAGE_FILE_BACKEND_PATH=/mnt",
 			"TENANT_ID=stub",
 			// TODO: https://github.com/supabase/storage-api/issues/55
 			"REGION=stub",
