@@ -125,7 +125,7 @@ type (
 	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
+		Api          Api            `toml:"api"`
 		Db           db             `toml:"db" mapstructure:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
@@ -142,23 +142,6 @@ type (
 		baseConfig
 		Overrides map[string]interface{} `toml:"remotes"`
 		Remotes   map[string]baseConfig  `toml:"-"`
-	}
-
-	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Image           string   `toml:"-"`
-		KongImage       string   `toml:"-"`
-		Port            uint16   `toml:"port"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
-		Tls             tlsKong  `toml:"tls"`
-		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
-	}
-
-	tlsKong struct {
-		Enabled bool `toml:"enabled"`
 	}
 
 	db struct {
@@ -307,7 +290,7 @@ func WithHostname(hostname string) ConfigEditor {
 func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
-		Api: api{
+		Api: Api{
 			Image:     postgrestImage,
 			KongImage: kongImage,
 		},
