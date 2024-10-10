@@ -50,6 +50,12 @@ const (
 	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
 )
 
+// Defines values for CreateApiKeyBodyType.
+const (
+	Publishable CreateApiKeyBodyType = "publishable"
+	Secret      CreateApiKeyBodyType = "secret"
+)
+
 // Defines values for CreateProviderBodyType.
 const (
 	Saml CreateProviderBodyType = "saml"
@@ -148,6 +154,20 @@ const (
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
 )
 
+// Defines values for PostgresEngine.
+const (
+	N15 PostgresEngine = "15"
+)
+
+// Defines values for ReleaseChannel.
+const (
+	Alpha     ReleaseChannel = "alpha"
+	Beta      ReleaseChannel = "beta"
+	Ga        ReleaseChannel = "ga"
+	Internal  ReleaseChannel = "internal"
+	Withdrawn ReleaseChannel = "withdrawn"
+)
+
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
 const (
 	SetUpReadReplicaBodyReadReplicaRegionApEast1      SetUpReadReplicaBodyReadReplicaRegion = "ap-east-1"
@@ -158,11 +178,14 @@ const (
 	SetUpReadReplicaBodyReadReplicaRegionApSoutheast2 SetUpReadReplicaBodyReadReplicaRegion = "ap-southeast-2"
 	SetUpReadReplicaBodyReadReplicaRegionCaCentral1   SetUpReadReplicaBodyReadReplicaRegion = "ca-central-1"
 	SetUpReadReplicaBodyReadReplicaRegionEuCentral1   SetUpReadReplicaBodyReadReplicaRegion = "eu-central-1"
+	SetUpReadReplicaBodyReadReplicaRegionEuCentral2   SetUpReadReplicaBodyReadReplicaRegion = "eu-central-2"
+	SetUpReadReplicaBodyReadReplicaRegionEuNorth1     SetUpReadReplicaBodyReadReplicaRegion = "eu-north-1"
 	SetUpReadReplicaBodyReadReplicaRegionEuWest1      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-1"
 	SetUpReadReplicaBodyReadReplicaRegionEuWest2      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-2"
 	SetUpReadReplicaBodyReadReplicaRegionEuWest3      SetUpReadReplicaBodyReadReplicaRegion = "eu-west-3"
 	SetUpReadReplicaBodyReadReplicaRegionSaEast1      SetUpReadReplicaBodyReadReplicaRegion = "sa-east-1"
 	SetUpReadReplicaBodyReadReplicaRegionUsEast1      SetUpReadReplicaBodyReadReplicaRegion = "us-east-1"
+	SetUpReadReplicaBodyReadReplicaRegionUsEast2      SetUpReadReplicaBodyReadReplicaRegion = "us-east-2"
 	SetUpReadReplicaBodyReadReplicaRegionUsWest1      SetUpReadReplicaBodyReadReplicaRegion = "us-west-1"
 	SetUpReadReplicaBodyReadReplicaRegionUsWest2      SetUpReadReplicaBodyReadReplicaRegion = "us-west-2"
 )
@@ -277,11 +300,14 @@ const (
 	V1CreateProjectBodyRegionApSoutheast2 V1CreateProjectBodyRegion = "ap-southeast-2"
 	V1CreateProjectBodyRegionCaCentral1   V1CreateProjectBodyRegion = "ca-central-1"
 	V1CreateProjectBodyRegionEuCentral1   V1CreateProjectBodyRegion = "eu-central-1"
+	V1CreateProjectBodyRegionEuCentral2   V1CreateProjectBodyRegion = "eu-central-2"
+	V1CreateProjectBodyRegionEuNorth1     V1CreateProjectBodyRegion = "eu-north-1"
 	V1CreateProjectBodyRegionEuWest1      V1CreateProjectBodyRegion = "eu-west-1"
 	V1CreateProjectBodyRegionEuWest2      V1CreateProjectBodyRegion = "eu-west-2"
 	V1CreateProjectBodyRegionEuWest3      V1CreateProjectBodyRegion = "eu-west-3"
 	V1CreateProjectBodyRegionSaEast1      V1CreateProjectBodyRegion = "sa-east-1"
 	V1CreateProjectBodyRegionUsEast1      V1CreateProjectBodyRegion = "us-east-1"
+	V1CreateProjectBodyRegionUsEast2      V1CreateProjectBodyRegion = "us-east-2"
 	V1CreateProjectBodyRegionUsWest1      V1CreateProjectBodyRegion = "us-west-1"
 	V1CreateProjectBodyRegionUsWest2      V1CreateProjectBodyRegion = "us-west-2"
 )
@@ -371,8 +397,21 @@ type ActivateVanitySubdomainResponse struct {
 
 // ApiKeyResponse defines model for ApiKeyResponse.
 type ApiKeyResponse struct {
-	ApiKey string `json:"api_key"`
-	Name   string `json:"name"`
+	ApiKey            string                   `json:"api_key"`
+	Description       *string                  `json:"description"`
+	Hash              *string                  `json:"hash"`
+	Id                *string                  `json:"id"`
+	InsertedAt        *string                  `json:"inserted_at"`
+	Name              string                   `json:"name"`
+	Prefix            *string                  `json:"prefix"`
+	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
+	Type              *map[string]interface{}  `json:"type"`
+	UpdatedAt         *string                  `json:"updated_at"`
+}
+
+// ApiKeySecretJWTTemplate defines model for ApiKeySecretJWTTemplate.
+type ApiKeySecretJWTTemplate struct {
+	Role string `json:"role"`
 }
 
 // AttributeMapping defines model for AttributeMapping.
@@ -521,6 +560,8 @@ type AuthConfigResponse struct {
 	MfaPhoneVerifyEnabled                         *bool    `json:"mfa_phone_verify_enabled"`
 	MfaTotpEnrollEnabled                          *bool    `json:"mfa_totp_enroll_enabled"`
 	MfaTotpVerifyEnabled                          *bool    `json:"mfa_totp_verify_enabled"`
+	MfaWebAuthnEnrollEnabled                      *bool    `json:"mfa_web_authn_enroll_enabled"`
+	MfaWebAuthnVerifyEnabled                      *bool    `json:"mfa_web_authn_verify_enabled"`
 	PasswordHibpEnabled                           *bool    `json:"password_hibp_enabled"`
 	PasswordMinLength                             *float32 `json:"password_min_length"`
 	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
@@ -531,6 +572,7 @@ type AuthConfigResponse struct {
 	RateLimitTokenRefresh                         *float32 `json:"rate_limit_token_refresh"`
 	RateLimitVerify                               *float32 `json:"rate_limit_verify"`
 	RefreshTokenRotationEnabled                   *bool    `json:"refresh_token_rotation_enabled"`
+	SamlAllowEncryptedAssertions                  *bool    `json:"saml_allow_encrypted_assertions"`
 	SamlEnabled                                   *bool    `json:"saml_enabled"`
 	SamlExternalUrl                               *string  `json:"saml_external_url"`
 	SecurityCaptchaEnabled                        *bool    `json:"security_captcha_enabled"`
@@ -598,8 +640,10 @@ type BranchDetailResponse struct {
 	DbPort          int                        `json:"db_port"`
 	DbUser          *string                    `json:"db_user,omitempty"`
 	JwtSecret       *string                    `json:"jwt_secret,omitempty"`
+	PostgresEngine  string                     `json:"postgres_engine"`
 	PostgresVersion string                     `json:"postgres_version"`
 	Ref             string                     `json:"ref"`
+	ReleaseChannel  string                     `json:"release_channel"`
 	Status          BranchDetailResponseStatus `json:"status"`
 }
 
@@ -639,13 +683,27 @@ type CfResponse struct {
 	Success  bool                     `json:"success"`
 }
 
+// CreateApiKeyBody defines model for CreateApiKeyBody.
+type CreateApiKeyBody struct {
+	Description       *string                  `json:"description"`
+	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
+	Type              CreateApiKeyBodyType     `json:"type"`
+}
+
+// CreateApiKeyBodyType defines model for CreateApiKeyBody.Type.
+type CreateApiKeyBodyType string
+
 // CreateBranchBody defines model for CreateBranchBody.
 type CreateBranchBody struct {
 	BranchName          string               `json:"branch_name"`
 	DesiredInstanceSize *DesiredInstanceSize `json:"desired_instance_size,omitempty"`
 	GitBranch           *string              `json:"git_branch,omitempty"`
 	Persistent          *bool                `json:"persistent,omitempty"`
-	Region              *string              `json:"region,omitempty"`
+
+	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
+	PostgresEngine *PostgresEngine `json:"postgres_engine,omitempty"`
+	Region         *string         `json:"region,omitempty"`
+	ReleaseChannel *ReleaseChannel `json:"release_channel,omitempty"`
 }
 
 // CreateOrganizationBodyV1 defines model for CreateOrganizationBodyV1.
@@ -866,23 +924,33 @@ type PgsodiumConfigResponse struct {
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
+	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
 	MaxLocksPerTransaction        *int                                          `json:"max_locks_per_transaction,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxReplicationSlots           *int                                          `json:"max_replication_slots,omitempty"`
+	MaxSlotWalKeepSize            *string                                       `json:"max_slot_wal_keep_size,omitempty"`
 	MaxStandbyArchiveDelay        *string                                       `json:"max_standby_archive_delay,omitempty"`
 	MaxStandbyStreamingDelay      *string                                       `json:"max_standby_streaming_delay,omitempty"`
+	MaxWalSenders                 *int                                          `json:"max_wal_senders,omitempty"`
+	MaxWalSize                    *string                                       `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
+	WalKeepSize                   *string                                       `json:"wal_keep_size,omitempty"`
+	WalSenderTimeout              *string                                       `json:"wal_sender_timeout,omitempty"`
 	WorkMem                       *string                                       `json:"work_mem,omitempty"`
 }
 
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
 type PostgresConfigResponseSessionReplicationRole string
+
+// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
+type PostgresEngine string
 
 // PostgrestConfigWithJWTSecretResponse defines model for PostgrestConfigWithJWTSecretResponse.
 type PostgrestConfigWithJWTSecretResponse struct {
@@ -897,14 +965,15 @@ type PostgrestConfigWithJWTSecretResponse struct {
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
 type ProjectUpgradeEligibilityResponse struct {
-	CurrentAppVersion         string           `json:"current_app_version"`
-	DurationEstimateHours     float32          `json:"duration_estimate_hours"`
-	Eligible                  bool             `json:"eligible"`
-	ExtensionDependentObjects []string         `json:"extension_dependent_objects"`
-	LatestAppVersion          string           `json:"latest_app_version"`
-	LegacyAuthCustomRoles     []string         `json:"legacy_auth_custom_roles"`
-	PotentialBreakingChanges  []string         `json:"potential_breaking_changes"`
-	TargetUpgradeVersions     []ProjectVersion `json:"target_upgrade_versions"`
+	CurrentAppVersion               string           `json:"current_app_version"`
+	CurrentAppVersionReleaseChannel ReleaseChannel   `json:"current_app_version_release_channel"`
+	DurationEstimateHours           float32          `json:"duration_estimate_hours"`
+	Eligible                        bool             `json:"eligible"`
+	ExtensionDependentObjects       []string         `json:"extension_dependent_objects"`
+	LatestAppVersion                string           `json:"latest_app_version"`
+	LegacyAuthCustomRoles           []string         `json:"legacy_auth_custom_roles"`
+	PotentialBreakingChanges        []string         `json:"potential_breaking_changes"`
+	TargetUpgradeVersions           []ProjectVersion `json:"target_upgrade_versions"`
 }
 
 // ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
@@ -914,8 +983,11 @@ type ProjectUpgradeInitiateResponse struct {
 
 // ProjectVersion defines model for ProjectVersion.
 type ProjectVersion struct {
-	AppVersion      string  `json:"app_version"`
-	PostgresVersion float32 `json:"postgres_version"`
+	AppVersion string `json:"app_version"`
+
+	// PostgresVersion Postgres engine version. If not provided, the latest version will be used.
+	PostgresVersion PostgresEngine `json:"postgres_version"`
+	ReleaseChannel  ReleaseChannel `json:"release_channel"`
 }
 
 // Provider defines model for Provider.
@@ -940,6 +1012,9 @@ type RealtimeHealthResponse struct {
 	DbConnected      bool    `json:"db_connected"`
 	Healthy          bool    `json:"healthy"`
 }
+
+// ReleaseChannel defines model for ReleaseChannel.
+type ReleaseChannel string
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
@@ -1107,6 +1182,12 @@ type TypescriptResponse struct {
 	Types string `json:"types"`
 }
 
+// UpdateApiKeyBody defines model for UpdateApiKeyBody.
+type UpdateApiKeyBody struct {
+	Description       *string                  `json:"description"`
+	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
+}
+
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                         *float32                                        `json:"api_max_request_duration,omitempty"`
@@ -1223,6 +1304,8 @@ type UpdateAuthConfigBody struct {
 	MfaPhoneVerifyEnabled                         *bool                                           `json:"mfa_phone_verify_enabled,omitempty"`
 	MfaTotpEnrollEnabled                          *bool                                           `json:"mfa_totp_enroll_enabled,omitempty"`
 	MfaTotpVerifyEnabled                          *bool                                           `json:"mfa_totp_verify_enabled,omitempty"`
+	MfaWebAuthnEnrollEnabled                      *bool                                           `json:"mfa_web_authn_enroll_enabled,omitempty"`
+	MfaWebAuthnVerifyEnabled                      *bool                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
 	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                             *float32                                        `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
@@ -1316,18 +1399,26 @@ type UpdatePgsodiumConfigBody struct {
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
+	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
 	MaxLocksPerTransaction        *int                                            `json:"max_locks_per_transaction,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                            `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                            `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                            `json:"max_parallel_workers_per_gather,omitempty"`
+	MaxReplicationSlots           *int                                            `json:"max_replication_slots,omitempty"`
+	MaxSlotWalKeepSize            *string                                         `json:"max_slot_wal_keep_size,omitempty"`
 	MaxStandbyArchiveDelay        *string                                         `json:"max_standby_archive_delay,omitempty"`
 	MaxStandbyStreamingDelay      *string                                         `json:"max_standby_streaming_delay,omitempty"`
+	MaxWalSenders                 *int                                            `json:"max_wal_senders,omitempty"`
+	MaxWalSize                    *string                                         `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                            `json:"max_worker_processes,omitempty"`
+	RestartDatabase               *bool                                           `json:"restart_database,omitempty"`
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
+	WalKeepSize                   *string                                         `json:"wal_keep_size,omitempty"`
+	WalSenderTimeout              *string                                         `json:"wal_sender_timeout,omitempty"`
 	WorkMem                       *string                                         `json:"work_mem,omitempty"`
 }
 
@@ -1382,7 +1473,8 @@ type UpdateSupavisorConfigResponsePoolMode string
 
 // UpgradeDatabaseBody defines model for UpgradeDatabaseBody.
 type UpgradeDatabaseBody struct {
-	TargetVersion float32 `json:"target_version"`
+	ReleaseChannel ReleaseChannel `json:"release_channel"`
+	TargetVersion  string         `json:"target_version"`
 }
 
 // V1Backup defines model for V1Backup.
@@ -1432,8 +1524,12 @@ type V1CreateProjectBody struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
+	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
+	PostgresEngine *PostgresEngine `json:"postgres_engine,omitempty"`
+
 	// Region Region you want your server to reside in
-	Region V1CreateProjectBodyRegion `json:"region"`
+	Region         V1CreateProjectBodyRegion `json:"region"`
+	ReleaseChannel *ReleaseChannel           `json:"release_channel,omitempty"`
 
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
@@ -1450,6 +1546,12 @@ type V1DatabaseResponse struct {
 	// Host Database host
 	Host string `json:"host"`
 
+	// PostgresEngine Database engine
+	PostgresEngine string `json:"postgres_engine"`
+
+	// ReleaseChannel Release channel
+	ReleaseChannel string `json:"release_channel"`
+
 	// Version Database version
 	Version string `json:"version"`
 }
@@ -1465,10 +1567,11 @@ type V1OrganizationMemberResponse struct {
 
 // V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
 type V1OrganizationSlugResponse struct {
-	Id        string                                `json:"id"`
-	Name      string                                `json:"name"`
-	OptInTags []V1OrganizationSlugResponseOptInTags `json:"opt_in_tags"`
-	Plan      *BillingPlanId                        `json:"plan,omitempty"`
+	AllowedReleaseChannels []ReleaseChannel                      `json:"allowed_release_channels"`
+	Id                     string                                `json:"id"`
+	Name                   string                                `json:"name"`
+	OptInTags              []V1OrganizationSlugResponseOptInTags `json:"opt_in_tags"`
+	Plan                   *BillingPlanId                        `json:"plan,omitempty"`
 }
 
 // V1OrganizationSlugResponseOptInTags defines model for V1OrganizationSlugResponse.OptInTags.
@@ -1662,6 +1765,11 @@ type V1GenerateTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
 }
 
+// V1GetPostgresUpgradeStatusParams defines parameters for V1GetPostgresUpgradeStatus.
+type V1GetPostgresUpgradeStatusParams struct {
+	TrackingId *string `form:"tracking_id,omitempty" json:"tracking_id,omitempty"`
+}
+
 // V1ListAllSnippetsParams defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParams struct {
 	ProjectRef *string `form:"project_ref,omitempty" json:"project_ref,omitempty"`
@@ -1678,6 +1786,12 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationBodyV1
 
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
+
+// CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
+type CreateApiKeyJSONRequestBody = CreateApiKeyBody
+
+// UpdateApiKeyJSONRequestBody defines body for UpdateApiKey for application/json ContentType.
+type UpdateApiKeyJSONRequestBody = UpdateApiKeyBody
 
 // V1CreateABranchJSONRequestBody defines body for V1CreateABranch for application/json ContentType.
 type V1CreateABranchJSONRequestBody = CreateBranchBody
