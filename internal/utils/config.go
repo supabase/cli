@@ -133,9 +133,10 @@ func ToRealtimeEnv(addr config.AddressFamily) string {
 }
 
 type InitParams struct {
-	ProjectId   string
-	UseOrioleDB bool
-	Overwrite   bool
+	ProjectId                  string
+	UseOrioleDB                bool
+	EdgeRuntimeDefaultLanguage string
+	Overwrite                  bool
 }
 
 func InitConfig(params InitParams, fsys afero.Fs) error {
@@ -143,6 +144,10 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	c.ProjectId = params.ProjectId
 	if params.UseOrioleDB {
 		c.Experimental.OrioleDBVersion = "15.1.0.150"
+	}
+	c.EdgeRuntime.DefaultLanguage = "typescript"
+	if params.EdgeRuntimeDefaultLanguage != "" {
+		c.EdgeRuntime.DefaultLanguage = params.EdgeRuntimeDefaultLanguage
 	}
 	// Create config file
 	if err := MkdirIfNotExistFS(fsys, SupabaseDirPath); err != nil {

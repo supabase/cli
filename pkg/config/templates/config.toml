@@ -226,6 +226,7 @@ enabled = true
 # Use `oneshot` for hot reload, or `per_worker` for load testing.
 policy = "oneshot"
 inspector_port = 8083
+default_language = "{{ .EdgeRuntime.DefaultLanguage }}"
 
 [analytics]
 enabled = true
