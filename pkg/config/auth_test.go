@@ -252,4 +252,122 @@ func TestDiffWithRemote(t *testing.T) {
 		assert.Contains(t, string(diff), "<changed-redacted>")
 		assert.Contains(t, string(diff), "<original-redacted>")
 	})
+	t.Run("ensures external providers are compared correctly", func(t *testing.T) {
+		auth := &Auth{
+			External: map[string]provider{
+				"google": {
+					Enabled:     true,
+					ClientId:    "local_client_id",
+					Secret:      "local_secret",
+					RedirectUri: "https://local.example.com/callback",
+				},
+			},
+		}
+
+		remoteConfig := v1API.AuthConfigResponse{
+			ExternalGoogleEnabled:  ptr(true),
+			ExternalGoogleClientId: ptr("remote_client_id"),
+			ExternalGoogleSecret:   ptr("remote_secret"),
+			ExternalGithubEnabled:  ptr(true),
+			ExternalGithubClientId: ptr("github_client_id"),
+			ExternalGithubSecret:   ptr("github_secret"),
+		}
+
+		diff := auth.DiffWithRemote(remoteConfig)
+
+		assert.NotContains(t, string(diff), "local_client_id")
+		assert.NotContains(t, string(diff), "local_secret")
+		assert.NotContains(t, string(diff), "remote_client_id")
+		assert.NotContains(t, string(diff), "remote_secret")
+		assert.NotContains(t, string(diff), "github_client_id")
+		assert.NotContains(t, string(diff), "github_secret")
+		assert.Contains(t, string(diff), "<changed-redacted>")
+		assert.Contains(t, string(diff), "<original-redacted>")
+	})
+
+	t.Run("ensures SMS providers are compared correctly", func(t *testing.T) {
+		auth := &Auth{
+			Sms: sms{
+				Twilio: twilioConfig{
+					Enabled:    true,
+					AccountSid: "local_account_sid",
+					AuthToken:  "local_auth_token",
+				},
+			},
+		}
+
+		remoteConfig := v1API.AuthConfigResponse{
+			SmsTwilioAccountSid: ptr("remote_account_sid"),
+			SmsTwilioAuthToken:  ptr("remote_auth_token"),
+			SmsVonageApiKey:     ptr("vonage_api_key"),
+			SmsVonageApiSecret:  ptr("vonage_api_secret"),
+		}
+
+		diff := auth.DiffWithRemote(remoteConfig)
+
+		assert.NotContains(t, string(diff), "local_account_sid")
+		assert.NotContains(t, string(diff), "local_auth_token")
+		assert.NotContains(t, string(diff), "remote_account_sid")
+		assert.NotContains(t, string(diff), "remote_auth_token")
+		assert.NotContains(t, string(diff), "vonage_api_key")
+		assert.NotContains(t, string(diff), "vonage_api_secret")
+		assert.Contains(t, string(diff), "<changed-redacted>")
+		assert.Contains(t, string(diff), "<original-redacted>")
+	})
+
+	t.Run("ensures hooks are compared correctly", func(t *testing.T) {
+		auth := &Auth{
+			Hook: hook{
+				CustomAccessToken: hookConfig{
+					Enabled: true,
+					URI:     "https://local.example.com/custom-token",
+					Secrets: "local_secrest",
+				},
+			},
+		}
+		remoteConfig := v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:      ptr(true),
+			HookCustomAccessTokenUri:          ptr("https://remote.example.com/custom-token"),
+			HookCustomAccessTokenSecrets:      ptr("remote_secret"),
+			HookMfaVerificationAttemptEnabled: ptr(true),
+			HookMfaVerificationAttemptUri:     ptr("https://remote.example.com/mfa"),
+		}
+
+		diff := auth.DiffWithRemote(remoteConfig)
+
+		assert.NotContains(t, string(diff), "local_secret")
+		assert.NotContains(t, string(diff), "remote_secret")
+		assert.Contains(t, string(diff), "<changed-redacted>")
+		assert.Contains(t, string(diff), "<original-redacted>")
+		assert.Contains(t, string(diff), "mfa_verification_attempt")
+	})
+
+	// TODO: Third parties are not included in AuthConfigReponse and need a dedicated logic
+	// to be added/removed/updated
+	// t.Run("ensures third-party providers are compared correctly", func(t *testing.T) {
+	// 	auth := &Auth{
+	// 		ThirdParty: thirdParty{
+	// 			Firebase: tpaFirebase{
+	// 				Enabled:   true,
+	// 				ProjectID: "local_project_id",
+	// 			},
+	// 		},
+	// 	}
+
+	// 	remoteConfig := v1API.AuthConfigResponse{
+	// 		ThirdPartyFirebaseEnabled:  ptr(true),
+	// 		ThirdPartyFirebaseProjectId: ptr("remote_project_id"),
+	// 		ThirdPartyAuth0Enabled:     ptr(true),
+	// 		ThirdPartyAuth0Tenant:      ptr("auth0_tenant"),
+	// 	}
+
+	// 	diff := auth.DiffWithRemote(remoteConfig)
+
+	// 	assert.NotContains(t, string(diff), "local_project_id")
+	// 	assert.NotContains(t, string(diff), "remote_project_id")
+	// 	assert.NotContains(t, string(diff), "auth0_tenant")
+	// 	assert.Contains(t, string(diff), "<changed-redacted>")
+	// 	assert.Contains(t, string(diff), "<original-redacted>")
+	// 	assert.Contains(t, string(diff), "auth0")
+	// })
 }

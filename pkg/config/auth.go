@@ -473,6 +473,27 @@ func (a *Auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) Auth 
 	if remoteConfig.SmtpMaxFrequency != nil {
 		result.Email.MaxFrequency = time.Duration(*remoteConfig.SmtpMaxFrequency) * time.Second
 	}
+	// Sensitives fields
+	if remoteConfig.SmtpAdminEmail != nil {
+		result.Email.Smtp.AdminEmail = *remoteConfig.SmtpAdminEmail
+	}
+	if remoteConfig.SmtpHost != nil {
+		result.Email.Smtp.Host = *remoteConfig.SmtpHost
+	}
+	if remoteConfig.SmtpPass != nil {
+		result.Email.Smtp.Pass = *remoteConfig.SmtpPass
+	}
+	if remoteConfig.SmtpPort != nil {
+		if port, err := strconv.ParseUint(*remoteConfig.SmtpPort, 10, 16); err == nil {
+			result.Email.Smtp.Port = uint16(port)
+		}
+	}
+	if remoteConfig.SmtpUser != nil {
+		result.Email.Smtp.User = *remoteConfig.SmtpUser
+	}
+	if remoteConfig.SmtpSenderName != nil {
+		result.Email.Smtp.SenderName = *remoteConfig.SmtpSenderName
+	}
 	// Handle external providers
 	result.mapRemoteExternalProviders(remoteConfig)
 	// Handle email templates
@@ -828,13 +849,66 @@ func (a *Auth) mapRemoteSmsProviders(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (a *Auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) []byte {
-	// Convert the config values into easily comparable remoteConfig values
-	localCopy := a.Clone()
-	remoteCopy := localCopy.FromRemoteAuthConfig(remoteConfig)
+func (original *Auth) compareAndHideSensitiveFields(remote *Auth) {
+	// This function compares the original Auth struct with a remote Auth struct
+	// and hides sensitive fields in both structs for secure comparison
+	// SMTP sensitive fields
+	compareSensitiveField(&original.Email.Smtp.AdminEmail, &remote.Email.Smtp.AdminEmail)
+	compareSensitiveField(&original.Email.Smtp.Host, &remote.Email.Smtp.Host)
+	compareSensitiveField(&original.Email.Smtp.User, &remote.Email.Smtp.User)
+	compareSensitiveField(&original.Email.Smtp.SenderName, &remote.Email.Smtp.SenderName)
+	compareSensitiveField(&original.Email.Smtp.Pass, &remote.Email.Smtp.Pass)
+	// Sms sensitives fields
+	compareSensitiveField(&original.Sms.Twilio.AuthToken, &remote.Sms.Twilio.AuthToken)
+	compareSensitiveField(&original.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
+	compareSensitiveField(&original.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
+	compareSensitiveField(&original.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
+	compareSensitiveField(&original.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
+	compareSensitiveField(&original.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
+	compareSensitiveField(&original.Sms.Twilio.AccountSid, &remote.Sms.Twilio.AccountSid)
+	compareSensitiveField(&original.Sms.Twilio.MessageServiceSid, &remote.Sms.Twilio.MessageServiceSid)
+	compareSensitiveField(&original.Sms.TwilioVerify.AccountSid, &remote.Sms.TwilioVerify.AccountSid)
+	compareSensitiveField(&original.Sms.TwilioVerify.MessageServiceSid, &remote.Sms.TwilioVerify.MessageServiceSid)
 
+	// Compare external providers hide secrets and id
+	for provider, originalConfig := range original.External {
+		if remoteConfig, exists := remote.External[provider]; exists {
+			compareSensitiveField(&originalConfig.Secret, &remoteConfig.Secret)
+			compareSensitiveField(&originalConfig.ClientId, &remoteConfig.ClientId)
+			compareSensitiveField(&originalConfig.RedirectUri, &remoteConfig.RedirectUri)
+			compareSensitiveField(&originalConfig.Url, &remoteConfig.Url)
+			remote.External[provider] = remoteConfig
+			original.External[provider] = originalConfig
+		}
+	}
+	// Api sensitive fields
+	compareSensitiveField(&original.JwtSecret, &remote.JwtSecret)
+	compareSensitiveField(&original.AnonKey, &remote.AnonKey)
+	compareSensitiveField(&original.ServiceRoleKey, &remote.ServiceRoleKey)
+
+	// Third-party sensitive fields
+	compareSensitiveField(&original.ThirdParty.Firebase.ProjectID, &remote.ThirdParty.Firebase.ProjectID)
+	compareSensitiveField(&original.ThirdParty.Auth0.Tenant, &remote.ThirdParty.Auth0.Tenant)
+	compareSensitiveField(&original.ThirdParty.Cognito.UserPoolID, &remote.ThirdParty.Cognito.UserPoolID)
+
+	// Hook secrets
+	compareSensitiveField(&original.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
+	compareSensitiveField(&original.Hook.PasswordVerificationAttempt.Secrets, &remote.Hook.PasswordVerificationAttempt.Secrets)
+	compareSensitiveField(&original.Hook.CustomAccessToken.Secrets, &remote.Hook.CustomAccessToken.Secrets)
+	compareSensitiveField(&original.Hook.SendSMS.Secrets, &remote.Hook.SendSMS.Secrets)
+	compareSensitiveField(&original.Hook.SendEmail.Secrets, &remote.Hook.SendEmail.Secrets)
+}
+
+func (a *Auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) []byte {
+	// First we clone our local auth for a new instance
+	localCopy := a.Clone()
+	// We make a new Auth instance from our remote config
+	remoteCopy := localCopy.FromRemoteAuthConfig(remoteConfig)
+	// We compare and hide sensitive fields for auth config, leaving only a marker to know if there was changes or not
+	localCopy.compareAndHideSensitiveFields(&remoteCopy)
 	currentValue := ToTomlBytes(&localCopy)
 	remoteCompare := ToTomlBytes(&remoteCopy)
+	// We diff our resulting config
 	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
 }
 
