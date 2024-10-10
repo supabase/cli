@@ -47,6 +47,32 @@ func (a *Api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	}
 
 	// Note: DbPool is not present in the Api struct, so it's not set here
-
 	return body
+}
+
+func (a *Api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) Api {
+	result := *a
+	// Update Schemas if present in remoteConfig
+	if remoteConfig.DbSchema != "" {
+		result.Schemas = strings.Split(remoteConfig.DbSchema, ",")
+	}
+
+	// Update ExtraSearchPath if present in remoteConfig
+	if remoteConfig.DbExtraSearchPath != "" {
+		result.ExtraSearchPath = strings.Split(remoteConfig.DbExtraSearchPath, ",")
+	}
+
+	// Update MaxRows if present in remoteConfig
+	if remoteConfig.MaxRows != 0 {
+		result.MaxRows = uint(remoteConfig.MaxRows)
+	}
+
+	return result
+}
+
+func (a *Api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
+	// Convert the config values into easily comparable remoteConfig values
+	currentValue := ToTomlBytes(a)
+	remoteCompare := ToTomlBytes(a.FromRemoteApiConfig(remoteConfig))
+	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
 }

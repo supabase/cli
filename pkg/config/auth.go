@@ -1,10 +1,19 @@
 package config
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
+	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type (
@@ -173,9 +182,17 @@ type (
 	}
 )
 
+func (a *Auth) Clone() Auth {
+	copy := *a
+	copy.External = maps.Clone(a.External)
+	copy.Email.Template = maps.Clone(a.Email.Template)
+	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
+	return copy
+}
+
 func (a *Auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
-		DisableSignup:                     &a.EnableSignup,
+		DisableSignup:                     ptr(!a.EnableSignup),
 		SiteUrl:                           ptr(a.SiteUrl),
 		JwtExp:                            ptr(float32(a.JwtExpiry)),
 		SmtpAdminEmail:                    ptr(a.Email.Smtp.AdminEmail),
@@ -307,6 +324,7 @@ func (a *Auth) mapExternalProviders(body *v1API.UpdateAuthConfigBody) {
 }
 
 func (a *Auth) mapEmailTemplates(body *v1API.UpdateAuthConfigBody) {
+
 	for name, template := range a.Email.Template {
 		switch name {
 		case "invite":
@@ -401,4 +419,638 @@ func getSmsProvider(a *Auth) string {
 // Helper function to get a pointer to a value
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func compareSensitiveField[T comparable](local *T, remote *T) {
+	if remote == nil {
+		return
+	}
+	if *local != *remote {
+		*local = any("<original-redacted>").(T)
+		*remote = any("<changed-redacted>").(T)
+	} else {
+		*local = any("<unchanged-redacted>").(T)
+		*remote = any("<unchanged-redacted>").(T)
+	}
+}
+
+func (a *Auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) Auth {
+	result := a.Clone()
+
+	if remoteConfig.DisableSignup != nil {
+		result.EnableSignup = !*remoteConfig.DisableSignup
+	}
+	if remoteConfig.SiteUrl != nil {
+		result.SiteUrl = *remoteConfig.SiteUrl
+	}
+	if remoteConfig.JwtExp != nil {
+		result.JwtExpiry = uint(time.Duration(*remoteConfig.JwtExp))
+	}
+	if remoteConfig.MailerAutoconfirm != nil {
+		result.Email.EnableConfirmations = *remoteConfig.MailerAutoconfirm
+	}
+	if remoteConfig.MailerSecureEmailChangeEnabled != nil {
+		result.Email.SecurePasswordChange = *remoteConfig.MailerSecureEmailChangeEnabled
+	}
+	if remoteConfig.SmsAutoconfirm != nil {
+		result.Sms.EnableConfirmations = *remoteConfig.SmsAutoconfirm
+	}
+	if remoteConfig.SmsTemplate != nil {
+		result.Sms.Template = *remoteConfig.SmsTemplate
+	}
+	if remoteConfig.SmsMaxFrequency != nil {
+		result.Sms.MaxFrequency = time.Duration(*remoteConfig.SmsMaxFrequency) * time.Second
+	}
+	if remoteConfig.ExternalEmailEnabled != nil {
+		result.Email.EnableSignup = *remoteConfig.ExternalEmailEnabled
+	}
+	if remoteConfig.ExternalPhoneEnabled != nil {
+		result.Sms.EnableSignup = *remoteConfig.ExternalPhoneEnabled
+	}
+	if remoteConfig.ExternalAnonymousUsersEnabled != nil {
+		result.EnableAnonymousSignIns = *remoteConfig.ExternalAnonymousUsersEnabled
+	}
+	if remoteConfig.SmtpMaxFrequency != nil {
+		result.Email.MaxFrequency = time.Duration(*remoteConfig.SmtpMaxFrequency) * time.Second
+	}
+	// Handle external providers
+	result.mapRemoteExternalProviders(remoteConfig)
+	// Handle email templates
+	result.mapRemoteEmailTemplates(remoteConfig)
+	// Handle hooks
+	result.mapRemoteHooks(remoteConfig)
+	// Handle SMS providers
+	result.mapRemoteSmsProviders(remoteConfig)
+
+	return result
+}
+
+func (a *Auth) mapRemoteEmailTemplates(remoteConfig v1API.AuthConfigResponse) {
+	for name, template := range a.Email.Template {
+		switch name {
+		case "invite":
+			if remoteConfig.MailerSubjectsInvite != nil {
+				template.Subject = *remoteConfig.MailerSubjectsInvite
+			}
+			if remoteConfig.MailerTemplatesInviteContent != nil {
+				template.ContentPath = *remoteConfig.MailerTemplatesInviteContent
+			}
+		case "confirmation":
+			if remoteConfig.MailerSubjectsConfirmation != nil {
+				template.Subject = *remoteConfig.MailerSubjectsConfirmation
+			}
+			if remoteConfig.MailerTemplatesConfirmationContent != nil {
+				template.ContentPath = *remoteConfig.MailerTemplatesConfirmationContent
+			}
+		case "recovery":
+			if remoteConfig.MailerSubjectsRecovery != nil {
+				template.Subject = *remoteConfig.MailerSubjectsRecovery
+			}
+			if remoteConfig.MailerTemplatesRecoveryContent != nil {
+				template.ContentPath = *remoteConfig.MailerTemplatesRecoveryContent
+			}
+		case "magic_link":
+			if remoteConfig.MailerSubjectsMagicLink != nil {
+				template.Subject = *remoteConfig.MailerSubjectsMagicLink
+			}
+			if remoteConfig.MailerTemplatesMagicLinkContent != nil {
+				template.ContentPath = *remoteConfig.MailerTemplatesMagicLinkContent
+			}
+		case "email_change":
+			if remoteConfig.MailerSubjectsEmailChange != nil {
+				template.Subject = *remoteConfig.MailerSubjectsEmailChange
+			}
+			if remoteConfig.MailerTemplatesEmailChangeContent != nil {
+				template.ContentPath = *remoteConfig.MailerTemplatesEmailChangeContent
+			}
+		}
+		a.Email.Template[name] = template
+	}
+}
+
+func (a *Auth) mapRemoteExternalProviders(remoteConfig v1API.AuthConfigResponse) {
+	for providerName, config := range a.External {
+		switch providerName {
+		case "apple":
+			if remoteConfig.ExternalAppleEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalAppleEnabled
+			}
+			if remoteConfig.ExternalAppleClientId != nil {
+				config.ClientId = *remoteConfig.ExternalAppleClientId
+			}
+			if remoteConfig.ExternalAppleSecret != nil {
+				config.Secret = *remoteConfig.ExternalAppleSecret
+			}
+		case "azure":
+			if remoteConfig.ExternalAzureEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalAzureEnabled
+			}
+			if remoteConfig.ExternalAzureClientId != nil {
+				config.ClientId = *remoteConfig.ExternalAzureClientId
+			}
+			if remoteConfig.ExternalAzureSecret != nil {
+				config.Secret = *remoteConfig.ExternalAzureSecret
+			}
+			if remoteConfig.ExternalAzureUrl != nil {
+				config.Url = *remoteConfig.ExternalAzureUrl
+			}
+		case "bitbucket":
+			if remoteConfig.ExternalBitbucketEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalBitbucketEnabled
+			}
+			if remoteConfig.ExternalBitbucketClientId != nil {
+				config.ClientId = *remoteConfig.ExternalBitbucketClientId
+			}
+			if remoteConfig.ExternalBitbucketSecret != nil {
+				config.Secret = *remoteConfig.ExternalBitbucketSecret
+			}
+		case "discord":
+			if remoteConfig.ExternalDiscordEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalDiscordEnabled
+			}
+			if remoteConfig.ExternalDiscordClientId != nil {
+				config.ClientId = *remoteConfig.ExternalDiscordClientId
+			}
+			if remoteConfig.ExternalDiscordSecret != nil {
+				config.Secret = *remoteConfig.ExternalDiscordSecret
+			}
+		case "facebook":
+			if remoteConfig.ExternalFacebookEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalFacebookEnabled
+			}
+			if remoteConfig.ExternalFacebookClientId != nil {
+				config.ClientId = *remoteConfig.ExternalFacebookClientId
+			}
+			if remoteConfig.ExternalFacebookSecret != nil {
+				config.Secret = *remoteConfig.ExternalFacebookSecret
+			}
+		case "github":
+			if remoteConfig.ExternalGithubEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalGithubEnabled
+			}
+			if remoteConfig.ExternalGithubClientId != nil {
+				config.ClientId = *remoteConfig.ExternalGithubClientId
+			}
+			if remoteConfig.ExternalGithubSecret != nil {
+				config.Secret = *remoteConfig.ExternalGithubSecret
+			}
+		case "gitlab":
+			if remoteConfig.ExternalGitlabEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalGitlabEnabled
+			}
+			if remoteConfig.ExternalGitlabClientId != nil {
+				config.ClientId = *remoteConfig.ExternalGitlabClientId
+			}
+			if remoteConfig.ExternalGitlabSecret != nil {
+				config.Secret = *remoteConfig.ExternalGitlabSecret
+			}
+			if remoteConfig.ExternalGitlabUrl != nil {
+				config.Url = *remoteConfig.ExternalGitlabUrl
+			}
+		case "google":
+			if remoteConfig.ExternalGoogleEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalGoogleEnabled
+			}
+			if remoteConfig.ExternalGoogleClientId != nil {
+				config.ClientId = *remoteConfig.ExternalGoogleClientId
+			}
+			if remoteConfig.ExternalGoogleSecret != nil {
+				config.Secret = *remoteConfig.ExternalGoogleSecret
+			}
+			if remoteConfig.ExternalGoogleSkipNonceCheck != nil {
+				config.SkipNonceCheck = *remoteConfig.ExternalGoogleSkipNonceCheck
+			}
+		case "keycloak":
+			if remoteConfig.ExternalKeycloakEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalKeycloakEnabled
+			}
+			if remoteConfig.ExternalKeycloakClientId != nil {
+				config.ClientId = *remoteConfig.ExternalKeycloakClientId
+			}
+			if remoteConfig.ExternalKeycloakSecret != nil {
+				config.Secret = *remoteConfig.ExternalKeycloakSecret
+			}
+			if remoteConfig.ExternalKeycloakUrl != nil {
+				config.Url = *remoteConfig.ExternalKeycloakUrl
+			}
+		case "linkedin_oidc", "linkedin":
+			if remoteConfig.ExternalLinkedinOidcEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalLinkedinOidcEnabled
+			}
+			if remoteConfig.ExternalLinkedinOidcClientId != nil {
+				config.ClientId = *remoteConfig.ExternalLinkedinOidcClientId
+			}
+			if remoteConfig.ExternalLinkedinOidcSecret != nil {
+				config.Secret = *remoteConfig.ExternalLinkedinOidcSecret
+			}
+		case "notion":
+			if remoteConfig.ExternalNotionEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalNotionEnabled
+			}
+			if remoteConfig.ExternalNotionClientId != nil {
+				config.ClientId = *remoteConfig.ExternalNotionClientId
+			}
+			if remoteConfig.ExternalNotionSecret != nil {
+				config.Secret = *remoteConfig.ExternalNotionSecret
+			}
+		case "slack_oidc", "slack":
+			if remoteConfig.ExternalSlackOidcEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalSlackOidcEnabled
+			}
+			if remoteConfig.ExternalSlackOidcClientId != nil {
+				config.ClientId = *remoteConfig.ExternalSlackOidcClientId
+			}
+			if remoteConfig.ExternalSlackOidcSecret != nil {
+				config.Secret = *remoteConfig.ExternalSlackOidcSecret
+			}
+		case "spotify":
+			if remoteConfig.ExternalSpotifyEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalSpotifyEnabled
+			}
+			if remoteConfig.ExternalSpotifyClientId != nil {
+				config.ClientId = *remoteConfig.ExternalSpotifyClientId
+			}
+			if remoteConfig.ExternalSpotifySecret != nil {
+				config.Secret = *remoteConfig.ExternalSpotifySecret
+			}
+		case "twitch":
+			if remoteConfig.ExternalTwitchEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalTwitchEnabled
+			}
+			if remoteConfig.ExternalTwitchClientId != nil {
+				config.ClientId = *remoteConfig.ExternalTwitchClientId
+			}
+			if remoteConfig.ExternalTwitchSecret != nil {
+				config.Secret = *remoteConfig.ExternalTwitchSecret
+			}
+		case "twitter":
+			if remoteConfig.ExternalTwitterEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalTwitterEnabled
+			}
+			if remoteConfig.ExternalTwitterClientId != nil {
+				config.ClientId = *remoteConfig.ExternalTwitterClientId
+			}
+			if remoteConfig.ExternalTwitterSecret != nil {
+				config.Secret = *remoteConfig.ExternalTwitterSecret
+			}
+		case "workos":
+			if remoteConfig.ExternalWorkosEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalWorkosEnabled
+			}
+			if remoteConfig.ExternalWorkosClientId != nil {
+				config.ClientId = *remoteConfig.ExternalWorkosClientId
+			}
+			if remoteConfig.ExternalWorkosSecret != nil {
+				config.Secret = *remoteConfig.ExternalWorkosSecret
+			}
+			if remoteConfig.ExternalWorkosUrl != nil {
+				config.Url = *remoteConfig.ExternalWorkosUrl
+			}
+		case "zoom":
+			if remoteConfig.ExternalZoomEnabled != nil {
+				config.Enabled = *remoteConfig.ExternalZoomEnabled
+			}
+			if remoteConfig.ExternalZoomClientId != nil {
+				config.ClientId = *remoteConfig.ExternalZoomClientId
+			}
+			if remoteConfig.ExternalZoomSecret != nil {
+				config.Secret = *remoteConfig.ExternalZoomSecret
+			}
+		}
+		a.External[providerName] = config
+	}
+}
+
+func (a *Auth) mapRemoteHooks(remoteConfig v1API.AuthConfigResponse) {
+	// Custom Access Token
+	if remoteConfig.HookCustomAccessTokenEnabled != nil {
+		a.Hook.CustomAccessToken.Enabled = *remoteConfig.HookCustomAccessTokenEnabled
+	}
+	if remoteConfig.HookCustomAccessTokenUri != nil {
+		a.Hook.CustomAccessToken.URI = *remoteConfig.HookCustomAccessTokenUri
+	}
+	if remoteConfig.HookCustomAccessTokenSecrets != nil {
+		a.Hook.CustomAccessToken.Secrets = *remoteConfig.HookCustomAccessTokenSecrets
+	}
+
+	// MFA Verification Attempt
+	if remoteConfig.HookMfaVerificationAttemptEnabled != nil {
+		a.Hook.MFAVerificationAttempt.Enabled = *remoteConfig.HookMfaVerificationAttemptEnabled
+	}
+	if remoteConfig.HookMfaVerificationAttemptUri != nil {
+		a.Hook.MFAVerificationAttempt.URI = *remoteConfig.HookMfaVerificationAttemptUri
+	}
+	if remoteConfig.HookMfaVerificationAttemptSecrets != nil {
+		a.Hook.MFAVerificationAttempt.Secrets = *remoteConfig.HookMfaVerificationAttemptSecrets
+	}
+
+	// Password Verification Attempt
+	if remoteConfig.HookPasswordVerificationAttemptEnabled != nil {
+		a.Hook.PasswordVerificationAttempt.Enabled = *remoteConfig.HookPasswordVerificationAttemptEnabled
+	}
+	if remoteConfig.HookPasswordVerificationAttemptUri != nil {
+		a.Hook.PasswordVerificationAttempt.URI = *remoteConfig.HookPasswordVerificationAttemptUri
+	}
+	if remoteConfig.HookPasswordVerificationAttemptSecrets != nil {
+		a.Hook.PasswordVerificationAttempt.Secrets = *remoteConfig.HookPasswordVerificationAttemptSecrets
+	}
+
+	// Send Email
+	if remoteConfig.HookSendEmailEnabled != nil {
+		a.Hook.SendEmail.Enabled = *remoteConfig.HookSendEmailEnabled
+	}
+	if remoteConfig.HookSendEmailUri != nil {
+		a.Hook.SendEmail.URI = *remoteConfig.HookSendEmailUri
+	}
+	if remoteConfig.HookSendEmailSecrets != nil {
+		a.Hook.SendEmail.Secrets = *remoteConfig.HookSendEmailSecrets
+	}
+
+	// Send SMS
+	if remoteConfig.HookSendSmsEnabled != nil {
+		a.Hook.SendSMS.Enabled = *remoteConfig.HookSendSmsEnabled
+	}
+	if remoteConfig.HookSendSmsUri != nil {
+		a.Hook.SendSMS.URI = *remoteConfig.HookSendSmsUri
+	}
+	if remoteConfig.HookSendSmsSecrets != nil {
+		a.Hook.SendSMS.Secrets = *remoteConfig.HookSendSmsSecrets
+	}
+}
+
+func (a *Auth) mapRemoteSmsProviders(remoteConfig v1API.AuthConfigResponse) {
+	// Twilio
+	if remoteConfig.SmsTwilioAccountSid != nil && remoteConfig.SmsTwilioAuthToken != nil {
+		a.Sms.Twilio.Enabled = true
+		a.Sms.Twilio.AccountSid = *remoteConfig.SmsTwilioAccountSid
+		a.Sms.Twilio.AuthToken = *remoteConfig.SmsTwilioAuthToken
+		if remoteConfig.SmsTwilioMessageServiceSid != nil {
+			a.Sms.Twilio.MessageServiceSid = *remoteConfig.SmsTwilioMessageServiceSid
+		}
+	}
+
+	// Twilio Verify
+	if remoteConfig.SmsTwilioVerifyAccountSid != nil && remoteConfig.SmsTwilioVerifyAuthToken != nil {
+		a.Sms.TwilioVerify.Enabled = true
+		a.Sms.TwilioVerify.AccountSid = *remoteConfig.SmsTwilioVerifyAccountSid
+		a.Sms.TwilioVerify.AuthToken = *remoteConfig.SmsTwilioVerifyAuthToken
+		if remoteConfig.SmsTwilioVerifyMessageServiceSid != nil {
+			a.Sms.TwilioVerify.MessageServiceSid = *remoteConfig.SmsTwilioVerifyMessageServiceSid
+		}
+	}
+
+	// Messagebird
+	if remoteConfig.SmsMessagebirdAccessKey != nil {
+		a.Sms.Messagebird.Enabled = true
+		a.Sms.Messagebird.AccessKey = *remoteConfig.SmsMessagebirdAccessKey
+		if remoteConfig.SmsMessagebirdOriginator != nil {
+			a.Sms.Messagebird.Originator = *remoteConfig.SmsMessagebirdOriginator
+		}
+	}
+
+	// Textlocal
+	if remoteConfig.SmsTextlocalApiKey != nil {
+		a.Sms.Textlocal.Enabled = true
+		a.Sms.Textlocal.ApiKey = *remoteConfig.SmsTextlocalApiKey
+		if remoteConfig.SmsTextlocalSender != nil {
+			a.Sms.Textlocal.Sender = *remoteConfig.SmsTextlocalSender
+		}
+	}
+
+	// Vonage
+	if remoteConfig.SmsVonageApiKey != nil && remoteConfig.SmsVonageApiSecret != nil {
+		a.Sms.Vonage.Enabled = true
+		a.Sms.Vonage.ApiKey = *remoteConfig.SmsVonageApiKey
+		a.Sms.Vonage.ApiSecret = *remoteConfig.SmsVonageApiSecret
+		if remoteConfig.SmsVonageFrom != nil {
+			a.Sms.Vonage.From = *remoteConfig.SmsVonageFrom
+		}
+	}
+}
+
+func (a *Auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) []byte {
+	// Convert the config values into easily comparable remoteConfig values
+	localCopy := a.Clone()
+	remoteCopy := localCopy.FromRemoteAuthConfig(remoteConfig)
+
+	currentValue := ToTomlBytes(&localCopy)
+	remoteCompare := ToTomlBytes(&remoteCopy)
+	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
+}
+
+func (f *tpaFirebase) issuerURL() string {
+	return fmt.Sprintf("https://securetoken.google.com/%s", f.ProjectID)
+}
+
+func (f *tpaFirebase) validate() error {
+	if f.ProjectID == "" {
+		return errors.New("Invalid config: auth.third_party.firebase is enabled but without a project_id.")
+	}
+
+	return nil
+}
+
+func (a *tpaAuth0) issuerURL() string {
+	if a.TenantRegion != "" {
+		return fmt.Sprintf("https://%s.%s.auth0.com", a.Tenant, a.TenantRegion)
+	}
+
+	return fmt.Sprintf("https://%s.auth0.com", a.Tenant)
+}
+
+func (a *tpaAuth0) validate() error {
+	if a.Tenant == "" {
+		return errors.New("Invalid config: auth.third_party.auth0 is enabled but without a tenant.")
+	}
+
+	return nil
+}
+
+func (c *tpaCognito) issuerURL() string {
+	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", c.UserPoolRegion, c.UserPoolID)
+}
+
+func (c *tpaCognito) validate() error {
+	if c.UserPoolID == "" {
+		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
+	}
+	var err error
+	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
+		return err
+	}
+
+	if c.UserPoolRegion == "" {
+		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
+	}
+	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (tpa *thirdParty) validate() error {
+	enabled := 0
+
+	if tpa.Firebase.Enabled {
+		enabled += 1
+
+		if err := tpa.Firebase.validate(); err != nil {
+			return err
+		}
+	}
+
+	if tpa.Auth0.Enabled {
+		enabled += 1
+
+		if err := tpa.Auth0.validate(); err != nil {
+			return err
+		}
+	}
+
+	if tpa.Cognito.Enabled {
+		enabled += 1
+
+		if err := tpa.Cognito.validate(); err != nil {
+			return err
+		}
+	}
+
+	if enabled > 1 {
+		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
+	}
+
+	return nil
+}
+
+func (tpa *thirdParty) IssuerURL() string {
+	if tpa.Firebase.Enabled {
+		return tpa.Firebase.issuerURL()
+	}
+
+	if tpa.Auth0.Enabled {
+		return tpa.Auth0.issuerURL()
+	}
+
+	if tpa.Cognito.Enabled {
+		return tpa.Cognito.issuerURL()
+	}
+
+	return ""
+}
+
+// ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
+// configs by resolving the JWKS via the OIDC discovery URL.
+// It always returns a JWKS string, except when there's an error fetching.
+func (a *Auth) ResolveJWKS(ctx context.Context) (string, error) {
+	var jwks struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+
+	issuerURL := a.ThirdParty.IssuerURL()
+	if issuerURL != "" {
+		discoveryURL := issuerURL + "/.well-known/openid-configuration"
+
+		t := &http.Client{Timeout: 10 * time.Second}
+		client := fetcher.NewFetcher(
+			discoveryURL,
+			fetcher.WithHTTPClient(t),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+
+		resp, err := client.Send(ctx, http.MethodGet, "", nil)
+		if err != nil {
+			return "", err
+		}
+
+		type oidcConfiguration struct {
+			JWKSURI string `json:"jwks_uri"`
+		}
+
+		oidcConfig, err := fetcher.ParseJSON[oidcConfiguration](resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if oidcConfig.JWKSURI == "" {
+			return "", fmt.Errorf("auth.third_party: OIDC configuration at URL %q does not expose a jwks_uri property", discoveryURL)
+		}
+
+		client = fetcher.NewFetcher(
+			oidcConfig.JWKSURI,
+			fetcher.WithHTTPClient(t),
+			fetcher.WithExpectedStatus(http.StatusOK),
+		)
+
+		resp, err = client.Send(ctx, http.MethodGet, "", nil)
+		if err != nil {
+			return "", err
+		}
+
+		type remoteJWKS struct {
+			Keys []json.RawMessage `json:"keys"`
+		}
+
+		rJWKS, err := fetcher.ParseJSON[remoteJWKS](resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if len(rJWKS.Keys) == 0 {
+			return "", fmt.Errorf("auth.third_party: JWKS at URL %q as discovered from %q does not contain any JWK keys", oidcConfig.JWKSURI, discoveryURL)
+		}
+
+		jwks.Keys = rJWKS.Keys
+	}
+
+	var secretJWK struct {
+		KeyType      string `json:"kty"`
+		KeyBase64URL string `json:"k"`
+	}
+
+	secretJWK.KeyType = "oct"
+	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret))
+
+	secretJWKEncoded, err := json.Marshal(&secretJWK)
+	if err != nil {
+		return "", errors.Errorf("failed to marshal secret jwk: %w", err)
+	}
+
+	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
+
+	jwksEncoded, err := json.Marshal(jwks)
+	if err != nil {
+		return "", errors.Errorf("failed to marshal jwks keys: %w", err)
+	}
+
+	return string(jwksEncoded), nil
+}
+
+func (h *hookConfig) HandleHook(hookType string) error {
+	// If not enabled do nothing
+	if !h.Enabled {
+		return nil
+	}
+	if h.URI == "" {
+		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	}
+	if err := validateHookURI(h.URI, hookType); err != nil {
+		return err
+	}
+	var err error
+	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	}
+	return nil
+}
+
+func validateHookURI(uri, hookName string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
+	}
+	return nil
 }

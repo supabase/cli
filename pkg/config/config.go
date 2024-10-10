@@ -2,16 +2,12 @@ package config
 
 import (
 	"bytes"
-	"context"
 	_ "embed"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"maps"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,8 +25,6 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
-
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -273,9 +267,7 @@ func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
 	copy.Functions = maps.Clone(c.Functions)
-	copy.Auth.External = maps.Clone(c.Auth.External)
-	copy.Auth.Email.Template = maps.Clone(c.Auth.Email.Template)
-	copy.Auth.Sms.TestOTP = maps.Clone(c.Auth.Sms.TestOTP)
+	copy.Auth = c.Auth.Clone()
 	return copy
 }
 
@@ -557,6 +549,15 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Remotes[name] = base
 	}
 	return nil
+}
+
+// Retrieve the final base config to use taking into account the remotes override
+func (c *config) GetOverrideConfig(remotes_name string) (overrideConfig baseConfig, overrideExist bool) {
+	overrideConfig, exist := c.Remotes[remotes_name]
+	if exist {
+		return overrideConfig, true
+	}
+	return c.baseConfig, false
 }
 
 func (c *baseConfig) Validate(fsys fs.FS) error {
@@ -903,35 +904,6 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 	return nil
 }
 
-func (h *hookConfig) HandleHook(hookType string) error {
-	// If not enabled do nothing
-	if !h.Enabled {
-		return nil
-	}
-	if h.URI == "" {
-		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
-	}
-	if err := validateHookURI(h.URI, hookType); err != nil {
-		return err
-	}
-	var err error
-	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
-	}
-	return nil
-}
-
-func validateHookURI(uri, hookName string) error {
-	parsed, err := url.Parse(uri)
-	if err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
-	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
-	}
-	return nil
-}
-
 // TODO: use field tag validator instead
 var funcSlugPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
@@ -952,190 +924,12 @@ func ValidateBucketName(name string) error {
 	return nil
 }
 
-func (f *tpaFirebase) issuerURL() string {
-	return fmt.Sprintf("https://securetoken.google.com/%s", f.ProjectID)
-}
-
-func (f *tpaFirebase) validate() error {
-	if f.ProjectID == "" {
-		return errors.New("Invalid config: auth.third_party.firebase is enabled but without a project_id.")
+func ToTomlBytes(config any) []byte {
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(config); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to marshal toml config:", err)
 	}
-
-	return nil
-}
-
-func (a *tpaAuth0) issuerURL() string {
-	if a.TenantRegion != "" {
-		return fmt.Sprintf("https://%s.%s.auth0.com", a.Tenant, a.TenantRegion)
-	}
-
-	return fmt.Sprintf("https://%s.auth0.com", a.Tenant)
-}
-
-func (a *tpaAuth0) validate() error {
-	if a.Tenant == "" {
-		return errors.New("Invalid config: auth.third_party.auth0 is enabled but without a tenant.")
-	}
-
-	return nil
-}
-
-func (c *tpaCognito) issuerURL() string {
-	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", c.UserPoolRegion, c.UserPoolID)
-}
-
-func (c *tpaCognito) validate() error {
-	if c.UserPoolID == "" {
-		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
-	}
-	var err error
-	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
-		return err
-	}
-
-	if c.UserPoolRegion == "" {
-		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
-	}
-	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (tpa *thirdParty) validate() error {
-	enabled := 0
-
-	if tpa.Firebase.Enabled {
-		enabled += 1
-
-		if err := tpa.Firebase.validate(); err != nil {
-			return err
-		}
-	}
-
-	if tpa.Auth0.Enabled {
-		enabled += 1
-
-		if err := tpa.Auth0.validate(); err != nil {
-			return err
-		}
-	}
-
-	if tpa.Cognito.Enabled {
-		enabled += 1
-
-		if err := tpa.Cognito.validate(); err != nil {
-			return err
-		}
-	}
-
-	if enabled > 1 {
-		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
-	}
-
-	return nil
-}
-
-func (tpa *thirdParty) IssuerURL() string {
-	if tpa.Firebase.Enabled {
-		return tpa.Firebase.issuerURL()
-	}
-
-	if tpa.Auth0.Enabled {
-		return tpa.Auth0.issuerURL()
-	}
-
-	if tpa.Cognito.Enabled {
-		return tpa.Cognito.issuerURL()
-	}
-
-	return ""
-}
-
-// ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
-// configs by resolving the JWKS via the OIDC discovery URL.
-// It always returns a JWKS string, except when there's an error fetching.
-func (a *Auth) ResolveJWKS(ctx context.Context) (string, error) {
-	var jwks struct {
-		Keys []json.RawMessage `json:"keys"`
-	}
-
-	issuerURL := a.ThirdParty.IssuerURL()
-	if issuerURL != "" {
-		discoveryURL := issuerURL + "/.well-known/openid-configuration"
-
-		t := &http.Client{Timeout: 10 * time.Second}
-		client := fetcher.NewFetcher(
-			discoveryURL,
-			fetcher.WithHTTPClient(t),
-			fetcher.WithExpectedStatus(http.StatusOK),
-		)
-
-		resp, err := client.Send(ctx, http.MethodGet, "", nil)
-		if err != nil {
-			return "", err
-		}
-
-		type oidcConfiguration struct {
-			JWKSURI string `json:"jwks_uri"`
-		}
-
-		oidcConfig, err := fetcher.ParseJSON[oidcConfiguration](resp.Body)
-		if err != nil {
-			return "", err
-		}
-
-		if oidcConfig.JWKSURI == "" {
-			return "", fmt.Errorf("auth.third_party: OIDC configuration at URL %q does not expose a jwks_uri property", discoveryURL)
-		}
-
-		client = fetcher.NewFetcher(
-			oidcConfig.JWKSURI,
-			fetcher.WithHTTPClient(t),
-			fetcher.WithExpectedStatus(http.StatusOK),
-		)
-
-		resp, err = client.Send(ctx, http.MethodGet, "", nil)
-		if err != nil {
-			return "", err
-		}
-
-		type remoteJWKS struct {
-			Keys []json.RawMessage `json:"keys"`
-		}
-
-		rJWKS, err := fetcher.ParseJSON[remoteJWKS](resp.Body)
-		if err != nil {
-			return "", err
-		}
-
-		if len(rJWKS.Keys) == 0 {
-			return "", fmt.Errorf("auth.third_party: JWKS at URL %q as discovered from %q does not contain any JWK keys", oidcConfig.JWKSURI, discoveryURL)
-		}
-
-		jwks.Keys = rJWKS.Keys
-	}
-
-	var secretJWK struct {
-		KeyType      string `json:"kty"`
-		KeyBase64URL string `json:"k"`
-	}
-
-	secretJWK.KeyType = "oct"
-	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret))
-
-	secretJWKEncoded, err := json.Marshal(&secretJWK)
-	if err != nil {
-		return "", errors.Errorf("failed to marshal secret jwk: %w", err)
-	}
-
-	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
-
-	jwksEncoded, err := json.Marshal(jwks)
-	if err != nil {
-		return "", errors.Errorf("failed to marshal jwks keys: %w", err)
-	}
-
-	return string(jwksEncoded), nil
+	return buf.Bytes()
 }
