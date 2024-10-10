@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -17,6 +18,10 @@ var (
 	//go:embed templates/index.ts
 	indexEmbed    string
 	indexTemplate = template.Must(template.New("indexl").Parse(indexEmbed))
+
+	//go:embed templates/index.js
+	indexJsEmbed    string
+	indexJsTemplate = template.Must(template.New("indexjs").Parse(indexJsEmbed))
 )
 
 type indexConfig struct {
@@ -24,7 +29,7 @@ type indexConfig struct {
 	Token string
 }
 
-func Run(ctx context.Context, slug string, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, useJs bool, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
 	{
@@ -32,28 +37,46 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			return err
 		}
 	}
+	if err := utils.LoadConfigFS(fsys); err != nil {
+		utils.CmdSuggestion = ""
+	}
 
-	// 2. Create new function.
+	// 2. Config
+	if !useJs {
+		defaultLanguage := utils.Config.EdgeRuntime.DefaultLanguage
+		if strings.ToLower(defaultLanguage) == "javascript" {
+			useJs = true
+		}
+	}
+
+	// 3. Create new function.
 	{
 		if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 			return err
 		}
+
 		path := filepath.Join(funcDir, "index.ts")
+		if useJs {
+			path = filepath.Join(funcDir, "index.js")
+		}
 		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err != nil {
 			return errors.Errorf("failed to create function entrypoint: %w", err)
 		}
 		defer f.Close()
 		// Templatize index.ts by config.toml if available
-		if err := utils.LoadConfigFS(fsys); err != nil {
-			utils.CmdSuggestion = ""
-		}
 		config := indexConfig{
 			URL:   utils.GetApiUrl("/functions/v1/" + slug),
 			Token: utils.Config.Auth.AnonKey,
 		}
-		if err := indexTemplate.Option("missingkey=error").Execute(f, config); err != nil {
-			return errors.Errorf("failed to initialise function entrypoint: %w", err)
+		if useJs {
+			if err := indexJsTemplate.Option("missingkey=error").Execute(f, config); err != nil {
+				return errors.Errorf("failed to initialise function entrypoint: %w", err)
+			}
+		} else {
+			if err := indexTemplate.Option("missingkey=error").Execute(f, config); err != nil {
+				return errors.Errorf("failed to initialise function entrypoint: %w", err)
+			}
 		}
 	}
 
