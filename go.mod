@@ -12,7 +12,7 @@ require (
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.60.4
-	github.com/danieljoos/wincred v1.2.1
+	github.com/danieljoos/wincred v1.2.2
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v27.3.1+incompatible
 	github.com/docker/docker v27.3.1+incompatible
