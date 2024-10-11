@@ -126,7 +126,7 @@ type (
 	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
+		Api          Api            `toml:"api"`
 		Db           db             `toml:"db" mapstructure:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
@@ -454,7 +454,7 @@ func WithHostname(hostname string) ConfigEditor {
 func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
-		Api: api{
+		Api: Api{
 			Image:     postgrestImage,
 			KongImage: kongImage,
 		},
@@ -1304,6 +1304,15 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+// Retrieve the final base config to use taking into account the remotes override
+func (c *config) GetRemoteOverride(remotes_name string) (overrideConfig baseConfig, overrideExist bool) {
+	overrideConfig, exist := c.Remotes[remotes_name]
+	if exist {
+		return overrideConfig, true
+	}
+	return c.baseConfig, false
 }
 
 func ToTomlBytes(config any) []byte {

@@ -7,7 +7,7 @@ import (
 )
 
 type (
-	api struct {
+	Api struct {
 		Enabled         bool     `toml:"enabled"`
 		Image           string   `toml:"-"`
 		KongImage       string   `toml:"-"`
@@ -25,7 +25,7 @@ type (
 	}
 )
 
-func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
+func (a *Api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	body := v1API.UpdatePostgrestConfigBody{}
 
 	// Convert Schemas to a comma-separated string
@@ -50,7 +50,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	return body
 }
 
-func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) api {
+func (a *Api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) Api {
 	result := *a
 	// Update Schemas if present in remoteConfig
 	result.Schemas = strings.Split(remoteConfig.DbSchema, ",")
@@ -64,9 +64,9 @@ func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecre
 	return result
 }
 
-func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
+func (a *Api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue := ToTomlBytes(a)
-	remoteCompare := ToTomlBytes(a.FromRemoteApiConfig(remoteConfig))
+	remoteCompare := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
 	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
 }
