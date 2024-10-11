@@ -416,24 +416,6 @@ func getSmsProvider(a *Auth) string {
 	}
 }
 
-// Helper function to get a pointer to a value
-func ptr[T any](v T) *T {
-	return &v
-}
-
-func compareSensitiveField[T comparable](local *T, remote *T) {
-	if remote == nil {
-		return
-	}
-	if *local != *remote {
-		*local = any("<original-redacted>").(T)
-		*remote = any("<changed-redacted>").(T)
-	} else {
-		*local = any("<unchanged-redacted>").(T)
-		*remote = any("<unchanged-redacted>").(T)
-	}
-}
-
 func (a *Auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) Auth {
 	result := a.Clone()
 
@@ -909,7 +891,7 @@ func (a *Auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) []byte {
 	currentValue := ToTomlBytes(&localCopy)
 	remoteCompare := ToTomlBytes(&remoteCopy)
 	// We diff our resulting config
-	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
+	return Diff("remote[auth]", remoteCompare, "local[auth]", currentValue)
 }
 
 func (f *tpaFirebase) issuerURL() string {

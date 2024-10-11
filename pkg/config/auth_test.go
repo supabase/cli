@@ -283,6 +283,7 @@ func TestDiffWithRemote(t *testing.T) {
 		assert.NotContains(t, string(diff), "github_secret")
 		assert.Contains(t, string(diff), "<changed-redacted>")
 		assert.Contains(t, string(diff), "<original-redacted>")
+		assert.Contains(t, string(diff), "github")
 	})
 
 	t.Run("ensures SMS providers are compared correctly", func(t *testing.T) {
@@ -313,6 +314,7 @@ func TestDiffWithRemote(t *testing.T) {
 		assert.NotContains(t, string(diff), "vonage_api_secret")
 		assert.Contains(t, string(diff), "<changed-redacted>")
 		assert.Contains(t, string(diff), "<original-redacted>")
+		assert.Contains(t, string(diff), "auth_token")
 	})
 
 	t.Run("ensures hooks are compared correctly", func(t *testing.T) {
