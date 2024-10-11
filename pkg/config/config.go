@@ -145,23 +145,6 @@ type (
 		Remotes   map[string]baseConfig  `toml:"-"`
 	}
 
-	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Image           string   `toml:"-"`
-		KongImage       string   `toml:"-"`
-		Port            uint16   `toml:"port"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
-		Tls             tlsKong  `toml:"tls"`
-		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
-	}
-
-	tlsKong struct {
-		Enabled bool `toml:"enabled"`
-	}
-
 	db struct {
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
@@ -1321,4 +1304,14 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+func ToTomlBytes(config any) []byte {
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(config); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to marshal toml config:", err)
+	}
+	return buf.Bytes()
 }

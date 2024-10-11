@@ -1,7 +1,6 @@
 package link
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -25,7 +23,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original := toTomlBytes(map[string]interface{}{
+	original := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
@@ -60,7 +58,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated := toTomlBytes(map[string]interface{}{
+	updated := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
@@ -70,16 +68,6 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 		fmt.Println(string(lineDiff))
 	}
 	return nil
-}
-
-func toTomlBytes(config any) []byte {
-	var buf bytes.Buffer
-	enc := toml.NewEncoder(&buf)
-	enc.Indent = ""
-	if err := enc.Encode(config); err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), "failed to marshal toml config:", err)
-	}
-	return buf.Bytes()
 }
 
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
