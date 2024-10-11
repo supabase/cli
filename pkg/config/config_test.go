@@ -75,6 +75,7 @@ func TestConfigParsing(t *testing.T) {
 		t.Setenv("AZURE_SECRET", "this is cool")
 		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
 		t.Setenv("SENDGRID_API_KEY", "sendgrid")
+		t.Setenv("AUTH_CALLBACK_URL", "http://localhost:3000/auth/callback")
 		assert.NoError(t, config.Load("", fsys))
 		// Check the default value in the config
 		assert.Equal(t, "http://127.0.0.1:3000", config.Auth.SiteUrl)
