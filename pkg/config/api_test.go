@@ -9,7 +9,7 @@ import (
 
 func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	t.Run("converts all fields correctly", func(t *testing.T) {
-		api := &Api{
+		api := &RemoteApi{
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         1000,
@@ -23,7 +23,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	})
 
 	t.Run("handles empty fields", func(t *testing.T) {
-		api := &Api{}
+		api := &RemoteApi{}
 
 		body := api.ToUpdatePostgrestConfigBody()
 
@@ -35,7 +35,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 
 func TestApiDiffWithRemote(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
-		api := &Api{
+		api := &RemoteApi{
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         1000,
@@ -58,7 +58,7 @@ func TestApiDiffWithRemote(t *testing.T) {
 	})
 
 	t.Run("handles no differences", func(t *testing.T) {
-		api := &Api{
+		api := &RemoteApi{
 			Schemas:         []string{"public"},
 			ExtraSearchPath: []string{"public"},
 			MaxRows:         500,

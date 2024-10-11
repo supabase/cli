@@ -126,7 +126,7 @@ type (
 	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
-		Api          Api            `toml:"api"`
+		Api          api            `toml:"api"`
 		Db           db             `toml:"db" mapstructure:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
@@ -454,7 +454,7 @@ func WithHostname(hostname string) ConfigEditor {
 func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
-		Api: Api{
+		Api: api{
 			Image:     postgrestImage,
 			KongImage: kongImage,
 		},
