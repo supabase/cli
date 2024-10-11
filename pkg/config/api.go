@@ -7,18 +7,15 @@ import (
 )
 
 type (
-	RemoteApi struct {
+	api struct {
+		Enabled         bool     `toml:"enabled"`
+		Image           string   `toml:"-"`
+		KongImage       string   `toml:"-"`
+		Port            uint16   `toml:"port"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
-	}
-	api struct {
-		RemoteApi
-		Enabled   bool    `toml:"enabled"`
-		Image     string  `toml:"-"`
-		KongImage string  `toml:"-"`
-		Port      uint16  `toml:"port"`
-		Tls       tlsKong `toml:"tls"`
+		Tls             tlsKong  `toml:"tls"`
 		// TODO: replace [auth|studio].api_url
 		ExternalUrl string `toml:"external_url"`
 	}
@@ -28,7 +25,7 @@ type (
 	}
 )
 
-func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
+func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	body := v1API.UpdatePostgrestConfigBody{}
 
 	// Convert Schemas to a comma-separated string
@@ -53,7 +50,7 @@ func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBod
 	return body
 }
 
-func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) RemoteApi {
+func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) api {
 	result := *a
 	// Update Schemas if present in remoteConfig
 	result.Schemas = strings.Split(remoteConfig.DbSchema, ",")
@@ -67,9 +64,9 @@ func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJW
 	return result
 }
 
-func (a *RemoteApi) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
+func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue := ToTomlBytes(a)
-	remoteCompare := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
+	remoteCompare := ToTomlBytes(a.FromRemoteApiConfig(remoteConfig))
 	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
 }
