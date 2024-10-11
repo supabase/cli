@@ -31,6 +31,13 @@ type (
 func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	body := v1API.UpdatePostgrestConfigBody{}
 
+	// When the api is disabled, remote side it just set the dbSchema to an empty value
+	if !a.Enabled {
+		emptyString := ""
+		body.DbSchema = &emptyString
+		return body
+	}
+
 	// Convert Schemas to a comma-separated string
 	if len(a.Schemas) > 0 {
 		schemas := strings.Join(a.Schemas, ",")
@@ -49,29 +56,33 @@ func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBod
 		body.MaxRows = &maxRows
 	}
 
-	// When the api is disabled, remote side it just set the dbSchema to an empty value
-	if !a.Enabled {
-		emptyString := ""
-		body.DbSchema = &emptyString
-	}
-
 	// Note: DbPool is not present in the Api struct, so it's not set here
 	return body
 }
 
 func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) RemoteApi {
 	result := *a
+	if remoteConfig.DbSchema == "" {
+		result.Enabled = false
+		return result
+	}
 	// Update Schemas if present in remoteConfig
-	result.Schemas = strings.Split(remoteConfig.DbSchema, ",")
+	schemas := strings.Split(remoteConfig.DbSchema, ",")
+	result.Schemas = make([]string, len(schemas))
+	// TODO: use slices.Map when upgrade go version
+	for i, schema := range schemas {
+		result.Schemas[i] = strings.TrimSpace(schema)
+	}
 
 	// Update ExtraSearchPath if present in remoteConfig
-	result.ExtraSearchPath = strings.Split(remoteConfig.DbExtraSearchPath, ",")
+	extraSearchPath := strings.Split(remoteConfig.DbExtraSearchPath, ",")
+	result.ExtraSearchPath = make([]string, len(extraSearchPath))
+	for i, path := range extraSearchPath {
+		result.ExtraSearchPath[i] = strings.TrimSpace(path)
+	}
 
 	// Update MaxRows if present in remoteConfig
 	result.MaxRows = uint(remoteConfig.MaxRows)
-
-	// If the remote schema is empty it means the api is disabled
-	result.Enabled = remoteConfig.DbSchema != ""
 
 	return result
 }
