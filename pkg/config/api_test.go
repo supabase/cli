@@ -74,4 +74,21 @@ func TestApiDiffWithRemote(t *testing.T) {
 
 		assert.Empty(t, diff)
 	})
+	t.Run("handles multiple schemas and search paths with spaces", func(t *testing.T) {
+		api := &RemoteApi{
+			Schemas:         []string{"public", "private"},
+			ExtraSearchPath: []string{"extensions", "public"},
+			MaxRows:         500,
+		}
+
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+			DbSchema:          "public, private",
+			DbExtraSearchPath: "extensions, public",
+			MaxRows:           500,
+		}
+
+		diff := api.DiffWithRemote(remoteConfig)
+
+		assert.Empty(t, diff)
+	})
 }

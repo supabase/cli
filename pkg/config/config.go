@@ -702,6 +702,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
+	duplicatedRemotesProjectsIds := make(map[string][]string)
 	for name, remote := range c.Overrides {
 		base := c.baseConfig.Clone()
 		// Encode a toml file with only config overrides
@@ -715,7 +716,19 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
 			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
 		}
+		if base.ProjectId == c.baseConfig.ProjectId {
+			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for remote %s this config won't apply to any branch\n", name)
+		} else {
+			duplicatedRemotesProjectsIds[base.ProjectId] = append(duplicatedRemotesProjectsIds[base.ProjectId], name)
+		}
+		// Check for duplicate project IDs across remotes
+		for projectId, remotes := range duplicatedRemotesProjectsIds {
+			if len(remotes) > 1 {
+				fmt.Fprintf(os.Stderr, "WARN: Multiple remotes (%s) have the same project_id: %s. This may lead to unexpected config override.\n", strings.Join(remotes, ", "), projectId)
+			}
+		}
 		if err := base.Validate(fsys); err != nil {
+			fmt.Fprintf(os.Stderr, "Error with remote config %s\n", name)
 			return err
 		}
 		c.Remotes[name] = base
@@ -1307,11 +1320,17 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 }
 
 // Retrieve the final base config to use taking into account the remotes override
-func (c *config) GetRemoteOverride(remotes_name string) (overrideConfig baseConfig, overrideExist bool) {
-	overrideConfig, exist := c.Remotes[remotes_name]
-	if exist {
-		return overrideConfig, true
+func (c *config) GetRemoteOverride(project_ref string) (overrideConfig baseConfig, overrideExist bool) {
+	// Iterate over all the config.Remotes
+	for _, remoteConfig := range c.Remotes {
+		// Check if there is one matching project_id
+		if remoteConfig.ProjectId == project_ref {
+			// Return the matching remote config and true to indicate an override exists
+			return remoteConfig, true
+		}
 	}
+
+	// If no matching remote config is found, return the base config and false
 	return c.baseConfig, false
 }
 
