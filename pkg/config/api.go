@@ -8,13 +8,13 @@ import (
 
 type (
 	RemoteApi struct {
+		Enabled         bool     `toml:"enabled"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
 	}
 	api struct {
 		RemoteApi
-		Enabled   bool    `toml:"enabled"`
 		Image     string  `toml:"-"`
 		KongImage string  `toml:"-"`
 		Port      uint16  `toml:"port"`
@@ -49,6 +49,12 @@ func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBod
 		body.MaxRows = &maxRows
 	}
 
+	// When the api is disabled, remote side it just set the dbSchema to an empty value
+	if !a.Enabled {
+		emptyString := ""
+		body.DbSchema = &emptyString
+	}
+
 	// Note: DbPool is not present in the Api struct, so it's not set here
 	return body
 }
@@ -63,6 +69,9 @@ func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJW
 
 	// Update MaxRows if present in remoteConfig
 	result.MaxRows = uint(remoteConfig.MaxRows)
+
+	// If the remote schema is empty it means the api is disabled
+	result.Enabled = remoteConfig.DbSchema != ""
 
 	return result
 }
