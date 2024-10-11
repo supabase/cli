@@ -1306,6 +1306,15 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	return string(jwksEncoded), nil
 }
 
+// Retrieve the final base config to use taking into account the remotes override
+func (c *config) GetRemoteOverride(remotes_name string) (overrideConfig baseConfig, overrideExist bool) {
+	overrideConfig, exist := c.Remotes[remotes_name]
+	if exist {
+		return overrideConfig, true
+	}
+	return c.baseConfig, false
+}
+
 func ToTomlBytes(config any) []byte {
 	var buf bytes.Buffer
 	enc := toml.NewEncoder(&buf)
