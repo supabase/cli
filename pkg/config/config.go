@@ -829,6 +829,11 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 		if c.Auth.SiteUrl, err = maybeLoadEnv(c.Auth.SiteUrl); err != nil {
 			return err
 		}
+		for i, url := range c.Auth.AdditionalRedirectUrls {
+			if c.Auth.AdditionalRedirectUrls[i], err = maybeLoadEnv(url); err != nil {
+				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
+			}
+		}
 		// Validate email config
 		for name, tmpl := range c.Auth.Email.Template {
 			if len(tmpl.ContentPath) > 0 {
