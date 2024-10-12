@@ -67,6 +67,7 @@ func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJW
 		result.Enabled = false
 		return result
 	}
+	result.Enabled = true
 	// Update Schemas if present in remoteConfig
 	schemas := strings.Split(remoteConfig.DbSchema, ",")
 	result.Schemas = make([]string, len(schemas))
