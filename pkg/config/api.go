@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 
+	"github.com/supabase/cli/internal/utils/diff"
 	v1API "github.com/supabase/cli/pkg/api"
 )
 
@@ -91,5 +92,5 @@ func (a *RemoteApi) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecr
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue := ToTomlBytes(a)
 	remoteCompare := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
-	return Diff("remote[api]", remoteCompare, "local[api]", currentValue)
+	return diff.Diff("remote[api]", remoteCompare, "local[api]", currentValue)
 }

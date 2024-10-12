@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/internal/utils/diff"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
@@ -63,7 +64,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 		"db":  utils.Config.Db,
 	})
 	// if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
-	if lineDiff := Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
+	if lineDiff := diff.Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 		fmt.Println(string(lineDiff))
 	}
