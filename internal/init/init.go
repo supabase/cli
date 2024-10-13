@@ -58,7 +58,7 @@ func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntelli
 		}
 	} else {
 		console := utils.NewConsole()
-		if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", false); err != nil {
+		if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno (recommended if you plan to write Edge Functions)?", false); err != nil {
 			return err
 		} else if isVscode {
 			return writeVscodeConfig(fsys)
