@@ -11,7 +11,7 @@ import (
 func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	t.Run("converts all fields correctly", func(t *testing.T) {
 		api := &RemoteApi{
-			Enabled: true,
+			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         1000,
@@ -37,7 +37,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 func TestApiDiffWithRemote(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
 		api := &RemoteApi{
-			Enabled: 		 true,
+			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         1000,
@@ -61,7 +61,7 @@ func TestApiDiffWithRemote(t *testing.T) {
 
 	t.Run("handles no differences", func(t *testing.T) {
 		api := &RemoteApi{
-			Enabled: 		 true,
+			Enabled:         true,
 			Schemas:         []string{"public"},
 			ExtraSearchPath: []string{"public"},
 			MaxRows:         500,
@@ -79,7 +79,7 @@ func TestApiDiffWithRemote(t *testing.T) {
 	})
 	t.Run("handles multiple schemas and search paths with spaces", func(t *testing.T) {
 		api := &RemoteApi{
-			Enabled: 		 true,
+			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         500,
@@ -97,7 +97,7 @@ func TestApiDiffWithRemote(t *testing.T) {
 	})
 	t.Run("handles api disabled on remote side", func(t *testing.T) {
 		api := &RemoteApi{
-			Enabled: 		 true,
+			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
 			MaxRows:         500,

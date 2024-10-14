@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 
+	"github.com/supabase/cli/internal/utils/cast"
 	"github.com/supabase/cli/internal/utils/diff"
 	v1API "github.com/supabase/cli/pkg/api"
 )
@@ -53,8 +54,8 @@ func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBod
 
 	// Convert MaxRows to int pointer
 	if a.MaxRows > 0 {
-		maxRows := int(a.MaxRows)
-		body.MaxRows = &maxRows
+		intValue := cast.UintToInt(a.MaxRows)
+		body.MaxRows = &intValue
 	}
 
 	// Note: DbPool is not present in the Api struct, so it's not set here
@@ -84,7 +85,7 @@ func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJW
 	}
 
 	// Update MaxRows if present in remoteConfig
-	result.MaxRows = uint(remoteConfig.MaxRows)
+	result.MaxRows = cast.IntToUint(remoteConfig.MaxRows)
 
 	return result
 }

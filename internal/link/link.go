@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/cast"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/diff"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -136,7 +137,7 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	utils.Config.Api.MaxRows = uint(config.MaxRows)
+	utils.Config.Api.MaxRows = cast.IntToUint(config.MaxRows)
 	utils.Config.Api.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
 	utils.Config.Api.Schemas = readCsv(config.DbSchema)
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils/cast"
 )
 
 // Equal to `startBufSize` from `bufio/scan.go`
@@ -83,7 +84,7 @@ func Split(sql io.Reader, transform ...func(string) string) (stats []string, err
 
 	// Increase scanner capacity to support very long lines containing e.g. geodata
 	buf := make([]byte, startBufSize)
-	maxbuf := int(viper.GetSizeInBytes("SCANNER_BUFFER_SIZE"))
+	maxbuf := cast.UintToInt(viper.GetSizeInBytes("SCANNER_BUFFER_SIZE"))
 	if maxbuf == 0 {
 		maxbuf = MaxScannerCapacity
 	}
