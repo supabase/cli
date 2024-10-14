@@ -10,7 +10,7 @@ const (
 	inbucketImage    = "inbucket/inbucket:3.0.3"
 	postgrestImage   = "postgrest/postgrest:v12.2.0"
 	pgmetaImage      = "supabase/postgres-meta:v0.83.2"
-	studioImage      = "supabase/studio:20240930-16f2b8e"
+	studioImage      = "supabase/studio:20241014-353d054"
 	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	edgeRuntimeImage = "supabase/edge-runtime:v1.58.13"
 	vectorImage      = "timberio/vector:0.28.1-alpine"
