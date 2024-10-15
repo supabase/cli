@@ -165,7 +165,7 @@ type (
 		Schemas         []string `toml:"schemas" validate:"required_if=Enabled true,min=1,dive,required"`
 		ExtraSearchPath []string `toml:"extra_search_path" validate:"required_if=Enabled true,dive"`
 		MaxRows         uint     `toml:"max_rows" validate:"required_if=Enabled true,gte=0"`
-		Tls             tlsKong  `toml:"tls" validate:"required_if=Enabled true,dive"`
+		Tls             tlsKong  `toml:"tls" validate:"required_if=Enabled true"`
 		// TODO: replace [auth|studio].api_url
 		ExternalUrl string `toml:"external_url" validate:"required_if=Enabled true,url"`
 	}
@@ -237,7 +237,7 @@ type (
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit" validate:"required,gt=0"`
 		S3Credentials       storageS3Credentials `toml:"-" validate:"required"`
 		ImageTransformation imageTransformation  `toml:"image_transformation" validate:"required"`
-		Buckets             BucketConfig         `toml:"buckets" validate:"dive,keys,bucket_name,required,endkeys,dive"`
+		Buckets             BucketConfig         `toml:"buckets" validate:"dive,keys,bucket_name,required,endkeys"`
 	}
 
 	BucketConfig map[string]bucket
@@ -279,20 +279,20 @@ type (
 		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins" validate:"required"`
 		Email                  email               `toml:"email" validate:"required"`
 		Sms                    sms                 `toml:"sms" validate:"required"`
-		External               map[string]provider `validate:"dive,keys,required,endkeys,dive"`
+		External               map[string]provider `validate:"dive,keys,required,endkeys"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret" validate:"required,min=32"`
 		AnonKey        string `toml:"-" mapstructure:"anon_key" validate:"required"`
 		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key" validate:"required"`
 
-		ThirdParty thirdParty `toml:"third_party" validate:"required"`
+		ThirdParty thirdParty `toml:"third_party" validate:"required,third_party"`
 	}
 
 	thirdParty struct {
-		Firebase tpaFirebase `toml:"firebase" validate:"required"`
-		Auth0    tpaAuth0    `toml:"auth0" validate:"required"`
-		Cognito  tpaCognito  `toml:"aws_cognito" validate:"required"`
+		Firebase tpaFirebase `toml:"firebase" validate:"dive"`
+		Auth0    tpaAuth0    `toml:"auth0" validate:"dive"`
+		Cognito  tpaCognito  `toml:"aws_cognito" validate:"dive"`
 		// Validate the whole struct
 		// Use a "-" tag to avoid conflict with the field validations
 	}
@@ -319,7 +319,7 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" validate:"required"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations" validate:"required"`
 		SecurePasswordChange bool                     `toml:"secure_password_change" validate:"required"`
-		Template             map[string]emailTemplate `toml:"template" validate:"dive,keys,required,endkeys,dive"`
+		Template             map[string]emailTemplate `toml:"template" validate:"dive,keys,required,endkeys"`
 		Smtp                 smtp                     `toml:"smtp" validate:"required"`
 		MaxFrequency         time.Duration            `toml:"max_frequency" validate:"required"`
 	}
@@ -354,10 +354,10 @@ type (
 
 	hook struct {
 		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt" validate:"dive,hook_config"`
-		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt" validate:"required,dive"`
-		CustomAccessToken           hookConfig `toml:"custom_access_token" validate:"required,dive"`
-		SendSMS                     hookConfig `toml:"send_sms" validate:"required,dive"`
-		SendEmail                   hookConfig `toml:"send_email" validate:"required,dive"`
+		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt" validate:"required"`
+		CustomAccessToken           hookConfig `toml:"custom_access_token" validate:"required"`
+		SendSMS                     hookConfig `toml:"send_sms" validate:"required"`
+		SendEmail                   hookConfig `toml:"send_email" validate:"required"`
 	}
 	factorTypeConfiguration struct {
 		EnrollEnabled bool `toml:"enroll_enabled" validate:"required"`
@@ -546,12 +546,12 @@ func NewConfig(editors ...ConfigEditor) config {
 				"gitlab":        {},
 				"google":        {},
 				"keycloak":      {},
-				"linkedin":      {},
+				"linkedin":      {}, // TODO: remove this field in v2
 				"linkedin_oidc": {},
 				"notion":        {},
 				"twitch":        {},
 				"twitter":       {},
-				"slack":         {},
+				"slack":         {}, // TODO: remove this field in v2
 				"slack_oidc":    {},
 				"spotify":       {},
 				"workos":        {},
@@ -644,7 +644,7 @@ func printStructFields(v reflect.Value, prefix string) {
 }
 
 func (c *config) ValidateWithErrors() []validator.ValidationErrors {
-	validate := validator.New()
+	validate := validator.New(validator.WithRequiredStructEnabled())
 
 	// Add this debug function
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -661,11 +661,6 @@ func (c *config) ValidateWithErrors() []validator.ValidationErrors {
 	validate.RegisterValidation("file", fileExistsValidator)
 	validate.RegisterValidation("hook_config", hookValidator)
 	validate.RegisterValidation("third_party", thirdPartyValidator)
-
-	// Add struct-level validation for nested structs
-	// validate.RegisterStructValidation(validate, storage{})
-	// validate.RegisterStructValidation(validateAuth, auth{})
-	// validate.RegisterStructValidation(validateThirdParty, thirdParty{})
 
 	// Initialize the translator
 	en := en.New()
