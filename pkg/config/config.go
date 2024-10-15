@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -26,6 +27,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
+	"github.com/go-playground/locales/en"
+	ut "github.com/go-playground/universal-translator"
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
@@ -100,6 +104,14 @@ func (c CustomClaims) NewToken() *jwt.Token {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
+// Regular expression to match strings in the form env(SOMETHING)
+var envPattern = regexp.MustCompile(`^env\((\w+)\)$`)
+
+var (
+	validate   *validator.Validate
+	translator ut.Translator
+)
+
 // We follow these rules when adding new config:
 //  1. Update init_config.toml (and init_config.test.toml) with the new key, default value, and comments to explain usage.
 //  2. Update config struct with new field and toml tag (spelled in snake_case).
@@ -124,329 +136,327 @@ func (c CustomClaims) NewToken() *jwt.Token {
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
 	baseConfig struct {
-		ProjectId    string         `toml:"project_id"`
-		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
-		Db           db             `toml:"db" mapstructure:"db"`
-		Realtime     realtime       `toml:"realtime"`
-		Studio       studio         `toml:"studio"`
-		Inbucket     inbucket       `toml:"inbucket"`
-		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth" mapstructure:"auth"`
-		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
-		Functions    FunctionConfig `toml:"functions"`
-		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+		ProjectId    string         `toml:"project_id" validate:"required,project_id"`
+		Hostname     string         `toml:"-" validate:"required,hostname|ip"`
+		Api          api            `toml:"api" validate:"required"`
+		Db           db             `toml:"db" mapstructure:"db" validate:"required"`
+		Realtime     realtime       `toml:"realtime" validate:"required"`
+		Studio       studio         `toml:"studio" validate:"required"`
+		Inbucket     inbucket       `toml:"inbucket" validate:"required"`
+		Storage      storage        `toml:"storage" validate:"required"`
+		Auth         auth           `toml:"auth" mapstructure:"auth" validate:"required"`
+		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" validate:"required"`
+		Functions    FunctionConfig `toml:"functions" validate:"required"`
+		Analytics    analytics      `toml:"analytics" validate:"required"`
+		Experimental experimental   `toml:"experimental" mapstructure:"-" validate:"omitempty"`
 	}
 
 	config struct {
 		baseConfig
-		Overrides map[string]interface{} `toml:"remotes"`
-		Remotes   map[string]baseConfig  `toml:"-"`
+		Overrides map[string]interface{} `toml:"remotes" validate:"dive"`
+		Remotes   map[string]baseConfig  `toml:"-" validate:"dive"`
 	}
 
 	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Image           string   `toml:"-"`
-		KongImage       string   `toml:"-"`
-		Port            uint16   `toml:"port"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
-		Tls             tlsKong  `toml:"tls"`
+		Enabled         bool     `toml:"enabled" validate:"required"`
+		Image           string   `toml:"-" validate:"required"`
+		KongImage       string   `toml:"-" validate:"required"`
+		Port            uint16   `toml:"port" validate:"required_if=Enabled true,gt=0,lt=65536"`
+		Schemas         []string `toml:"schemas" validate:"required_if=Enabled true,min=1,dive,required"`
+		ExtraSearchPath []string `toml:"extra_search_path" validate:"required_if=Enabled true,dive"`
+		MaxRows         uint     `toml:"max_rows" validate:"required_if=Enabled true,gte=0"`
+		Tls             tlsKong  `toml:"tls" validate:"required_if=Enabled true,dive"`
 		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
+		ExternalUrl string `toml:"external_url" validate:"required_if=Enabled true,url"`
 	}
 
 	tlsKong struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" validate:"required"`
 	}
 
 	db struct {
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ShadowPort   uint16 `toml:"shadow_port"`
-		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-"`
-		RootKey      string `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler `toml:"pooler"`
-		Seed         seed   `toml:"seed"`
+		Image        string `toml:"-" validate:"required"`
+		Port         uint16 `toml:"port" validate:"required,gt=0,lt=65536"`
+		ShadowPort   uint16 `toml:"shadow_port" validate:"required,gt=0,lt=65536"`
+		MajorVersion uint   `toml:"major_version" validate:"required,db_major_version,oneof=13 14 15"`
+		Password     string `toml:"-" validate:"required"`
+		RootKey      string `toml:"-" mapstructure:"root_key" validate:"required"`
+		Pooler       pooler `toml:"pooler" validate:"required"`
+		Seed         seed   `toml:"seed" validate:"required"`
 	}
 
 	seed struct {
-		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
-		SqlPaths     []string `toml:"-"`
+		Enabled      bool     `toml:"enabled" validate:"required"`
+		GlobPatterns []string `toml:"sql_paths" validate:"dive,required"`
+		SqlPaths     []string `toml:"-" validate:"dive,required"`
 	}
 
 	pooler struct {
-		Enabled          bool     `toml:"enabled"`
-		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
-		ConnectionString string   `toml:"-"`
-		TenantId         string   `toml:"-"`
-		EncryptionKey    string   `toml:"-"`
-		SecretKeyBase    string   `toml:"-"`
+		Enabled          bool     `toml:"enabled" validate:"required"`
+		Image            string   `toml:"-" validate:"required"`
+		Port             uint16   `toml:"port" validate:"required_if=Enabled true,gt=0,lt=65536"`
+		PoolMode         PoolMode `toml:"pool_mode" validate:"required_if=Enabled true,oneof=transaction session"`
+		DefaultPoolSize  uint     `toml:"default_pool_size" validate:"gte=0"`
+		MaxClientConn    uint     `toml:"max_client_conn" validate:"gte=0"`
+		ConnectionString string   `toml:"-" validate:"required_if=Enabled true"`
+		TenantId         string   `toml:"-" validate:"required_if=Enabled true"`
+		EncryptionKey    string   `toml:"-" validate:"required_if=Enabled true,min=32"`
+		SecretKeyBase    string   `toml:"-" validate:"required_if=Enabled true,min=32"`
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled"`
-		Image           string        `toml:"-"`
-		IpVersion       AddressFamily `toml:"ip_version"`
-		MaxHeaderLength uint          `toml:"max_header_length"`
-		TenantId        string        `toml:"-"`
-		EncryptionKey   string        `toml:"-"`
-		SecretKeyBase   string        `toml:"-"`
+		Enabled         bool          `toml:"enabled" validate:"required"`
+		Image           string        `toml:"-" validate:"required"`
+		IpVersion       AddressFamily `toml:"ip_version" validate:"required_if=Enabled true,oneof=IPv4 IPv6"`
+		MaxHeaderLength uint          `toml:"max_header_length" validate:"required,gt=0"`
+		TenantId        string        `toml:"-"  validate:"required_if=Enabled true"`
+		EncryptionKey   string        `toml:"-"  validate:"required_if=Enabled true,min=16"`
+		SecretKeyBase   string        `toml:"-"  validate:"required_if=Enabled true,min=32"`
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
-		PgmetaImage  string `toml:"-"`
+		Enabled      bool   `toml:"enabled" validate:"required"`
+		Image        string `toml:"-" validate:"required"`
+		Port         uint16 `toml:"port" validate:"required_if=Enabled true,gt=0,lt=65536"`
+		ApiUrl       string `toml:"api_url" validate:"omitempty,url"`
+		OpenaiApiKey string `toml:"openai_api_key" validate:"omitempty,env_or_string"`
+		PgmetaImage  string `toml:"-" validate:"required"`
 	}
 
 	inbucket struct {
-		Enabled  bool   `toml:"enabled"`
-		Image    string `toml:"-"`
-		Port     uint16 `toml:"port"`
-		SmtpPort uint16 `toml:"smtp_port"`
-		Pop3Port uint16 `toml:"pop3_port"`
+		Enabled  bool   `toml:"enabled" validate:"required"`
+		Image    string `toml:"-" validate:"required"`
+		Port     uint16 `toml:"port" validate:"required,gt=0,lt=65536"`
+		SmtpPort uint16 `toml:"smtp_port" validate:"required,gt=0,lt=65536"`
+		Pop3Port uint16 `toml:"pop3_port" validate:"required,gt=0,lt=65536"`
 	}
 
 	storage struct {
-		Enabled             bool                 `toml:"enabled"`
-		Image               string               `toml:"-"`
-		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
-		S3Credentials       storageS3Credentials `toml:"-"`
-		ImageTransformation imageTransformation  `toml:"image_transformation"`
-		Buckets             BucketConfig         `toml:"buckets"`
+		Enabled             bool                 `toml:"enabled" validate:"required"`
+		Image               string               `toml:"-" validate:"required"`
+		FileSizeLimit       sizeInBytes          `toml:"file_size_limit" validate:"required,gt=0"`
+		S3Credentials       storageS3Credentials `toml:"-" validate:"required"`
+		ImageTransformation imageTransformation  `toml:"image_transformation" validate:"required"`
+		Buckets             BucketConfig         `toml:"buckets" validate:"dive,keys,bucket_name,required,endkeys,dive"`
 	}
 
 	BucketConfig map[string]bucket
 
 	bucket struct {
-		Public           *bool       `toml:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
+		Public           *bool       `toml:"public" validate:"required"`
+		FileSizeLimit    sizeInBytes `toml:"file_size_limit" validate:"required,gt=0"`
+		AllowedMimeTypes []string    `toml:"allowed_mime_types" validate:"dive,required"`
+		ObjectsPath      string      `toml:"objects_path" validate:"required"`
 	}
 
 	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
+		Enabled bool   `toml:"enabled" validate:"required"`
+		Image   string `toml:"-" validate:"required"`
 	}
 
 	storageS3Credentials struct {
-		AccessKeyId     string `toml:"-"`
-		SecretAccessKey string `toml:"-"`
-		Region          string `toml:"-"`
+		AccessKeyId     string `toml:"-" validate:"required"`
+		SecretAccessKey string `toml:"-" validate:"required"`
+		Region          string `toml:"-" validate:"required"`
 	}
 
 	auth struct {
-		Enabled                bool     `toml:"enabled"`
-		Image                  string   `toml:"-"`
-		SiteUrl                string   `toml:"site_url"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
+		Enabled                bool     `toml:"enabled" validate:"required"`
+		Image                  string   `toml:"-" validate:"required"`
+		SiteUrl                string   `toml:"site_url" validate:"required,url,env_or_string"`
+		AdditionalRedirectUrls []string `toml:"additional_redirect_urls" validate:"dive,url"`
 
-		JwtExpiry                  uint `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		JwtExpiry                  uint `toml:"jwt_expiry" validate:"required,gt=0"`
+		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation" validate:"required"`
+		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval" validate:"gte=0"`
+		EnableManualLinking        bool `toml:"enable_manual_linking" validate:"required"`
 
-		Hook     hook     `toml:"hook"`
-		MFA      mfa      `toml:"mfa"`
-		Sessions sessions `toml:"sessions"`
+		Hook     hook     `toml:"hook" validate:"required"`
+		MFA      mfa      `toml:"mfa" validate:"required"`
+		Sessions sessions `toml:"sessions" validate:"required"`
 
-		EnableSignup           bool  `toml:"enable_signup"`
-		EnableAnonymousSignIns bool  `toml:"enable_anonymous_sign_ins"`
-		Email                  email `toml:"email"`
-		Sms                    sms   `toml:"sms"`
-		External               map[string]provider
+		EnableSignup           bool                `toml:"enable_signup" validate:"required"`
+		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins" validate:"required"`
+		Email                  email               `toml:"email" validate:"required"`
+		Sms                    sms                 `toml:"sms" validate:"required"`
+		External               map[string]provider `validate:"dive,keys,required,endkeys,dive"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
-		AnonKey        string `toml:"-" mapstructure:"anon_key"`
-		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+		JwtSecret      string `toml:"-" mapstructure:"jwt_secret" validate:"required,min=32"`
+		AnonKey        string `toml:"-" mapstructure:"anon_key" validate:"required"`
+		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key" validate:"required"`
 
-		ThirdParty thirdParty `toml:"third_party"`
+		ThirdParty thirdParty `toml:"third_party" validate:"required"`
 	}
 
 	thirdParty struct {
-		Firebase tpaFirebase `toml:"firebase"`
-		Auth0    tpaAuth0    `toml:"auth0"`
-		Cognito  tpaCognito  `toml:"aws_cognito"`
+		Firebase tpaFirebase `toml:"firebase" validate:"required"`
+		Auth0    tpaAuth0    `toml:"auth0" validate:"required"`
+		Cognito  tpaCognito  `toml:"aws_cognito" validate:"required"`
+		// Validate the whole struct
+		// Use a "-" tag to avoid conflict with the field validations
 	}
 
 	tpaFirebase struct {
-		Enabled bool `toml:"enabled"`
-
-		ProjectID string `toml:"project_id"`
+		Enabled   bool   `toml:"enabled" validate:"required"`
+		ProjectID string `toml:"project_id" validate:"required"`
 	}
 
 	tpaAuth0 struct {
-		Enabled bool `toml:"enabled"`
-
-		Tenant       string `toml:"tenant"`
-		TenantRegion string `toml:"tenant_region"`
+		Enabled      bool   `toml:"enabled" validate:"required"`
+		Tenant       string `toml:"tenant" validate:"required"`
+		TenantRegion string `toml:"tenant_region" validate:"required"`
 	}
 
 	tpaCognito struct {
-		Enabled bool `toml:"enabled"`
-
-		UserPoolID     string `toml:"user_pool_id"`
-		UserPoolRegion string `toml:"user_pool_region"`
+		Enabled        bool   `toml:"enabled" validate:"required"`
+		UserPoolID     string `toml:"user_pool_id" validate:"required"`
+		UserPoolRegion string `toml:"user_pool_region" validate:"required"`
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup"`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
-		EnableConfirmations  bool                     `toml:"enable_confirmations"`
-		SecurePasswordChange bool                     `toml:"secure_password_change"`
-		Template             map[string]emailTemplate `toml:"template"`
-		Smtp                 smtp                     `toml:"smtp"`
-		MaxFrequency         time.Duration            `toml:"max_frequency"`
+		EnableSignup         bool                     `toml:"enable_signup" validate:"required"`
+		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" validate:"required"`
+		EnableConfirmations  bool                     `toml:"enable_confirmations" validate:"required"`
+		SecurePasswordChange bool                     `toml:"secure_password_change" validate:"required"`
+		Template             map[string]emailTemplate `toml:"template" validate:"dive,keys,required,endkeys,dive"`
+		Smtp                 smtp                     `toml:"smtp" validate:"required"`
+		MaxFrequency         time.Duration            `toml:"max_frequency" validate:"required"`
 	}
 
 	smtp struct {
-		Host       string `toml:"host"`
-		Port       uint16 `toml:"port"`
-		User       string `toml:"user"`
-		Pass       string `toml:"pass"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Host         string        `toml:"host" validate:"required"`
+		Port         uint16        `toml:"port" validate:"required,gt=0,lt=65536"`
+		User         string        `toml:"user" validate:"required"`
+		Pass         string        `toml:"pass" validate:"required"`
+		AdminEmail   string        `toml:"admin_email" validate:"required,email"`
+		SenderName   string        `toml:"sender_name" validate:"required"`
+		MaxFrequency time.Duration `toml:"max_frequency" validate:"required"`
 	}
 
 	emailTemplate struct {
-		Subject     string `toml:"subject"`
-		ContentPath string `toml:"content_path"`
+		Subject     string `toml:"subject" validate:"required"`
+		ContentPath string `toml:"content_path" validate:"required,file"`
 	}
 
 	sms struct {
-		EnableSignup        bool              `toml:"enable_signup"`
-		EnableConfirmations bool              `toml:"enable_confirmations"`
-		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
-		TestOTP             map[string]string `toml:"test_otp"`
-		MaxFrequency        time.Duration     `toml:"max_frequency"`
+		EnableSignup        bool              `toml:"enable_signup" validate:"required"`
+		EnableConfirmations bool              `toml:"enable_confirmations" validate:"required"`
+		Template            string            `toml:"template" validate:"required"`
+		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio" validate:"required"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify" validate:"required"`
+		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird" validate:"required"`
+		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal" validate:"required"`
+		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage" validate:"required"`
+		TestOTP             map[string]string `toml:"test_otp" validate:"dive,keys,required,endkeys,required"`
+		MaxFrequency        time.Duration     `toml:"max_frequency" validate:"required"`
 	}
 
 	hook struct {
-		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt"`
-		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt"`
-		CustomAccessToken           hookConfig `toml:"custom_access_token"`
-		SendSMS                     hookConfig `toml:"send_sms"`
-		SendEmail                   hookConfig `toml:"send_email"`
+		MFAVerificationAttempt      hookConfig `toml:"mfa_verification_attempt" validate:"dive,hook_config"`
+		PasswordVerificationAttempt hookConfig `toml:"password_verification_attempt" validate:"required,dive"`
+		CustomAccessToken           hookConfig `toml:"custom_access_token" validate:"required,dive"`
+		SendSMS                     hookConfig `toml:"send_sms" validate:"required,dive"`
+		SendEmail                   hookConfig `toml:"send_email" validate:"required,dive"`
 	}
 	factorTypeConfiguration struct {
-		EnrollEnabled bool `toml:"enroll_enabled"`
-		VerifyEnabled bool `toml:"verify_enabled"`
+		EnrollEnabled bool `toml:"enroll_enabled" validate:"required"`
+		VerifyEnabled bool `toml:"verify_enabled" validate:"required"`
 	}
-
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
-		OtpLength    uint          `toml:"otp_length"`
-		Template     string        `toml:"template"`
-		MaxFrequency time.Duration `toml:"max_frequency"`
+		OtpLength    uint          `toml:"otp_length" validate:"required,gt=0"`
+		Template     string        `toml:"template" validate:"required"`
+		MaxFrequency time.Duration `toml:"max_frequency" validate:"required"`
 	}
 
 	mfa struct {
-		TOTP               factorTypeConfiguration      `toml:"totp"`
-		Phone              phoneFactorTypeConfiguration `toml:"phone"`
-		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
+		TOTP               factorTypeConfiguration      `toml:"totp" validate:"required"`
+		Phone              phoneFactorTypeConfiguration `toml:"phone" validate:"required"`
+		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors" validate:"required,gte=0"`
 	}
 
 	hookConfig struct {
-		Enabled bool   `toml:"enabled"`
-		URI     string `toml:"uri"`
-		Secrets string `toml:"secrets"`
+		Enabled bool   `toml:"enabled" validate:"required"`
+		URI     string `toml:"uri" validate:"required_if=Enabled true"`
+		Secrets string `toml:"secrets" validate:"env_or_string"`
 	}
 
 	sessions struct {
-		Timebox           time.Duration `toml:"timebox"`
-		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
+		Timebox           time.Duration `toml:"timebox" validate:"required"`
+		InactivityTimeout time.Duration `toml:"inactivity_timeout" validate:"required"`
 	}
 
 	twilioConfig struct {
-		Enabled           bool   `toml:"enabled"`
-		AccountSid        string `toml:"account_sid"`
-		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         string `toml:"auth_token" mapstructure:"auth_token"`
+		Enabled           bool   `toml:"enabled" validate:"required"`
+		AccountSid        string `toml:"account_sid" validate:"required_if=Enabled true,env_or_string"`
+		MessageServiceSid string `toml:"message_service_sid" validate:"required_if=Enabled true,env_or_string"`
+		AuthToken         string `toml:"auth_token" validate:"required_if=Enabled true,env_or_string"`
 	}
 
 	messagebirdConfig struct {
-		Enabled    bool   `toml:"enabled"`
-		Originator string `toml:"originator"`
-		AccessKey  string `toml:"access_key" mapstructure:"access_key"`
+		Enabled    bool   `toml:"enabled" validate:"required"`
+		Originator string `toml:"originator" validate:"required"`
+		AccessKey  string `toml:"access_key" mapstructure:"access_key" validate:"required"`
 	}
 
 	textlocalConfig struct {
-		Enabled bool   `toml:"enabled"`
-		Sender  string `toml:"sender"`
-		ApiKey  string `toml:"api_key" mapstructure:"api_key"`
+		Enabled bool   `toml:"enabled" validate:"required"`
+		Sender  string `toml:"sender" validate:"required"`
+		ApiKey  string `toml:"api_key" mapstructure:"api_key" validate:"required"`
 	}
 
 	vonageConfig struct {
-		Enabled   bool   `toml:"enabled"`
-		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret string `toml:"api_secret" mapstructure:"api_secret"`
+		Enabled   bool   `toml:"enabled" validate:"required"`
+		From      string `toml:"from" validate:"required"`
+		ApiKey    string `toml:"api_key" mapstructure:"api_key" validate:"required"`
+		ApiSecret string `toml:"api_secret" mapstructure:"api_secret" validate:"required"`
 	}
 
 	provider struct {
-		Enabled        bool   `toml:"enabled"`
-		ClientId       string `toml:"client_id"`
-		Secret         string `toml:"secret"`
-		Url            string `toml:"url"`
-		RedirectUri    string `toml:"redirect_uri"`
-		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+		Enabled        bool   `toml:"enabled" validate:"required"`
+		ClientId       string `validate:"required_if=Enabled true,env_or_string"`
+		Secret         string `validate:"required_if=Enabled true,env_or_string"`
+		RedirectUri    string `validate:"omitempty,url,env_or_string"`
+		Url            string `validate:"omitempty,url,env_or_string"`
+		SkipNonceCheck bool   `toml:"skip_nonce_check" validate:"omitempty"`
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
+		Enabled       bool          `toml:"enabled" validate:"required"`
+		Image         string        `toml:"-" validate:"required"`
+		Policy        RequestPolicy `toml:"policy" validate:"required,oneof=per_worker oneshot"`
+		InspectorPort uint16        `toml:"inspector_port" validate:"gt=0,lt=65536"`
 	}
 
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled    *bool  `toml:"enabled"`
-		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint string `json:"-"`
+		Enabled    *bool  `toml:"enabled" validate:"required"`
+		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT" validate:"required"`
+		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty" validate:"omitempty,file"`
+		Entrypoint string `json:"-" validate:"omitempty"`
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled"`
-		Image            string          `toml:"-"`
-		VectorImage      string          `toml:"-"`
-		Port             uint16          `toml:"port"`
-		Backend          LogflareBackend `toml:"backend"`
-		GcpProjectId     string          `toml:"gcp_project_id"`
-		GcpProjectNumber string          `toml:"gcp_project_number"`
-		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		Enabled          bool            `toml:"enabled" validate:"required"`
+		Image            string          `toml:"-" validate:"required"`
+		VectorImage      string          `toml:"-" validate:"required"`
+		Port             uint16          `toml:"port" validate:"required_if=Enabled true,gt=0,lt=65536"`
+		Backend          LogflareBackend `toml:"backend" validate:"required_if=Enabled true,oneof=postgres bigquery"`
+		GcpProjectId     string          `toml:"gcp_project_id" validate:"required_if=Backend bigquery"`
+		GcpProjectNumber string          `toml:"gcp_project_number" validate:"required_if=Backend bigquery"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path" validate:"required_if=Backend bigquery,file"`
+		ApiKey           string          `toml:"-" mapstructure:"api_key" validate:"omitempty"`
 		// Deprecated together with syslog
-		VectorPort uint16 `toml:"vector_port"`
+		VectorPort uint16 `toml:"vector_port" validate:"gte=0,lt=65536"`
 	}
-
 	experimental struct {
-		OrioleDBVersion string `toml:"orioledb_version"`
-		S3Host          string `toml:"s3_host"`
-		S3Region        string `toml:"s3_region"`
-		S3AccessKey     string `toml:"s3_access_key"`
-		S3SecretKey     string `toml:"s3_secret_key"`
+		OrioleDBVersion string `toml:"orioledb_version" validate:"omitempty"`
+		S3Host          string `toml:"s3_host" validate:"required_if=OrioleDBVersion !='',env_or_string,hostname|ip|url"`
+		S3Region        string `toml:"s3_region" validate:"required_if=OrioleDBVersion !='',env_or_string"`
+		S3AccessKey     string `toml:"s3_access_key" validate:"required_if=OrioleDBVersion !='',env_or_string"`
+		S3SecretKey     string `toml:"s3_secret_key" validate:"required_if=OrioleDBVersion !='',env_or_string"`
 	}
 )
 
@@ -536,12 +546,12 @@ func NewConfig(editors ...ConfigEditor) config {
 				"gitlab":        {},
 				"google":        {},
 				"keycloak":      {},
-				"linkedin":      {}, // TODO: remove this field in v2
+				"linkedin":      {},
 				"linkedin_oidc": {},
 				"notion":        {},
 				"twitch":        {},
 				"twitter":       {},
-				"slack":         {}, // TODO: remove this field in v2
+				"slack":         {},
 				"slack_oidc":    {},
 				"spotify":       {},
 				"workos":        {},
@@ -579,8 +589,23 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
-	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
+	// envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 )
+
+func (fc FunctionConfig) Validate() error {
+	for slug, fn := range fc {
+		err := validate.Var(slug, "function_slug")
+		if err != nil {
+			return err
+		}
+		// Validate the function struct
+		err = validate.Struct(fn)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (c *config) Eject(w io.Writer) error {
 	// Defaults to current directory name as project id
@@ -597,6 +622,113 @@ func (c *config) Eject(w io.Writer) error {
 		return errors.Errorf("failed to initialise config: %w", err)
 	}
 	return nil
+}
+
+func printStructFields(v reflect.Value, prefix string) {
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		// Check if the field is exported
+		if field.PkgPath == "" {
+			fmt.Printf("%sField: %s, Type: %v, Value: %v, Tags: %v\n", prefix, field.Name, field.Type, value.Interface(), field.Tag)
+		} else {
+			fmt.Printf("%sField: %s, Type: %v, Value: <unexported>, Tags: %v\n", prefix, field.Name, field.Type, field.Tag)
+		}
+
+		if field.Type.Kind() == reflect.Struct {
+			printStructFields(value, prefix+"  ")
+		}
+	}
+}
+
+func (c *config) ValidateWithErrors() []validator.ValidationErrors {
+	validate := validator.New()
+
+	// Add this debug function
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" {
+			return ""
+		}
+		return name
+	})
+	validate.RegisterValidation("project_id", projectIDValidator)
+	validate.RegisterValidation("env_or_string", envOrString)
+	validate.RegisterValidation("db_major_version", dbMajorVersionValidator)
+	validate.RegisterValidation("bucket_name", bucketNameValidator)
+	validate.RegisterValidation("file", fileExistsValidator)
+	validate.RegisterValidation("hook_config", hookValidator)
+	validate.RegisterValidation("third_party", thirdPartyValidator)
+
+	// Add struct-level validation for nested structs
+	// validate.RegisterStructValidation(validate, storage{})
+	// validate.RegisterStructValidation(validateAuth, auth{})
+	// validate.RegisterStructValidation(validateThirdParty, thirdParty{})
+
+	// Initialize the translator
+	en := en.New()
+	uni := ut.New(en, en)
+	translator, _ := uni.GetTranslator("en")
+
+	// Register the custom error message for env_or_string
+	validate.RegisterTranslation("env_or_string", translator, func(ut ut.Translator) error {
+		return ut.Add("env_or_string", "{0} must be a non-empty string or refer to a set environment variable in the form env(SOMETHING).", true)
+	}, func(ut ut.Translator, fe validator.FieldError) string {
+		t, _ := ut.T("env_or_string", fe.Field())
+		return t
+	})
+	// Add custom validation for the Experimental field
+	validate.RegisterStructValidation(func(sl validator.StructLevel) {
+		exp := sl.Current().Interface().(experimental)
+		if exp.OrioleDBVersion != "" {
+			if exp.S3Host == "" || exp.S3Region == "" || exp.S3AccessKey == "" || exp.S3SecretKey == "" {
+				sl.ReportError(exp, "Experimental", "Experimental", "experimental_config", "")
+			}
+		}
+	}, experimental{})
+
+	if sanitized := sanitizeProjectId(c.ProjectId); sanitized != c.ProjectId {
+		fmt.Fprintln(os.Stderr, "WARNING:", "project_id field in config is invalid. Auto-fixing to", sanitized)
+		c.ProjectId = sanitized
+	}
+	switch c.Db.MajorVersion {
+	case 13:
+		c.Db.Image = pg13Image
+	case 14:
+		c.Db.Image = pg14Image
+	case 15:
+		if len(c.Experimental.OrioleDBVersion) > 0 {
+			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+		}
+	}
+
+	// Add this debug function
+	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" {
+			return ""
+		}
+		return name
+	})
+
+	// Print struct fields
+	fmt.Println("Config structure:")
+	printStructFields(reflect.ValueOf(c.baseConfig), "")
+
+	var errs []validator.ValidationErrors
+	if err := validate.Struct(c.baseConfig); err != nil {
+		if validationErrs, ok := err.(validator.ValidationErrors); ok {
+			for _, err := range validationErrs {
+				fmt.Printf("Validation error: Field: %s, Tag: %s, Type: %v, Value: %v\n",
+					err.Namespace(), err.Tag(), err.Type(), err.Value())
+			}
+			errs = append(errs, validationErrs)
+		}
+	}
+
+	return errs
 }
 
 func (c *config) Load(path string, fsys fs.FS) error {
@@ -1100,17 +1232,6 @@ func (h *hookConfig) HandleHook(hookType string) error {
 	var err error
 	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
 		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
-	}
-	return nil
-}
-
-func validateHookURI(uri, hookName string) error {
-	parsed, err := url.Parse(uri)
-	if err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
-	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
 	}
 	return nil
 }

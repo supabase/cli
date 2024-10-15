@@ -335,3 +335,50 @@ func TestLoadSeedPaths(t *testing.T) {
 		assert.Empty(t, config.SqlPaths)
 	})
 }
+
+func TestValidateWithErrors(t *testing.T) {
+	t.Run("valid config returns no errors", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "valid-project"
+		config.Db.MajorVersion = 14
+		config.Auth.SiteUrl = "http://localhost:3000"
+		config.Db.Port = 5432
+		config.Db.ShadowPort = 5433
+
+		errors := config.ValidateWithErrors()
+		assert.Empty(t, errors)
+	})
+
+	t.Run("invalid config returns validation errors", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = ""             // Invalid: empty project ID
+		config.Db.MajorVersion = 11       // Invalid: unsupported version
+		config.Auth.SiteUrl = "not-a-url" // Invalid: not a proper URL
+
+		errors := config.ValidateWithErrors()
+		assert.NotEmpty(t, errors)
+		assert.Len(t, errors, 3)
+
+		// Check for specific error messages
+		var errorFields []string
+		for _, err := range errors {
+			errorFields = append(errorFields, err.Error())
+		}
+		assert.Contains(t, errorFields, "ProjectId")
+		assert.Contains(t, errorFields, "MajorVersion")
+		assert.Contains(t, errorFields, "SiteUrl")
+	})
+
+	t.Run("invalid function slug returns error", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "valid-project"
+		config.Functions = FunctionConfig{
+			"invalid-slug!": function{},
+		}
+
+		errors := config.ValidateWithErrors()
+		assert.NotEmpty(t, errors)
+		assert.Len(t, errors, 1)
+		assert.Equal(t, "Functions", errors[0].Error())
+	})
+}
