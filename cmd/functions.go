@@ -68,6 +68,7 @@ var (
 		},
 	}
 
+	flang           string
 	functionsNewCmd = &cobra.Command{
 		Use:   "new <Function name>",
 		Short: "Create a new Function locally",
@@ -77,7 +78,7 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new_.Run(cmd.Context(), args[0], afero.NewOsFs())
+			return new_.Run(cmd.Context(), args[0], flang, afero.NewOsFs())
 		},
 	}
 
@@ -138,6 +139,7 @@ func init() {
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	functionsNewCmd.Flags().StringVar(&flang, "lang", "", "Language of the Function.")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)

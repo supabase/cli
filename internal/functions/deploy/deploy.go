@@ -50,7 +50,7 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 }
 
 func GetFunctionSlugs(fsys afero.Fs) (slugs []string, disabledSlugs []string, err error) {
-	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
+	pattern := filepath.Join(utils.FunctionsDir, "*", "index.[jt]s")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
 		return nil, nil, errors.Errorf("failed to glob function slugs: %w", err)
@@ -86,7 +86,18 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		function := utils.Config.Functions[name]
 		// Precedence order: flag > config > fallback
 		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join(utils.FunctionsDir, name, "index.ts")
+			// glob for possible entrypoints
+			pattern := filepath.Join(utils.FunctionsDir, name, "index.[jt]s")
+			paths, err := afero.Glob(fsys, pattern)
+			if err != nil {
+				return nil, errors.Errorf("failed to glob function entrypoint paths: %w", err)
+			}
+			if len(paths) == 0 {
+				return nil, errors.Errorf("No valid index file for %s. Index file must have either .ts or .js extension", name)
+			}
+
+			// use the first matching path
+			function.Entrypoint = paths[0]
 		}
 		if len(importMapPath) > 0 {
 			function.ImportMap = importMapPath

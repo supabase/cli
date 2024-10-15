@@ -412,10 +412,11 @@ type (
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
+		Enabled         bool          `toml:"enabled"`
+		Image           string        `toml:"-"`
+		Policy          RequestPolicy `toml:"policy"`
+		InspectorPort   uint16        `toml:"inspector_port"`
+		DefaultLanguage string        `toml:"default_language"`
 	}
 
 	FunctionConfig map[string]function
