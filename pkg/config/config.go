@@ -450,6 +450,11 @@ type (
 	}
 )
 
+func (f function) IsEnabled() bool {
+	// If Enabled is not defined, or defined and set to true
+	return f.Enabled == nil || *f.Enabled
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
