@@ -3,9 +3,9 @@ package config
 import (
 	"strings"
 
-	"github.com/supabase/cli/internal/utils/cast"
-	"github.com/supabase/cli/internal/utils/diff"
 	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/diff"
 )
 
 type (

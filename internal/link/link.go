@@ -14,13 +14,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/cast"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/supabase/cli/internal/utils/diff"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/diff"
 	"github.com/supabase/cli/pkg/migration"
 )
 
