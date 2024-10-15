@@ -2,7 +2,7 @@ package cast
 
 import "math"
 
-// UintToInt converts a uint to an *int, handling potential overflow
+// UintToInt converts a uint to an int, handling potential overflow
 func UintToInt(value uint) int {
 	if value <= math.MaxInt {
 		result := int(value)
