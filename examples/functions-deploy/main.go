@@ -25,9 +25,10 @@ func deploy(ctx context.Context, fsys fs.FS) error {
 	apiClient := newAPIClient(os.Getenv("SUPABASE_ACCESS_TOKEN"))
 	eszipBundler := function.NewNativeBundler(".", fsys)
 	functionClient := function.NewEdgeRuntimeAPI(project, apiClient, eszipBundler)
+	importMapPath := "supabase/functions/import_map.json"
 	fc := config.FunctionConfig{"my-slug": {
 		Entrypoint: "supabase/functions/my-slug/index.ts",
-		ImportMap:  "supabase/functions/import_map.json",
+		ImportMap:  &importMapPath,
 	}}
 	return functionClient.UpsertFunctions(ctx, fc)
 }

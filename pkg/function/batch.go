@@ -44,8 +44,12 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 				continue
 			}
 		}
+		var importMap string
+		if function.ImportMap != nil {
+			importMap = *function.ImportMap
+		}
 		var body bytes.Buffer
-		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, &body); err != nil {
+		if err := s.eszip.Bundle(ctx, function.Entrypoint, importMap, &body); err != nil {
 			return err
 		}
 		// Update if function already exists
@@ -53,7 +57,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 			if _, ok := exists[slug]; ok {
 				if resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
 					VerifyJwt:      function.VerifyJWT,
-					ImportMapPath:  toFileURL(function.ImportMap),
+					ImportMapPath:  toFileURL(importMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
 				}, eszipContentType, &body); err != nil {
 					return errors.Errorf("failed to update function: %w", err)
@@ -65,7 +69,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					Slug:           &slug,
 					Name:           &slug,
 					VerifyJwt:      function.VerifyJWT,
-					ImportMapPath:  toFileURL(function.ImportMap),
+					ImportMapPath:  toFileURL(importMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
 				}, eszipContentType, &body); err != nil {
 					return errors.Errorf("failed to create function: %w", err)

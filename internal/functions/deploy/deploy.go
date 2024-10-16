@@ -3,7 +3,6 @@ package deploy
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -61,14 +60,6 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 }
 
 func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
-	// Although some functions do not require import map, it's more convenient to setup
-	// vscode deno extension with a single import map for all functions.
-	fallbackExists := true
-	if _, err := fsys.Stat(utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
-		fallbackExists = false
-	} else if err != nil {
-		return nil, errors.Errorf("failed to fallback import map: %w", err)
-	}
 	// Flag import map is specified relative to current directory instead of workdir
 	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
 		importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
@@ -81,9 +72,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			function.Entrypoint = filepath.Join(utils.FunctionsDir, name, "index.ts")
 		}
 		if len(importMapPath) > 0 {
-			function.ImportMap = importMapPath
-		} else if len(function.ImportMap) == 0 && fallbackExists {
-			function.ImportMap = utils.FallbackImportMapPath
+			function.ImportMap = &importMapPath
 		}
 		if noVerifyJWT != nil {
 			function.VerifyJWT = utils.Ptr(!*noVerifyJWT)

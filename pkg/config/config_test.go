@@ -341,3 +341,80 @@ func TestLoadSeedPaths(t *testing.T) {
 		assert.Empty(t, config.SqlPaths)
 	})
 }
+
+func TestFunctionsConfig(t *testing.T) {
+	t.Run("overrides verify jwt", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+				project_id = "test-project"
+				[functions.hello]
+				verify_jwt = true
+				[functions.world]
+				verify_jwt = false
+				[functions.default]
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error
+		assert.NoError(t, err)
+		helloVerifyJwt := true
+		worldVerifyJwt := false
+		var importMap string
+		assert.Equal(t, FunctionConfig{
+			"hello": function{
+				VerifyJWT:  &helloVerifyJwt,
+				ImportMap:  &importMap,
+				Entrypoint: "supabase/functions/hello/index.ts",
+			},
+			"world": function{
+				VerifyJWT:  &worldVerifyJwt,
+				ImportMap:  &importMap,
+				Entrypoint: "supabase/functions/world/index.ts",
+			},
+			"default": function{
+				ImportMap:  &importMap,
+				Entrypoint: "supabase/functions/default/index.ts",
+			},
+		}, config.Functions)
+	})
+
+	t.Run("overrides import map", func(t *testing.T) {
+		config := NewConfig()
+		fallbackImportMap := "supabase/functions/import_map.json"
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+				project_id = "test-project"
+				[functions.hello]
+				import_map = ""
+				[functions.world]
+				import_map = "./test.json"
+				[functions.default]
+			`)},
+			fallbackImportMap: &fs.MapFile{},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error
+		assert.NoError(t, err)
+		helloImportMap := ""
+		worldImportMap := "supabase/test.json"
+		assert.Equal(t, FunctionConfig{
+			"hello": function{
+				ImportMap:  &helloImportMap,
+				Entrypoint: "supabase/functions/hello/index.ts",
+			},
+			"world": function{
+				ImportMap:  &worldImportMap,
+				Entrypoint: "supabase/functions/world/index.ts",
+			},
+			"default": function{
+				ImportMap:  &fallbackImportMap,
+				Entrypoint: "supabase/functions/default/index.ts",
+			},
+		}, config.Functions)
+	})
+}

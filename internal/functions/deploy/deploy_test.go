@@ -286,68 +286,54 @@ verify_jwt = false
 }
 
 func TestImportMapPath(t *testing.T) {
-	t.Run("loads import map from default location", func(t *testing.T) {
+	t.Run("overrides with cli flag", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		utils.CurrentDirAbs = "/tmp"
+		slug := "hello"
+		utils.Config.Functions = config.FunctionConfig{slug: {
+			ImportMap: &utils.FallbackImportMapPath,
+			VerifyJWT: utils.Ptr(false),
+		}}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
-		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
+		fc, err := GetFunctionConfig([]string{slug}, "import_map.json", utils.Ptr(false), fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc["test"].ImportMap)
+		require.NotNil(t, fc[slug].ImportMap)
+		assert.Equal(t, "/tmp/import_map.json", *fc[slug].ImportMap)
+		require.NotNil(t, fc[slug].VerifyJWT)
+		assert.True(t, *fc[slug].VerifyJWT)
 	})
 
-	t.Run("per function config takes precedence", func(t *testing.T) {
+	t.Run("returns original if no fallback", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })
-		slug := "hello"
-		utils.Config.Functions = config.FunctionConfig{
-			slug: {ImportMap: "import_map.json"},
-		}
+		slug := "test"
+		utils.Config.Functions = config.FunctionConfig{slug: {
+			ImportMap: &utils.FallbackImportMapPath,
+			VerifyJWT: utils.Ptr(false),
+		}}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, "import_map.json", fc[slug].ImportMap)
-	})
-
-	t.Run("overrides with cli flag", func(t *testing.T) {
-		t.Cleanup(func() { clear(utils.Config.Functions) })
-		slug := "hello"
-		utils.Config.Functions = config.FunctionConfig{
-			slug: {ImportMap: "import_map.json"},
-		}
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, utils.Ptr(false), fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc[slug].ImportMap)
-	})
-
-	t.Run("returns empty string if no fallback", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, fc["test"].ImportMap)
+		require.NotNil(t, fc[slug].ImportMap)
+		assert.Equal(t, utils.FallbackImportMapPath, *fc[slug].ImportMap)
+		require.NotNil(t, fc[slug].VerifyJWT)
+		assert.False(t, *fc[slug].VerifyJWT)
 	})
 
 	t.Run("preserves absolute path", func(t *testing.T) {
 		path := "/tmp/import_map.json"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, path, nil, fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, path, fc["test"].ImportMap)
+		assert.NotNil(t, fc["test"].ImportMap)
+		assert.Equal(t, path, *fc["test"].ImportMap)
 	})
 }
