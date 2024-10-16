@@ -702,7 +702,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
-	duplicatedRemotesProjectsIds := make(map[string][]string)
 	for name, remote := range c.Overrides {
 		base := c.baseConfig.Clone()
 		// Encode a toml file with only config overrides
@@ -714,18 +713,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
 			return errors.Errorf("failed to decode remote config: %w", err)
 		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
+			fmt.Fprintf(os.Stderr, "WARN: unknown config fields: %+v\n", undecoded)
 		}
 		if base.ProjectId == c.baseConfig.ProjectId {
-			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for remote %s this config won't apply to any branch\n", name)
-		} else {
-			duplicatedRemotesProjectsIds[base.ProjectId] = append(duplicatedRemotesProjectsIds[base.ProjectId], name)
-		}
-		// Check for duplicate project IDs across remotes
-		for projectId, remotes := range duplicatedRemotesProjectsIds {
-			if len(remotes) > 1 {
-				fmt.Fprintf(os.Stderr, "WARN: Multiple remotes (%s) have the same project_id: %s. This may lead to unexpected config override.\n", strings.Join(remotes, ", "), projectId)
-			}
+			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
 		}
 		if err := base.Validate(fsys); err != nil {
 			return errors.Errorf("invalid remote config %s: %w", name, err)
@@ -1324,18 +1315,23 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 }
 
 // Retrieve the final base config to use taking into account the remotes override
-func (c *config) GetRemoteOverride(project_ref string) (overrideConfig baseConfig, overrideExist bool) {
+func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
+	var result []string
 	// Iterate over all the config.Remotes
-	for _, remoteConfig := range c.Remotes {
+	for name, remoteConfig := range c.Remotes {
 		// Check if there is one matching project_id
-		if remoteConfig.ProjectId == project_ref {
-			// Return the matching remote config and true to indicate an override exists
-			return remoteConfig, true
+		if remoteConfig.ProjectId == projectRef {
+			// Check for duplicate project IDs across remotes
+			result = append(result, name)
 		}
 	}
-
+	if len(result) == 0 {
+		return baseConfig{}, errors.Errorf("no remote found for project_id: %s", projectRef)
+	} else if len(result) > 1 {
+		return baseConfig{}, errors.Errorf("multiple remotes %v have the same project_id: %s", result, projectRef)
+	}
 	// If no matching remote config is found, return the base config and false
-	return c.baseConfig, false
+	return c.Remotes[result[0]], nil
 }
 
 func ToTomlBytes(config any) ([]byte, error) {
