@@ -728,7 +728,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			}
 		}
 		if err := base.Validate(fsys); err != nil {
-			return errors.Errorf("invalid remote config %s : %w", name, err)
+			return errors.Errorf("invalid remote config %s: %w", name, err)
 		}
 		c.Remotes[name] = base
 	}

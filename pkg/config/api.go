@@ -33,8 +33,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 
 	// When the api is disabled, remote side it just set the dbSchema to an empty value
 	if !a.Enabled {
-		emptyString := ""
-		body.DbSchema = &emptyString
+		body.DbSchema = cast.Ptr("")
 		return body
 	}
 
@@ -52,8 +51,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 
 	// Convert MaxRows to int pointer
 	if a.MaxRows > 0 {
-		intValue := cast.UintToInt(a.MaxRows)
-		body.MaxRows = &intValue
+		body.MaxRows = cast.Ptr(cast.UintToInt(a.MaxRows))
 	}
 
 	// Note: DbPool is not present in the Api struct, so it's not set here
