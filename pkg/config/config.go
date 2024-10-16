@@ -719,7 +719,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
 		}
 		if err := base.Validate(fsys); err != nil {
-			return errors.Errorf("invalid remote config %s: %w", name, err)
+			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
 		}
 		c.Remotes[name] = base
 	}
