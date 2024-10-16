@@ -223,12 +223,12 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
 			continue
 		}
-		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
+		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, *fc.ImportMap, fsys)
 		if err != nil {
 			return nil, "", err
 		}
 		binds = append(binds, modules...)
-		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
+		fc.ImportMap = utils.Ptr(utils.ToDockerPath(*fc.ImportMap))
 		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
 		functionsConfig[slug] = fc
 	}

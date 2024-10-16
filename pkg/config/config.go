@@ -421,10 +421,10 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled    *bool  `toml:"enabled"`
-		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint string `json:"-"`
+		Enabled    *bool   `toml:"enabled"`
+		VerifyJWT  *bool   `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap  *string `toml:"import_map" json:"importMapPath,omitempty"`
+		Entrypoint string  `json:"-"`
 	}
 
 	analytics struct {
@@ -702,6 +702,14 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
+	// Although some functions do not require import map, it's more convenient to setup
+	// vscode deno extension with a single import map for all functions.
+	var fallbackImportMap string
+	if _, err := fs.Stat(fsys, builder.FallbackImportMapPath); err == nil {
+		fallbackImportMap = builder.FallbackImportMapPath
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to load import map: %w", err)
+	}
 	for slug, function := range c.Functions {
 		// TODO: support configuring alternative entrypoint path, such as index.js
 		if len(function.Entrypoint) == 0 {
@@ -710,9 +718,12 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			// Append supabase/ because paths in configs are specified relative to config.toml
 			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
 		}
-		// Functions may not use import map so we don't set a default value
-		if len(function.ImportMap) > 0 && !filepath.IsAbs(function.ImportMap) {
-			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
+		// Allow users to disable import map by explicitly setting to empty string
+		if function.ImportMap == nil {
+			function.ImportMap = &fallbackImportMap
+		} else if len(*function.ImportMap) > 0 && !filepath.IsAbs(*function.ImportMap) {
+			customImportMap := filepath.Join(builder.SupabaseDirPath, *function.ImportMap)
+			function.ImportMap = &customImportMap
 		}
 		c.Functions[slug] = function
 	}
