@@ -9,14 +9,12 @@ import (
 )
 
 type (
-	RemoteApi struct {
+	api struct {
 		Enabled         bool     `toml:"enabled"`
 		Schemas         []string `toml:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows"`
-	}
-	api struct {
-		RemoteApi
+		// Local only config
 		Image     string  `toml:"-"`
 		KongImage string  `toml:"-"`
 		Port      uint16  `toml:"port"`
@@ -30,7 +28,7 @@ type (
 	}
 )
 
-func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
+func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	body := v1API.UpdatePostgrestConfigBody{}
 
 	// When the api is disabled, remote side it just set the dbSchema to an empty value
@@ -62,12 +60,13 @@ func (a *RemoteApi) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBod
 	return body
 }
 
-func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) RemoteApi {
+func (a *api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) api {
 	result := *a
 	if remoteConfig.DbSchema == "" {
 		result.Enabled = false
 		return result
 	}
+
 	result.Enabled = true
 	// Update Schemas if present in remoteConfig
 	schemas := strings.Split(remoteConfig.DbSchema, ",")
@@ -90,9 +89,15 @@ func (a *RemoteApi) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJW
 	return result
 }
 
-func (a *RemoteApi) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) []byte {
+func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) ([]byte, error) {
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue := ToTomlBytes(a)
-	remoteCompare := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
-	return diff.Diff("remote[api]", remoteCompare, "local[api]", currentValue)
+	currentValue, err := ToTomlBytes(a)
+	if err != nil {
+		return nil, err
+	}
+	remoteCompare, err := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
+	if err != nil {
+		return nil, err
+	}
+	return diff.Diff("remote[api]", remoteCompare, "local[api]", currentValue), nil
 }

@@ -25,10 +25,13 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original := cliConfig.ToTomlBytes(map[string]interface{}{
+	original, err := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
 
 	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
 		return err
@@ -60,11 +63,14 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated := cliConfig.ToTomlBytes(map[string]interface{}{
+	updated, err := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
-	// if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+
 	if lineDiff := diff.Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 		fmt.Println(string(lineDiff))

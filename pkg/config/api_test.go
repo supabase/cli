@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,7 +9,7 @@ import (
 
 func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	t.Run("converts all fields correctly", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
@@ -25,7 +24,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	})
 
 	t.Run("handles empty fields", func(t *testing.T) {
-		api := &RemoteApi{}
+		api := &api{}
 
 		body := api.ToUpdatePostgrestConfigBody()
 
@@ -36,7 +35,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 
 func TestApiDiffWithRemote(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
@@ -49,7 +48,8 @@ func TestApiDiffWithRemote(t *testing.T) {
 			MaxRows:           500,
 		}
 
-		diff := api.DiffWithRemote(remoteConfig)
+		diff, err := api.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err, string(diff))
 
 		assert.Contains(t, string(diff), "-schemas = [\"public\"]")
 		assert.Contains(t, string(diff), "+schemas = [\"public\", \"private\"]")
@@ -60,7 +60,7 @@ func TestApiDiffWithRemote(t *testing.T) {
 	})
 
 	t.Run("handles no differences", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         true,
 			Schemas:         []string{"public"},
 			ExtraSearchPath: []string{"public"},
@@ -73,12 +73,14 @@ func TestApiDiffWithRemote(t *testing.T) {
 			MaxRows:           500,
 		}
 
-		diff := api.DiffWithRemote(remoteConfig)
+		diff, err := api.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
 
 		assert.Empty(t, diff)
 	})
+
 	t.Run("handles multiple schemas and search paths with spaces", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
@@ -91,12 +93,14 @@ func TestApiDiffWithRemote(t *testing.T) {
 			MaxRows:           500,
 		}
 
-		diff := api.DiffWithRemote(remoteConfig)
+		diff, err := api.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
 
 		assert.Empty(t, diff)
 	})
+
 	t.Run("handles api disabled on remote side", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         true,
 			Schemas:         []string{"public", "private"},
 			ExtraSearchPath: []string{"extensions", "public"},
@@ -109,15 +113,15 @@ func TestApiDiffWithRemote(t *testing.T) {
 			MaxRows:           0,
 		}
 
-		diff := api.DiffWithRemote(remoteConfig)
-		d := string(diff)
-		fmt.Println(d)
+		diff, err := api.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err, string(diff))
 
 		assert.Contains(t, string(diff), "-enabled = false")
 		assert.Contains(t, string(diff), "+enabled = true")
 	})
+
 	t.Run("handles api disabled on local side", func(t *testing.T) {
-		api := &RemoteApi{
+		api := &api{
 			Enabled:         false,
 			Schemas:         []string{"public"},
 			ExtraSearchPath: []string{"public"},
@@ -130,9 +134,8 @@ func TestApiDiffWithRemote(t *testing.T) {
 			MaxRows:           500,
 		}
 
-		diff := api.DiffWithRemote(remoteConfig)
-		d := string(diff)
-		fmt.Println(d)
+		diff, err := api.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err, string(diff))
 
 		assert.Contains(t, string(diff), "-enabled = true")
 		assert.Contains(t, string(diff), "+enabled = false")

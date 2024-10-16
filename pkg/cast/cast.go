@@ -19,3 +19,7 @@ func IntToUint(value int) uint {
 	}
 	return uint(value)
 }
+
+func Ptr[T any](v T) *T {
+	return &v
+}

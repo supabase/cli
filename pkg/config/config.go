@@ -1338,12 +1338,12 @@ func (c *config) GetRemoteOverride(project_ref string) (overrideConfig baseConfi
 	return c.baseConfig, false
 }
 
-func ToTomlBytes(config any) []byte {
+func ToTomlBytes(config any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := toml.NewEncoder(&buf)
 	enc.Indent = ""
 	if err := enc.Encode(config); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to marshal toml config:", err)
+		return nil, errors.Errorf("failed to marshal toml config: %w", err)
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
