@@ -343,8 +343,8 @@ func TestLoadSeedPaths(t *testing.T) {
 }
 
 func TestLoadEnv(t *testing.T) {
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
-	t.Setenv("DB_ROOT_KEY", "test-root-key")
+	t.Setenv("SUPABASE_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SUPABASE_DB_ROOT_KEY", "test-root-key")
 	config := NewConfig()
 	// Run test
 	err := config.loadFromEnv()
