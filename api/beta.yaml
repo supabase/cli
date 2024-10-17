@@ -340,6 +340,98 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+    post:
+      operationId: createApiKey
+      summary: '[Alpha] Creates a new API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+  /v1/projects/{ref}/api-keys/{id}:
+    patch:
+      operationId: updateApiKey
+      summary: '[Alpha] Updates an API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateApiKeyBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+    delete:
+      operationId: deleteApiKey
+      summary: '[Alpha] Deletes an API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
         '403':
           description: ''
       tags:
@@ -1217,7 +1309,7 @@ paths:
         - bearer: []
   /v1/projects/{ref}/upgrade/eligibility:
     get:
-      operationId: v1-get-postgrest-upgrade-eligibility
+      operationId: v1-get-postgres-upgrade-eligibility
       summary: '[Beta] Returns the project''s eligibility for upgrades'
       parameters:
         - name: ref
@@ -1245,7 +1337,7 @@ paths:
         - bearer: []
   /v1/projects/{ref}/upgrade/status:
     get:
-      operationId: v1-get-postgrest-upgrade-status
+      operationId: v1-get-postgres-upgrade-status
       summary: '[Beta] Gets the latest status of the project''s upgrade'
       parameters:
         - name: ref
@@ -1255,6 +1347,11 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            type: string
+        - name: tracking_id
+          required: false
+          in: query
+          schema:
             type: string
       responses:
         '200':
@@ -1479,6 +1576,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostgresConfigResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to update project's Postgres config
       tags:
@@ -2426,6 +2525,10 @@ components:
           type: string
         postgres_version:
           type: string
+        postgres_engine:
+          type: string
+        release_channel:
+          type: string
         status:
           enum:
             - ACTIVE_HEALTHY
@@ -2455,6 +2558,8 @@ components:
         - db_port
         - ref
         - postgres_version
+        - postgres_engine
+        - release_channel
         - status
         - db_host
     UpdateBranchBody:
@@ -2547,9 +2652,17 @@ components:
         version:
           type: string
           description: Database version
+        postgres_engine:
+          type: string
+          description: Database engine
+        release_channel:
+          type: string
+          description: Release channel
       required:
         - host
         - version
+        - postgres_engine
+        - release_channel
     V1ProjectResponse:
       type: object
       properties:
@@ -2609,6 +2722,21 @@ components:
         - 8xlarge
         - 12xlarge
         - 16xlarge
+    ReleaseChannel:
+      type: string
+      enum:
+        - internal
+        - alpha
+        - beta
+        - ga
+        - withdrawn
+    PostgresEngine:
+      type: string
+      description: >-
+        Postgres engine version. If not provided, the latest version will be
+        used.
+      enum:
+        - '15'
     V1CreateProjectBody:
       type: object
       properties:
@@ -2635,6 +2763,7 @@ components:
           type: string
           enum:
             - us-east-1
+            - us-east-2
             - us-west-1
             - us-west-2
             - ap-east-1
@@ -2645,7 +2774,9 @@ components:
             - eu-west-1
             - eu-west-2
             - eu-west-3
+            - eu-north-1
             - eu-central-1
+            - eu-central-2
             - ca-central-1
             - ap-south-1
             - sa-east-1
@@ -2662,6 +2793,10 @@ components:
           description: Template URL used to create the project from the CLI.
           example: >-
             https://github.com/supabase/supabase/tree/master/examples/slack-clone/nextjs-slack-clone
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
+        postgres_engine:
+          $ref: '#/components/schemas/PostgresEngine'
       required:
         - db_pass
         - name
@@ -2851,6 +2986,13 @@ components:
         - owner
         - updated_by
         - content
+    ApiKeySecretJWTTemplate:
+      type: object
+      properties:
+        role:
+          type: string
+      required:
+        - role
     ApiKeyResponse:
       type: object
       properties:
@@ -2858,14 +3000,70 @@ components:
           type: string
         api_key:
           type: string
+        id:
+          type: string
+          nullable: true
+        type:
+          nullable: true
+          type: object
+        prefix:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        hash:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
+        inserted_at:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          nullable: true
       required:
         - name
         - api_key
+    CreateApiKeyBody:
+      type: object
+      properties:
+        type:
+          enum:
+            - publishable
+            - secret
+          type: string
+        description:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
+      required:
+        - type
+    UpdateApiKeyBody:
+      type: object
+      properties:
+        description:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
     CreateBranchBody:
       type: object
       properties:
         desired_instance_size:
           $ref: '#/components/schemas/DesiredInstanceSize'
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
+        postgres_engine:
+          $ref: '#/components/schemas/PostgresEngine'
         branch_name:
           type: string
         git_branch:
@@ -3221,9 +3419,12 @@ components:
     UpgradeDatabaseBody:
       type: object
       properties:
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
         target_version:
-          type: number
+          type: string
       required:
+        - release_channel
         - target_version
     ProjectUpgradeInitiateResponse:
       type: object
@@ -3236,15 +3437,20 @@ components:
       type: object
       properties:
         postgres_version:
-          type: number
+          $ref: '#/components/schemas/PostgresEngine'
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
         app_version:
           type: string
       required:
         - postgres_version
+        - release_channel
         - app_version
     ProjectUpgradeEligibilityResponse:
       type: object
       properties:
+        current_app_version_release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
         eligible:
           type: boolean
         current_app_version:
@@ -3270,6 +3476,7 @@ components:
           items:
             type: string
       required:
+        - current_app_version_release_channel
         - eligible
         - current_app_version
         - latest_app_version
@@ -3353,6 +3560,7 @@ components:
           type: string
           enum:
             - us-east-1
+            - us-east-2
             - us-west-1
             - us-west-2
             - ap-east-1
@@ -3363,7 +3571,9 @@ components:
             - eu-west-1
             - eu-west-2
             - eu-west-3
+            - eu-north-1
             - eu-central-1
+            - eu-central-2
             - ca-central-1
             - ap-south-1
             - sa-east-1
@@ -3437,9 +3647,9 @@ components:
     PostgresConfigResponse:
       type: object
       properties:
-        statement_timeout:
-          type: string
         effective_cache_size:
+          type: string
+        logical_decoding_work_mem:
           type: string
         maintenance_work_mem:
           type: string
@@ -3463,15 +3673,29 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_replication_slots:
+          type: integer
+        max_slot_wal_keep_size:
+          type: string
         max_standby_archive_delay:
           type: string
         max_standby_streaming_delay:
           type: string
+        max_wal_size:
+          type: string
+        max_wal_senders:
+          type: integer
         max_worker_processes:
           type: integer
           minimum: 0
           maximum: 262143
         shared_buffers:
+          type: string
+        statement_timeout:
+          type: string
+        wal_keep_size:
+          type: string
+        wal_sender_timeout:
           type: string
         work_mem:
           type: string
@@ -3484,9 +3708,9 @@ components:
     UpdatePostgresConfigBody:
       type: object
       properties:
-        statement_timeout:
-          type: string
         effective_cache_size:
+          type: string
+        logical_decoding_work_mem:
           type: string
         maintenance_work_mem:
           type: string
@@ -3510,18 +3734,34 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_replication_slots:
+          type: integer
+        max_slot_wal_keep_size:
+          type: string
         max_standby_archive_delay:
           type: string
         max_standby_streaming_delay:
           type: string
+        max_wal_size:
+          type: string
+        max_wal_senders:
+          type: integer
         max_worker_processes:
           type: integer
           minimum: 0
           maximum: 262143
         shared_buffers:
           type: string
+        statement_timeout:
+          type: string
+        wal_keep_size:
+          type: string
+        wal_sender_timeout:
+          type: string
         work_mem:
           type: string
+        restart_database:
+          type: boolean
         session_replication_role:
           enum:
             - origin
@@ -3954,6 +4194,12 @@ components:
         mfa_phone_verify_enabled:
           type: boolean
           nullable: true
+        mfa_web_authn_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_web_authn_verify_enabled:
+          type: boolean
+          nullable: true
         mfa_phone_otp_length:
           type: number
         mfa_phone_template:
@@ -3997,6 +4243,9 @@ components:
           nullable: true
         saml_external_url:
           type: string
+          nullable: true
+        saml_allow_encrypted_assertions:
+          type: boolean
           nullable: true
         security_captcha_enabled:
           type: boolean
@@ -4232,6 +4481,8 @@ components:
         - mfa_totp_verify_enabled
         - mfa_phone_enroll_enabled
         - mfa_phone_verify_enabled
+        - mfa_web_authn_enroll_enabled
+        - mfa_web_authn_verify_enabled
         - mfa_phone_otp_length
         - mfa_phone_template
         - mfa_phone_max_frequency
@@ -4247,6 +4498,7 @@ components:
         - refresh_token_rotation_enabled
         - saml_enabled
         - saml_external_url
+        - saml_allow_encrypted_assertions
         - security_captcha_enabled
         - security_captcha_provider
         - security_captcha_secret
@@ -4657,6 +4909,10 @@ components:
         mfa_totp_enroll_enabled:
           type: boolean
         mfa_totp_verify_enabled:
+          type: boolean
+        mfa_web_authn_enroll_enabled:
+          type: boolean
+        mfa_web_authn_verify_enabled:
           type: boolean
         mfa_phone_enroll_enabled:
           type: boolean
@@ -5113,11 +5369,16 @@ components:
             type: string
             enum:
               - AI_SQL_GENERATOR_OPT_IN
+        allowed_release_channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseChannel'
         id:
           type: string
         name:
           type: string
       required:
         - opt_in_tags
+        - allowed_release_channels
         - id
         - name

@@ -142,6 +142,19 @@ type ClientInterface interface {
 	// V1GetProjectApiKeys request
 	V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateApiKeyWithBody request with any body
+	CreateApiKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateApiKey(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteApiKey request
+	DeleteApiKey(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateApiKeyWithBody request with any body
+	UpdateApiKeyWithBody(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateApiKey(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1DisablePreviewBranching request
 	V1DisablePreviewBranching(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -351,11 +364,11 @@ type ClientInterface interface {
 
 	V1UpgradePostgresVersion(ctx context.Context, ref string, body V1UpgradePostgresVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1GetPostgrestUpgradeEligibility request
-	V1GetPostgrestUpgradeEligibility(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPostgresUpgradeEligibility request
+	V1GetPostgresUpgradeEligibility(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1GetPostgrestUpgradeStatus request
-	V1GetPostgrestUpgradeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPostgresUpgradeStatus request
+	V1GetPostgresUpgradeStatus(ctx context.Context, ref string, params *V1GetPostgresUpgradeStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeactivateVanitySubdomainConfig request
 	V1DeactivateVanitySubdomainConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -598,6 +611,66 @@ func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...Req
 
 func (c *Client) V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectApiKeysRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApiKeyRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateApiKey(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApiKeyRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteApiKeyRequest(c.Server, ref, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateApiKeyRequestWithBody(c.Server, ref, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateApiKey(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateApiKeyRequest(c.Server, ref, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1532,8 +1605,8 @@ func (c *Client) V1UpgradePostgresVersion(ctx context.Context, ref string, body 
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetPostgrestUpgradeEligibility(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetPostgrestUpgradeEligibilityRequest(c.Server, ref)
+func (c *Client) V1GetPostgresUpgradeEligibility(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPostgresUpgradeEligibilityRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1544,8 +1617,8 @@ func (c *Client) V1GetPostgrestUpgradeEligibility(ctx context.Context, ref strin
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetPostgrestUpgradeStatus(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetPostgrestUpgradeStatusRequest(c.Server, ref)
+func (c *Client) V1GetPostgresUpgradeStatus(ctx context.Context, ref string, params *V1GetPostgresUpgradeStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPostgresUpgradeStatusRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2290,6 +2363,148 @@ func NewV1GetProjectApiKeysRequest(server string, ref string) (*http.Request, er
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateApiKeyRequest calls the generic CreateApiKey builder with application/json body
+func NewCreateApiKeyRequest(server string, ref string, body CreateApiKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateApiKeyRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewCreateApiKeyRequestWithBody generates requests for CreateApiKey with any type of body
+func NewCreateApiKeyRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteApiKeyRequest generates requests for DeleteApiKey
+func NewDeleteApiKeyRequest(server string, ref string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateApiKeyRequest calls the generic UpdateApiKey builder with application/json body
+func NewUpdateApiKeyRequest(server string, ref string, id string, body UpdateApiKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateApiKeyRequestWithBody(server, ref, id, "application/json", bodyReader)
+}
+
+// NewUpdateApiKeyRequestWithBody generates requests for UpdateApiKey with any type of body
+func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4773,8 +4988,8 @@ func NewV1UpgradePostgresVersionRequestWithBody(server string, ref string, conte
 	return req, nil
 }
 
-// NewV1GetPostgrestUpgradeEligibilityRequest generates requests for V1GetPostgrestUpgradeEligibility
-func NewV1GetPostgrestUpgradeEligibilityRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetPostgresUpgradeEligibilityRequest generates requests for V1GetPostgresUpgradeEligibility
+func NewV1GetPostgresUpgradeEligibilityRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4807,8 +5022,8 @@ func NewV1GetPostgrestUpgradeEligibilityRequest(server string, ref string) (*htt
 	return req, nil
 }
 
-// NewV1GetPostgrestUpgradeStatusRequest generates requests for V1GetPostgrestUpgradeStatus
-func NewV1GetPostgrestUpgradeStatusRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetPostgresUpgradeStatusRequest generates requests for V1GetPostgresUpgradeStatus
+func NewV1GetPostgresUpgradeStatusRequest(server string, ref string, params *V1GetPostgresUpgradeStatusParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4831,6 +5046,28 @@ func NewV1GetPostgrestUpgradeStatusRequest(server string, ref string) (*http.Req
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.TrackingId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "tracking_id", runtime.ParamLocationQuery, *params.TrackingId); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -5182,6 +5419,19 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectApiKeysWithResponse request
 	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
 
+	// CreateApiKeyWithBodyWithResponse request with any body
+	CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+
+	CreateApiKeyWithResponse(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+
+	// DeleteApiKeyWithResponse request
+	DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error)
+
+	// UpdateApiKeyWithBodyWithResponse request with any body
+	UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+
+	UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+
 	// V1DisablePreviewBranchingWithResponse request
 	V1DisablePreviewBranchingWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DisablePreviewBranchingResponse, error)
 
@@ -5391,11 +5641,11 @@ type ClientWithResponsesInterface interface {
 
 	V1UpgradePostgresVersionWithResponse(ctx context.Context, ref string, body V1UpgradePostgresVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpgradePostgresVersionResponse, error)
 
-	// V1GetPostgrestUpgradeEligibilityWithResponse request
-	V1GetPostgrestUpgradeEligibilityWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgrestUpgradeEligibilityResponse, error)
+	// V1GetPostgresUpgradeEligibilityWithResponse request
+	V1GetPostgresUpgradeEligibilityWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresUpgradeEligibilityResponse, error)
 
-	// V1GetPostgrestUpgradeStatusWithResponse request
-	V1GetPostgrestUpgradeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgrestUpgradeStatusResponse, error)
+	// V1GetPostgresUpgradeStatusWithResponse request
+	V1GetPostgresUpgradeStatusWithResponse(ctx context.Context, ref string, params *V1GetPostgresUpgradeStatusParams, reqEditors ...RequestEditorFn) (*V1GetPostgresUpgradeStatusResponse, error)
 
 	// V1DeactivateVanitySubdomainConfigWithResponse request
 	V1DeactivateVanitySubdomainConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeactivateVanitySubdomainConfigResponse, error)
@@ -5743,6 +5993,72 @@ func (r V1GetProjectApiKeysResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectApiKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateApiKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6948,14 +7264,14 @@ func (r V1UpgradePostgresVersionResponse) StatusCode() int {
 	return 0
 }
 
-type V1GetPostgrestUpgradeEligibilityResponse struct {
+type V1GetPostgresUpgradeEligibilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *ProjectUpgradeEligibilityResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1GetPostgrestUpgradeEligibilityResponse) Status() string {
+func (r V1GetPostgresUpgradeEligibilityResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -6963,21 +7279,21 @@ func (r V1GetPostgrestUpgradeEligibilityResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1GetPostgrestUpgradeEligibilityResponse) StatusCode() int {
+func (r V1GetPostgresUpgradeEligibilityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type V1GetPostgrestUpgradeStatusResponse struct {
+type V1GetPostgresUpgradeStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *DatabaseUpgradeStatusResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1GetPostgrestUpgradeStatusResponse) Status() string {
+func (r V1GetPostgresUpgradeStatusResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -6985,7 +7301,7 @@ func (r V1GetPostgrestUpgradeStatusResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1GetPostgrestUpgradeStatusResponse) StatusCode() int {
+func (r V1GetPostgresUpgradeStatusResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7288,6 +7604,49 @@ func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseV1GetProjectApiKeysResponse(rsp)
+}
+
+// CreateApiKeyWithBodyWithResponse request with arbitrary body returning *CreateApiKeyResponse
+func (c *ClientWithResponses) CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
+	rsp, err := c.CreateApiKeyWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateApiKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
+	rsp, err := c.CreateApiKey(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateApiKeyResponse(rsp)
+}
+
+// DeleteApiKeyWithResponse request returning *DeleteApiKeyResponse
+func (c *ClientWithResponses) DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error) {
+	rsp, err := c.DeleteApiKey(ctx, ref, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteApiKeyResponse(rsp)
+}
+
+// UpdateApiKeyWithBodyWithResponse request with arbitrary body returning *UpdateApiKeyResponse
+func (c *ClientWithResponses) UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
+	rsp, err := c.UpdateApiKeyWithBody(ctx, ref, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateApiKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
+	rsp, err := c.UpdateApiKey(ctx, ref, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateApiKeyResponse(rsp)
 }
 
 // V1DisablePreviewBranchingWithResponse request returning *V1DisablePreviewBranchingResponse
@@ -7961,22 +8320,22 @@ func (c *ClientWithResponses) V1UpgradePostgresVersionWithResponse(ctx context.C
 	return ParseV1UpgradePostgresVersionResponse(rsp)
 }
 
-// V1GetPostgrestUpgradeEligibilityWithResponse request returning *V1GetPostgrestUpgradeEligibilityResponse
-func (c *ClientWithResponses) V1GetPostgrestUpgradeEligibilityWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgrestUpgradeEligibilityResponse, error) {
-	rsp, err := c.V1GetPostgrestUpgradeEligibility(ctx, ref, reqEditors...)
+// V1GetPostgresUpgradeEligibilityWithResponse request returning *V1GetPostgresUpgradeEligibilityResponse
+func (c *ClientWithResponses) V1GetPostgresUpgradeEligibilityWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresUpgradeEligibilityResponse, error) {
+	rsp, err := c.V1GetPostgresUpgradeEligibility(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1GetPostgrestUpgradeEligibilityResponse(rsp)
+	return ParseV1GetPostgresUpgradeEligibilityResponse(rsp)
 }
 
-// V1GetPostgrestUpgradeStatusWithResponse request returning *V1GetPostgrestUpgradeStatusResponse
-func (c *ClientWithResponses) V1GetPostgrestUpgradeStatusWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgrestUpgradeStatusResponse, error) {
-	rsp, err := c.V1GetPostgrestUpgradeStatus(ctx, ref, reqEditors...)
+// V1GetPostgresUpgradeStatusWithResponse request returning *V1GetPostgresUpgradeStatusResponse
+func (c *ClientWithResponses) V1GetPostgresUpgradeStatusWithResponse(ctx context.Context, ref string, params *V1GetPostgresUpgradeStatusParams, reqEditors ...RequestEditorFn) (*V1GetPostgresUpgradeStatusResponse, error) {
+	rsp, err := c.V1GetPostgresUpgradeStatus(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1GetPostgrestUpgradeStatusResponse(rsp)
+	return ParseV1GetPostgresUpgradeStatusResponse(rsp)
 }
 
 // V1DeactivateVanitySubdomainConfigWithResponse request returning *V1DeactivateVanitySubdomainConfigResponse
@@ -8419,6 +8778,84 @@ func ParseV1GetProjectApiKeysResponse(rsp *http.Response) (*V1GetProjectApiKeysR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []ApiKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateApiKeyResponse parses an HTTP response from a CreateApiKeyWithResponse call
+func ParseCreateApiKeyResponse(rsp *http.Response) (*CreateApiKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateApiKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ApiKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteApiKeyResponse parses an HTTP response from a DeleteApiKeyWithResponse call
+func ParseDeleteApiKeyResponse(rsp *http.Response) (*DeleteApiKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteApiKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApiKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateApiKeyResponse parses an HTTP response from a UpdateApiKeyWithResponse call
+func ParseUpdateApiKeyResponse(rsp *http.Response) (*UpdateApiKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateApiKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApiKeyResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9749,15 +10186,15 @@ func ParseV1UpgradePostgresVersionResponse(rsp *http.Response) (*V1UpgradePostgr
 	return response, nil
 }
 
-// ParseV1GetPostgrestUpgradeEligibilityResponse parses an HTTP response from a V1GetPostgrestUpgradeEligibilityWithResponse call
-func ParseV1GetPostgrestUpgradeEligibilityResponse(rsp *http.Response) (*V1GetPostgrestUpgradeEligibilityResponse, error) {
+// ParseV1GetPostgresUpgradeEligibilityResponse parses an HTTP response from a V1GetPostgresUpgradeEligibilityWithResponse call
+func ParseV1GetPostgresUpgradeEligibilityResponse(rsp *http.Response) (*V1GetPostgresUpgradeEligibilityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1GetPostgrestUpgradeEligibilityResponse{
+	response := &V1GetPostgresUpgradeEligibilityResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -9775,15 +10212,15 @@ func ParseV1GetPostgrestUpgradeEligibilityResponse(rsp *http.Response) (*V1GetPo
 	return response, nil
 }
 
-// ParseV1GetPostgrestUpgradeStatusResponse parses an HTTP response from a V1GetPostgrestUpgradeStatusWithResponse call
-func ParseV1GetPostgrestUpgradeStatusResponse(rsp *http.Response) (*V1GetPostgrestUpgradeStatusResponse, error) {
+// ParseV1GetPostgresUpgradeStatusResponse parses an HTTP response from a V1GetPostgresUpgradeStatusWithResponse call
+func ParseV1GetPostgresUpgradeStatusResponse(rsp *http.Response) (*V1GetPostgresUpgradeStatusResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1GetPostgrestUpgradeStatusResponse{
+	response := &V1GetPostgresUpgradeStatusResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

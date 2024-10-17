@@ -4,21 +4,21 @@ go 1.22.4
 
 require (
 	github.com/BurntSushi/toml v1.4.0
-	github.com/Netflix/go-env v0.0.0-20220526054621-78278af1949d
-	github.com/andybalholm/brotli v1.1.0
+	github.com/Netflix/go-env v0.1.0
+	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.60.4
-	github.com/danieljoos/wincred v1.2.1
+	github.com/danieljoos/wincred v1.2.2
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v27.3.1+incompatible
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
-	github.com/getsentry/sentry-go v0.28.1
+	github.com/getsentry/sentry-go v0.29.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.12.0
@@ -40,7 +40,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/runtime v1.1.1
-	github.com/slack-go/slack v0.14.0
+	github.com/slack-go/slack v0.15.0
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/pflag v1.0.5
@@ -49,10 +49,10 @@ require (
 	github.com/stripe/pg-schema-diff v0.7.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.5
-	go.opentelemetry.io/otel v1.30.0
+	go.opentelemetry.io/otel v1.31.0
 	golang.org/x/mod v0.21.0
 	golang.org/x/oauth2 v0.23.0
-	golang.org/x/term v0.24.0
+	golang.org/x/term v0.25.0
 	google.golang.org/grpc v1.67.1
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.12.0
@@ -322,10 +322,10 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.28.0 // indirect
-	go.opentelemetry.io/otel/metric v1.30.0 // indirect
+	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.28.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.28.0 // indirect
-	go.opentelemetry.io/otel/trace v1.30.0 // indirect
+	go.opentelemetry.io/otel/trace v1.31.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/automaxprocs v1.5.3 // indirect
@@ -337,7 +337,7 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.25.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
 	golang.org/x/tools v0.24.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240814211410-ddb44dafa142 // indirect
