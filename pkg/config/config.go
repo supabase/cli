@@ -140,9 +140,9 @@ type (
 	}
 
 	config struct {
-		baseConfig
-		Overrides map[string]interface{} `toml:"remotes"`
-		Remotes   map[string]baseConfig  `toml:"-"`
+		baseConfig `mapstructure:",squash"`
+		Overrides  map[string]interface{} `toml:"remotes"`
+		Remotes    map[string]baseConfig  `toml:"-"`
 	}
 
 	db struct {
