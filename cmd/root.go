@@ -223,7 +223,7 @@ func recoverAndExit() {
 func init() {
 	cobra.OnInitialize(func() {
 		viper.SetEnvPrefix("SUPABASE")
-		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 		viper.AutomaticEnv()
 	})
 
