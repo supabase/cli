@@ -601,6 +601,7 @@ func (c *config) loadFromEnv() error {
 		return errors.Errorf("failed to decode env: %w", err)
 	}
 	v := viper.New()
+	v.SetEnvPrefix("SUPABASE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	if err := v.MergeConfigMap(envKeysMap); err != nil {
