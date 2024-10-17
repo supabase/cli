@@ -28,6 +28,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
 
@@ -136,13 +137,13 @@ type (
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+		Experimental experimental   `toml:"experimental"`
 	}
 
 	config struct {
-		baseConfig
-		Overrides map[string]interface{} `toml:"remotes"`
-		Remotes   map[string]baseConfig  `toml:"-"`
+		baseConfig `mapstructure:",squash"`
+		Overrides  map[string]interface{} `toml:"remotes"`
+		Remotes    map[string]baseConfig  `toml:"-"`
 	}
 
 	db struct {
@@ -587,6 +588,29 @@ func (c *config) Eject(w io.Writer) error {
 	return nil
 }
 
+func (c *config) loadFromEnv() error {
+	// Allow overriding base config object with automatic env
+	// Ref: https://github.com/spf13/viper/issues/761
+	envKeysMap := map[string]interface{}{}
+	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:               &envKeysMap,
+		IgnoreUntaggedFields: true,
+	}); err != nil {
+		return errors.Errorf("failed to create decoder: %w", err)
+	} else if err := dec.Decode(c.baseConfig); err != nil {
+		return errors.Errorf("failed to decode env: %w", err)
+	}
+	v := viper.New()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	if err := v.MergeConfigMap(envKeysMap); err != nil {
+		return errors.Errorf("failed to merge config: %w", err)
+	} else if err := v.Unmarshal(c); err != nil {
+		return errors.Errorf("failed to parse env to config: %w", err)
+	}
+	return nil
+}
+
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load default values
@@ -614,9 +638,8 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// Load secrets from .env file
 	if err := loadDefaultEnv(); err != nil {
 		return err
-	}
-	if err := viper.Unmarshal(c); err != nil {
-		return errors.Errorf("failed to parse env to config: %w", err)
+	} else if err := c.loadFromEnv(); err != nil {
+		return err
 	}
 	// Generate JWT tokens
 	if len(c.Auth.AnonKey) == 0 {
