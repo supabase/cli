@@ -28,7 +28,6 @@ var (
 		"pgtle",
 		`supabase\_migrations`,
 		"vault",
-		"publication",
 	}
 )
 
