@@ -28,6 +28,7 @@ var (
 		"pgtle",
 		`supabase\_migrations`,
 		"vault",
+		"publication",
 	}
 )
 
@@ -63,5 +64,38 @@ func ListUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 		return nil, errors.Errorf("failed to list schemas: %w", err)
 	}
 	// TODO: show detail and hint from pgconn.PgError
+	return pgxv5.CollectStrings(rows)
+}
+
+func DropUserPublication(ctx context.Context, conn *pgx.Conn) error {
+	excludes := []string{"supabase_realtime"}
+	userPublications, err := ListUserPublications(ctx, conn, excludes...)
+	if err != nil {
+		return err
+	}
+
+	// Drop all user defined publications
+	migration := MigrationFile{}
+	for _, publication := range userPublications {
+		sql := fmt.Sprintf("DROP PUBLICATION %s", publication)
+		migration.Statements = append(migration.Statements, sql)
+	}
+	return migration.ExecBatch(ctx, conn)
+}
+
+func ListUserPublications(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
+	query := `
+		SELECT pubname
+		FROM pg_publication
+		WHERE pubname NOT LIKE ANY($1)
+	`
+
+	// Execute the query, passing the exclude slice as a single argument
+	rows, err := conn.Query(ctx, query, exclude)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list publications: %w", err)
+	}
+
+	// Collect results into a slice of strings
 	return pgxv5.CollectStrings(rows)
 }
