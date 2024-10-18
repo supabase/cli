@@ -9,7 +9,7 @@ const (
 	kongImage        = "library/kong:2.8.1"
 	inbucketImage    = "inbucket/inbucket:3.0.3"
 	postgrestImage   = "postgrest/postgrest:v12.2.0"
-	pgmetaImage      = "supabase/postgres-meta:v0.83.2"
+	pgmetaImage      = "supabase/postgres-meta:v0.84.1"
 	studioImage      = "supabase/studio:20241014-c083b3b"
 	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
 	edgeRuntimeImage = "supabase/edge-runtime:v1.59.0"
