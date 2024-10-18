@@ -341,3 +341,15 @@ func TestLoadSeedPaths(t *testing.T) {
 		assert.Empty(t, config.SqlPaths)
 	})
 }
+
+func TestLoadEnv(t *testing.T) {
+	t.Setenv("SUPABASE_AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("SUPABASE_DB_ROOT_KEY", "test-root-key")
+	config := NewConfig()
+	// Run test
+	err := config.loadFromEnv()
+	// Check error
+	assert.NoError(t, err)
+	assert.Equal(t, "test-secret", config.Auth.JwtSecret)
+	assert.Equal(t, "test-root-key", config.Db.RootKey)
+}
