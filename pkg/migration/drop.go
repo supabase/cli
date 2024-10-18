@@ -14,8 +14,9 @@ var (
 	//go:embed queries/drop.sql
 	DropObjects string
 	//go:embed queries/list.sql
-	ListSchemas      string
-	ListPublications = "SELECT pubname FROM pg_publication WHERE pubname NOT LIKE ANY($1)"
+	ListSchemas string
+	//go:embed queries/publications.sql
+	ListPublications string
 
 	// Initialised by postgres image and owned by postgres role
 	ManagedSchemas = []string{
