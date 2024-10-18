@@ -35,6 +35,10 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		exists[f.Slug] = struct{}{}
 	}
 	for slug, function := range functionConfig {
+		if !function.IsEnabled() {
+			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
+			continue
+		}
 		for _, keep := range filter {
 			if !keep(slug) {
 				continue

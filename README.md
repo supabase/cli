@@ -130,7 +130,7 @@ For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency
   Add a symlink to the binary in `$PATH` for easier access:
 
   ```sh
-  ln -s "$(go env GOPATH)/cli" /usr/bin/supabase
+  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
   ```
 
   This works on other non-standard Linux distros.

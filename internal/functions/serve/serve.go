@@ -209,12 +209,9 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 }
 
 func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
-	slugs, skippedFunctions, err := deploy.GetFunctionSlugs(fsys)
+	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
-	}
-	if len(skippedFunctions) > 0 {
-		fmt.Fprintf(utils.GetDebugLogger(), "Skipped serving the following functions: %s\n", strings.Join(skippedFunctions, ", "))
 	}
 	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
@@ -222,6 +219,10 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	}
 	binds := []string{}
 	for slug, fc := range functionsConfig {
+		if !fc.IsEnabled() {
+			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			continue
+		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
 		if err != nil {
 			return nil, "", err
