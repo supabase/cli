@@ -220,6 +220,9 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	if err := migration.DropUserSchemas(ctx, conn); err != nil {
 		return err
 	}
+	if err := migration.DropUserPublication(ctx, conn); err != nil {
+		return err
+	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 

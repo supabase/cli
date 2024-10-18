@@ -15,6 +15,8 @@ var (
 	DropObjects string
 	//go:embed queries/list.sql
 	ListSchemas string
+	//go:embed queries/publications.sql
+	ListPublications string
 
 	// Initialised by postgres image and owned by postgres role
 	ManagedSchemas = []string{
@@ -29,6 +31,8 @@ var (
 		`supabase\_migrations`,
 		"vault",
 	}
+
+	ManagedPublications = []string{"supabase_realtime"}
 )
 
 func DropUserSchemas(ctx context.Context, conn *pgx.Conn) error {
@@ -63,5 +67,32 @@ func ListUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]
 		return nil, errors.Errorf("failed to list schemas: %w", err)
 	}
 	// TODO: show detail and hint from pgconn.PgError
+	return pgxv5.CollectStrings(rows)
+}
+
+func DropUserPublication(ctx context.Context, conn *pgx.Conn) error {
+	excludes := ManagedPublications
+	userPublications, err := ListUserPublications(ctx, conn, excludes...)
+	if err != nil {
+		return err
+	}
+
+	// Drop all user defined publications
+	migration := MigrationFile{}
+	for _, publication := range userPublications {
+		sql := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s", publication)
+		migration.Statements = append(migration.Statements, sql)
+	}
+	return migration.ExecBatch(ctx, conn)
+}
+
+func ListUserPublications(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
+	// Execute the query, passing the exclude slice as a single argument
+	rows, err := conn.Query(ctx, ListPublications, exclude)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list publications: %w", err)
+	}
+
+	// Collect results into a slice of strings
 	return pgxv5.CollectStrings(rows)
 }
