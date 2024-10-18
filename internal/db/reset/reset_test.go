@@ -418,7 +418,11 @@ func TestResetRemote(t *testing.T) {
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
 			Query(migration.DropObjects).
-			Reply("INSERT 0")
+			Reply("INSERT 0").
+			Query(migration.ListPublications, migration.ManagedPublications).
+			Reply("SELECT pubname", []interface{}{"pub1"}).
+			Query("DROP PUBLICATION IF EXISTS pub1").
+			Reply("DROP PUBLICATION")
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
@@ -444,7 +448,12 @@ func TestResetRemote(t *testing.T) {
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
 			Query(migration.DropObjects).
-			Reply("INSERT 0")
+			Reply("INSERT 0").
+			Query(migration.ListPublications, migration.ManagedPublications).
+			Reply("SELECT pubname", []interface{}{"pub1"}).
+			Query("DROP PUBLICATION IF EXISTS pub1").
+			Reply("DROP PUBLICATION")
+
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
