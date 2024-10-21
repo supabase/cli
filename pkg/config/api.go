@@ -44,10 +44,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	}
 
 	// Convert ExtraSearchPath to a comma-separated string
-	if len(a.ExtraSearchPath) > 0 {
-		extraSearchPath := strings.Join(a.ExtraSearchPath, ",")
-		body.DbExtraSearchPath = &extraSearchPath
-	}
+	body.DbExtraSearchPath = cast.Ptr(strings.Join(a.ExtraSearchPath, ","))
 
 	// Convert MaxRows to int pointer
 	if a.MaxRows > 0 {
