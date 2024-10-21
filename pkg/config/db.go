@@ -66,26 +66,50 @@ type (
 	}
 )
 
+// Compare two pointers values handling the nil case
+func isPointerValueEquals[T comparable](a, b *T) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// Compare two db config, if changes requires restart return true, return false otherwise
+func requireDbRestart(a *db, b *db) bool {
+	return !isPointerValueEquals(a.MaxConnections, b.MaxConnections) ||
+		!isPointerValueEquals(a.MaxWorkerProcesses, b.MaxWorkerProcesses) ||
+		!isPointerValueEquals(a.MaxParallelWorkers, b.MaxParallelWorkers) ||
+		!isPointerValueEquals(a.MaxWalSenders, b.MaxWalSenders) ||
+		!isPointerValueEquals(a.MaxReplicationSlots, b.MaxReplicationSlots) ||
+		!isPointerValueEquals(a.SharedBuffers, b.SharedBuffers)
+}
+
 func (a *db) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body := v1API.UpdatePostgresConfigBody{}
 
+	// Parameters that require restart
+	body.MaxConnections = cast.UintToIntPtr(a.MaxConnections)
+	body.MaxWorkerProcesses = cast.UintToIntPtr(a.MaxWorkerProcesses)
+	body.MaxParallelWorkers = cast.UintToIntPtr(a.MaxParallelWorkers)
+	body.MaxWalSenders = cast.UintToIntPtr(a.MaxWalSenders)
+	body.MaxReplicationSlots = cast.UintToIntPtr(a.MaxReplicationSlots)
+	body.SharedBuffers = a.SharedBuffers
+
+	// Parameters that can be changed without restart
 	body.EffectiveCacheSize = a.EffectiveCacheSize
 	body.LogicalDecodingWorkMem = a.LogicalDecodingWorkMem
 	body.MaintenanceWorkMem = a.MaintenanceWorkMem
-	body.MaxConnections = cast.UintToIntPtr(a.MaxConnections)
 	body.MaxLocksPerTransaction = cast.UintToIntPtr(a.MaxLocksPerTransaction)
 	body.MaxParallelMaintenanceWorkers = cast.UintToIntPtr(a.MaxParallelMaintenanceWorkers)
-	body.MaxParallelWorkers = cast.UintToIntPtr(a.MaxParallelWorkers)
 	body.MaxParallelWorkersPerGather = cast.UintToIntPtr(a.MaxParallelWorkersPerGather)
-	body.MaxReplicationSlots = cast.UintToIntPtr(a.MaxReplicationSlots)
 	body.MaxSlotWalKeepSize = a.MaxSlotWalKeepSize
 	body.MaxStandbyArchiveDelay = a.MaxStandbyArchiveDelay
 	body.MaxStandbyStreamingDelay = a.MaxStandbyStreamingDelay
-	body.MaxWalSenders = cast.UintToIntPtr(a.MaxWalSenders)
 	body.MaxWalSize = a.MaxWalSize
-	body.MaxWorkerProcesses = cast.UintToIntPtr(a.MaxWorkerProcesses)
 	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.SessionReplicationRole)
-	body.SharedBuffers = a.SharedBuffers
 	body.StatementTimeout = a.StatementTimeout
 	body.WalKeepSize = a.WalKeepSize
 	body.WalSenderTimeout = a.WalSenderTimeout
