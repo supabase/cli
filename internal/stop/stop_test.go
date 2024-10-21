@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -197,6 +198,24 @@ func TestStopServices(t *testing.T) {
 		utils.InbucketId = "test-inbucket"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStop(utils.Docker)
+		// Run test
+		err := stop(context.Background(), false, io.Discard, utils.Config.ProjectId)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips all filter when removing data volumes with Docker version pre-v1.42", func(t *testing.T) {
+		utils.DbId = "test-db"
+		utils.ConfigId = "test-config"
+		utils.StorageId = "test-storage"
+		utils.EdgeRuntimeId = "test-functions"
+		utils.InbucketId = "test-inbucket"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, client.WithVersion("1.41")(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStop(utils.Docker)
 		// Run test

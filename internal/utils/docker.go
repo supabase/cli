@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
@@ -125,10 +126,12 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	}
 	// Remove named volumes
 	if NoBackupVolume {
-		// Since docker engine 25.0.3, all flag is required to include named volumes.
-		// https://github.com/docker/cli/blob/master/cli/command/volume/prune.go#L76
 		vargs := args.Clone()
-		vargs.Add("all", "true")
+		if versions.GreaterThanOrEqualTo(Docker.ClientVersion(), "1.42") {
+			// Since docker engine 25.0.3, all flag is required to include named volumes.
+			// https://github.com/docker/cli/blob/master/cli/command/volume/prune.go#L76
+			vargs.Add("all", "true")
+		}
 		if report, err := Docker.VolumesPrune(ctx, vargs); err != nil {
 			return errors.Errorf("failed to prune volumes: %w", err)
 		} else if viper.GetBool("DEBUG") {
