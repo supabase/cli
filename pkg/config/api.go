@@ -38,7 +38,10 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	}
 
 	// Convert Schemas to a comma-separated string
-	body.DbSchema = cast.Ptr(strings.Join(a.Schemas, ","))
+	if len(a.Schemas) > 0 {
+ 		schemas := strings.Join(a.Schemas, ",")
+ 		body.DbSchema = &schemas
+ 	}
 
 	// Convert ExtraSearchPath to a comma-separated string
 	body.DbExtraSearchPath = cast.Ptr(strings.Join(a.ExtraSearchPath, ","))
