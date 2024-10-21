@@ -20,6 +20,32 @@ func IntToUint(value int) uint {
 	return uint(value)
 }
 
+func UintToIntPtr(value *uint) *int {
+	if value == nil {
+		return nil
+	}
+	if *value <= math.MaxInt {
+		result := int(*value)
+		return &result
+	}
+	maxInt := math.MaxInt
+	return &maxInt
+}
+
+// IntToUint converts an int to a uint, handling negative values
+func IntToUintPtr(value *int) *uint {
+	var result uint
+	result = 0
+	if value == nil {
+		return nil
+	}
+	if *value < 0 {
+		return &result
+	}
+	result = uint(*value)
+	return &result
+}
+
 func Ptr[T any](v T) *T {
 	return &v
 }

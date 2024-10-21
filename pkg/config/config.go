@@ -57,8 +57,6 @@ const (
 	LogflareBigQuery LogflareBackend = "bigquery"
 )
 
-type PoolMode string
-
 const (
 	TransactionMode PoolMode = "transaction"
 	SessionMode     PoolMode = "session"
@@ -144,36 +142,6 @@ type (
 		baseConfig `mapstructure:",squash"`
 		Overrides  map[string]interface{} `toml:"remotes"`
 		Remotes    map[string]baseConfig  `toml:"-"`
-	}
-
-	db struct {
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ShadowPort   uint16 `toml:"shadow_port"`
-		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-"`
-		RootKey      string `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler `toml:"pooler"`
-		Seed         seed   `toml:"seed"`
-	}
-
-	seed struct {
-		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
-		SqlPaths     []string `toml:"-"`
-	}
-
-	pooler struct {
-		Enabled          bool     `toml:"enabled"`
-		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
-		ConnectionString string   `toml:"-"`
-		TenantId         string   `toml:"-"`
-		EncryptionKey    string   `toml:"-"`
-		SecretKeyBase    string   `toml:"-"`
 	}
 
 	realtime struct {
@@ -775,6 +743,12 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate db config
+	if c.Db.remoteDb.SessionReplicationRole != nil {
+		allowedRoles := []string{"origin", "replica", "local"}
+		if !sliceContains(allowedRoles, *c.Db.remoteDb.SessionReplicationRole) {
+			return errors.Errorf("Invalid config for db.session_replication_role: %s. Must be one of: %v", *c.Db.remoteDb.SessionReplicationRole, allowedRoles)
+		}
+	}
 	if c.Db.Port == 0 {
 		return errors.New("Missing required field in config: db.port")
 	}
