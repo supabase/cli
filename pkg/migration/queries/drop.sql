@@ -74,4 +74,14 @@ begin
   loop
     execute format('drop policy if exists %I on %I.%I cascade', rec.policyname, rec.schemaname, rec.tablename);
   end loop;
+
+  -- publications
+  for rec in
+    select *
+    from pg_publication p
+    where
+      p.pubname != 'supabase_realtime'
+  loop
+    execute format('drop publication if exists %I', rec.pubname);
+  end loop;
 end $$;
