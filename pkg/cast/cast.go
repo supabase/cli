@@ -32,7 +32,6 @@ func UintToIntPtr(value *uint) *int {
 	return &maxInt
 }
 
-// IntToUint converts an int to a uint, handling negative values
 func IntToUintPtr(value *int) *uint {
 	var result uint
 	result = 0
