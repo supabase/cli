@@ -25,7 +25,7 @@ func UintToIntPtr(value *uint) *int {
 		return nil
 	}
 	if *value <= math.MaxInt {
-		result := int(*value)
+		result := UintToInt(*value)
 		return &result
 	}
 	maxInt := math.MaxInt
@@ -41,7 +41,7 @@ func IntToUintPtr(value *int) *uint {
 	if *value < 0 {
 		return &result
 	}
-	result = uint(*value)
+	result = IntToUint(*value)
 	return &result
 }
 
