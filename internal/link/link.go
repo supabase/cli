@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -243,7 +244,12 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
 	if err != nil {
 		return errors.Errorf("failed to retrieve remote project status: %w", err)
 	}
-	if resp.JSON200 == nil {
+	switch resp.StatusCode() {
+	case http.StatusNotFound:
+		// Ignore not found error to support linking branch projects
+		return nil
+	case http.StatusOK:
+	default:
 		return errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
 	}
 
