@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -209,20 +210,37 @@ func TestLinkCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})
-	t.Run("throws error on project inactive", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+}
+
+func TestStatusCheck(t *testing.T) {
+	project := "test-project"
+
+	t.Run("ignores project not found", func(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
-			Reply(200).
+			Reply(http.StatusNotFound)
+		// Run test
+		err := checkRemoteProjectStatus(context.Background(), project)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on project inactive", func(t *testing.T) {
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(http.StatusOK).
 			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusINACTIVE})
 		// Run test
-		err := Run(context.Background(), project, fsys)
+		err := checkRemoteProjectStatus(context.Background(), project)
 		// Check error
-		assert.ErrorContains(t, err, "project is paused")
+		assert.ErrorIs(t, err, errProjectPaused)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

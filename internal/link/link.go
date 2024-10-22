@@ -239,6 +239,8 @@ func updatePoolerConfig(config api.SupavisorConfigResponse) {
 	}
 }
 
+var errProjectPaused = errors.New("project is paused")
+
 func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
 	if err != nil {
@@ -249,6 +251,7 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
 		// Ignore not found error to support linking branch projects
 		return nil
 	case http.StatusOK:
+		// resp.JSON200 is not nil, proceed
 	default:
 		return errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
 	}
@@ -256,12 +259,11 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
 	switch resp.JSON200.Status {
 	case api.V1ProjectResponseStatusINACTIVE:
 		utils.CmdSuggestion = fmt.Sprintf("An admin must unpause it from the Supabase dashboard at %s", utils.Aqua(fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), projectRef)))
-		return errors.New("project is paused")
+		return errors.New(errProjectPaused)
 	case api.V1ProjectResponseStatusACTIVEHEALTHY:
 		// Project is in the desired state, do nothing
-		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "%s: Project status is %s instead of Active Healthy. Some operations might fail.\n", utils.Yellow("Warning"), resp.JSON200.Status)
+		fmt.Fprintf(os.Stderr, "%s: Project status is %s instead of Active Healthy. Some operations might fail.\n", utils.Yellow("WARNING"), resp.JSON200.Status)
 	}
 
 	return nil
