@@ -28,6 +28,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"golang.org/x/mod/semver"
 
@@ -136,30 +137,13 @@ type (
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental" mapstructure:"-"`
+		Experimental experimental   `toml:"experimental"`
 	}
 
 	config struct {
-		baseConfig
-		Overrides map[string]interface{} `toml:"remotes"`
-		Remotes   map[string]baseConfig  `toml:"-"`
-	}
-
-	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Image           string   `toml:"-"`
-		KongImage       string   `toml:"-"`
-		Port            uint16   `toml:"port"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
-		Tls             tlsKong  `toml:"tls"`
-		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
-	}
-
-	tlsKong struct {
-		Enabled bool `toml:"enabled"`
+		baseConfig `mapstructure:",squash"`
+		Overrides  map[string]interface{} `toml:"remotes"`
+		Remotes    map[string]baseConfig  `toml:"-"`
 	}
 
 	db struct {
@@ -450,6 +434,11 @@ type (
 	}
 )
 
+func (f function) IsEnabled() bool {
+	// If Enabled is not defined, or defined and set to true
+	return f.Enabled == nil || *f.Enabled
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
@@ -599,6 +588,30 @@ func (c *config) Eject(w io.Writer) error {
 	return nil
 }
 
+func (c *config) loadFromEnv() error {
+	// Allow overriding base config object with automatic env
+	// Ref: https://github.com/spf13/viper/issues/761
+	envKeysMap := map[string]interface{}{}
+	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:               &envKeysMap,
+		IgnoreUntaggedFields: true,
+	}); err != nil {
+		return errors.Errorf("failed to create decoder: %w", err)
+	} else if err := dec.Decode(c.baseConfig); err != nil {
+		return errors.Errorf("failed to decode env: %w", err)
+	}
+	v := viper.New()
+	v.SetEnvPrefix("SUPABASE")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	if err := v.MergeConfigMap(envKeysMap); err != nil {
+		return errors.Errorf("failed to merge config: %w", err)
+	} else if err := v.Unmarshal(c); err != nil {
+		return errors.Errorf("failed to parse env to config: %w", err)
+	}
+	return nil
+}
+
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load default values
@@ -626,9 +639,8 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// Load secrets from .env file
 	if err := loadDefaultEnv(); err != nil {
 		return err
-	}
-	if err := viper.Unmarshal(c); err != nil {
-		return errors.Errorf("failed to parse env to config: %w", err)
+	} else if err := c.loadFromEnv(); err != nil {
+		return err
 	}
 	// Generate JWT tokens
 	if len(c.Auth.AnonKey) == 0 {
@@ -718,6 +730,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.baseConfig.Validate(fsys); err != nil {
 		return err
 	}
+	idToName := map[string]string{}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
 	for name, remote := range c.Overrides {
 		base := c.baseConfig.Clone()
@@ -730,10 +743,18 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
 			return errors.Errorf("failed to decode remote config: %w", err)
 		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-			fmt.Fprintf(os.Stderr, "Unknown config fields: %+v\n", undecoded)
+			fmt.Fprintf(os.Stderr, "WARN: unknown config fields: %+v\n", undecoded)
+		}
+		// Cross validate remote project id
+		if base.ProjectId == c.baseConfig.ProjectId {
+			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
+		} else if other, exists := idToName[base.ProjectId]; exists {
+			return errors.Errorf("duplicate project_id for [remotes.%s] and [remotes.%s]", other, name)
+		} else {
+			idToName[base.ProjectId] = name
 		}
 		if err := base.Validate(fsys); err != nil {
-			return err
+			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
 		}
 		c.Remotes[name] = base
 	}
@@ -1326,4 +1347,36 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+// Retrieve the final base config to use taking into account the remotes override
+func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
+	var result []string
+	// Iterate over all the config.Remotes
+	for name, remoteConfig := range c.Remotes {
+		// Check if there is one matching project_id
+		if remoteConfig.ProjectId == projectRef {
+			// Check for duplicate project IDs across remotes
+			result = append(result, name)
+		}
+	}
+	// If no matching remote config is found, return the base config
+	if len(result) == 0 {
+		return c.baseConfig, errors.Errorf("no remote found for project_id: %s", projectRef)
+	}
+	remote := c.Remotes[result[0]]
+	if len(result) > 1 {
+		return remote, errors.Errorf("multiple remotes %v have the same project_id: %s", result, projectRef)
+	}
+	return remote, nil
+}
+
+func ToTomlBytes(config any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(config); err != nil {
+		return nil, errors.Errorf("failed to marshal toml config: %w", err)
+	}
+	return buf.Bytes(), nil
 }

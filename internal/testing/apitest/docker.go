@@ -9,9 +9,11 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
 )
 
@@ -64,6 +66,12 @@ func MockDockerStop(docker *client.Client) {
 		Post("/v" + docker.ClientVersion() + "/containers/prune").
 		Reply(http.StatusOK).
 		JSON(container.PruneReport{})
+	if !versions.GreaterThanOrEqualTo(docker.ClientVersion(), "1.42") {
+		gock.New(docker.DaemonHost()).
+			Post("/v"+docker.ClientVersion()+"/volumes/prune").
+			MatchParam("filters", `"all":{"true":true}`).
+			ReplyError(errors.New(`failed to parse filters for all=true&label=com.supabase.cli.project%3Dtest: "all" is an invalid volume filter`))
+	}
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/volumes/prune").
 		Reply(http.StatusOK).

@@ -1,7 +1,6 @@
 package link
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -20,15 +18,20 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/diff"
 	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original := toTomlBytes(map[string]interface{}{
+	original, err := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
 
 	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
 		return err
@@ -60,26 +63,19 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated := toTomlBytes(map[string]interface{}{
+	updated, err := cliConfig.ToTomlBytes(map[string]interface{}{
 		"api": utils.Config.Api,
 		"db":  utils.Config.Db,
 	})
-	// if lineDiff := cmp.Diff(original, updated); len(lineDiff) > 0 {
-	if lineDiff := Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+
+	if lineDiff := diff.Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
 		fmt.Println(string(lineDiff))
 	}
 	return nil
-}
-
-func toTomlBytes(config any) []byte {
-	var buf bytes.Buffer
-	enc := toml.NewEncoder(&buf)
-	enc.Indent = ""
-	if err := enc.Encode(config); err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), "failed to marshal toml config:", err)
-	}
-	return buf.Bytes()
 }
 
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
@@ -147,7 +143,7 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	utils.Config.Api.MaxRows = uint(config.MaxRows)
+	utils.Config.Api.MaxRows = cast.IntToUint(config.MaxRows)
 	utils.Config.Api.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
 	utils.Config.Api.Schemas = readCsv(config.DbSchema)
 }
