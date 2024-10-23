@@ -20,6 +20,20 @@ func IntToUint(value int) uint {
 	return uint(value)
 }
 
+func UintToIntPtr(value *uint) *int {
+	if value == nil {
+		return nil
+	}
+	return Ptr(UintToInt(*value))
+}
+
+func IntToUintPtr(value *int) *uint {
+	if value == nil {
+		return nil
+	}
+	return Ptr(IntToUint(*value))
+}
+
 func Ptr[T any](v T) *T {
 	return &v
 }
