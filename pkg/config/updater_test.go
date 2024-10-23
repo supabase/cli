@@ -79,7 +79,7 @@ func TestUpdateDbConfig(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(v1API.PostgresConfigResponse{})
 		gock.New(server).
-			Patch("/v1/projects/test-project/config/database").
+			Put("/v1/projects/test-project/config/database").
 			Reply(http.StatusOK).
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
