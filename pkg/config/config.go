@@ -989,7 +989,6 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
-	// Validate experimental webhooks config
 	if err := c.Experimental.validateWebhooks(); err != nil {
 		return err
 	}
@@ -1359,11 +1358,10 @@ func ToTomlBytes(config any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Add this method to the experimental struct
 func (e *experimental) validateWebhooks() error {
 	if e.Webhooks != nil {
 		if !e.Webhooks.Enabled {
-			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true left undefined")
+			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
 		}
 	}
 	return nil
