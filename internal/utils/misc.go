@@ -295,10 +295,6 @@ func ValidateFunctionSlug(slug string) error {
 	return nil
 }
 
-func Ptr[T any](v T) *T {
-	return &v
-}
-
 func GetHostname() string {
 	host := Docker.DaemonHost()
 	if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {

@@ -14,6 +14,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestCreateCommand(t *testing.T) {
@@ -36,7 +37,7 @@ func TestCreateCommand(t *testing.T) {
 			})
 		// Run test
 		err := Run(context.Background(), api.CreateBranchBody{
-			Region: utils.Ptr("sin"),
+			Region: cast.Ptr("sin"),
 		}, fsys)
 		// Check error
 		assert.NoError(t, err)
@@ -53,7 +54,7 @@ func TestCreateCommand(t *testing.T) {
 			ReplyError(net.ErrClosed)
 		// Run test
 		err := Run(context.Background(), api.CreateBranchBody{
-			Region: utils.Ptr("sin"),
+			Region: cast.Ptr("sin"),
 		}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, net.ErrClosed)
@@ -70,7 +71,7 @@ func TestCreateCommand(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := Run(context.Background(), api.CreateBranchBody{
-			Region: utils.Ptr("sin"),
+			Region: cast.Ptr("sin"),
 		}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error creating preview branch:")
