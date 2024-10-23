@@ -739,7 +739,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 	}
 	// Validate db config
 	if c.Db.Settings.SessionReplicationRole != nil {
-		allowedRoles := []SessionReplicationRole{"origin", "replica", "local"}
+		allowedRoles := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
 		if !sliceContains(allowedRoles, *c.Db.Settings.SessionReplicationRole) {
 			return errors.Errorf("Invalid config for db.session_replication_role: %s. Must be one of: %v", *c.Db.Settings.SessionReplicationRole, allowedRoles)
 		}

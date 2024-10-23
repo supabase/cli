@@ -69,7 +69,7 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 	remoteConfig := s.fromRemoteConfig(*dbConfig.JSON200)
 	restartRequired := s.requireDbRestart(remoteConfig)
 	if restartRequired {
-		fmt.Fprintln(os.Stderr, "DB service updates will require database restart...")
+		fmt.Fprintln(os.Stderr, "Database will be restarted to apply config updates...")
 	}
 	updateBody := s.ToUpdatePostgresConfigBody()
 	updateBody.RestartDatabase = &restartRequired
