@@ -388,12 +388,17 @@ type (
 		VectorPort uint16 `toml:"vector_port"`
 	}
 
+	webhooks struct {
+		Enabled bool `toml:"enabled"`
+	}
+
 	experimental struct {
-		OrioleDBVersion string `toml:"orioledb_version"`
-		S3Host          string `toml:"s3_host"`
-		S3Region        string `toml:"s3_region"`
-		S3AccessKey     string `toml:"s3_access_key"`
-		S3SecretKey     string `toml:"s3_secret_key"`
+		OrioleDBVersion string    `toml:"orioledb_version"`
+		S3Host          string    `toml:"s3_host"`
+		S3Region        string    `toml:"s3_region"`
+		S3AccessKey     string    `toml:"s3_access_key"`
+		S3SecretKey     string    `toml:"s3_secret_key"`
+		Webhooks        *webhooks `toml:"webhooks"`
 	}
 )
 
@@ -984,6 +989,10 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
+	// Validate experimental webhooks config
+	if err := c.Experimental.validateWebhooks(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1348,4 +1357,14 @@ func ToTomlBytes(config any) ([]byte, error) {
 		return nil, errors.Errorf("failed to marshal toml config: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// Add this method to the experimental struct
+func (e *experimental) validateWebhooks() error {
+	if e.Webhooks != nil {
+		if !e.Webhooks.Enabled {
+			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true left undefined")
+		}
+	}
+	return nil
 }

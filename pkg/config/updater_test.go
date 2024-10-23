@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestUpdateApi(t *testing.T) {
@@ -58,6 +59,158 @@ func TestUpdateApi(t *testing.T) {
 			})
 		// Run test
 		err := updater.UpdateApiConfig(context.Background(), "test-project", api{})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+}
+
+func TestUpdateDbConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("updates remote DB config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/database").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgresConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/database").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgresConfigResponse{
+				MaxConnections: cast.Ptr(cast.UintToInt(100)),
+			})
+		// Run test
+		err := updater.UpdateDbConfig(context.Background(), "test-project", db{
+			Settings: settings{
+				MaxConnections: cast.Ptr(cast.IntToUint(100)),
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips update if no diff in DB config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/database").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgresConfigResponse{
+				MaxConnections: cast.Ptr(cast.UintToInt(100)),
+			})
+		// Run test
+		err := updater.UpdateDbConfig(context.Background(), "test-project", db{
+			Settings: settings{
+				MaxConnections: cast.Ptr(cast.IntToUint(100)),
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+}
+
+func TestUpdateExperimentalConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("enables webhooks", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Post("/v1/projects/test-project/database/webhooks/enable").
+			Reply(http.StatusOK).
+			JSON(map[string]interface{}{})
+		// Run test
+		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", &experimental{
+			Webhooks: &webhooks{
+				Enabled: true,
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips update if webhooks not enabled", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Run test
+		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", &experimental{
+			Webhooks: &webhooks{
+				Enabled: false,
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+}
+
+func TestUpdateRemoteConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("updates all configs", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		// API config
+		gock.New(server).
+			Get("/v1/projects/test-project/postgrest").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgrestConfigWithJWTSecretResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/postgrest").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgrestConfigWithJWTSecretResponse{
+				DbSchema: "public",
+				MaxRows:  1000,
+			})
+		// DB config
+		gock.New(server).
+			Get("/v1/projects/test-project/config/database").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgresConfigResponse{})
+		gock.New(server).
+			Put("/v1/projects/test-project/config/database").
+			Reply(http.StatusOK).
+			JSON(v1API.PostgresConfigResponse{
+				MaxConnections: cast.Ptr(cast.UintToInt(100)),
+			})
+		// Experimental config
+		gock.New(server).
+			Post("/v1/projects/test-project/database/webhooks/enable").
+			Reply(http.StatusOK).
+			JSON(map[string]interface{}{})
+		// Run test
+		err := updater.UpdateRemoteConfig(context.Background(), baseConfig{
+			ProjectId: "test-project",
+			Api: api{
+				Enabled: true,
+				Schemas: []string{"public", "private"},
+				MaxRows: 1000,
+			},
+			Db: db{
+				Settings: settings{
+					MaxConnections: cast.Ptr(cast.IntToUint(100)),
+				},
+			},
+			Experimental: experimental{
+				Webhooks: &webhooks{
+					Enabled: true,
+				},
+			},
+		})
 		// Check result
 		assert.NoError(t, err)
 		assert.True(t, gock.IsDone())
