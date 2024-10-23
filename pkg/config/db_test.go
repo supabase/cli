@@ -11,7 +11,7 @@ import (
 func TestDbToUpdatePostgresConfigBody(t *testing.T) {
 	t.Run("converts all fields correctly", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				EffectiveCacheSize:     cast.Ptr("4GB"),
 				MaxConnections:         cast.Ptr(uint(100)),
 				SharedBuffers:          cast.Ptr("1GB"),
@@ -45,7 +45,7 @@ func TestDbToUpdatePostgresConfigBody(t *testing.T) {
 func TestDbDiffWithRemote(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				EffectiveCacheSize: cast.Ptr("4GB"),
 				MaxConnections:     cast.Ptr(uint(100)),
 				SharedBuffers:      cast.Ptr("1GB"),
@@ -71,7 +71,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 
 	t.Run("handles no differences", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				EffectiveCacheSize: cast.Ptr("4GB"),
 				MaxConnections:     cast.Ptr(uint(100)),
 				SharedBuffers:      cast.Ptr("1GB"),
@@ -92,7 +92,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 
 	t.Run("handles multiple schemas and search paths with spaces", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				EffectiveCacheSize: cast.Ptr("4GB"),
 				MaxConnections:     cast.Ptr(uint(100)),
 				SharedBuffers:      cast.Ptr("1GB"),
@@ -113,7 +113,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 
 	t.Run("handles api disabled on remote side", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				EffectiveCacheSize: cast.Ptr("4GB"),
 				MaxConnections:     cast.Ptr(uint(100)),
 				SharedBuffers:      cast.Ptr("1GB"),
@@ -134,7 +134,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 
 	t.Run("handles api disabled on local side", func(t *testing.T) {
 		db := &db{
-			remoteDb: remoteDb{
+			Settings: settings{
 				// All fields are nil to simulate disabled API
 			},
 		}

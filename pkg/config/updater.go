@@ -66,7 +66,7 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
-	remoteConfig := c.fromRemoteApiConfig(*dbConfig.JSON200)
+	remoteConfig := c.fromRemoteDbConfig(*dbConfig.JSON200)
 	restartRequired := requireDbRestart(&c, &remoteConfig)
 	if restartRequired {
 		fmt.Fprintln(os.Stderr, "DB service updates will require database restart...")

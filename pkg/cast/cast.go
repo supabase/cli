@@ -24,25 +24,14 @@ func UintToIntPtr(value *uint) *int {
 	if value == nil {
 		return nil
 	}
-	if *value <= math.MaxInt {
-		result := UintToInt(*value)
-		return &result
-	}
-	maxInt := math.MaxInt
-	return &maxInt
+	return Ptr(UintToInt(*value))
 }
 
 func IntToUintPtr(value *int) *uint {
-	var result uint
-	result = 0
 	if value == nil {
 		return nil
 	}
-	if *value < 0 {
-		return &result
-	}
-	result = IntToUint(*value)
-	return &result
+	return Ptr(IntToUint(*value))
 }
 
 func Ptr[T any](v T) *T {

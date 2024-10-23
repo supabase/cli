@@ -8,9 +8,7 @@ import (
 
 type (
 	PoolMode string
-
-	// All of thoses are remote only settings that'll apply to supabase hosted database
-	remoteDb struct {
+	settings struct {
 		EffectiveCacheSize            *string `toml:"effective_cache_size"`
 		LogicalDecodingWorkMem        *string `toml:"logical_decoding_work_mem"`
 		MaintenanceWorkMem            *string `toml:"maintenance_work_mem"`
@@ -35,15 +33,15 @@ type (
 	}
 
 	db struct {
-		remoteDb
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ShadowPort   uint16 `toml:"shadow_port"`
-		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-"`
-		RootKey      string `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler `toml:"pooler"`
-		Seed         seed   `toml:"seed"`
+		Image        string   `toml:"-"`
+		Port         uint16   `toml:"port"`
+		ShadowPort   uint16   `toml:"shadow_port"`
+		MajorVersion uint     `toml:"major_version"`
+		Password     string   `toml:"-"`
+		RootKey      string   `toml:"-" mapstructure:"root_key"`
+		Pooler       pooler   `toml:"pooler"`
+		Seed         seed     `toml:"seed"`
+		Settings     settings `toml:"settings"`
 	}
 
 	seed struct {
@@ -79,68 +77,68 @@ func isPointerValueEquals[T comparable](a, b *T) bool {
 
 // Compare two db config, if changes requires restart return true, return false otherwise
 func requireDbRestart(a *db, b *db) bool {
-	return !isPointerValueEquals(a.MaxConnections, b.MaxConnections) ||
-		!isPointerValueEquals(a.MaxWorkerProcesses, b.MaxWorkerProcesses) ||
-		!isPointerValueEquals(a.MaxParallelWorkers, b.MaxParallelWorkers) ||
-		!isPointerValueEquals(a.MaxWalSenders, b.MaxWalSenders) ||
-		!isPointerValueEquals(a.MaxReplicationSlots, b.MaxReplicationSlots) ||
-		!isPointerValueEquals(a.SharedBuffers, b.SharedBuffers)
+	return !isPointerValueEquals(a.Settings.MaxConnections, b.Settings.MaxConnections) ||
+		!isPointerValueEquals(a.Settings.MaxWorkerProcesses, b.Settings.MaxWorkerProcesses) ||
+		!isPointerValueEquals(a.Settings.MaxParallelWorkers, b.Settings.MaxParallelWorkers) ||
+		!isPointerValueEquals(a.Settings.MaxWalSenders, b.Settings.MaxWalSenders) ||
+		!isPointerValueEquals(a.Settings.MaxReplicationSlots, b.Settings.MaxReplicationSlots) ||
+		!isPointerValueEquals(a.Settings.SharedBuffers, b.Settings.SharedBuffers)
 }
 
 func (a *db) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body := v1API.UpdatePostgresConfigBody{}
 
 	// Parameters that require restart
-	body.MaxConnections = cast.UintToIntPtr(a.MaxConnections)
-	body.MaxWorkerProcesses = cast.UintToIntPtr(a.MaxWorkerProcesses)
-	body.MaxParallelWorkers = cast.UintToIntPtr(a.MaxParallelWorkers)
-	body.MaxWalSenders = cast.UintToIntPtr(a.MaxWalSenders)
-	body.MaxReplicationSlots = cast.UintToIntPtr(a.MaxReplicationSlots)
-	body.SharedBuffers = a.SharedBuffers
+	body.MaxConnections = cast.UintToIntPtr(a.Settings.MaxConnections)
+	body.MaxWorkerProcesses = cast.UintToIntPtr(a.Settings.MaxWorkerProcesses)
+	body.MaxParallelWorkers = cast.UintToIntPtr(a.Settings.MaxParallelWorkers)
+	body.MaxWalSenders = cast.UintToIntPtr(a.Settings.MaxWalSenders)
+	body.MaxReplicationSlots = cast.UintToIntPtr(a.Settings.MaxReplicationSlots)
+	body.SharedBuffers = a.Settings.SharedBuffers
 
 	// Parameters that can be changed without restart
-	body.EffectiveCacheSize = a.EffectiveCacheSize
-	body.LogicalDecodingWorkMem = a.LogicalDecodingWorkMem
-	body.MaintenanceWorkMem = a.MaintenanceWorkMem
-	body.MaxLocksPerTransaction = cast.UintToIntPtr(a.MaxLocksPerTransaction)
-	body.MaxParallelMaintenanceWorkers = cast.UintToIntPtr(a.MaxParallelMaintenanceWorkers)
-	body.MaxParallelWorkersPerGather = cast.UintToIntPtr(a.MaxParallelWorkersPerGather)
-	body.MaxSlotWalKeepSize = a.MaxSlotWalKeepSize
-	body.MaxStandbyArchiveDelay = a.MaxStandbyArchiveDelay
-	body.MaxStandbyStreamingDelay = a.MaxStandbyStreamingDelay
-	body.MaxWalSize = a.MaxWalSize
-	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.SessionReplicationRole)
-	body.StatementTimeout = a.StatementTimeout
-	body.WalKeepSize = a.WalKeepSize
-	body.WalSenderTimeout = a.WalSenderTimeout
-	body.WorkMem = a.WorkMem
+	body.EffectiveCacheSize = a.Settings.EffectiveCacheSize
+	body.LogicalDecodingWorkMem = a.Settings.LogicalDecodingWorkMem
+	body.MaintenanceWorkMem = a.Settings.MaintenanceWorkMem
+	body.MaxLocksPerTransaction = cast.UintToIntPtr(a.Settings.MaxLocksPerTransaction)
+	body.MaxParallelMaintenanceWorkers = cast.UintToIntPtr(a.Settings.MaxParallelMaintenanceWorkers)
+	body.MaxParallelWorkersPerGather = cast.UintToIntPtr(a.Settings.MaxParallelWorkersPerGather)
+	body.MaxSlotWalKeepSize = a.Settings.MaxSlotWalKeepSize
+	body.MaxStandbyArchiveDelay = a.Settings.MaxStandbyArchiveDelay
+	body.MaxStandbyStreamingDelay = a.Settings.MaxStandbyStreamingDelay
+	body.MaxWalSize = a.Settings.MaxWalSize
+	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.Settings.SessionReplicationRole)
+	body.StatementTimeout = a.Settings.StatementTimeout
+	body.WalKeepSize = a.Settings.WalKeepSize
+	body.WalSenderTimeout = a.Settings.WalSenderTimeout
+	body.WorkMem = a.Settings.WorkMem
 	return body
 }
 
-func (a *db) fromRemoteApiConfig(remoteConfig v1API.PostgresConfigResponse) db {
+func (a *db) fromRemoteDbConfig(remoteConfig v1API.PostgresConfigResponse) db {
 	result := *a
 
-	result.remoteDb.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
-	result.remoteDb.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
-	result.remoteDb.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
-	result.remoteDb.MaxConnections = cast.IntToUintPtr(remoteConfig.MaxConnections)
-	result.remoteDb.MaxLocksPerTransaction = cast.IntToUintPtr(remoteConfig.MaxLocksPerTransaction)
-	result.remoteDb.MaxParallelMaintenanceWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelMaintenanceWorkers)
-	result.remoteDb.MaxParallelWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelWorkers)
-	result.remoteDb.MaxParallelWorkersPerGather = cast.IntToUintPtr(remoteConfig.MaxParallelWorkersPerGather)
-	result.remoteDb.MaxReplicationSlots = cast.IntToUintPtr(remoteConfig.MaxReplicationSlots)
-	result.remoteDb.MaxSlotWalKeepSize = remoteConfig.MaxSlotWalKeepSize
-	result.remoteDb.MaxStandbyArchiveDelay = remoteConfig.MaxStandbyArchiveDelay
-	result.remoteDb.MaxStandbyStreamingDelay = remoteConfig.MaxStandbyStreamingDelay
-	result.remoteDb.MaxWalSenders = cast.IntToUintPtr(remoteConfig.MaxWalSenders)
-	result.remoteDb.MaxWalSize = remoteConfig.MaxWalSize
-	result.remoteDb.MaxWorkerProcesses = cast.IntToUintPtr(remoteConfig.MaxWorkerProcesses)
-	result.remoteDb.SessionReplicationRole = (*string)(remoteConfig.SessionReplicationRole)
-	result.remoteDb.SharedBuffers = remoteConfig.SharedBuffers
-	result.remoteDb.StatementTimeout = remoteConfig.StatementTimeout
-	result.remoteDb.WalKeepSize = remoteConfig.WalKeepSize
-	result.remoteDb.WalSenderTimeout = remoteConfig.WalSenderTimeout
-	result.remoteDb.WorkMem = remoteConfig.WorkMem
+	result.Settings.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
+	result.Settings.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
+	result.Settings.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
+	result.Settings.MaxConnections = cast.IntToUintPtr(remoteConfig.MaxConnections)
+	result.Settings.MaxLocksPerTransaction = cast.IntToUintPtr(remoteConfig.MaxLocksPerTransaction)
+	result.Settings.MaxParallelMaintenanceWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelMaintenanceWorkers)
+	result.Settings.MaxParallelWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelWorkers)
+	result.Settings.MaxParallelWorkersPerGather = cast.IntToUintPtr(remoteConfig.MaxParallelWorkersPerGather)
+	result.Settings.MaxReplicationSlots = cast.IntToUintPtr(remoteConfig.MaxReplicationSlots)
+	result.Settings.MaxSlotWalKeepSize = remoteConfig.MaxSlotWalKeepSize
+	result.Settings.MaxStandbyArchiveDelay = remoteConfig.MaxStandbyArchiveDelay
+	result.Settings.MaxStandbyStreamingDelay = remoteConfig.MaxStandbyStreamingDelay
+	result.Settings.MaxWalSenders = cast.IntToUintPtr(remoteConfig.MaxWalSenders)
+	result.Settings.MaxWalSize = remoteConfig.MaxWalSize
+	result.Settings.MaxWorkerProcesses = cast.IntToUintPtr(remoteConfig.MaxWorkerProcesses)
+	result.Settings.SessionReplicationRole = (*string)(remoteConfig.SessionReplicationRole)
+	result.Settings.SharedBuffers = remoteConfig.SharedBuffers
+	result.Settings.StatementTimeout = remoteConfig.StatementTimeout
+	result.Settings.WalKeepSize = remoteConfig.WalKeepSize
+	result.Settings.WalSenderTimeout = remoteConfig.WalSenderTimeout
+	result.Settings.WorkMem = remoteConfig.WorkMem
 	return result
 }
 
@@ -150,7 +148,7 @@ func (a *db) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
+	remoteCompare, err := ToTomlBytes(a.fromRemoteDbConfig(remoteConfig))
 	if err != nil {
 		return nil, err
 	}
