@@ -316,7 +316,7 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		utils.DbId = "supabase_db_test"
 		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
-		utils.Config.Db.Settings.MaxConnections = cast.Ptr(uint(200))
+		utils.Config.Db.Settings.MaxConnections = cast.Ptr(uint(50))
 
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -352,6 +352,6 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 
 		// Check if the custom MaxConnections setting was applied
 		config := NewContainerConfig()
-		assert.Contains(t, config.Entrypoint[2], "max_connections = 200")
+		assert.Contains(t, config.Entrypoint[2], "max_connections = 50")
 	})
 }
