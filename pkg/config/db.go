@@ -150,8 +150,8 @@ func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) s
 	return result
 }
 
+// create a valid string to append to /etc/postgresql/postgresql.conf
 func (a *settings) ToPostgresConfig() string {
-	// create a valid string to append to /etc/postgresql/postgresql.conf
 	var config strings.Builder
 
 	// Helper function to add a setting if it's not nil
@@ -195,9 +195,7 @@ func (a *settings) ToPostgresConfig() string {
 	addSetting("max_wal_senders", a.MaxWalSenders)
 	addSetting("max_wal_size", a.MaxWalSize)
 	addSetting("max_worker_processes", a.MaxWorkerProcesses)
-	if a.SessionReplicationRole != nil {
-		addSetting("session_replication_role", string(*a.SessionReplicationRole))
-	}
+	addSetting("session_replication_role", a.SessionReplicationRole)
 	addSetting("shared_buffers", a.SharedBuffers)
 	addSetting("statement_timeout", a.StatementTimeout)
 	addSetting("wal_keep_size", a.WalKeepSize)
