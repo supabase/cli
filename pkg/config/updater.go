@@ -51,14 +51,14 @@ func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, 
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db) error {
+func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef string, s settings) error {
 	dbConfig, err := u.client.V1GetPostgresConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read DB config: %w", err)
 	} else if dbConfig.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", dbConfig.StatusCode(), string(dbConfig.Body))
 	}
-	dbDiff, err := c.DiffWithRemote(*dbConfig.JSON200)
+	dbDiff, err := s.DiffWithRemote(*dbConfig.JSON200)
 	if err != nil {
 		return err
 	} else if len(dbDiff) == 0 {
@@ -66,17 +66,24 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
-	remoteConfig := c.fromRemoteDbConfig(*dbConfig.JSON200)
-	restartRequired := requireDbRestart(&c, &remoteConfig)
+	remoteConfig := s.fromRemoteConfig(*dbConfig.JSON200)
+	restartRequired := s.requireDbRestart(remoteConfig)
 	if restartRequired {
 		fmt.Fprintln(os.Stderr, "DB service updates will require database restart...")
 	}
-	updateBody := c.ToUpdatePostgresConfigBody()
+	updateBody := s.ToUpdatePostgresConfigBody()
 	updateBody.RestartDatabase = &restartRequired
 	if resp, err := u.client.V1UpdatePostgresConfigWithResponse(ctx, projectRef, updateBody); err != nil {
 		return errors.Errorf("failed to update DB config: %w", err)
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db) error {
+	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings); err != nil {
+		return err
 	}
 	return nil
 }

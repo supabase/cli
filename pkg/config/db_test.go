@@ -8,7 +8,7 @@ import (
 	"github.com/supabase/cli/pkg/cast"
 )
 
-func TestDbToUpdatePostgresConfigBody(t *testing.T) {
+func TestDbSettingsToUpdatePostgresConfigBody(t *testing.T) {
 	t.Run("converts all fields correctly", func(t *testing.T) {
 		db := &db{
 			Settings: settings{
@@ -16,11 +16,11 @@ func TestDbToUpdatePostgresConfigBody(t *testing.T) {
 				MaxConnections:         cast.Ptr(uint(100)),
 				SharedBuffers:          cast.Ptr("1GB"),
 				StatementTimeout:       cast.Ptr("30s"),
-				SessionReplicationRole: cast.Ptr("replica"),
+				SessionReplicationRole: cast.Ptr(SessionReplicationRoleReplica),
 			},
 		}
 
-		body := db.ToUpdatePostgresConfigBody()
+		body := db.Settings.ToUpdatePostgresConfigBody()
 
 		assert.Equal(t, "4GB", *body.EffectiveCacheSize)
 		assert.Equal(t, 100, *body.MaxConnections)
@@ -32,7 +32,7 @@ func TestDbToUpdatePostgresConfigBody(t *testing.T) {
 	t.Run("handles empty fields", func(t *testing.T) {
 		db := &db{}
 
-		body := db.ToUpdatePostgresConfigBody()
+		body := db.Settings.ToUpdatePostgresConfigBody()
 
 		assert.Nil(t, body.EffectiveCacheSize)
 		assert.Nil(t, body.MaxConnections)
@@ -42,7 +42,7 @@ func TestDbToUpdatePostgresConfigBody(t *testing.T) {
 	})
 }
 
-func TestDbDiffWithRemote(t *testing.T) {
+func TestDbSettingsDiffWithRemote(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
 		db := &db{
 			Settings: settings{
@@ -58,7 +58,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 			SharedBuffers:      cast.Ptr("2GB"),
 		}
 
-		diff, err := db.DiffWithRemote(remoteConfig)
+		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
 		assert.Contains(t, string(diff), "-effective_cache_size = \"8GB\"")
@@ -84,7 +84,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 			SharedBuffers:      cast.Ptr("1GB"),
 		}
 
-		diff, err := db.DiffWithRemote(remoteConfig)
+		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
 		assert.Empty(t, diff)
@@ -105,7 +105,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 			SharedBuffers:      cast.Ptr("1GB"),
 		}
 
-		diff, err := db.DiffWithRemote(remoteConfig)
+		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
 		assert.Empty(t, diff)
@@ -124,7 +124,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 			// All fields are nil to simulate disabled API
 		}
 
-		diff, err := db.DiffWithRemote(remoteConfig)
+		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
 		assert.Contains(t, string(diff), "+effective_cache_size = \"4GB\"")
@@ -145,7 +145,7 @@ func TestDbDiffWithRemote(t *testing.T) {
 			SharedBuffers:      cast.Ptr("1GB"),
 		}
 
-		diff, err := db.DiffWithRemote(remoteConfig)
+		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
 		assert.Contains(t, string(diff), "-effective_cache_size = \"4GB\"")
