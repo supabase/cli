@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -306,5 +307,57 @@ func TestSetupDatabase(t *testing.T) {
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+func TestStartDatabaseWithCustomSettings(t *testing.T) {
+	t.Run("starts database with custom MaxConnections", func(t *testing.T) {
+		// Setup
+		utils.Config.Db.MajorVersion = 15
+		utils.DbId = "supabase_db_test"
+		utils.ConfigId = "supabase_config_test"
+		utils.Config.Db.Port = 5432
+		utils.Config.Db.Settings.MaxConnections = cast.Ptr(uint(50))
+
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
+			Reply(http.StatusNotFound).
+			JSON(volume.Volume{})
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), utils.DbId)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: types.Healthy},
+				},
+			}})
+
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Storage.Image), "test-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		// Run test
+		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+
+		// Check if the custom MaxConnections setting was applied
+		config := NewContainerConfig()
+		assert.Contains(t, config.Entrypoint[2], "max_connections = 50")
 	})
 }

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+
 	"github.com/google/go-cmp/cmp"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -144,6 +146,17 @@ func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) s
 	result.WalSenderTimeout = remoteConfig.WalSenderTimeout
 	result.WorkMem = remoteConfig.WorkMem
 	return result
+}
+
+const pgConfHeader = "\n# supabase [db.settings] configuration\n"
+
+// create a valid string to append to /etc/postgresql/postgresql.conf
+func (a *settings) ToPostgresConfig() string {
+	// Assuming postgres settings is always a flat struct, we can serialise
+	// using toml, then replace double quotes with single.
+	data, _ := ToTomlBytes(*a)
+	body := bytes.ReplaceAll(data, []byte{'"'}, []byte{'\''})
+	return pgConfHeader + string(body)
 }
 
 func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]byte, error) {
