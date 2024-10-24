@@ -24,7 +24,7 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db); err != nil {
 		return err
 	}
-	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, &remote.Experimental); err != nil {
+	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental); err != nil {
 		return err
 	}
 	return nil
@@ -91,16 +91,15 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp *experimental) error {
-	if exp == nil {
-		return nil
-	}
-
+func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp experimental) error {
 	if exp.Webhooks != nil && exp.Webhooks.Enabled {
 		fmt.Fprintln(os.Stderr, "Enabling webhooks for the project...")
 
-		if _, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef); err != nil {
+		resp, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef)
+		if err != nil {
 			return errors.Errorf("failed to enable webhooks: %w", err)
+		} else if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+			return errors.Errorf("unexpected enable webhook status %d: %s", resp.StatusCode(), string(resp.Body))
 		}
 		fmt.Fprintln(os.Stderr, "Webhooks have been successfully enabled for the project.")
 		return nil

@@ -131,7 +131,7 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(map[string]interface{}{})
 		// Run test
-		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", &experimental{
+		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", experimental{
 			Webhooks: &webhooks{
 				Enabled: true,
 			},
@@ -144,7 +144,7 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 	t.Run("skips update if webhooks not enabled", func(t *testing.T) {
 		updater := NewConfigUpdater(*client)
 		// Run test
-		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", &experimental{
+		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", experimental{
 			Webhooks: &webhooks{
 				Enabled: false,
 			},
