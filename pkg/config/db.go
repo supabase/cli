@@ -153,6 +153,7 @@ func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) s
 // create a valid string to append to /etc/postgresql/postgresql.conf
 func (a *settings) ToPostgresConfig() string {
 	var config strings.Builder
+	fmt.Fprint(&config, "\n#supabase [db.settings] configuration\n")
 
 	// Helper function to add a setting if it's not nil
 	addSetting := func(name string, value interface{}) {
