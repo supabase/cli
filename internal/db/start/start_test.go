@@ -339,6 +339,12 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 				},
 			}})
 
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Storage.Image), "test-storage")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
