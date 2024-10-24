@@ -702,6 +702,8 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
 	for name, remote := range c.Overrides {
 		base := c.baseConfig.Clone()
+		// On remotes branches set seed as disabled by default
+		base.Db.Seed.Enabled = false
 		// Encode a toml file with only config overrides
 		var buf bytes.Buffer
 		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {

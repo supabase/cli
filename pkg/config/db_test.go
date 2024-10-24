@@ -153,3 +153,41 @@ func TestDbSettingsDiffWithRemote(t *testing.T) {
 		assert.Contains(t, string(diff), "-shared_buffers = \"1GB\"")
 	})
 }
+
+func TestSettingsToPostgresConfig(t *testing.T) {
+	t.Run("Only set values should appear", func(t *testing.T) {
+		settings := settings{
+			MaxConnections:         cast.Ptr(uint(100)),
+			MaxLocksPerTransaction: cast.Ptr(uint(64)),
+			SharedBuffers:          cast.Ptr("128MB"),
+			WorkMem:                cast.Ptr("4MB"),
+		}
+		got := settings.ToPostgresConfig()
+
+		assert.Contains(t, got, "max_connections = 100")
+		assert.Contains(t, got, "max_locks_per_transaction = 64")
+		assert.Contains(t, got, "shared_buffers = '128MB'")
+		assert.Contains(t, got, "work_mem = '4MB'")
+
+		assert.NotContains(t, got, "effective_cache_size")
+		assert.NotContains(t, got, "maintenance_work_mem")
+		assert.NotContains(t, got, "max_parallel_workers")
+	})
+
+	t.Run("SessionReplicationRole should be handled correctly", func(t *testing.T) {
+		settings := settings{
+			SessionReplicationRole: cast.Ptr(SessionReplicationRoleOrigin),
+		}
+		got := settings.ToPostgresConfig()
+
+		assert.Contains(t, got, "session_replication_role = 'origin'")
+	})
+
+	t.Run("Empty settings should result in empty string", func(t *testing.T) {
+		settings := settings{}
+		got := settings.ToPostgresConfig()
+
+		assert.Equal(t, got, "\n# supabase [db.settings] configuration\n")
+		assert.NotContains(t, got, "=")
+	})
+}
