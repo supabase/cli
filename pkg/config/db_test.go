@@ -187,7 +187,7 @@ func TestSettingsToPostgresConfig(t *testing.T) {
 		settings := settings{}
 		got := settings.ToPostgresConfig()
 
-		assert.Empty(t, got)
+		assert.Equal(t, got, "\n#supabase [db.settings] configuration\n")
 		assert.NotContains(t, got, "=")
 	})
 }
