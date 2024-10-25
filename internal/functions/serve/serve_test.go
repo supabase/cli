@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestServeCommand(t *testing.T) {
@@ -100,7 +101,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), ".env", utils.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
+		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})

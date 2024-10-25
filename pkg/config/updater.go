@@ -21,7 +21,12 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateApiConfig(ctx, remote.ProjectId, remote.Api); err != nil {
 		return err
 	}
-	// TODO: implement other service configs, ie. auth
+	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db); err != nil {
+		return err
+	}
+	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -40,10 +45,61 @@ func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, 
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating API service with config:", string(apiDiff))
+
 	if resp, err := u.client.V1UpdatePostgrestServiceConfigWithResponse(ctx, projectRef, c.ToUpdatePostgrestConfigBody()); err != nil {
 		return errors.Errorf("failed to update API config: %w", err)
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef string, s settings) error {
+	dbConfig, err := u.client.V1GetPostgresConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read DB config: %w", err)
+	} else if dbConfig.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", dbConfig.StatusCode(), string(dbConfig.Body))
+	}
+	dbDiff, err := s.DiffWithRemote(*dbConfig.JSON200)
+	if err != nil {
+		return err
+	} else if len(dbDiff) == 0 {
+		fmt.Fprintln(os.Stderr, "Remote DB config is up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
+	remoteConfig := s.fromRemoteConfig(*dbConfig.JSON200)
+	restartRequired := s.requireDbRestart(remoteConfig)
+	if restartRequired {
+		fmt.Fprintln(os.Stderr, "Database will be restarted to apply config updates...")
+	}
+	updateBody := s.ToUpdatePostgresConfigBody()
+	updateBody.RestartDatabase = &restartRequired
+	if resp, err := u.client.V1UpdatePostgresConfigWithResponse(ctx, projectRef, updateBody); err != nil {
+		return errors.Errorf("failed to update DB config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db) error {
+	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp experimental) error {
+	if exp.Webhooks != nil && exp.Webhooks.Enabled {
+		fmt.Fprintln(os.Stderr, "Enabling webhooks for the project...")
+
+		if resp, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef); err != nil {
+			return errors.Errorf("failed to enable webhooks: %w", err)
+		} else if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+			return errors.Errorf("unexpected enable webhook status %d: %s", resp.StatusCode(), string(resp.Body))
+		}
 	}
 	return nil
 }

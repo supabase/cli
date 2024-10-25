@@ -93,9 +93,12 @@ func TestConfigParsing(t *testing.T) {
 		assert.Equal(t, false, production.Auth.EnableSignup)
 		assert.Equal(t, false, production.Auth.External["azure"].Enabled)
 		assert.Equal(t, "nope", production.Auth.External["azure"].ClientId)
+		// Check seed should be disabled by default for remote configs
+		assert.Equal(t, false, production.Db.Seed.Enabled)
 		// Check the values for the staging override
 		assert.Equal(t, "staging-project", staging.ProjectId)
 		assert.Equal(t, []string{"image/png"}, staging.Storage.Buckets["images"].AllowedMimeTypes)
+		assert.Equal(t, true, staging.Db.Seed.Enabled)
 	})
 }
 

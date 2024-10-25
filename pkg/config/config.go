@@ -57,13 +57,6 @@ const (
 	LogflareBigQuery LogflareBackend = "bigquery"
 )
 
-type PoolMode string
-
-const (
-	TransactionMode PoolMode = "transaction"
-	SessionMode     PoolMode = "session"
-)
-
 type AddressFamily string
 
 const (
@@ -144,36 +137,6 @@ type (
 		baseConfig `mapstructure:",squash"`
 		Overrides  map[string]interface{} `toml:"remotes"`
 		Remotes    map[string]baseConfig  `toml:"-"`
-	}
-
-	db struct {
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ShadowPort   uint16 `toml:"shadow_port"`
-		MajorVersion uint   `toml:"major_version"`
-		Password     string `toml:"-"`
-		RootKey      string `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler `toml:"pooler"`
-		Seed         seed   `toml:"seed"`
-	}
-
-	seed struct {
-		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
-		SqlPaths     []string `toml:"-"`
-	}
-
-	pooler struct {
-		Enabled          bool     `toml:"enabled"`
-		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
-		ConnectionString string   `toml:"-"`
-		TenantId         string   `toml:"-"`
-		EncryptionKey    string   `toml:"-"`
-		SecretKeyBase    string   `toml:"-"`
 	}
 
 	realtime struct {
@@ -425,12 +388,17 @@ type (
 		VectorPort uint16 `toml:"vector_port"`
 	}
 
+	webhooks struct {
+		Enabled bool `toml:"enabled"`
+	}
+
 	experimental struct {
-		OrioleDBVersion string `toml:"orioledb_version"`
-		S3Host          string `toml:"s3_host"`
-		S3Region        string `toml:"s3_region"`
-		S3AccessKey     string `toml:"s3_access_key"`
-		S3SecretKey     string `toml:"s3_secret_key"`
+		OrioleDBVersion string    `toml:"orioledb_version"`
+		S3Host          string    `toml:"s3_host"`
+		S3Region        string    `toml:"s3_region"`
+		S3AccessKey     string    `toml:"s3_access_key"`
+		S3SecretKey     string    `toml:"s3_secret_key"`
+		Webhooks        *webhooks `toml:"webhooks"`
 	}
 )
 
@@ -734,6 +702,8 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
 	for name, remote := range c.Overrides {
 		base := c.baseConfig.Clone()
+		// On remotes branches set seed as disabled by default
+		base.Db.Seed.Enabled = false
 		// Encode a toml file with only config overrides
 		var buf bytes.Buffer
 		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
@@ -775,6 +745,12 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate db config
+	if c.Db.Settings.SessionReplicationRole != nil {
+		allowedRoles := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
+		if !sliceContains(allowedRoles, *c.Db.Settings.SessionReplicationRole) {
+			return errors.Errorf("Invalid config for db.session_replication_role: %s. Must be one of: %v", *c.Db.Settings.SessionReplicationRole, allowedRoles)
+		}
+	}
 	if c.Db.Port == 0 {
 		return errors.New("Missing required field in config: db.port")
 	}
@@ -1014,6 +990,9 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
 			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
+	}
+	if err := c.Experimental.validateWebhooks(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1379,4 +1358,13 @@ func ToTomlBytes(config any) ([]byte, error) {
 		return nil, errors.Errorf("failed to marshal toml config: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func (e *experimental) validateWebhooks() error {
+	if e.Webhooks != nil {
+		if !e.Webhooks.Enabled {
+			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
+		}
+	}
+	return nil
 }

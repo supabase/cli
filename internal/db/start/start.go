@@ -56,7 +56,6 @@ func NewContainerConfig() container.Config {
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
-		"POSTGRES_INITDB_ARGS=--lc-ctype=C.UTF-8",
 		"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
 	}
@@ -81,13 +80,18 @@ func NewContainerConfig() container.Config {
 			Timeout:  2 * time.Second,
 			Retries:  3,
 		},
-		Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/postgresql.schema.sql && cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && docker-entrypoint.sh postgres -D /etc/postgresql
+		Entrypoint: []string{"sh", "-c", `
+cat <<'EOF' > /etc/postgresql.schema.sql && \
+cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
+cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
+docker-entrypoint.sh postgres -D /etc/postgresql
 ` + initialSchema + `
 ` + _supabaseSchema + `
 EOF
 ` + utils.Config.Db.RootKey + `
 EOF
-`},
+` + utils.Config.Db.Settings.ToPostgresConfig() + `
+EOF`},
 	}
 	if utils.Config.Db.MajorVersion >= 14 {
 		config.Cmd = []string{"postgres",
@@ -124,11 +128,13 @@ func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...f
 	}
 	if utils.Config.Db.MajorVersion <= 14 {
 		config.Entrypoint = []string{"sh", "-c", `
-			cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql
+cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \
+cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
+docker-entrypoint.sh postgres -D /etc/postgresql
 ` + _supabaseSchema + `
 EOF
-			docker-entrypoint.sh postgres -D /etc/postgresql
-		`}
+` + utils.Config.Db.Settings.ToPostgresConfig() + `
+EOF`}
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly

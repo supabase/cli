@@ -237,5 +237,8 @@ client_id = "nope"
 [remotes.staging]
 project_id = "staging-project"
 
+[remotes.staging.db.seed]
+enabled = true
+
 [remotes.staging.storage.buckets.images]
 allowed_mime_types = ["image/png"]
