@@ -95,14 +95,11 @@ func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef
 	if exp.Webhooks != nil && exp.Webhooks.Enabled {
 		fmt.Fprintln(os.Stderr, "Enabling webhooks for the project...")
 
-		resp, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef)
-		if err != nil {
+		if resp, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef); err != nil {
 			return errors.Errorf("failed to enable webhooks: %w", err)
 		} else if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
 			return errors.Errorf("unexpected enable webhook status %d: %s", resp.StatusCode(), string(resp.Body))
 		}
-		fmt.Fprintln(os.Stderr, "Webhooks have been successfully enabled for the project.")
-		return nil
 	}
 	return nil
 }
