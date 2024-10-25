@@ -12,7 +12,6 @@ require (
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.60.4
-	github.com/danieljoos/wincred v1.2.2
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
 	github.com/docker/cli v27.3.1+incompatible
 	github.com/docker/docker v27.3.1+incompatible
@@ -48,7 +47,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/stripe/pg-schema-diff v0.7.0
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
-	github.com/zalando/go-keyring v0.2.5
+	github.com/zalando/go-keyring v0.2.6
 	go.opentelemetry.io/otel v1.31.0
 	golang.org/x/mod v0.21.0
 	golang.org/x/oauth2 v0.23.0
@@ -61,6 +60,7 @@ require (
 require (
 	4d63.com/gocheckcompilerdirectives v1.2.1 // indirect
 	4d63.com/gochecknoglobals v0.2.1 // indirect
+	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/4meepo/tagalign v1.3.4 // indirect
 	github.com/Abirdcfly/dupword v0.1.1 // indirect
@@ -77,7 +77,6 @@ require (
 	github.com/ProtonMail/go-crypto v1.0.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.8.0 // indirect
 	github.com/alecthomas/go-check-sumtype v0.1.4 // indirect
-	github.com/alessio/shellescape v1.4.1 // indirect
 	github.com/alexkohler/nakedret/v2 v2.0.4 // indirect
 	github.com/alexkohler/prealloc v1.0.0 // indirect
 	github.com/alingse/asasalint v0.0.11 // indirect
@@ -115,6 +114,7 @@ require (
 	github.com/curioswitch/go-reassign v0.2.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.1 // indirect
 	github.com/daixiang0/gci v0.13.5 // indirect
+	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect

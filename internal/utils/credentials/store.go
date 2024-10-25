@@ -65,7 +65,16 @@ func (ks *KeyringStore) Delete(project string) error {
 }
 
 func (ks *KeyringStore) DeleteAll() error {
-	return deleteAll(namespace)
+	if err := assertKeyringSupported(); err != nil {
+		return err
+	}
+	if err := keyring.DeleteAll(namespace); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return ErrNotSupported
+		}
+		return errors.Errorf("failed to delete all credentials in %s: %w", namespace, err)
+	}
+	return nil
 }
 
 func assertKeyringSupported() error {
