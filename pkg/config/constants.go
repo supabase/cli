@@ -6,7 +6,7 @@ const (
 	Pg15Image = "supabase/postgres:15.1.1.78"
 	// Append to ServiceImages when adding new dependencies below
 	// TODO: try https://github.com/axllent/mailpit
-	kongImage        = "library/kong:2.8.1"
+	kongImage        = "library/kong:3.8.0"
 	inbucketImage    = "inbucket/inbucket:3.0.3"
 	postgrestImage   = "postgrest/postgrest:v12.2.0"
 	pgmetaImage      = "supabase/postgres-meta:v0.84.2"
