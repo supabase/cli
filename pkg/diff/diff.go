@@ -259,3 +259,16 @@ func tgs(x, y []string) []pair {
 	seq[0] = pair{0, 0} // sentinel at start
 	return seq
 }
+
+func CompareSensitiveField[T comparable](local *T, remote *T) {
+	if remote == nil {
+		return
+	}
+	if *local != *remote {
+		*local = any("<changed-sensitive-value-hidden>").(T)
+		*remote = any("<original-sensitive-value-hidden>").(T)
+	} else {
+		*local = any("<unchanged-sensitive-value-hidden>").(T)
+		*remote = any("<unchanged-sensitive-value-hidden>").(T)
+	}
+}
