@@ -678,6 +678,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if bucket.FileSizeLimit == 0 {
 			bucket.FileSizeLimit = c.Storage.FileSizeLimit
 		}
+		if len(bucket.ObjectsPath) > 0 && !filepath.IsAbs(bucket.ObjectsPath) {
+			bucket.ObjectsPath = filepath.Join(builder.SupabaseDirPath, bucket.ObjectsPath)
+		}
 		c.Storage.Buckets[name] = bucket
 	}
 	for slug, function := range c.Functions {
