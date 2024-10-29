@@ -33,6 +33,7 @@ const (
 	BranchDetailResponseStatusPAUSEFAILED     BranchDetailResponseStatus = "PAUSE_FAILED"
 	BranchDetailResponseStatusPAUSING         BranchDetailResponseStatus = "PAUSING"
 	BranchDetailResponseStatusREMOVED         BranchDetailResponseStatus = "REMOVED"
+	BranchDetailResponseStatusRESIZING        BranchDetailResponseStatus = "RESIZING"
 	BranchDetailResponseStatusRESTARTING      BranchDetailResponseStatus = "RESTARTING"
 	BranchDetailResponseStatusRESTOREFAILED   BranchDetailResponseStatus = "RESTORE_FAILED"
 	BranchDetailResponseStatusRESTORING       BranchDetailResponseStatus = "RESTORING"
@@ -335,6 +336,7 @@ const (
 	V1ProjectResponseStatusPAUSEFAILED     V1ProjectResponseStatus = "PAUSE_FAILED"
 	V1ProjectResponseStatusPAUSING         V1ProjectResponseStatus = "PAUSING"
 	V1ProjectResponseStatusREMOVED         V1ProjectResponseStatus = "REMOVED"
+	V1ProjectResponseStatusRESIZING        V1ProjectResponseStatus = "RESIZING"
 	V1ProjectResponseStatusRESTARTING      V1ProjectResponseStatus = "RESTARTING"
 	V1ProjectResponseStatusRESTOREFAILED   V1ProjectResponseStatus = "RESTORE_FAILED"
 	V1ProjectResponseStatusRESTORING       V1ProjectResponseStatus = "RESTORING"
@@ -652,7 +654,8 @@ type BranchDetailResponseStatus string
 
 // BranchResetResponse defines model for BranchResetResponse.
 type BranchResetResponse struct {
-	Message string `json:"message"`
+	Message       string `json:"message"`
+	WorkflowRunId string `json:"workflow_run_id"`
 }
 
 // BranchResponse defines model for BranchResponse.
@@ -1138,6 +1141,22 @@ type SslValidation struct {
 	ValidationRecords []ValidationRecord `json:"validation_records"`
 }
 
+// StorageConfigResponse defines model for StorageConfigResponse.
+type StorageConfigResponse struct {
+	Features      StorageFeatures `json:"features"`
+	FileSizeLimit float32         `json:"fileSizeLimit"`
+}
+
+// StorageFeatureImageTransformation defines model for StorageFeatureImageTransformation.
+type StorageFeatureImageTransformation struct {
+	Enabled bool `json:"enabled"`
+}
+
+// StorageFeatures defines model for StorageFeatures.
+type StorageFeatures struct {
+	ImageTransformation StorageFeatureImageTransformation `json:"imageTransformation"`
+}
+
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
 type SubdomainAvailabilityResponse struct {
 	Available bool `json:"available"`
@@ -1450,6 +1469,12 @@ type UpdateProviderResponse struct {
 	UpdatedAt *string         `json:"updated_at,omitempty"`
 }
 
+// UpdateStorageConfigBody defines model for UpdateStorageConfigBody.
+type UpdateStorageConfigBody struct {
+	Features      *StorageFeatures `json:"features,omitempty"`
+	FileSizeLimit *float32         `json:"fileSizeLimit,omitempty"`
+}
+
 // UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.
 type UpdateSupavisorConfigBody struct {
 	DefaultPoolSize *int `json:"default_pool_size"`
@@ -1725,8 +1750,8 @@ type V1AuthorizeUserParamsResponseType string
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
 
-// CreateFunctionParams defines parameters for CreateFunction.
-type CreateFunctionParams struct {
+// V1CreateAFunctionParams defines parameters for V1CreateAFunction.
+type V1CreateAFunctionParams struct {
 	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
 	Name           *string `form:"name,omitempty" json:"name,omitempty"`
 	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
@@ -1814,6 +1839,9 @@ type V1UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
 
+// V1UpdateStorageConfigJSONRequestBody defines body for V1UpdateStorageConfig for application/json ContentType.
+type V1UpdateStorageConfigJSONRequestBody = UpdateStorageConfigBody
+
 // V1UpdateHostnameConfigJSONRequestBody defines body for V1UpdateHostnameConfig for application/json ContentType.
 type V1UpdateHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
 
@@ -1823,8 +1851,8 @@ type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
 
-// CreateFunctionJSONRequestBody defines body for CreateFunction for application/json ContentType.
-type CreateFunctionJSONRequestBody = V1CreateFunctionBody
+// V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
+type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
 
 // V1UpdateAFunctionJSONRequestBody defines body for V1UpdateAFunction for application/json ContentType.
 type V1UpdateAFunctionJSONRequestBody = V1UpdateFunctionBody
