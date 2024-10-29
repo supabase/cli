@@ -117,6 +117,10 @@ double_confirm_changes = true
 enable_confirmations = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
+# Number of characters used in the email OTP.
+otp_length = 6
+# Number of seconds before the email OTP expires.
+otp_expiry = 300
 
 # Use a production-ready SMTP server
 [auth.email.smtp]

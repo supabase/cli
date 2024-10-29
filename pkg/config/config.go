@@ -258,6 +258,8 @@ type (
 		Template             map[string]emailTemplate `toml:"template"`
 		Smtp                 smtp                     `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
+		OtpLength            uint                     `toml:"otp_length"`
+		OtpExpiry            uint                     `toml:"otp_expiry"`
 	}
 
 	smtp struct {
