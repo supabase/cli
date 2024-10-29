@@ -309,6 +309,7 @@ type (
 	mfa struct {
 		TOTP               factorTypeConfiguration      `toml:"totp"`
 		Phone              phoneFactorTypeConfiguration `toml:"phone"`
+		WebAuthn           factorTypeConfiguration      `toml:"web_authn"`
 		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
 	}
 
