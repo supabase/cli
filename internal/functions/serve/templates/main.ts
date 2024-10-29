@@ -43,6 +43,7 @@ const DENO_SB_ERROR_MAP = new Map([
 ]);
 
 interface FunctionConfig {
+  entrypointPath: string;
   importMapPath: string;
   verifyJWT: boolean;
 }
