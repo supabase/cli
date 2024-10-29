@@ -226,6 +226,14 @@ type ClientInterface interface {
 
 	V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetStorageConfig request
+	V1GetStorageConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateStorageConfigWithBody request with any body
+	V1UpdateStorageConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateStorageConfig(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1DeleteHostnameConfig request
 	V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -262,10 +270,10 @@ type ClientInterface interface {
 	// V1ListAllFunctions request
 	V1ListAllFunctions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateFunctionWithBody request with any body
-	CreateFunctionWithBody(ctx context.Context, ref string, params *CreateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1CreateAFunctionWithBody request with any body
+	V1CreateAFunctionWithBody(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateFunction(ctx context.Context, ref string, params *CreateFunctionParams, body CreateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteAFunction request
 	V1DeleteAFunction(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -993,6 +1001,42 @@ func (c *Client) V1UpdatePostgresConfig(ctx context.Context, ref string, body V1
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetStorageConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetStorageConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateStorageConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateStorageConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateStorageConfig(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateStorageConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DeleteHostnameConfigRequest(c.Server, ref)
 	if err != nil {
@@ -1149,8 +1193,8 @@ func (c *Client) V1ListAllFunctions(ctx context.Context, ref string, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateFunctionWithBody(ctx context.Context, ref string, params *CreateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFunctionRequestWithBody(c.Server, ref, params, contentType, body)
+func (c *Client) V1CreateAFunctionWithBody(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateAFunctionRequestWithBody(c.Server, ref, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1161,8 +1205,8 @@ func (c *Client) CreateFunctionWithBody(ctx context.Context, ref string, params 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateFunction(ctx context.Context, ref string, params *CreateFunctionParams, body CreateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFunctionRequest(c.Server, ref, params, body)
+func (c *Client) V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateAFunctionRequest(c.Server, ref, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3281,6 +3325,87 @@ func NewV1UpdatePostgresConfigRequestWithBody(server string, ref string, content
 	return req, nil
 }
 
+// NewV1GetStorageConfigRequest generates requests for V1GetStorageConfig
+func NewV1GetStorageConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/storage", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateStorageConfigRequest calls the generic V1UpdateStorageConfig builder with application/json body
+func NewV1UpdateStorageConfigRequest(server string, ref string, body V1UpdateStorageConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateStorageConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateStorageConfigRequestWithBody generates requests for V1UpdateStorageConfig with any type of body
+func NewV1UpdateStorageConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/storage", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1DeleteHostnameConfigRequest generates requests for V1DeleteHostnameConfig
 func NewV1DeleteHostnameConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -3660,19 +3785,19 @@ func NewV1ListAllFunctionsRequest(server string, ref string) (*http.Request, err
 	return req, nil
 }
 
-// NewCreateFunctionRequest calls the generic CreateFunction builder with application/json body
-func NewCreateFunctionRequest(server string, ref string, params *CreateFunctionParams, body CreateFunctionJSONRequestBody) (*http.Request, error) {
+// NewV1CreateAFunctionRequest calls the generic V1CreateAFunction builder with application/json body
+func NewV1CreateAFunctionRequest(server string, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateFunctionRequestWithBody(server, ref, params, "application/json", bodyReader)
+	return NewV1CreateAFunctionRequestWithBody(server, ref, params, "application/json", bodyReader)
 }
 
-// NewCreateFunctionRequestWithBody generates requests for CreateFunction with any type of body
-func NewCreateFunctionRequestWithBody(server string, ref string, params *CreateFunctionParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1CreateAFunctionRequestWithBody generates requests for V1CreateAFunction with any type of body
+func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5503,6 +5628,14 @@ type ClientWithResponsesInterface interface {
 
 	V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
 
+	// V1GetStorageConfigWithResponse request
+	V1GetStorageConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetStorageConfigResponse, error)
+
+	// V1UpdateStorageConfigWithBodyWithResponse request with any body
+	V1UpdateStorageConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error)
+
+	V1UpdateStorageConfigWithResponse(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error)
+
 	// V1DeleteHostnameConfigWithResponse request
 	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
 
@@ -5539,10 +5672,10 @@ type ClientWithResponsesInterface interface {
 	// V1ListAllFunctionsWithResponse request
 	V1ListAllFunctionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllFunctionsResponse, error)
 
-	// CreateFunctionWithBodyWithResponse request with any body
-	CreateFunctionWithBodyWithResponse(ctx context.Context, ref string, params *CreateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFunctionResponse, error)
+	// V1CreateAFunctionWithBodyWithResponse request with any body
+	V1CreateAFunctionWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error)
 
-	CreateFunctionWithResponse(ctx context.Context, ref string, params *CreateFunctionParams, body CreateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFunctionResponse, error)
+	V1CreateAFunctionWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error)
 
 	// V1DeleteAFunctionWithResponse request
 	V1DeleteAFunctionWithResponse(ctx context.Context, ref string, functionSlug string, reqEditors ...RequestEditorFn) (*V1DeleteAFunctionResponse, error)
@@ -6482,6 +6615,49 @@ func (r V1UpdatePostgresConfigResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetStorageConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *StorageConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetStorageConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetStorageConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateStorageConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateStorageConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateStorageConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1DeleteHostnameConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6699,14 +6875,14 @@ func (r V1ListAllFunctionsResponse) StatusCode() int {
 	return 0
 }
 
-type CreateFunctionResponse struct {
+type V1CreateAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *FunctionResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r CreateFunctionResponse) Status() string {
+func (r V1CreateAFunctionResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -6714,7 +6890,7 @@ func (r CreateFunctionResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CreateFunctionResponse) StatusCode() int {
+func (r V1CreateAFunctionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7876,6 +8052,32 @@ func (c *ClientWithResponses) V1UpdatePostgresConfigWithResponse(ctx context.Con
 	return ParseV1UpdatePostgresConfigResponse(rsp)
 }
 
+// V1GetStorageConfigWithResponse request returning *V1GetStorageConfigResponse
+func (c *ClientWithResponses) V1GetStorageConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetStorageConfigResponse, error) {
+	rsp, err := c.V1GetStorageConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetStorageConfigResponse(rsp)
+}
+
+// V1UpdateStorageConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateStorageConfigResponse
+func (c *ClientWithResponses) V1UpdateStorageConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error) {
+	rsp, err := c.V1UpdateStorageConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateStorageConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateStorageConfigWithResponse(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error) {
+	rsp, err := c.V1UpdateStorageConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateStorageConfigResponse(rsp)
+}
+
 // V1DeleteHostnameConfigWithResponse request returning *V1DeleteHostnameConfigResponse
 func (c *ClientWithResponses) V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error) {
 	rsp, err := c.V1DeleteHostnameConfig(ctx, ref, reqEditors...)
@@ -7990,21 +8192,21 @@ func (c *ClientWithResponses) V1ListAllFunctionsWithResponse(ctx context.Context
 	return ParseV1ListAllFunctionsResponse(rsp)
 }
 
-// CreateFunctionWithBodyWithResponse request with arbitrary body returning *CreateFunctionResponse
-func (c *ClientWithResponses) CreateFunctionWithBodyWithResponse(ctx context.Context, ref string, params *CreateFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFunctionResponse, error) {
-	rsp, err := c.CreateFunctionWithBody(ctx, ref, params, contentType, body, reqEditors...)
+// V1CreateAFunctionWithBodyWithResponse request with arbitrary body returning *V1CreateAFunctionResponse
+func (c *ClientWithResponses) V1CreateAFunctionWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error) {
+	rsp, err := c.V1CreateAFunctionWithBody(ctx, ref, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateFunctionResponse(rsp)
+	return ParseV1CreateAFunctionResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateFunctionWithResponse(ctx context.Context, ref string, params *CreateFunctionParams, body CreateFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFunctionResponse, error) {
-	rsp, err := c.CreateFunction(ctx, ref, params, body, reqEditors...)
+func (c *ClientWithResponses) V1CreateAFunctionWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error) {
+	rsp, err := c.V1CreateAFunction(ctx, ref, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateFunctionResponse(rsp)
+	return ParseV1CreateAFunctionResponse(rsp)
 }
 
 // V1DeleteAFunctionWithResponse request returning *V1DeleteAFunctionResponse
@@ -9350,6 +9552,48 @@ func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresC
 	return response, nil
 }
 
+// ParseV1GetStorageConfigResponse parses an HTTP response from a V1GetStorageConfigWithResponse call
+func ParseV1GetStorageConfigResponse(rsp *http.Response) (*V1GetStorageConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetStorageConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StorageConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateStorageConfigResponse parses an HTTP response from a V1UpdateStorageConfigWithResponse call
+func ParseV1UpdateStorageConfigResponse(rsp *http.Response) (*V1UpdateStorageConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateStorageConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1DeleteHostnameConfigResponse parses an HTTP response from a V1DeleteHostnameConfigWithResponse call
 func ParseV1DeleteHostnameConfigResponse(rsp *http.Response) (*V1DeleteHostnameConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -9580,15 +9824,15 @@ func ParseV1ListAllFunctionsResponse(rsp *http.Response) (*V1ListAllFunctionsRes
 	return response, nil
 }
 
-// ParseCreateFunctionResponse parses an HTTP response from a CreateFunctionWithResponse call
-func ParseCreateFunctionResponse(rsp *http.Response) (*CreateFunctionResponse, error) {
+// ParseV1CreateAFunctionResponse parses an HTTP response from a V1CreateAFunctionWithResponse call
+func ParseV1CreateAFunctionResponse(rsp *http.Response) (*V1CreateAFunctionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateFunctionResponse{
+	response := &V1CreateAFunctionResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
