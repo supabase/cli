@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/role_configs"
 	"github.com/supabase/cli/internal/inspect/role_connections"
 	"github.com/supabase/cli/internal/inspect/seq_scans"
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
@@ -65,6 +66,8 @@ func TestReportCommand(t *testing.T) {
 			Reply("COPY 0").
 			Query(wrapQuery(replication_slots.ReplicationSlotsQuery)).
 			Reply("COPY 0").
+			Query(wrapQuery(role_configs.RoleConfigsQuery)).
+			Reply("COPY 0").
 			Query(wrapQuery(role_connections.RoleConnectionsQuery)).
 			Reply("COPY 0").
 			Query(wrapQuery(seq_scans.SeqScansQuery)).
@@ -89,7 +92,7 @@ func TestReportCommand(t *testing.T) {
 		assert.NoError(t, err)
 		matches, err := afero.Glob(fsys, "*.csv")
 		assert.NoError(t, err)
-		assert.Len(t, matches, 19)
+		assert.Len(t, matches, 20)
 	})
 }
 
