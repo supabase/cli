@@ -1,7 +1,6 @@
 module github.com/supabase/cli
 
-go 1.22.4
-toolchain go1.23.2
+go 1.23.2
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
