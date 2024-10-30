@@ -58,6 +58,10 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 			slugs = append(slugs, slug)
 		}
 	}
+	// Add all function slugs declared in config file
+	for slug := range utils.Config.Functions {
+		slugs = append(slugs, slug)
+	}
 	return slugs, nil
 }
 

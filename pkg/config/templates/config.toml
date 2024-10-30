@@ -121,6 +121,10 @@ enable_confirmations = false
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
+# Number of characters used in the email OTP.
+otp_length = 6
+# Number of seconds before the email OTP expires (defaults to 1 hour).
+otp_expiry = 3600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -186,6 +190,11 @@ verify_enabled = true
 # otp_length = 6
 # template = "Your code is {{ `{{ .Code }}` }} ."
 # max_frequency = "10s"
+
+# Configure Multi-factor-authentication via WebAuthn
+# [auth.mfa.web_authn]
+# enroll_enabled = true
+# verify_enabled = true
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,

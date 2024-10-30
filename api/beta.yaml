@@ -1525,6 +1525,63 @@ paths:
         - Projects
       security:
         - bearer: []
+  /v1/projects/{ref}/config/storage:
+    get:
+      operationId: v1-get-storage-config
+      summary: Gets project's storage config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's storage config
+      tags:
+        - Storage
+      security:
+        - bearer: []
+    patch:
+      operationId: v1-update-storage-config
+      summary: Updates project's storage config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStorageConfigBody'
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's storage config
+      tags:
+        - Storage
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/database/postgres:
     get:
       operationId: v1-get-postgres-config
@@ -1910,7 +1967,7 @@ paths:
         - bearer: []
   /v1/projects/{ref}/functions:
     post:
-      operationId: createFunction
+      operationId: v1-create-a-function
       summary: Create a function
       description: Creates a function and adds it to the specified project.
       parameters:
@@ -2545,6 +2602,7 @@ components:
             - RESTORING
             - RESTORE_FAILED
             - PAUSE_FAILED
+            - RESIZING
           type: string
         db_host:
           type: string
@@ -2639,9 +2697,12 @@ components:
     BranchResetResponse:
       type: object
       properties:
+        workflow_run_id:
+          type: string
         message:
           type: string
       required:
+        - workflow_run_id
         - message
     V1DatabaseResponse:
       type: object
@@ -2701,6 +2762,7 @@ components:
             - RESTORING
             - RESTORE_FAILED
             - PAUSE_FAILED
+            - RESIZING
           type: string
       required:
         - id
@@ -3644,6 +3706,37 @@ components:
         - name
         - healthy
         - status
+    StorageFeatureImageTransformation:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+      required:
+        - enabled
+    StorageFeatures:
+      type: object
+      properties:
+        imageTransformation:
+          $ref: '#/components/schemas/StorageFeatureImageTransformation'
+      required:
+        - imageTransformation
+    StorageConfigResponse:
+      type: object
+      properties:
+        fileSizeLimit:
+          type: number
+        features:
+          $ref: '#/components/schemas/StorageFeatures'
+      required:
+        - fileSizeLimit
+        - features
+    UpdateStorageConfigBody:
+      type: object
+      properties:
+        fileSizeLimit:
+          type: number
+        features:
+          $ref: '#/components/schemas/StorageFeatures'
     PostgresConfigResponse:
       type: object
       properties:

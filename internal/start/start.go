@@ -485,6 +485,8 @@ EOF
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
+			fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
@@ -518,6 +520,8 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
 			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
 			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.VerifyEnabled),
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 

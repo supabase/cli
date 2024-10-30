@@ -2,6 +2,7 @@ import {
   STATUS_CODE,
   STATUS_TEXT,
 } from "https://deno.land/std/http/status.ts";
+import * as posix from "https://deno.land/std/path/posix/mod.ts";
 
 import * as jose from "https://deno.land/x/jose@v4.13.1/index.ts";
 
@@ -28,7 +29,6 @@ const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
 const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
-const FUNCTIONS_PATH = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_PATH")!;
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
@@ -43,6 +43,7 @@ const DENO_SB_ERROR_MAP = new Map([
 ]);
 
 interface FunctionConfig {
+  entrypointPath: string;
   importMapPath: string;
   verifyJWT: boolean;
 }
@@ -144,7 +145,7 @@ Deno.serve({
       }
     }
 
-    const servicePath = `${FUNCTIONS_PATH}/${functionName}`;
+    const servicePath = posix.dirname(functionsConfig[functionName].entrypointPath);
     console.error(`serving the request with ${servicePath}`);
 
     // Ref: https://supabase.com/docs/guides/functions/limits
@@ -167,6 +168,9 @@ Deno.serve({
     // point, as their migration process will not be easy.
     const decoratorType = "tc39";
 
+    const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
+    const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
+
     try {
       const worker = await EdgeRuntime.userWorkers.create({
         servicePath,
@@ -179,7 +183,8 @@ Deno.serve({
         customModuleRoot,
         cpuTimeSoftLimitMs,
         cpuTimeHardLimitMs,
-        decoratorType
+        decoratorType,
+        maybeEntrypoint
       });
 
       const controller = new AbortController();

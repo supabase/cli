@@ -61,7 +61,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
 				}
 			} else {
-				if resp, err := s.client.CreateFunctionWithBodyWithResponse(ctx, s.project, &api.CreateFunctionParams{
+				if resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 					Slug:           &slug,
 					Name:           &slug,
 					VerifyJwt:      function.VerifyJWT,

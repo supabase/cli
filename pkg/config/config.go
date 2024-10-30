@@ -188,6 +188,7 @@ type (
 		SecretAccessKey string `toml:"-"`
 		Region          string `toml:"-"`
 	}
+
 	edgeRuntime struct {
 		Enabled       bool          `toml:"enabled"`
 		Image         string        `toml:"-"`
@@ -198,10 +199,10 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled    *bool  `toml:"enabled"`
+		Enabled    *bool  `toml:"enabled" json:"-"`
 		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint string `json:"-"`
+		Entrypoint string `toml:"entrypoint" json:"entrypointPath,omitempty"`
 	}
 
 	analytics struct {
@@ -504,6 +505,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	for name, bucket := range c.Storage.Buckets {
 		if bucket.FileSizeLimit == 0 {
 			bucket.FileSizeLimit = c.Storage.FileSizeLimit
+		}
+		if len(bucket.ObjectsPath) > 0 && !filepath.IsAbs(bucket.ObjectsPath) {
+			bucket.ObjectsPath = filepath.Join(builder.SupabaseDirPath, bucket.ObjectsPath)
 		}
 		c.Storage.Buckets[name] = bucket
 	}
