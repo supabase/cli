@@ -1,10 +1,10 @@
 module github.com/supabase/cli
 
-go 1.22.4
+go 1.23.2
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
-	github.com/Netflix/go-env v0.1.0
+	github.com/Netflix/go-env v0.1.2
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/bubbles v0.18.0
