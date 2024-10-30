@@ -160,35 +160,6 @@ type (
 		Pop3Port uint16 `toml:"pop3_port"`
 	}
 
-	storage struct {
-		Enabled             bool                 `toml:"enabled"`
-		Image               string               `toml:"-"`
-		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
-		S3Credentials       storageS3Credentials `toml:"-"`
-		ImageTransformation imageTransformation  `toml:"image_transformation"`
-		Buckets             BucketConfig         `toml:"buckets"`
-	}
-
-	BucketConfig map[string]bucket
-
-	bucket struct {
-		Public           *bool       `toml:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
-	}
-
-	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
-	}
-
-	storageS3Credentials struct {
-		AccessKeyId     string `toml:"-"`
-		SecretAccessKey string `toml:"-"`
-		Region          string `toml:"-"`
-	}
-
 	edgeRuntime struct {
 		Enabled       bool          `toml:"enabled"`
 		Image         string        `toml:"-"`

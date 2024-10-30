@@ -24,6 +24,9 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db); err != nil {
 		return err
 	}
+	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage); err != nil {
+		return err
+	}
 	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental); err != nil {
 		return err
 	}
@@ -69,6 +72,7 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
+
 	remoteConfig := s.fromRemoteConfig(*dbConfig.JSON200)
 	restartRequired := s.requireDbRestart(remoteConfig)
 	if restartRequired {
@@ -91,14 +95,41 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 	return nil
 }
 
+func (u *ConfigUpdater) UpdateStorageConfig(ctx context.Context, projectRef string, c storage) error {
+	if !c.Enabled {
+		return nil
+	}
+	storageConfig, err := u.client.V1GetStorageConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read Storage config: %w", err)
+	} else if storageConfig.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", storageConfig.StatusCode(), string(storageConfig.Body))
+	}
+	storageDiff, err := c.DiffWithRemote(*storageConfig.JSON200)
+	if err != nil {
+		return err
+	} else if len(storageDiff) == 0 {
+		fmt.Fprintln(os.Stderr, "Remote Storage config is up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Updating Storage service with config:", string(storageDiff))
+
+	if resp, err := u.client.V1UpdateStorageConfigWithResponse(ctx, projectRef, c.ToUpdateStorageConfigBody()); err != nil {
+		return errors.Errorf("failed to update Storage config: %w", err)
+	} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+		return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
+	}
+	return nil
+}
+
 func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp experimental) error {
 	if exp.Webhooks != nil && exp.Webhooks.Enabled {
-		fmt.Fprintln(os.Stderr, "Enabling webhooks for the project...")
+		fmt.Fprintln(os.Stderr, "Enabling webhooks for project:", projectRef)
 
 		if resp, err := u.client.V1EnableDatabaseWebhookWithResponse(ctx, projectRef); err != nil {
 			return errors.Errorf("failed to enable webhooks: %w", err)
-		} else if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return errors.Errorf("unexpected enable webhook status %d: %s", resp.StatusCode(), string(resp.Body))
+		} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+			return errors.Errorf("unexpected enable webhook status %d: %s", status, string(resp.Body))
 		}
 	}
 	return nil
