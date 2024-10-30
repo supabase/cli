@@ -38,7 +38,7 @@ type (
 )
 
 func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
-	body := v1API.UpdateStorageConfigBody{}
+	body := v1API.UpdateStorageConfigBody{Features: &v1API.StorageFeatures{}}
 	body.FileSizeLimit = cast.Ptr(int64(s.FileSizeLimit))
 	body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
 	return body

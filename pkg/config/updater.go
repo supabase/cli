@@ -24,6 +24,9 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db); err != nil {
 		return err
 	}
+	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage); err != nil {
+		return err
+	}
 	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental); err != nil {
 		return err
 	}
