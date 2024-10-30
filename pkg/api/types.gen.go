@@ -1472,7 +1472,7 @@ type UpdateProviderResponse struct {
 // UpdateStorageConfigBody defines model for UpdateStorageConfigBody.
 type UpdateStorageConfigBody struct {
 	Features      *StorageFeatures `json:"features,omitempty"`
-	FileSizeLimit *float32         `json:"fileSizeLimit,omitempty"`
+	FileSizeLimit *int64           `json:"fileSizeLimit,omitempty"`
 }
 
 // UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.

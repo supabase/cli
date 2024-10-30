@@ -155,6 +155,52 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 	})
 }
 
+func TestUpdateStorageConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("updates remote Storage config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/storage").
+			Reply(http.StatusOK).
+			JSON(v1API.StorageConfigResponse{
+				FileSizeLimit: 100,
+				Features: v1API.StorageFeatures{
+					ImageTransformation: v1API.StorageFeatureImageTransformation{
+						Enabled: true,
+					},
+				},
+			})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/storage").
+			Reply(http.StatusOK)
+		// Run test
+		err := updater.UpdateStorageConfig(context.Background(), "test-project", storage{Enabled: true})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips update if no diff in Storage config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/storage").
+			Reply(http.StatusOK).
+			JSON(v1API.StorageConfigResponse{})
+		// Run test
+		err := updater.UpdateStorageConfig(context.Background(), "test-project", storage{Enabled: true})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+}
+
 func TestUpdateRemoteConfig(t *testing.T) {
 	server := "http://localhost"
 	client, err := v1API.NewClientWithResponses(server)
@@ -187,6 +233,14 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
+		// Storage config
+		gock.New(server).
+			Get("/v1/projects/test-project/config/storage").
+			Reply(http.StatusOK).
+			JSON(v1API.StorageConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/storage").
+			Reply(http.StatusOK)
 		// Experimental config
 		gock.New(server).
 			Post("/v1/projects/test-project/database/webhooks/enable").
@@ -203,6 +257,13 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			Db: db{
 				Settings: settings{
 					MaxConnections: cast.Ptr(cast.IntToUint(100)),
+				},
+			},
+			Storage: storage{
+				Enabled:       true,
+				FileSizeLimit: 100,
+				ImageTransformation: imageTransformation{
+					Enabled: true,
 				},
 			},
 			Experimental: experimental{
