@@ -218,18 +218,18 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		ExternalEmailEnabled:              cast.Ptr(a.Email.EnableSignup),
 		ExternalPhoneEnabled:              cast.Ptr(a.Sms.EnableSignup),
 		ExternalAnonymousUsersEnabled:     cast.Ptr(a.EnableAnonymousSignIns),
-		MfaMaxEnrolledFactors:             cast.Ptr(int(a.MFA.MaxEnrolledFactors)),
+		MfaMaxEnrolledFactors:             cast.Ptr(cast.UintToInt((a.MFA.MaxEnrolledFactors))),
 		MfaTotpEnrollEnabled:              cast.Ptr(a.MFA.TOTP.EnrollEnabled),
 		MfaTotpVerifyEnabled:              cast.Ptr(a.MFA.TOTP.VerifyEnabled),
 		MfaPhoneEnrollEnabled:             cast.Ptr(a.MFA.Phone.EnrollEnabled),
 		MfaPhoneVerifyEnabled:             cast.Ptr(a.MFA.Phone.VerifyEnabled),
-		MfaPhoneOtpLength:                 cast.Ptr(int(a.MFA.Phone.OtpLength)),
+		MfaPhoneOtpLength:                 cast.Ptr(cast.UintToInt(a.MFA.Phone.OtpLength)),
 		MfaPhoneTemplate:                  cast.Ptr(a.MFA.Phone.Template),
 		MfaPhoneMaxFrequency:              cast.Ptr(int(a.MFA.Phone.MaxFrequency.Seconds())),
 		MfaWebAuthnEnrollEnabled:          cast.Ptr(a.MFA.WebAuthn.EnrollEnabled),
 		MfaWebAuthnVerifyEnabled:          cast.Ptr(a.MFA.WebAuthn.VerifyEnabled),
 		RefreshTokenRotationEnabled:       cast.Ptr(a.EnableRefreshTokenRotation),
-		SecurityRefreshTokenReuseInterval: cast.Ptr(int(a.RefreshTokenReuseInterval)),
+		SecurityRefreshTokenReuseInterval: cast.Ptr(cast.UintToInt(a.RefreshTokenReuseInterval)),
 		SecurityManualLinkingEnabled:      cast.Ptr(a.EnableManualLinking),
 		SessionsTimebox:                   cast.Ptr(int(a.Sessions.Timebox.Seconds())),
 		SessionsInactivityTimeout:         cast.Ptr(int(a.Sessions.InactivityTimeout.Seconds())),
@@ -867,54 +867,40 @@ func (a *auth) mapRemoteSmsProviders(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (original *auth) compareAndHideSensitiveFields(remote *auth) {
+func (a *auth) compareAndHideSensitiveFields(remote *auth) {
 	// This function compares the original auth struct with a remote auth struct
 	// and hides sensitive fields in both structs for secure comparison
 	// SMTP sensitive fields
-	diff.CompareSensitiveField(&original.Email.Smtp.AdminEmail, &remote.Email.Smtp.AdminEmail)
-	diff.CompareSensitiveField(&original.Email.Smtp.Host, &remote.Email.Smtp.Host)
-	diff.CompareSensitiveField(&original.Email.Smtp.User, &remote.Email.Smtp.User)
-	diff.CompareSensitiveField(&original.Email.Smtp.SenderName, &remote.Email.Smtp.SenderName)
-	diff.CompareSensitiveField(&original.Email.Smtp.Pass, &remote.Email.Smtp.Pass)
+	diff.CompareSensitiveField(&a.Email.Smtp.Pass, &remote.Email.Smtp.Pass)
+
 	// Sms sensitives fields
-	diff.CompareSensitiveField(&original.Sms.Twilio.AuthToken, &remote.Sms.Twilio.AuthToken)
-	diff.CompareSensitiveField(&original.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
-	diff.CompareSensitiveField(&original.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
-	diff.CompareSensitiveField(&original.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
-	diff.CompareSensitiveField(&original.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
-	diff.CompareSensitiveField(&original.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
-	diff.CompareSensitiveField(&original.Sms.Twilio.AccountSid, &remote.Sms.Twilio.AccountSid)
-	diff.CompareSensitiveField(&original.Sms.Twilio.MessageServiceSid, &remote.Sms.Twilio.MessageServiceSid)
-	diff.CompareSensitiveField(&original.Sms.TwilioVerify.AccountSid, &remote.Sms.TwilioVerify.AccountSid)
-	diff.CompareSensitiveField(&original.Sms.TwilioVerify.MessageServiceSid, &remote.Sms.TwilioVerify.MessageServiceSid)
+	diff.CompareSensitiveField(&a.Sms.Twilio.AuthToken, &remote.Sms.Twilio.AuthToken)
+	diff.CompareSensitiveField(&a.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
+	diff.CompareSensitiveField(&a.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
+	diff.CompareSensitiveField(&a.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
+	diff.CompareSensitiveField(&a.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
+	diff.CompareSensitiveField(&a.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
 
 	// Compare external providers hide secrets and id
-	for provider, originalConfig := range original.External {
+	for provider, aConfig := range a.External {
 		if remoteConfig, exists := remote.External[provider]; exists {
-			diff.CompareSensitiveField(&originalConfig.Secret, &remoteConfig.Secret)
-			diff.CompareSensitiveField(&originalConfig.ClientId, &remoteConfig.ClientId)
-			diff.CompareSensitiveField(&originalConfig.RedirectUri, &remoteConfig.RedirectUri)
-			diff.CompareSensitiveField(&originalConfig.Url, &remoteConfig.Url)
+			diff.CompareSensitiveField(&aConfig.Secret, &remoteConfig.Secret)
 			remote.External[provider] = remoteConfig
-			original.External[provider] = originalConfig
+			a.External[provider] = aConfig
 		}
 	}
-	// Api sensitive fields
-	diff.CompareSensitiveField(&original.JwtSecret, &remote.JwtSecret)
-	diff.CompareSensitiveField(&original.AnonKey, &remote.AnonKey)
-	diff.CompareSensitiveField(&original.ServiceRoleKey, &remote.ServiceRoleKey)
 
-	// Third-party sensitive fields
-	diff.CompareSensitiveField(&original.ThirdParty.Firebase.ProjectID, &remote.ThirdParty.Firebase.ProjectID)
-	diff.CompareSensitiveField(&original.ThirdParty.Auth0.Tenant, &remote.ThirdParty.Auth0.Tenant)
-	diff.CompareSensitiveField(&original.ThirdParty.Cognito.UserPoolID, &remote.ThirdParty.Cognito.UserPoolID)
+	// Api sensitive fields
+	diff.CompareSensitiveField(&a.JwtSecret, &remote.JwtSecret)
+	diff.CompareSensitiveField(&a.AnonKey, &remote.AnonKey)
+	diff.CompareSensitiveField(&a.ServiceRoleKey, &remote.ServiceRoleKey)
 
 	// Hook secrets
-	diff.CompareSensitiveField(&original.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
-	diff.CompareSensitiveField(&original.Hook.PasswordVerificationAttempt.Secrets, &remote.Hook.PasswordVerificationAttempt.Secrets)
-	diff.CompareSensitiveField(&original.Hook.CustomAccessToken.Secrets, &remote.Hook.CustomAccessToken.Secrets)
-	diff.CompareSensitiveField(&original.Hook.SendSMS.Secrets, &remote.Hook.SendSMS.Secrets)
-	diff.CompareSensitiveField(&original.Hook.SendEmail.Secrets, &remote.Hook.SendEmail.Secrets)
+	diff.CompareSensitiveField(&a.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
+	diff.CompareSensitiveField(&a.Hook.PasswordVerificationAttempt.Secrets, &remote.Hook.PasswordVerificationAttempt.Secrets)
+	diff.CompareSensitiveField(&a.Hook.CustomAccessToken.Secrets, &remote.Hook.CustomAccessToken.Secrets)
+	diff.CompareSensitiveField(&a.Hook.SendSMS.Secrets, &remote.Hook.SendSMS.Secrets)
+	diff.CompareSensitiveField(&a.Hook.SendEmail.Secrets, &remote.Hook.SendEmail.Secrets)
 }
 
 func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {

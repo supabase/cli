@@ -147,7 +147,7 @@ func TestFromRemoteAuthConfig(t *testing.T) {
 
 		assert.True(t, updatedAuth.EnableSignup)
 		assert.Equal(t, "https://example.com", updatedAuth.SiteUrl)
-		assert.Equal(t, uint(*remoteConfig.JwtExp), updatedAuth.JwtExpiry)
+		assert.Equal(t, uint(3600), updatedAuth.JwtExpiry)
 		assert.True(t, updatedAuth.Email.EnableConfirmations)
 		assert.True(t, updatedAuth.Email.SecurePasswordChange)
 		assert.True(t, updatedAuth.Sms.EnableConfirmations)
@@ -233,6 +233,7 @@ func TestDiffWithRemote(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, string(diff))
 	})
+
 	t.Run("ensures sensitive fields aren't leaked", func(t *testing.T) {
 		auth := &auth{
 			Email: email{
@@ -257,21 +258,12 @@ func TestDiffWithRemote(t *testing.T) {
 		diff, err := auth.DiffWithRemote(remoteConfig)
 
 		assert.NoError(t, err)
-		assert.NotContains(t, string(diff), "admin@example.com")
-		assert.NotContains(t, string(diff), "smtp.example.com")
 		assert.NotContains(t, string(diff), "secretpassword")
-		assert.NotContains(t, string(diff), "smtpuser")
-		assert.NotContains(t, string(diff), "Sender Name")
-
-		assert.NotContains(t, string(diff), "different@example.com")
-		assert.NotContains(t, string(diff), "smtp.different.com")
 		assert.NotContains(t, string(diff), "differentpassword")
-		assert.NotContains(t, string(diff), "differentuser")
-		assert.NotContains(t, string(diff), "Different Sender")
-
 		assert.Contains(t, string(diff), "<original-sensitive-value-hidden>")
 		assert.Contains(t, string(diff), "<original-sensitive-value-hidden>")
 	})
+
 	t.Run("ensures external providers are compared correctly", func(t *testing.T) {
 		auth := &auth{
 			External: map[string]provider{
@@ -283,6 +275,7 @@ func TestDiffWithRemote(t *testing.T) {
 				},
 				"github": {
 					Enabled: false,
+					Secret:  "github_secret",
 				},
 			},
 		}
@@ -299,11 +292,8 @@ func TestDiffWithRemote(t *testing.T) {
 		diff, err := auth.DiffWithRemote(remoteConfig)
 
 		assert.NoError(t, err)
-		assert.NotContains(t, string(diff), "local_client_id")
 		assert.NotContains(t, string(diff), "local_secret")
-		assert.NotContains(t, string(diff), "remote_client_id")
 		assert.NotContains(t, string(diff), "remote_secret")
-		assert.NotContains(t, string(diff), "github_client_id")
 		assert.NotContains(t, string(diff), "github_secret")
 		assert.Contains(t, string(diff), "<changed-sensitive-value-hidden>")
 		assert.Contains(t, string(diff), "<unchanged-sensitive-value-hidden>")
@@ -331,11 +321,8 @@ func TestDiffWithRemote(t *testing.T) {
 		diff, err := auth.DiffWithRemote(remoteConfig)
 
 		assert.NoError(t, err)
-		assert.NotContains(t, string(diff), "local_account_sid")
 		assert.NotContains(t, string(diff), "local_auth_token")
-		assert.NotContains(t, string(diff), "remote_account_sid")
 		assert.NotContains(t, string(diff), "remote_auth_token")
-		assert.NotContains(t, string(diff), "vonage_api_key")
 		assert.NotContains(t, string(diff), "vonage_api_secret")
 		assert.Contains(t, string(diff), "<changed-sensitive-value-hidden>")
 		assert.Contains(t, string(diff), "<unchanged-sensitive-value-hidden>")
@@ -348,7 +335,7 @@ func TestDiffWithRemote(t *testing.T) {
 				CustomAccessToken: hookConfig{
 					Enabled: true,
 					URI:     "https://local.example.com/custom-token",
-					Secrets: "local_secrest",
+					Secrets: "local_secrets",
 				},
 			},
 		}
