@@ -199,36 +199,40 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		SiteUrl:                           cast.Ptr(a.SiteUrl),
-		JwtExp:                            cast.Ptr(float32(a.JwtExpiry)),
+		JwtExp:                            cast.Ptr(cast.UintToInt(a.JwtExpiry)),
 		SmtpAdminEmail:                    cast.Ptr(a.Email.Smtp.AdminEmail),
 		SmtpHost:                          cast.Ptr(a.Email.Smtp.Host),
 		SmtpPass:                          cast.Ptr(a.Email.Smtp.Pass),
 		SmtpPort:                          cast.Ptr(strconv.Itoa(int(a.Email.Smtp.Port))),
 		SmtpUser:                          cast.Ptr(a.Email.Smtp.User),
 		SmtpSenderName:                    cast.Ptr(a.Email.Smtp.SenderName),
-		SmtpMaxFrequency:                  cast.Ptr(float32(a.Email.MaxFrequency.Seconds())),
+		SmtpMaxFrequency:                  cast.Ptr(int(a.Email.MaxFrequency.Seconds())),
 		MailerAutoconfirm:                 cast.Ptr(a.Email.EnableConfirmations),
 		MailerSecureEmailChangeEnabled:    cast.Ptr(a.Email.SecurePasswordChange),
+		MailerOtpLength:                   cast.Ptr(cast.UintToInt(a.Email.OtpLength)),
+		MailerOtpExp:                      cast.Ptr(cast.UintToInt(a.Email.OtpExpiry)),
 		SmsAutoconfirm:                    cast.Ptr(a.Sms.EnableConfirmations),
-		SmsProvider:                       cast.Ptr(getSmsProvider(a)),
+		SmsProvider:                       a.Sms.getProvider(),
 		SmsTemplate:                       cast.Ptr(a.Sms.Template),
-		SmsMaxFrequency:                   cast.Ptr(float32(a.Sms.MaxFrequency.Seconds())),
+		SmsMaxFrequency:                   cast.Ptr(int(a.Sms.MaxFrequency.Seconds())),
 		ExternalEmailEnabled:              cast.Ptr(a.Email.EnableSignup),
 		ExternalPhoneEnabled:              cast.Ptr(a.Sms.EnableSignup),
 		ExternalAnonymousUsersEnabled:     cast.Ptr(a.EnableAnonymousSignIns),
-		MfaMaxEnrolledFactors:             cast.Ptr(float32(a.MFA.MaxEnrolledFactors)),
+		MfaMaxEnrolledFactors:             cast.Ptr(int(a.MFA.MaxEnrolledFactors)),
 		MfaTotpEnrollEnabled:              cast.Ptr(a.MFA.TOTP.EnrollEnabled),
 		MfaTotpVerifyEnabled:              cast.Ptr(a.MFA.TOTP.VerifyEnabled),
 		MfaPhoneEnrollEnabled:             cast.Ptr(a.MFA.Phone.EnrollEnabled),
 		MfaPhoneVerifyEnabled:             cast.Ptr(a.MFA.Phone.VerifyEnabled),
-		MfaPhoneOtpLength:                 cast.Ptr(float32(a.MFA.Phone.OtpLength)),
+		MfaPhoneOtpLength:                 cast.Ptr(int(a.MFA.Phone.OtpLength)),
 		MfaPhoneTemplate:                  cast.Ptr(a.MFA.Phone.Template),
-		MfaPhoneMaxFrequency:              cast.Ptr(float32(a.MFA.Phone.MaxFrequency.Seconds())),
+		MfaPhoneMaxFrequency:              cast.Ptr(int(a.MFA.Phone.MaxFrequency.Seconds())),
+		MfaWebAuthnEnrollEnabled:          cast.Ptr(a.MFA.WebAuthn.EnrollEnabled),
+		MfaWebAuthnVerifyEnabled:          cast.Ptr(a.MFA.WebAuthn.VerifyEnabled),
 		RefreshTokenRotationEnabled:       cast.Ptr(a.EnableRefreshTokenRotation),
-		SecurityRefreshTokenReuseInterval: cast.Ptr(float32(a.RefreshTokenReuseInterval)),
+		SecurityRefreshTokenReuseInterval: cast.Ptr(int(a.RefreshTokenReuseInterval)),
 		SecurityManualLinkingEnabled:      cast.Ptr(a.EnableManualLinking),
-		SessionsTimebox:                   cast.Ptr(float32(a.Sessions.Timebox.Seconds())),
-		SessionsInactivityTimeout:         cast.Ptr(float32(a.Sessions.InactivityTimeout.Seconds())),
+		SessionsTimebox:                   cast.Ptr(int(a.Sessions.Timebox.Seconds())),
+		SessionsInactivityTimeout:         cast.Ptr(int(a.Sessions.InactivityTimeout.Seconds())),
 	}
 
 	// Handle external providers
@@ -249,6 +253,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 func (a *auth) mapExternalProviders(body *v1API.UpdateAuthConfigBody) {
 	for providerName, config := range a.External {
 		switch providerName {
+		// Ignore deprecated fields: "linkedin", "slack"
 		case "apple":
 			body.ExternalAppleEnabled = cast.Ptr(config.Enabled)
 			body.ExternalAppleClientId = cast.Ptr(config.ClientId)
@@ -290,7 +295,6 @@ func (a *auth) mapExternalProviders(body *v1API.UpdateAuthConfigBody) {
 			body.ExternalKeycloakSecret = cast.Ptr(config.Secret)
 			body.ExternalKeycloakUrl = cast.Ptr(config.Url)
 		case "linkedin_oidc":
-		case "linkedin":
 			body.ExternalLinkedinOidcEnabled = cast.Ptr(config.Enabled)
 			body.ExternalLinkedinOidcClientId = cast.Ptr(config.ClientId)
 			body.ExternalLinkedinOidcSecret = cast.Ptr(config.Secret)
@@ -299,7 +303,6 @@ func (a *auth) mapExternalProviders(body *v1API.UpdateAuthConfigBody) {
 			body.ExternalNotionClientId = cast.Ptr(config.ClientId)
 			body.ExternalNotionSecret = cast.Ptr(config.Secret)
 		case "slack_oidc":
-		case "slack":
 			body.ExternalSlackOidcEnabled = cast.Ptr(config.Enabled)
 			body.ExternalSlackOidcClientId = cast.Ptr(config.ClientId)
 			body.ExternalSlackOidcSecret = cast.Ptr(config.Secret)
@@ -329,7 +332,7 @@ func (a *auth) mapExternalProviders(body *v1API.UpdateAuthConfigBody) {
 }
 
 func (a *auth) mapEmailTemplates(body *v1API.UpdateAuthConfigBody) {
-
+	// TODO: load file content and ignore empty string
 	for name, template := range a.Email.Template {
 		switch name {
 		case "invite":
@@ -404,21 +407,23 @@ func (a *auth) mapSmsProviders(body *v1API.UpdateAuthConfigBody) {
 }
 
 // Helper function to determine SMS provider
-func getSmsProvider(a *auth) string {
+func (s sms) getProvider() *string {
+	var provider string
 	switch {
-	case a.Sms.Twilio.Enabled:
-		return "twilio"
-	case a.Sms.TwilioVerify.Enabled:
-		return "twilio_verify"
-	case a.Sms.Messagebird.Enabled:
-		return "messagebird"
-	case a.Sms.Textlocal.Enabled:
-		return "textlocal"
-	case a.Sms.Vonage.Enabled:
-		return "vonage"
+	case s.Twilio.Enabled:
+		provider = "twilio"
+	case s.TwilioVerify.Enabled:
+		provider = "twilio_verify"
+	case s.Messagebird.Enabled:
+		provider = "messagebird"
+	case s.Textlocal.Enabled:
+		provider = "textlocal"
+	case s.Vonage.Enabled:
+		provider = "vonage"
 	default:
-		return ""
+		return nil
 	}
+	return &provider
 }
 
 func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth {
@@ -431,7 +436,7 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 		result.SiteUrl = *remoteConfig.SiteUrl
 	}
 	if remoteConfig.JwtExp != nil {
-		result.JwtExpiry = uint(time.Duration(*remoteConfig.JwtExp))
+		result.JwtExpiry = cast.IntToUint(*remoteConfig.JwtExp)
 	}
 	if remoteConfig.MailerAutoconfirm != nil {
 		result.Email.EnableConfirmations = *remoteConfig.MailerAutoconfirm
@@ -460,6 +465,32 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	if remoteConfig.SmtpMaxFrequency != nil {
 		result.Email.MaxFrequency = time.Duration(*remoteConfig.SmtpMaxFrequency) * time.Second
 	}
+	if remoteConfig.MailerOtpLength != nil {
+		result.Email.OtpLength = cast.IntToUint(*remoteConfig.MailerOtpLength)
+	}
+	result.Email.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
+	if remoteConfig.MfaMaxEnrolledFactors != nil {
+		result.MFA.MaxEnrolledFactors = cast.IntToUint(*remoteConfig.MfaMaxEnrolledFactors)
+	}
+	if remoteConfig.MfaTotpEnrollEnabled != nil {
+		result.MFA.TOTP.EnrollEnabled = *remoteConfig.MfaTotpEnrollEnabled
+	}
+	if remoteConfig.MfaTotpVerifyEnabled != nil {
+		result.MFA.TOTP.VerifyEnabled = *remoteConfig.MfaTotpVerifyEnabled
+	}
+	if remoteConfig.MfaPhoneEnrollEnabled != nil {
+		result.MFA.Phone.EnrollEnabled = *remoteConfig.MfaPhoneEnrollEnabled
+	}
+	if remoteConfig.MfaPhoneVerifyEnabled != nil {
+		result.MFA.Phone.VerifyEnabled = *remoteConfig.MfaPhoneVerifyEnabled
+	}
+	if remoteConfig.MfaPhoneTemplate != nil {
+		result.MFA.Phone.Template = *remoteConfig.MfaPhoneTemplate
+	}
+	if remoteConfig.MfaPhoneMaxFrequency != nil {
+		result.MFA.Phone.MaxFrequency = time.Duration(*remoteConfig.MfaPhoneMaxFrequency) * time.Second
+	}
+	result.MFA.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
 	// Sensitives fields
 	if remoteConfig.SmtpAdminEmail != nil {
 		result.Email.Smtp.AdminEmail = *remoteConfig.SmtpAdminEmail

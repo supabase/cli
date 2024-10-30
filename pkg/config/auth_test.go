@@ -1,7 +1,6 @@
 package config
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -33,6 +32,8 @@ func TestToUpdateAuthConfigBody(t *testing.T) {
 					SenderName: "Test Sender",
 				},
 				MaxFrequency: 60 * time.Second,
+				OtpLength:    6,
+				OtpExpiry:    3600,
 			},
 			Sms: sms{
 				EnableSignup:        true,
@@ -55,6 +56,10 @@ func TestToUpdateAuthConfigBody(t *testing.T) {
 					Template:     "Your MFA code is {{.otp}}",
 					MaxFrequency: 60 * time.Second,
 				},
+				WebAuthn: factorTypeConfiguration{
+					EnrollEnabled: true,
+					VerifyEnabled: true,
+				},
 			},
 			EnableAnonymousSignIns: true,
 			Sessions: sessions{
@@ -65,47 +70,58 @@ func TestToUpdateAuthConfigBody(t *testing.T) {
 
 		body := auth.ToUpdateAuthConfigBody()
 
-		// Use helper function to safely check pointer values
-		assertPtrEqual := func(t *testing.T, expected interface{}, actual interface{}, fieldName string) {
-			t.Helper()
-			if actual == nil {
-				t.Errorf("Expected %s to be %v, but it was nil", fieldName, expected)
-				return
-			}
-			assert.Equal(t, expected, reflect.ValueOf(actual).Elem().Interface(), fieldName)
-		}
-
-		assertPtrEqual(t, false, body.DisableSignup, "DisableSignup")
-		assertPtrEqual(t, "https://example.com", body.SiteUrl, "SiteUrl")
-		assertPtrEqual(t, float32(3600), body.JwtExp, "JwtExp")
-		assertPtrEqual(t, true, body.RefreshTokenRotationEnabled, "RefreshTokenRotationEnabled")
-		assertPtrEqual(t, float32(10), body.SecurityRefreshTokenReuseInterval, "SecurityRefreshTokenReuseInterval")
-		assertPtrEqual(t, true, body.SecurityManualLinkingEnabled, "SecurityManualLinkingEnabled")
-		assertPtrEqual(t, "admin@example.com", body.SmtpAdminEmail, "SmtpAdminEmail")
-		assertPtrEqual(t, "smtp.example.com", body.SmtpHost, "SmtpHost")
-		assertPtrEqual(t, "smtppass", body.SmtpPass, "SmtpPass")
-		assertPtrEqual(t, "587", body.SmtpPort, "SmtpPort")
-		assertPtrEqual(t, "smtpuser", body.SmtpUser, "SmtpUser")
-		assertPtrEqual(t, "Test Sender", body.SmtpSenderName, "SmtpSenderName")
-		assertPtrEqual(t, float32(60), body.SmtpMaxFrequency, "SmtpMaxFrequency")
-		assertPtrEqual(t, true, body.MailerAutoconfirm, "MailerAutoconfirm")
-		assertPtrEqual(t, true, body.MailerSecureEmailChangeEnabled, "MailerSecureEmailChangeEnabled")
-		assertPtrEqual(t, true, body.SmsAutoconfirm, "SmsAutoconfirm")
-		assertPtrEqual(t, "Your OTP is {{.otp}}", body.SmsTemplate, "SmsTemplate")
-		assertPtrEqual(t, float32(60), body.SmsMaxFrequency, "SmsMaxFrequency")
-		assertPtrEqual(t, true, body.ExternalEmailEnabled, "ExternalEmailEnabled")
-		assertPtrEqual(t, true, body.ExternalPhoneEnabled, "ExternalPhoneEnabled")
-		assertPtrEqual(t, true, body.ExternalAnonymousUsersEnabled, "ExternalAnonymousUsersEnabled")
-		assertPtrEqual(t, float32(3), body.MfaMaxEnrolledFactors, "MfaMaxEnrolledFactors")
-		assertPtrEqual(t, true, body.MfaTotpEnrollEnabled, "MfaTotpEnrollEnabled")
-		assertPtrEqual(t, true, body.MfaTotpVerifyEnabled, "MfaTotpVerifyEnabled")
-		assertPtrEqual(t, true, body.MfaPhoneEnrollEnabled, "MfaPhoneEnrollEnabled")
-		assertPtrEqual(t, true, body.MfaPhoneVerifyEnabled, "MfaPhoneVerifyEnabled")
-		assertPtrEqual(t, float32(6), body.MfaPhoneOtpLength, "MfaPhoneOtpLength")
-		assertPtrEqual(t, "Your MFA code is {{.otp}}", body.MfaPhoneTemplate, "MfaPhoneTemplate")
-		assertPtrEqual(t, float32(60), body.MfaPhoneMaxFrequency, "MfaPhoneMaxFrequency")
-		assertPtrEqual(t, float32(3600), body.SessionsTimebox, "SessionsTimebox")
-		assertPtrEqual(t, float32(1800), body.SessionsInactivityTimeout, "SessionsInactivityTimeout")
+		assert.Equal(t, v1API.UpdateAuthConfigBody{
+			DisableSignup:                          cast.Ptr(false),
+			SiteUrl:                                cast.Ptr("https://example.com"),
+			JwtExp:                                 cast.Ptr(3600),
+			RefreshTokenRotationEnabled:            cast.Ptr(true),
+			SecurityRefreshTokenReuseInterval:      cast.Ptr(10),
+			SecurityManualLinkingEnabled:           cast.Ptr(true),
+			SmtpAdminEmail:                         cast.Ptr("admin@example.com"),
+			SmtpHost:                               cast.Ptr("smtp.example.com"),
+			SmtpPass:                               cast.Ptr("smtppass"),
+			SmtpPort:                               cast.Ptr("587"),
+			SmtpUser:                               cast.Ptr("smtpuser"),
+			SmtpSenderName:                         cast.Ptr("Test Sender"),
+			SmtpMaxFrequency:                       cast.Ptr(60),
+			MailerAutoconfirm:                      cast.Ptr(true),
+			MailerSecureEmailChangeEnabled:         cast.Ptr(true),
+			MailerOtpLength:                        cast.Ptr(6),
+			MailerOtpExp:                           cast.Ptr(3600),
+			SmsAutoconfirm:                         cast.Ptr(true),
+			SmsTemplate:                            cast.Ptr("Your OTP is {{.otp}}"),
+			SmsMaxFrequency:                        cast.Ptr(60),
+			ExternalEmailEnabled:                   cast.Ptr(true),
+			ExternalPhoneEnabled:                   cast.Ptr(true),
+			ExternalAnonymousUsersEnabled:          cast.Ptr(true),
+			MfaMaxEnrolledFactors:                  cast.Ptr(3),
+			MfaTotpEnrollEnabled:                   cast.Ptr(true),
+			MfaTotpVerifyEnabled:                   cast.Ptr(true),
+			MfaPhoneEnrollEnabled:                  cast.Ptr(true),
+			MfaPhoneVerifyEnabled:                  cast.Ptr(true),
+			MfaPhoneOtpLength:                      cast.Ptr(6),
+			MfaPhoneTemplate:                       cast.Ptr("Your MFA code is {{.otp}}"),
+			MfaPhoneMaxFrequency:                   cast.Ptr(60),
+			MfaWebAuthnEnrollEnabled:               cast.Ptr(true),
+			MfaWebAuthnVerifyEnabled:               cast.Ptr(true),
+			SessionsTimebox:                        cast.Ptr(3600),
+			SessionsInactivityTimeout:              cast.Ptr(1800),
+			HookCustomAccessTokenEnabled:           cast.Ptr(false),
+			HookCustomAccessTokenSecrets:           cast.Ptr(""),
+			HookCustomAccessTokenUri:               cast.Ptr(""),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
+			HookMfaVerificationAttemptSecrets:      cast.Ptr(""),
+			HookMfaVerificationAttemptUri:          cast.Ptr(""),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
+			HookPasswordVerificationAttemptSecrets: cast.Ptr(""),
+			HookPasswordVerificationAttemptUri:     cast.Ptr(""),
+			HookSendEmailEnabled:                   cast.Ptr(false),
+			HookSendEmailSecrets:                   cast.Ptr(""),
+			HookSendEmailUri:                       cast.Ptr(""),
+			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookSendSmsSecrets:                     cast.Ptr(""),
+			HookSendSmsUri:                         cast.Ptr(""),
+		}, body)
 	})
 }
 
@@ -115,23 +131,23 @@ func TestFromRemoteAuthConfig(t *testing.T) {
 		remoteConfig := v1API.AuthConfigResponse{
 			DisableSignup:                  cast.Ptr(false),
 			SiteUrl:                        cast.Ptr("https://example.com"),
-			JwtExp:                         cast.Ptr(float32(3600)),
+			JwtExp:                         cast.Ptr(3600),
 			MailerAutoconfirm:              cast.Ptr(true),
 			MailerSecureEmailChangeEnabled: cast.Ptr(true),
 			SmsAutoconfirm:                 cast.Ptr(true),
 			SmsTemplate:                    cast.Ptr("Your OTP is {{.otp}}"),
-			SmsMaxFrequency:                cast.Ptr(float32(60)),
+			SmsMaxFrequency:                cast.Ptr(60),
 			ExternalEmailEnabled:           cast.Ptr(true),
 			ExternalPhoneEnabled:           cast.Ptr(true),
 			ExternalAnonymousUsersEnabled:  cast.Ptr(true),
-			SmtpMaxFrequency:               cast.Ptr(float32(60)),
+			SmtpMaxFrequency:               cast.Ptr(60),
 		}
 
 		updatedAuth := auth.fromRemoteAuthConfig(remoteConfig)
 
 		assert.True(t, updatedAuth.EnableSignup)
 		assert.Equal(t, "https://example.com", updatedAuth.SiteUrl)
-		assert.Equal(t, uint(time.Duration(*remoteConfig.JwtExp)), updatedAuth.JwtExpiry)
+		assert.Equal(t, uint(*remoteConfig.JwtExp), updatedAuth.JwtExpiry)
 		assert.True(t, updatedAuth.Email.EnableConfirmations)
 		assert.True(t, updatedAuth.Email.SecurePasswordChange)
 		assert.True(t, updatedAuth.Sms.EnableConfirmations)
@@ -163,11 +179,11 @@ func TestDiffWithRemote(t *testing.T) {
 		remoteConfig := v1API.AuthConfigResponse{
 			DisableSignup:     cast.Ptr(true),
 			SiteUrl:           cast.Ptr("https://remote.com"),
-			JwtExp:            cast.Ptr(float32(7200)),
+			JwtExp:            cast.Ptr(7200),
 			MailerAutoconfirm: cast.Ptr(false),
 			SmsAutoconfirm:    cast.Ptr(false),
 			SmsTemplate:       cast.Ptr("Different template"),
-			SmsMaxFrequency:   cast.Ptr(float32(120)),
+			SmsMaxFrequency:   cast.Ptr(120),
 		}
 
 		diff, err := auth.DiffWithRemote(remoteConfig)
@@ -205,11 +221,11 @@ func TestDiffWithRemote(t *testing.T) {
 		remoteConfig := v1API.AuthConfigResponse{
 			DisableSignup:     cast.Ptr(false),
 			SiteUrl:           cast.Ptr("https://example.com"),
-			JwtExp:            cast.Ptr(float32(3600)),
+			JwtExp:            cast.Ptr(3600),
 			MailerAutoconfirm: cast.Ptr(true),
 			SmsAutoconfirm:    cast.Ptr(true),
 			SmsTemplate:       cast.Ptr("Your OTP is {{.otp}}"),
-			SmsMaxFrequency:   cast.Ptr(float32(60)),
+			SmsMaxFrequency:   cast.Ptr(60),
 		}
 
 		diff, err := auth.DiffWithRemote(remoteConfig)
