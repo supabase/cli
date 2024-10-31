@@ -37,14 +37,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Role Name|Custom config|\n|-|-|\n"
+	table := "|Role name|Custom config|\n|-|-|\n"
 	for _, r := range result {
 		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Role_name, r.Custom_config)
 	}
 
-	if err := list.RenderTable(table); err != nil {
-		return err
-	}
-
-	return nil
+	return list.RenderTable(table)
 }
