@@ -2,7 +2,10 @@ package config
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -186,6 +189,24 @@ type (
 		UserPoolRegion string `toml:"user_pool_region"`
 	}
 )
+
+func sha256Hmac(key, value string) string {
+	h := hmac.New(sha256.New, []byte(key))
+	h.Write([]byte(value))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func compareHashedField(secret string, local, remote *string) {
+	if remote == nil {
+		return
+	}
+	if *local == "" && *remote == "" {
+		return
+	}
+	localHashed := sha256Hmac(secret, *local)
+	diff.CompareSensitiveField(&localHashed, remote)
+	*local = localHashed
+}
 
 func (a *auth) Clone() auth {
 	copy := *a
@@ -867,49 +888,49 @@ func (a *auth) mapRemoteSmsProviders(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (a *auth) compareAndHideSensitiveFields(remote *auth) {
+func (a *auth) compareSensitiveFields(secret string, remote *auth) {
 	// This function compares the original auth struct with a remote auth struct
 	// and hides sensitive fields in both structs for secure comparison
 	// SMTP sensitive fields
-	diff.CompareSensitiveField(&a.Email.Smtp.Pass, &remote.Email.Smtp.Pass)
+	compareHashedField(secret, &a.Email.Smtp.Pass, &remote.Email.Smtp.Pass)
 
 	// Sms sensitives fields
-	diff.CompareSensitiveField(&a.Sms.Twilio.AuthToken, &remote.Sms.Twilio.AuthToken)
-	diff.CompareSensitiveField(&a.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
-	diff.CompareSensitiveField(&a.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
-	diff.CompareSensitiveField(&a.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
-	diff.CompareSensitiveField(&a.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
-	diff.CompareSensitiveField(&a.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
+	compareHashedField(secret, &a.Sms.Twilio.AuthToken, &remote.Sms.Twilio.AuthToken)
+	compareHashedField(secret, &a.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
+	compareHashedField(secret, &a.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
+	compareHashedField(secret, &a.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
+	compareHashedField(secret, &a.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
+	compareHashedField(secret, &a.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
 
 	// Compare external providers hide secrets and id
 	for provider, aConfig := range a.External {
 		if remoteConfig, exists := remote.External[provider]; exists {
-			diff.CompareSensitiveField(&aConfig.Secret, &remoteConfig.Secret)
+			compareHashedField(secret, &aConfig.Secret, &remoteConfig.Secret)
 			remote.External[provider] = remoteConfig
 			a.External[provider] = aConfig
 		}
 	}
 
 	// Api sensitive fields
-	diff.CompareSensitiveField(&a.JwtSecret, &remote.JwtSecret)
-	diff.CompareSensitiveField(&a.AnonKey, &remote.AnonKey)
-	diff.CompareSensitiveField(&a.ServiceRoleKey, &remote.ServiceRoleKey)
+	compareHashedField(secret, &a.JwtSecret, &remote.JwtSecret)
+	compareHashedField(secret, &a.AnonKey, &remote.AnonKey)
+	compareHashedField(secret, &a.ServiceRoleKey, &remote.ServiceRoleKey)
 
 	// Hook secrets
-	diff.CompareSensitiveField(&a.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
-	diff.CompareSensitiveField(&a.Hook.PasswordVerificationAttempt.Secrets, &remote.Hook.PasswordVerificationAttempt.Secrets)
-	diff.CompareSensitiveField(&a.Hook.CustomAccessToken.Secrets, &remote.Hook.CustomAccessToken.Secrets)
-	diff.CompareSensitiveField(&a.Hook.SendSMS.Secrets, &remote.Hook.SendSMS.Secrets)
-	diff.CompareSensitiveField(&a.Hook.SendEmail.Secrets, &remote.Hook.SendEmail.Secrets)
+	compareHashedField(secret, &a.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
+	compareHashedField(secret, &a.Hook.PasswordVerificationAttempt.Secrets, &remote.Hook.PasswordVerificationAttempt.Secrets)
+	compareHashedField(secret, &a.Hook.CustomAccessToken.Secrets, &remote.Hook.CustomAccessToken.Secrets)
+	compareHashedField(secret, &a.Hook.SendSMS.Secrets, &remote.Hook.SendSMS.Secrets)
+	compareHashedField(secret, &a.Hook.SendEmail.Secrets, &remote.Hook.SendEmail.Secrets)
 }
 
-func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+func (a *auth) DiffWithRemote(secretKey string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
 	// First we clone our local auth for a new instance
 	localCopy := a.Clone()
 	// We make a new auth instance from our remote config
 	remoteCopy := localCopy.fromRemoteAuthConfig(remoteConfig)
 	// We compare and hide sensitive fields for auth config, leaving only a marker to know if there was changes or not
-	localCopy.compareAndHideSensitiveFields(&remoteCopy)
+	localCopy.compareSensitiveFields(secretKey, &remoteCopy)
 	currentValue, err := ToTomlBytes(&localCopy)
 
 	if err != nil {

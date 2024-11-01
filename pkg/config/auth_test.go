@@ -186,7 +186,7 @@ func TestDiffWithRemote(t *testing.T) {
 			SmsMaxFrequency:   cast.Ptr(120),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.Contains(t, string(diff), "-site_url = \"https://remote.com\"")
@@ -228,7 +228,7 @@ func TestDiffWithRemote(t *testing.T) {
 			SmsMaxFrequency:   cast.Ptr(60),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.Empty(t, string(diff))
@@ -248,14 +248,14 @@ func TestDiffWithRemote(t *testing.T) {
 		}
 
 		remoteConfig := v1API.AuthConfigResponse{
-			SmtpAdminEmail: cast.Ptr("different@example.com"),
-			SmtpHost:       cast.Ptr("smtp.different.com"),
-			SmtpPass:       cast.Ptr("differentpassword"),
-			SmtpUser:       cast.Ptr("differentuser"),
-			SmtpSenderName: cast.Ptr("Different Sender"),
+			SmtpAdminEmail: cast.Ptr(sha256Hmac("project-ref", "different@example.com")),
+			SmtpHost:       cast.Ptr(sha256Hmac("project-ref", "smtp.different.com")),
+			SmtpPass:       cast.Ptr(sha256Hmac("project-ref", "differentpassword")),
+			SmtpUser:       cast.Ptr(sha256Hmac("project-ref", "differentuser")),
+			SmtpSenderName: cast.Ptr(sha256Hmac("project-ref", "Different Sender")),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.NotContains(t, string(diff), "secretpassword")
@@ -283,13 +283,13 @@ func TestDiffWithRemote(t *testing.T) {
 		remoteConfig := v1API.AuthConfigResponse{
 			ExternalGoogleEnabled:  cast.Ptr(true),
 			ExternalGoogleClientId: cast.Ptr("remote_client_id"),
-			ExternalGoogleSecret:   cast.Ptr("remote_secret"),
+			ExternalGoogleSecret:   cast.Ptr(sha256Hmac("project-ref", "remote_secret")),
 			ExternalGithubEnabled:  cast.Ptr(true),
 			ExternalGithubClientId: cast.Ptr("github_client_id"),
-			ExternalGithubSecret:   cast.Ptr("github_secret"),
+			ExternalGithubSecret:   cast.Ptr(sha256Hmac("project-ref", "github_secret")),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.NotContains(t, string(diff), "local_secret")
@@ -312,20 +312,19 @@ func TestDiffWithRemote(t *testing.T) {
 		}
 
 		remoteConfig := v1API.AuthConfigResponse{
-			SmsTwilioAccountSid: cast.Ptr("remote_account_sid"),
-			SmsTwilioAuthToken:  cast.Ptr("remote_auth_token"),
-			SmsVonageApiKey:     cast.Ptr("vonage_api_key"),
-			SmsVonageApiSecret:  cast.Ptr("vonage_api_secret"),
+			SmsTwilioAccountSid: cast.Ptr(sha256Hmac("project-ref", "remote_account_sid")),
+			SmsTwilioAuthToken:  cast.Ptr(sha256Hmac("project-ref", "remote_auth_token")),
+			SmsVonageApiKey:     cast.Ptr(sha256Hmac("project-ref", "vonage_api_key")),
+			SmsVonageApiSecret:  cast.Ptr(sha256Hmac("project-ref", "vonage_api_secret")),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.NotContains(t, string(diff), "local_auth_token")
 		assert.NotContains(t, string(diff), "remote_auth_token")
 		assert.NotContains(t, string(diff), "vonage_api_secret")
 		assert.Contains(t, string(diff), "<changed-sensitive-value-hidden>")
-		assert.Contains(t, string(diff), "<unchanged-sensitive-value-hidden>")
 		assert.Contains(t, string(diff), "auth_token")
 	})
 
@@ -342,18 +341,17 @@ func TestDiffWithRemote(t *testing.T) {
 		remoteConfig := v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:      cast.Ptr(true),
 			HookCustomAccessTokenUri:          cast.Ptr("https://remote.example.com/custom-token"),
-			HookCustomAccessTokenSecrets:      cast.Ptr("remote_secret"),
+			HookCustomAccessTokenSecrets:      cast.Ptr(sha256Hmac("project-ref", "remote_secret")),
 			HookMfaVerificationAttemptEnabled: cast.Ptr(true),
 			HookMfaVerificationAttemptUri:     cast.Ptr("https://remote.example.com/mfa"),
 		}
 
-		diff, err := auth.DiffWithRemote(remoteConfig)
+		diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 		assert.NoError(t, err)
 		assert.NotContains(t, string(diff), "local_secret")
 		assert.NotContains(t, string(diff), "remote_secret")
 		assert.Contains(t, string(diff), "<changed-sensitive-value-hidden>")
-		assert.Contains(t, string(diff), "<unchanged-sensitive-value-hidden>")
 		assert.Contains(t, string(diff), "mfa_verification_attempt")
 	})
 
@@ -376,7 +374,7 @@ func TestDiffWithRemote(t *testing.T) {
 	// 		ThirdPartyAuth0Tenant:      cast.Ptr("auth0_tenant"),
 	// 	}
 
-	// 	diff, err := auth.DiffWithRemote(remoteConfig)
+	// 	diff, err := auth.DiffWithRemote("project-ref", remoteConfig)
 
 	// assert.NoError(t, err)
 	// 	assert.NotContains(t, string(diff), "local_project_id")
