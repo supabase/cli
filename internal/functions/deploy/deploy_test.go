@@ -314,6 +314,53 @@ func TestImportMapPath(t *testing.T) {
 		assert.Equal(t, "import_map.json", fc[slug].ImportMap)
 	})
 
+	t.Run("loads local deno.json", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		slug := "hello"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create deno.json in function folder
+		denoConfigPath := filepath.Join(utils.FunctionsDir, slug, "deno.json")
+		require.NoError(t, afero.WriteFile(fsys, denoConfigPath, []byte("{}"), 0644))
+		// Run test
+		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, denoConfigPath, fc[slug].ImportMap)
+	})
+
+	t.Run("loads local deno.jsonc", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		slug := "hello"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create deno.jsonc in function folder
+		denoConfigPath := filepath.Join(utils.FunctionsDir, slug, "deno.jsonc")
+		require.NoError(t, afero.WriteFile(fsys, denoConfigPath, []byte("{}"), 0644))
+		// Run test
+		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, denoConfigPath, fc[slug].ImportMap)
+	})
+
+	t.Run("local deno.json takes precedence over fallback", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		slug := "hello"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Create fallback import map to test precedence order
+		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		// Create deno.json in function folder to test precedence order
+		denoConfigPath := filepath.Join(utils.FunctionsDir, slug, "deno.json")
+		require.NoError(t, afero.WriteFile(fsys, denoConfigPath, []byte("{}"), 0644))
+		// Run test
+		fc, err := GetFunctionConfig([]string{slug}, "", cast.Ptr(false), fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, denoConfigPath, fc[slug].ImportMap)
+	})
+
 	t.Run("overrides with cli flag", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })
 		slug := "hello"
@@ -322,12 +369,19 @@ func TestImportMapPath(t *testing.T) {
 		}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Custom global import map loaded via cli flag
+		customImportMapPath := filepath.Join(utils.FunctionsDir, "custom_import_map.json")
+		require.NoError(t, afero.WriteFile(fsys, customImportMapPath, []byte("{}"), 0644))
+		// Create fallback import map to test precedence order
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		// Create deno.json in function folder to test precedence order
+		denoConfigPath := filepath.Join(utils.FunctionsDir, slug, "deno.json")
+		require.NoError(t, afero.WriteFile(fsys, denoConfigPath, []byte("{}"), 0644))
 		// Run test
-		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, cast.Ptr(false), fsys)
+		fc, err := GetFunctionConfig([]string{slug}, customImportMapPath, cast.Ptr(false), fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc[slug].ImportMap)
+		assert.Equal(t, customImportMapPath, fc[slug].ImportMap)
 	})
 
 	t.Run("returns empty string if no fallback", func(t *testing.T) {
