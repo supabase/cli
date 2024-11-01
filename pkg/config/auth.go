@@ -512,7 +512,6 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 		result.MFA.Phone.MaxFrequency = time.Duration(*remoteConfig.MfaPhoneMaxFrequency) * time.Second
 	}
 	result.MFA.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
-	// Sensitives fields
 	if remoteConfig.SmtpAdminEmail != nil {
 		result.Email.Smtp.AdminEmail = *remoteConfig.SmtpAdminEmail
 	}
@@ -899,7 +898,6 @@ func (a *auth) compareSensitiveFields(secret string, remote *auth) {
 	compareHashedField(secret, &a.Sms.TwilioVerify.AuthToken, &remote.Sms.TwilioVerify.AuthToken)
 	compareHashedField(secret, &a.Sms.Messagebird.AccessKey, &remote.Sms.Messagebird.AccessKey)
 	compareHashedField(secret, &a.Sms.Textlocal.ApiKey, &remote.Sms.Textlocal.ApiKey)
-	compareHashedField(secret, &a.Sms.Vonage.ApiKey, &remote.Sms.Vonage.ApiKey)
 	compareHashedField(secret, &a.Sms.Vonage.ApiSecret, &remote.Sms.Vonage.ApiSecret)
 
 	// Compare external providers hide secrets and id
@@ -910,11 +908,6 @@ func (a *auth) compareSensitiveFields(secret string, remote *auth) {
 			a.External[provider] = aConfig
 		}
 	}
-
-	// Api sensitive fields
-	compareHashedField(secret, &a.JwtSecret, &remote.JwtSecret)
-	compareHashedField(secret, &a.AnonKey, &remote.AnonKey)
-	compareHashedField(secret, &a.ServiceRoleKey, &remote.ServiceRoleKey)
 
 	// Hook secrets
 	compareHashedField(secret, &a.Hook.MFAVerificationAttempt.Secrets, &remote.Hook.MFAVerificationAttempt.Secrets)
