@@ -590,6 +590,7 @@ func (a *auth) mapRemoteEmailTemplates(remoteConfig v1API.AuthConfigResponse) {
 func (a *auth) mapRemoteExternalProviders(remoteConfig v1API.AuthConfigResponse) {
 	for providerName, config := range a.External {
 		switch providerName {
+		// Ignore deprecated fields: "linkedin", "slack"
 		case "apple":
 			if remoteConfig.ExternalAppleEnabled != nil {
 				config.Enabled = *remoteConfig.ExternalAppleEnabled
@@ -692,7 +693,7 @@ func (a *auth) mapRemoteExternalProviders(remoteConfig v1API.AuthConfigResponse)
 			if remoteConfig.ExternalKeycloakUrl != nil {
 				config.Url = *remoteConfig.ExternalKeycloakUrl
 			}
-		case "linkedin_oidc", "linkedin":
+		case "linkedin_oidc":
 			if remoteConfig.ExternalLinkedinOidcEnabled != nil {
 				config.Enabled = *remoteConfig.ExternalLinkedinOidcEnabled
 			}
@@ -712,7 +713,7 @@ func (a *auth) mapRemoteExternalProviders(remoteConfig v1API.AuthConfigResponse)
 			if remoteConfig.ExternalNotionSecret != nil {
 				config.Secret = *remoteConfig.ExternalNotionSecret
 			}
-		case "slack_oidc", "slack":
+		case "slack_oidc":
 			if remoteConfig.ExternalSlackOidcEnabled != nil {
 				config.Enabled = *remoteConfig.ExternalSlackOidcEnabled
 			}
