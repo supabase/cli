@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/role_configs"
 	"github.com/supabase/cli/internal/inspect/role_connections"
 	"github.com/supabase/cli/internal/inspect/seq_scans"
 	"github.com/supabase/cli/internal/inspect/table_index_sizes"
@@ -194,6 +195,14 @@ var (
 		},
 	}
 
+	inspectRoleConfigsCmd = &cobra.Command{
+		Use:   "role-configs",
+		Short: "Show configuration settings for database roles when they have been modified",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return role_configs.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
 	inspectRoleConnectionsCmd = &cobra.Command{
 		Use:   "role-connections",
 		Short: "Show number of active connections for all database roles",
@@ -247,6 +256,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
+	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
 	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
