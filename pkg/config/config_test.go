@@ -363,6 +363,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		fsys := fs.MapFS{
 			"supabase/config.toml":               &fs.MapFile{Data: []byte("project_id = \"test\"")},
 			"supabase/functions/hello/deno.json": &fs.MapFile{},
+			"supabase/functions/hello/index.ts":  &fs.MapFile{},
 		}
 		// Run test
 		assert.NoError(t, config.Load("", fsys))
@@ -374,6 +375,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		fsys := fs.MapFS{
 			"supabase/config.toml":                &fs.MapFile{Data: []byte("project_id = \"test\"")},
 			"supabase/functions/hello/deno.jsonc": &fs.MapFile{},
+			"supabase/functions/hello/index.ts":   &fs.MapFile{},
 		}
 		// Run test
 		assert.NoError(t, config.Load("", fsys))
@@ -389,6 +391,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 			hello.import_map = "custom_import_map.json"
 			`)},
 			"supabase/functions/hello/deno.json": &fs.MapFile{},
+			"supabase/functions/hello/index.ts":  &fs.MapFile{},
 		}
 		// Run test
 		assert.NoError(t, config.Load("", fsys))
