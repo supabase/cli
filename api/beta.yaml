@@ -2643,6 +2643,12 @@ components:
     BranchResponse:
       type: object
       properties:
+        pr_number:
+          type: integer
+          format: int32
+        latest_check_run_id:
+          type: integer
+          format: int64
         id:
           type: string
         name:
@@ -2655,10 +2661,6 @@ components:
           type: boolean
         git_branch:
           type: string
-        pr_number:
-          type: number
-        latest_check_run_id:
-          type: number
         reset_on_push:
           type: boolean
         persistent:
@@ -2908,6 +2910,9 @@ components:
     OAuthTokenResponse:
       type: object
       properties:
+        expires_in:
+          type: integer
+          format: int64
         token_type:
           type: string
           enum:
@@ -2916,18 +2921,17 @@ components:
           type: string
         refresh_token:
           type: string
-        expires_in:
-          type: number
       required:
+        - expires_in
         - token_type
         - access_token
         - refresh_token
-        - expires_in
     SnippetProject:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         name:
           type: string
       required:
@@ -2937,7 +2941,8 @@ components:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         username:
           type: string
       required:
@@ -3379,7 +3384,8 @@ components:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         ref:
           type: string
         name:
@@ -3513,6 +3519,8 @@ components:
       properties:
         current_app_version_release_channel:
           $ref: '#/components/schemas/ReleaseChannel'
+        duration_estimate_hours:
+          type: integer
         eligible:
           type: boolean
         current_app_version:
@@ -3527,8 +3535,6 @@ components:
           type: array
           items:
             type: string
-        duration_estimate_hours:
-          type: number
         legacy_auth_custom_roles:
           type: array
           items:
@@ -3539,23 +3545,29 @@ components:
             type: string
       required:
         - current_app_version_release_channel
+        - duration_estimate_hours
         - eligible
         - current_app_version
         - latest_app_version
         - target_upgrade_versions
         - potential_breaking_changes
-        - duration_estimate_hours
         - legacy_auth_custom_roles
         - extension_dependent_objects
     DatabaseUpgradeStatus:
       type: object
       properties:
+        target_version:
+          type: integer
+        status:
+          enum:
+            - 0
+            - 1
+            - 2
+          type: integer
         initiated_at:
           type: string
         latest_status_at:
           type: string
-        target_version:
-          type: number
         error:
           type: string
           enum:
@@ -3582,17 +3594,11 @@ components:
             - 8_attached_volume_to_upgraded_instance
             - 9_completed_upgrade
             - 10_completed_post_physical_backup
-        status:
-          type: number
-          enum:
-            - 0
-            - 1
-            - 2
       required:
-        - initiated_at
-        - latest_status_at
         - target_version
         - status
+        - initiated_at
+        - latest_status_at
     DatabaseUpgradeStatusResponse:
       type: object
       properties:
@@ -3655,26 +3661,16 @@ components:
       properties:
         name:
           type: string
-        version:
-          type: string
-        description:
-          type: string
+          enum:
+            - GoTrue
       required:
         - name
-        - version
-        - description
     RealtimeHealthResponse:
       type: object
       properties:
-        healthy:
-          type: boolean
-        db_connected:
-          type: boolean
         connected_cluster:
-          type: number
+          type: integer
       required:
-        - healthy
-        - db_connected
         - connected_cluster
     V1ServiceHealthResponse:
       type: object
@@ -3724,7 +3720,8 @@ components:
       type: object
       properties:
         fileSizeLimit:
-          type: number
+          type: integer
+          format: int64
         features:
           $ref: '#/components/schemas/StorageFeatures'
       required:
@@ -3884,6 +3881,14 @@ components:
     SupavisorConfigResponse:
       type: object
       properties:
+        db_port:
+          type: integer
+        default_pool_size:
+          type: integer
+          nullable: true
+        max_client_conn:
+          type: integer
+          nullable: true
         identifier:
           type: string
         database_type:
@@ -3897,34 +3902,26 @@ components:
           type: string
         db_host:
           type: string
-        db_port:
-          type: number
         db_name:
           type: string
         connectionString:
           type: string
-        default_pool_size:
-          type: number
-          nullable: true
-        max_client_conn:
-          type: number
-          nullable: true
         pool_mode:
           enum:
             - transaction
             - session
           type: string
       required:
+        - db_port
+        - default_pool_size
+        - max_client_conn
         - identifier
         - database_type
         - is_using_scram_auth
         - db_user
         - db_host
-        - db_port
         - db_name
         - connectionString
-        - default_pool_size
-        - max_client_conn
         - pool_mode
     UpdateSupavisorConfigBody:
       type: object
@@ -3945,7 +3942,7 @@ components:
       type: object
       properties:
         default_pool_size:
-          type: number
+          type: integer
           nullable: true
         pool_mode:
           enum:
@@ -3959,10 +3956,67 @@ components:
       type: object
       properties:
         api_max_request_duration:
-          type: number
+          type: integer
           nullable: true
         db_max_pool_size:
-          type: number
+          type: integer
+          nullable: true
+        jwt_exp:
+          type: integer
+          nullable: true
+        mailer_otp_exp:
+          type: integer
+        mailer_otp_length:
+          type: integer
+          nullable: true
+        mfa_max_enrolled_factors:
+          type: integer
+          nullable: true
+        mfa_phone_otp_length:
+          type: integer
+        mfa_phone_max_frequency:
+          type: integer
+          nullable: true
+        password_min_length:
+          type: integer
+          nullable: true
+        rate_limit_anonymous_users:
+          type: integer
+          nullable: true
+        rate_limit_email_sent:
+          type: integer
+          nullable: true
+        rate_limit_sms_sent:
+          type: integer
+          nullable: true
+        rate_limit_token_refresh:
+          type: integer
+          nullable: true
+        rate_limit_verify:
+          type: integer
+          nullable: true
+        rate_limit_otp:
+          type: integer
+          nullable: true
+        security_refresh_token_reuse_interval:
+          type: integer
+          nullable: true
+        sessions_inactivity_timeout:
+          type: integer
+          nullable: true
+        sessions_timebox:
+          type: integer
+          nullable: true
+        sms_max_frequency:
+          type: integer
+          nullable: true
+        sms_otp_exp:
+          type: integer
+          nullable: true
+        sms_otp_length:
+          type: integer
+        smtp_max_frequency:
+          type: integer
           nullable: true
         disable_signup:
           type: boolean
@@ -4222,19 +4276,11 @@ components:
         hook_send_email_secrets:
           type: string
           nullable: true
-        jwt_exp:
-          type: number
-          nullable: true
         mailer_allow_unverified_email_sign_ins:
           type: boolean
           nullable: true
         mailer_autoconfirm:
           type: boolean
-          nullable: true
-        mailer_otp_exp:
-          type: number
-        mailer_otp_length:
-          type: number
           nullable: true
         mailer_secure_email_change_enabled:
           type: boolean
@@ -4275,9 +4321,6 @@ components:
         mailer_templates_recovery_content:
           type: string
           nullable: true
-        mfa_max_enrolled_factors:
-          type: number
-          nullable: true
         mfa_totp_enroll_enabled:
           type: boolean
           nullable: true
@@ -4296,40 +4339,14 @@ components:
         mfa_web_authn_verify_enabled:
           type: boolean
           nullable: true
-        mfa_phone_otp_length:
-          type: number
         mfa_phone_template:
           type: string
-          nullable: true
-        mfa_phone_max_frequency:
-          type: number
           nullable: true
         password_hibp_enabled:
           type: boolean
           nullable: true
-        password_min_length:
-          type: number
-          nullable: true
         password_required_characters:
           type: string
-          nullable: true
-        rate_limit_anonymous_users:
-          type: number
-          nullable: true
-        rate_limit_email_sent:
-          type: number
-          nullable: true
-        rate_limit_sms_sent:
-          type: number
-          nullable: true
-        rate_limit_token_refresh:
-          type: number
-          nullable: true
-        rate_limit_verify:
-          type: number
-          nullable: true
-        rate_limit_otp:
-          type: number
           nullable: true
         refresh_token_rotation_enabled:
           type: boolean
@@ -4355,14 +4372,8 @@ components:
         security_manual_linking_enabled:
           type: boolean
           nullable: true
-        security_refresh_token_reuse_interval:
-          type: number
-          nullable: true
         security_update_password_require_reauthentication:
           type: boolean
-          nullable: true
-        sessions_inactivity_timeout:
-          type: number
           nullable: true
         sessions_single_per_user:
           type: boolean
@@ -4370,17 +4381,11 @@ components:
         sessions_tags:
           type: string
           nullable: true
-        sessions_timebox:
-          type: number
-          nullable: true
         site_url:
           type: string
           nullable: true
         sms_autoconfirm:
           type: boolean
-          nullable: true
-        sms_max_frequency:
-          type: number
           nullable: true
         sms_messagebird_access_key:
           type: string
@@ -4388,11 +4393,6 @@ components:
         sms_messagebird_originator:
           type: string
           nullable: true
-        sms_otp_exp:
-          type: number
-          nullable: true
-        sms_otp_length:
-          type: number
         sms_provider:
           type: string
           nullable: true
@@ -4447,9 +4447,6 @@ components:
         smtp_host:
           type: string
           nullable: true
-        smtp_max_frequency:
-          type: number
-          nullable: true
         smtp_pass:
           type: string
           nullable: true
@@ -4468,6 +4465,26 @@ components:
       required:
         - api_max_request_duration
         - db_max_pool_size
+        - jwt_exp
+        - mailer_otp_exp
+        - mailer_otp_length
+        - mfa_max_enrolled_factors
+        - mfa_phone_otp_length
+        - mfa_phone_max_frequency
+        - password_min_length
+        - rate_limit_anonymous_users
+        - rate_limit_email_sent
+        - rate_limit_sms_sent
+        - rate_limit_token_refresh
+        - rate_limit_verify
+        - rate_limit_otp
+        - security_refresh_token_reuse_interval
+        - sessions_inactivity_timeout
+        - sessions_timebox
+        - sms_max_frequency
+        - sms_otp_exp
+        - sms_otp_length
+        - smtp_max_frequency
         - disable_signup
         - external_anonymous_users_enabled
         - external_apple_additional_client_ids
@@ -4554,11 +4571,8 @@ components:
         - hook_send_email_enabled
         - hook_send_email_uri
         - hook_send_email_secrets
-        - jwt_exp
         - mailer_allow_unverified_email_sign_ins
         - mailer_autoconfirm
-        - mailer_otp_exp
-        - mailer_otp_length
         - mailer_secure_email_change_enabled
         - mailer_subjects_confirmation
         - mailer_subjects_email_change
@@ -4572,25 +4586,15 @@ components:
         - mailer_templates_magic_link_content
         - mailer_templates_reauthentication_content
         - mailer_templates_recovery_content
-        - mfa_max_enrolled_factors
         - mfa_totp_enroll_enabled
         - mfa_totp_verify_enabled
         - mfa_phone_enroll_enabled
         - mfa_phone_verify_enabled
         - mfa_web_authn_enroll_enabled
         - mfa_web_authn_verify_enabled
-        - mfa_phone_otp_length
         - mfa_phone_template
-        - mfa_phone_max_frequency
         - password_hibp_enabled
-        - password_min_length
         - password_required_characters
-        - rate_limit_anonymous_users
-        - rate_limit_email_sent
-        - rate_limit_sms_sent
-        - rate_limit_token_refresh
-        - rate_limit_verify
-        - rate_limit_otp
         - refresh_token_rotation_enabled
         - saml_enabled
         - saml_external_url
@@ -4599,19 +4603,13 @@ components:
         - security_captcha_provider
         - security_captcha_secret
         - security_manual_linking_enabled
-        - security_refresh_token_reuse_interval
         - security_update_password_require_reauthentication
-        - sessions_inactivity_timeout
         - sessions_single_per_user
         - sessions_tags
-        - sessions_timebox
         - site_url
         - sms_autoconfirm
-        - sms_max_frequency
         - sms_messagebird_access_key
         - sms_messagebird_originator
-        - sms_otp_exp
-        - sms_otp_length
         - sms_provider
         - sms_template
         - sms_test_otp
@@ -4630,7 +4628,6 @@ components:
         - sms_vonage_from
         - smtp_admin_email
         - smtp_host
-        - smtp_max_frequency
         - smtp_pass
         - smtp_port
         - smtp_sender_name
@@ -4639,15 +4636,93 @@ components:
     UpdateAuthConfigBody:
       type: object
       properties:
+        jwt_exp:
+          type: integer
+          minimum: 0
+          maximum: 604800
+        smtp_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        mfa_max_enrolled_factors:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        sessions_timebox:
+          type: integer
+          minimum: 0
+        sessions_inactivity_timeout:
+          type: integer
+          minimum: 0
+        rate_limit_anonymous_users:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_email_sent:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_sms_sent:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_verify:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_token_refresh:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_otp:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        password_min_length:
+          type: integer
+          minimum: 6
+          maximum: 32767
+        security_refresh_token_reuse_interval:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        mailer_otp_exp:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        mailer_otp_length:
+          type: integer
+          minimum: 6
+          maximum: 10
+        sms_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        sms_otp_exp:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        sms_otp_length:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        db_max_pool_size:
+          type: integer
+        api_max_request_duration:
+          type: integer
+        mfa_phone_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        mfa_phone_otp_length:
+          type: integer
+          minimum: 0
+          maximum: 32767
         site_url:
           type: string
           pattern: /^[^,]+$/
         disable_signup:
           type: boolean
-        jwt_exp:
-          type: number
-          minimum: 0
-          maximum: 604800
         smtp_admin_email:
           type: string
         smtp_host:
@@ -4658,10 +4733,6 @@ components:
           type: string
         smtp_pass:
           type: string
-        smtp_max_frequency:
-          type: number
-          minimum: 0
-          maximum: 32767
         smtp_sender_name:
           type: string
         mailer_allow_unverified_email_sign_ins:
@@ -4692,10 +4763,6 @@ components:
           type: string
         mailer_templates_reauthentication_content:
           type: string
-        mfa_max_enrolled_factors:
-          type: number
-          minimum: 0
-          maximum: 2147483647
         uri_allow_list:
           type: string
         external_anonymous_users_enabled:
@@ -4715,51 +4782,17 @@ components:
           type: string
         security_captcha_secret:
           type: string
-        sessions_timebox:
-          type: number
-          minimum: 0
-        sessions_inactivity_timeout:
-          type: number
-          minimum: 0
         sessions_single_per_user:
           type: boolean
         sessions_tags:
           type: string
           pattern: /^\s*([a-z0-9_-]+(\s*,+\s*)?)*\s*$/i
-        rate_limit_anonymous_users:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_email_sent:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_sms_sent:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_verify:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_token_refresh:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_otp:
-          type: number
-          minimum: 1
-          maximum: 2147483647
         mailer_secure_email_change_enabled:
           type: boolean
         refresh_token_rotation_enabled:
           type: boolean
         password_hibp_enabled:
           type: boolean
-        password_min_length:
-          type: number
-          minimum: 6
-          maximum: 32767
         password_required_characters:
           type: string
           enum:
@@ -4771,32 +4804,8 @@ components:
           type: boolean
         security_update_password_require_reauthentication:
           type: boolean
-        security_refresh_token_reuse_interval:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        mailer_otp_exp:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        mailer_otp_length:
-          type: number
-          minimum: 6
-          maximum: 10
         sms_autoconfirm:
           type: boolean
-        sms_max_frequency:
-          type: number
-          minimum: 0
-          maximum: 32767
-        sms_otp_exp:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        sms_otp_length:
-          type: number
-          minimum: 0
-          maximum: 32767
         sms_provider:
           type: string
         sms_messagebird_access_key:
@@ -4998,10 +5007,6 @@ components:
           type: string
         external_zoom_secret:
           type: string
-        db_max_pool_size:
-          type: number
-        api_max_request_duration:
-          type: number
         mfa_totp_enroll_enabled:
           type: boolean
         mfa_totp_verify_enabled:
@@ -5014,14 +5019,6 @@ components:
           type: boolean
         mfa_phone_verify_enabled:
           type: boolean
-        mfa_phone_max_frequency:
-          type: number
-          minimum: 0
-          maximum: 32767
-        mfa_phone_otp_length:
-          type: number
-          minimum: 0
-          maximum: 32767
         mfa_phone_template:
           type: string
     CreateThirdPartyAuthBody:
@@ -5090,6 +5087,14 @@ components:
     FunctionResponse:
       type: object
       properties:
+        version:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
         id:
           type: string
         slug:
@@ -5102,12 +5107,6 @@ components:
             - REMOVED
             - THROTTLED
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
         verify_jwt:
           type: boolean
         import_map:
@@ -5117,16 +5116,24 @@ components:
         import_map_path:
           type: string
       required:
+        - version
+        - created_at
+        - updated_at
         - id
         - slug
         - name
         - status
-        - version
-        - created_at
-        - updated_at
     FunctionSlugResponse:
       type: object
       properties:
+        version:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
         id:
           type: string
         slug:
@@ -5139,12 +5146,6 @@ components:
             - REMOVED
             - THROTTLED
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
         verify_jwt:
           type: boolean
         import_map:
@@ -5154,13 +5155,13 @@ components:
         import_map_path:
           type: string
       required:
+        - version
+        - created_at
+        - updated_at
         - id
         - slug
         - name
         - status
-        - version
-        - created_at
-        - updated_at
     V1UpdateFunctionBody:
       type: object
       properties:
@@ -5398,9 +5399,11 @@ components:
       type: object
       properties:
         earliest_physical_backup_date_unix:
-          type: number
+          type: integer
+          format: int64
         latest_physical_backup_date_unix:
-          type: number
+          type: integer
+          format: int64
     V1BackupsResponse:
       type: object
       properties:
@@ -5426,7 +5429,9 @@ components:
       type: object
       properties:
         recovery_time_target_unix:
-          type: number
+          type: integer
+          minimum: 0
+          format: int64
       required:
         - recovery_time_target_unix
     V1OrganizationMemberResponse:

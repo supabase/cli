@@ -14,6 +14,11 @@ const (
 	Oauth2Scopes = "oauth2.Scopes"
 )
 
+// Defines values for AuthHealthResponseName.
+const (
+	GoTrue AuthHealthResponseName = "GoTrue"
+)
+
 // Defines values for BillingPlanId.
 const (
 	BillingPlanIdEnterprise BillingPlanId = "enterprise"
@@ -448,184 +453,185 @@ type AttributeValue_Default struct {
 
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
-	ApiMaxRequestDuration                         *float32 `json:"api_max_request_duration"`
-	DbMaxPoolSize                                 *float32 `json:"db_max_pool_size"`
-	DisableSignup                                 *bool    `json:"disable_signup"`
-	ExternalAnonymousUsersEnabled                 *bool    `json:"external_anonymous_users_enabled"`
-	ExternalAppleAdditionalClientIds              *string  `json:"external_apple_additional_client_ids"`
-	ExternalAppleClientId                         *string  `json:"external_apple_client_id"`
-	ExternalAppleEnabled                          *bool    `json:"external_apple_enabled"`
-	ExternalAppleSecret                           *string  `json:"external_apple_secret"`
-	ExternalAzureClientId                         *string  `json:"external_azure_client_id"`
-	ExternalAzureEnabled                          *bool    `json:"external_azure_enabled"`
-	ExternalAzureSecret                           *string  `json:"external_azure_secret"`
-	ExternalAzureUrl                              *string  `json:"external_azure_url"`
-	ExternalBitbucketClientId                     *string  `json:"external_bitbucket_client_id"`
-	ExternalBitbucketEnabled                      *bool    `json:"external_bitbucket_enabled"`
-	ExternalBitbucketSecret                       *string  `json:"external_bitbucket_secret"`
-	ExternalDiscordClientId                       *string  `json:"external_discord_client_id"`
-	ExternalDiscordEnabled                        *bool    `json:"external_discord_enabled"`
-	ExternalDiscordSecret                         *string  `json:"external_discord_secret"`
-	ExternalEmailEnabled                          *bool    `json:"external_email_enabled"`
-	ExternalFacebookClientId                      *string  `json:"external_facebook_client_id"`
-	ExternalFacebookEnabled                       *bool    `json:"external_facebook_enabled"`
-	ExternalFacebookSecret                        *string  `json:"external_facebook_secret"`
-	ExternalFigmaClientId                         *string  `json:"external_figma_client_id"`
-	ExternalFigmaEnabled                          *bool    `json:"external_figma_enabled"`
-	ExternalFigmaSecret                           *string  `json:"external_figma_secret"`
-	ExternalGithubClientId                        *string  `json:"external_github_client_id"`
-	ExternalGithubEnabled                         *bool    `json:"external_github_enabled"`
-	ExternalGithubSecret                          *string  `json:"external_github_secret"`
-	ExternalGitlabClientId                        *string  `json:"external_gitlab_client_id"`
-	ExternalGitlabEnabled                         *bool    `json:"external_gitlab_enabled"`
-	ExternalGitlabSecret                          *string  `json:"external_gitlab_secret"`
-	ExternalGitlabUrl                             *string  `json:"external_gitlab_url"`
-	ExternalGoogleAdditionalClientIds             *string  `json:"external_google_additional_client_ids"`
-	ExternalGoogleClientId                        *string  `json:"external_google_client_id"`
-	ExternalGoogleEnabled                         *bool    `json:"external_google_enabled"`
-	ExternalGoogleSecret                          *string  `json:"external_google_secret"`
-	ExternalGoogleSkipNonceCheck                  *bool    `json:"external_google_skip_nonce_check"`
-	ExternalKakaoClientId                         *string  `json:"external_kakao_client_id"`
-	ExternalKakaoEnabled                          *bool    `json:"external_kakao_enabled"`
-	ExternalKakaoSecret                           *string  `json:"external_kakao_secret"`
-	ExternalKeycloakClientId                      *string  `json:"external_keycloak_client_id"`
-	ExternalKeycloakEnabled                       *bool    `json:"external_keycloak_enabled"`
-	ExternalKeycloakSecret                        *string  `json:"external_keycloak_secret"`
-	ExternalKeycloakUrl                           *string  `json:"external_keycloak_url"`
-	ExternalLinkedinOidcClientId                  *string  `json:"external_linkedin_oidc_client_id"`
-	ExternalLinkedinOidcEnabled                   *bool    `json:"external_linkedin_oidc_enabled"`
-	ExternalLinkedinOidcSecret                    *string  `json:"external_linkedin_oidc_secret"`
-	ExternalNotionClientId                        *string  `json:"external_notion_client_id"`
-	ExternalNotionEnabled                         *bool    `json:"external_notion_enabled"`
-	ExternalNotionSecret                          *string  `json:"external_notion_secret"`
-	ExternalPhoneEnabled                          *bool    `json:"external_phone_enabled"`
-	ExternalSlackClientId                         *string  `json:"external_slack_client_id"`
-	ExternalSlackEnabled                          *bool    `json:"external_slack_enabled"`
-	ExternalSlackOidcClientId                     *string  `json:"external_slack_oidc_client_id"`
-	ExternalSlackOidcEnabled                      *bool    `json:"external_slack_oidc_enabled"`
-	ExternalSlackOidcSecret                       *string  `json:"external_slack_oidc_secret"`
-	ExternalSlackSecret                           *string  `json:"external_slack_secret"`
-	ExternalSpotifyClientId                       *string  `json:"external_spotify_client_id"`
-	ExternalSpotifyEnabled                        *bool    `json:"external_spotify_enabled"`
-	ExternalSpotifySecret                         *string  `json:"external_spotify_secret"`
-	ExternalTwitchClientId                        *string  `json:"external_twitch_client_id"`
-	ExternalTwitchEnabled                         *bool    `json:"external_twitch_enabled"`
-	ExternalTwitchSecret                          *string  `json:"external_twitch_secret"`
-	ExternalTwitterClientId                       *string  `json:"external_twitter_client_id"`
-	ExternalTwitterEnabled                        *bool    `json:"external_twitter_enabled"`
-	ExternalTwitterSecret                         *string  `json:"external_twitter_secret"`
-	ExternalWorkosClientId                        *string  `json:"external_workos_client_id"`
-	ExternalWorkosEnabled                         *bool    `json:"external_workos_enabled"`
-	ExternalWorkosSecret                          *string  `json:"external_workos_secret"`
-	ExternalWorkosUrl                             *string  `json:"external_workos_url"`
-	ExternalZoomClientId                          *string  `json:"external_zoom_client_id"`
-	ExternalZoomEnabled                           *bool    `json:"external_zoom_enabled"`
-	ExternalZoomSecret                            *string  `json:"external_zoom_secret"`
-	HookCustomAccessTokenEnabled                  *bool    `json:"hook_custom_access_token_enabled"`
-	HookCustomAccessTokenSecrets                  *string  `json:"hook_custom_access_token_secrets"`
-	HookCustomAccessTokenUri                      *string  `json:"hook_custom_access_token_uri"`
-	HookMfaVerificationAttemptEnabled             *bool    `json:"hook_mfa_verification_attempt_enabled"`
-	HookMfaVerificationAttemptSecrets             *string  `json:"hook_mfa_verification_attempt_secrets"`
-	HookMfaVerificationAttemptUri                 *string  `json:"hook_mfa_verification_attempt_uri"`
-	HookPasswordVerificationAttemptEnabled        *bool    `json:"hook_password_verification_attempt_enabled"`
-	HookPasswordVerificationAttemptSecrets        *string  `json:"hook_password_verification_attempt_secrets"`
-	HookPasswordVerificationAttemptUri            *string  `json:"hook_password_verification_attempt_uri"`
-	HookSendEmailEnabled                          *bool    `json:"hook_send_email_enabled"`
-	HookSendEmailSecrets                          *string  `json:"hook_send_email_secrets"`
-	HookSendEmailUri                              *string  `json:"hook_send_email_uri"`
-	HookSendSmsEnabled                            *bool    `json:"hook_send_sms_enabled"`
-	HookSendSmsSecrets                            *string  `json:"hook_send_sms_secrets"`
-	HookSendSmsUri                                *string  `json:"hook_send_sms_uri"`
-	JwtExp                                        *float32 `json:"jwt_exp"`
-	MailerAllowUnverifiedEmailSignIns             *bool    `json:"mailer_allow_unverified_email_sign_ins"`
-	MailerAutoconfirm                             *bool    `json:"mailer_autoconfirm"`
-	MailerOtpExp                                  float32  `json:"mailer_otp_exp"`
-	MailerOtpLength                               *float32 `json:"mailer_otp_length"`
-	MailerSecureEmailChangeEnabled                *bool    `json:"mailer_secure_email_change_enabled"`
-	MailerSubjectsConfirmation                    *string  `json:"mailer_subjects_confirmation"`
-	MailerSubjectsEmailChange                     *string  `json:"mailer_subjects_email_change"`
-	MailerSubjectsInvite                          *string  `json:"mailer_subjects_invite"`
-	MailerSubjectsMagicLink                       *string  `json:"mailer_subjects_magic_link"`
-	MailerSubjectsReauthentication                *string  `json:"mailer_subjects_reauthentication"`
-	MailerSubjectsRecovery                        *string  `json:"mailer_subjects_recovery"`
-	MailerTemplatesConfirmationContent            *string  `json:"mailer_templates_confirmation_content"`
-	MailerTemplatesEmailChangeContent             *string  `json:"mailer_templates_email_change_content"`
-	MailerTemplatesInviteContent                  *string  `json:"mailer_templates_invite_content"`
-	MailerTemplatesMagicLinkContent               *string  `json:"mailer_templates_magic_link_content"`
-	MailerTemplatesReauthenticationContent        *string  `json:"mailer_templates_reauthentication_content"`
-	MailerTemplatesRecoveryContent                *string  `json:"mailer_templates_recovery_content"`
-	MfaMaxEnrolledFactors                         *float32 `json:"mfa_max_enrolled_factors"`
-	MfaPhoneEnrollEnabled                         *bool    `json:"mfa_phone_enroll_enabled"`
-	MfaPhoneMaxFrequency                          *float32 `json:"mfa_phone_max_frequency"`
-	MfaPhoneOtpLength                             float32  `json:"mfa_phone_otp_length"`
-	MfaPhoneTemplate                              *string  `json:"mfa_phone_template"`
-	MfaPhoneVerifyEnabled                         *bool    `json:"mfa_phone_verify_enabled"`
-	MfaTotpEnrollEnabled                          *bool    `json:"mfa_totp_enroll_enabled"`
-	MfaTotpVerifyEnabled                          *bool    `json:"mfa_totp_verify_enabled"`
-	MfaWebAuthnEnrollEnabled                      *bool    `json:"mfa_web_authn_enroll_enabled"`
-	MfaWebAuthnVerifyEnabled                      *bool    `json:"mfa_web_authn_verify_enabled"`
-	PasswordHibpEnabled                           *bool    `json:"password_hibp_enabled"`
-	PasswordMinLength                             *float32 `json:"password_min_length"`
-	PasswordRequiredCharacters                    *string  `json:"password_required_characters"`
-	RateLimitAnonymousUsers                       *float32 `json:"rate_limit_anonymous_users"`
-	RateLimitEmailSent                            *float32 `json:"rate_limit_email_sent"`
-	RateLimitOtp                                  *float32 `json:"rate_limit_otp"`
-	RateLimitSmsSent                              *float32 `json:"rate_limit_sms_sent"`
-	RateLimitTokenRefresh                         *float32 `json:"rate_limit_token_refresh"`
-	RateLimitVerify                               *float32 `json:"rate_limit_verify"`
-	RefreshTokenRotationEnabled                   *bool    `json:"refresh_token_rotation_enabled"`
-	SamlAllowEncryptedAssertions                  *bool    `json:"saml_allow_encrypted_assertions"`
-	SamlEnabled                                   *bool    `json:"saml_enabled"`
-	SamlExternalUrl                               *string  `json:"saml_external_url"`
-	SecurityCaptchaEnabled                        *bool    `json:"security_captcha_enabled"`
-	SecurityCaptchaProvider                       *string  `json:"security_captcha_provider"`
-	SecurityCaptchaSecret                         *string  `json:"security_captcha_secret"`
-	SecurityManualLinkingEnabled                  *bool    `json:"security_manual_linking_enabled"`
-	SecurityRefreshTokenReuseInterval             *float32 `json:"security_refresh_token_reuse_interval"`
-	SecurityUpdatePasswordRequireReauthentication *bool    `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                     *float32 `json:"sessions_inactivity_timeout"`
-	SessionsSinglePerUser                         *bool    `json:"sessions_single_per_user"`
-	SessionsTags                                  *string  `json:"sessions_tags"`
-	SessionsTimebox                               *float32 `json:"sessions_timebox"`
-	SiteUrl                                       *string  `json:"site_url"`
-	SmsAutoconfirm                                *bool    `json:"sms_autoconfirm"`
-	SmsMaxFrequency                               *float32 `json:"sms_max_frequency"`
-	SmsMessagebirdAccessKey                       *string  `json:"sms_messagebird_access_key"`
-	SmsMessagebirdOriginator                      *string  `json:"sms_messagebird_originator"`
-	SmsOtpExp                                     *float32 `json:"sms_otp_exp"`
-	SmsOtpLength                                  float32  `json:"sms_otp_length"`
-	SmsProvider                                   *string  `json:"sms_provider"`
-	SmsTemplate                                   *string  `json:"sms_template"`
-	SmsTestOtp                                    *string  `json:"sms_test_otp"`
-	SmsTestOtpValidUntil                          *string  `json:"sms_test_otp_valid_until"`
-	SmsTextlocalApiKey                            *string  `json:"sms_textlocal_api_key"`
-	SmsTextlocalSender                            *string  `json:"sms_textlocal_sender"`
-	SmsTwilioAccountSid                           *string  `json:"sms_twilio_account_sid"`
-	SmsTwilioAuthToken                            *string  `json:"sms_twilio_auth_token"`
-	SmsTwilioContentSid                           *string  `json:"sms_twilio_content_sid"`
-	SmsTwilioMessageServiceSid                    *string  `json:"sms_twilio_message_service_sid"`
-	SmsTwilioVerifyAccountSid                     *string  `json:"sms_twilio_verify_account_sid"`
-	SmsTwilioVerifyAuthToken                      *string  `json:"sms_twilio_verify_auth_token"`
-	SmsTwilioVerifyMessageServiceSid              *string  `json:"sms_twilio_verify_message_service_sid"`
-	SmsVonageApiKey                               *string  `json:"sms_vonage_api_key"`
-	SmsVonageApiSecret                            *string  `json:"sms_vonage_api_secret"`
-	SmsVonageFrom                                 *string  `json:"sms_vonage_from"`
-	SmtpAdminEmail                                *string  `json:"smtp_admin_email"`
-	SmtpHost                                      *string  `json:"smtp_host"`
-	SmtpMaxFrequency                              *float32 `json:"smtp_max_frequency"`
-	SmtpPass                                      *string  `json:"smtp_pass"`
-	SmtpPort                                      *string  `json:"smtp_port"`
-	SmtpSenderName                                *string  `json:"smtp_sender_name"`
-	SmtpUser                                      *string  `json:"smtp_user"`
-	UriAllowList                                  *string  `json:"uri_allow_list"`
+	ApiMaxRequestDuration                         *int    `json:"api_max_request_duration"`
+	DbMaxPoolSize                                 *int    `json:"db_max_pool_size"`
+	DisableSignup                                 *bool   `json:"disable_signup"`
+	ExternalAnonymousUsersEnabled                 *bool   `json:"external_anonymous_users_enabled"`
+	ExternalAppleAdditionalClientIds              *string `json:"external_apple_additional_client_ids"`
+	ExternalAppleClientId                         *string `json:"external_apple_client_id"`
+	ExternalAppleEnabled                          *bool   `json:"external_apple_enabled"`
+	ExternalAppleSecret                           *string `json:"external_apple_secret"`
+	ExternalAzureClientId                         *string `json:"external_azure_client_id"`
+	ExternalAzureEnabled                          *bool   `json:"external_azure_enabled"`
+	ExternalAzureSecret                           *string `json:"external_azure_secret"`
+	ExternalAzureUrl                              *string `json:"external_azure_url"`
+	ExternalBitbucketClientId                     *string `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEnabled                      *bool   `json:"external_bitbucket_enabled"`
+	ExternalBitbucketSecret                       *string `json:"external_bitbucket_secret"`
+	ExternalDiscordClientId                       *string `json:"external_discord_client_id"`
+	ExternalDiscordEnabled                        *bool   `json:"external_discord_enabled"`
+	ExternalDiscordSecret                         *string `json:"external_discord_secret"`
+	ExternalEmailEnabled                          *bool   `json:"external_email_enabled"`
+	ExternalFacebookClientId                      *string `json:"external_facebook_client_id"`
+	ExternalFacebookEnabled                       *bool   `json:"external_facebook_enabled"`
+	ExternalFacebookSecret                        *string `json:"external_facebook_secret"`
+	ExternalFigmaClientId                         *string `json:"external_figma_client_id"`
+	ExternalFigmaEnabled                          *bool   `json:"external_figma_enabled"`
+	ExternalFigmaSecret                           *string `json:"external_figma_secret"`
+	ExternalGithubClientId                        *string `json:"external_github_client_id"`
+	ExternalGithubEnabled                         *bool   `json:"external_github_enabled"`
+	ExternalGithubSecret                          *string `json:"external_github_secret"`
+	ExternalGitlabClientId                        *string `json:"external_gitlab_client_id"`
+	ExternalGitlabEnabled                         *bool   `json:"external_gitlab_enabled"`
+	ExternalGitlabSecret                          *string `json:"external_gitlab_secret"`
+	ExternalGitlabUrl                             *string `json:"external_gitlab_url"`
+	ExternalGoogleAdditionalClientIds             *string `json:"external_google_additional_client_ids"`
+	ExternalGoogleClientId                        *string `json:"external_google_client_id"`
+	ExternalGoogleEnabled                         *bool   `json:"external_google_enabled"`
+	ExternalGoogleSecret                          *string `json:"external_google_secret"`
+	ExternalGoogleSkipNonceCheck                  *bool   `json:"external_google_skip_nonce_check"`
+	ExternalKakaoClientId                         *string `json:"external_kakao_client_id"`
+	ExternalKakaoEnabled                          *bool   `json:"external_kakao_enabled"`
+	ExternalKakaoSecret                           *string `json:"external_kakao_secret"`
+	ExternalKeycloakClientId                      *string `json:"external_keycloak_client_id"`
+	ExternalKeycloakEnabled                       *bool   `json:"external_keycloak_enabled"`
+	ExternalKeycloakSecret                        *string `json:"external_keycloak_secret"`
+	ExternalKeycloakUrl                           *string `json:"external_keycloak_url"`
+	ExternalLinkedinOidcClientId                  *string `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEnabled                   *bool   `json:"external_linkedin_oidc_enabled"`
+	ExternalLinkedinOidcSecret                    *string `json:"external_linkedin_oidc_secret"`
+	ExternalNotionClientId                        *string `json:"external_notion_client_id"`
+	ExternalNotionEnabled                         *bool   `json:"external_notion_enabled"`
+	ExternalNotionSecret                          *string `json:"external_notion_secret"`
+	ExternalPhoneEnabled                          *bool   `json:"external_phone_enabled"`
+	ExternalSlackClientId                         *string `json:"external_slack_client_id"`
+	ExternalSlackEnabled                          *bool   `json:"external_slack_enabled"`
+	ExternalSlackOidcClientId                     *string `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEnabled                      *bool   `json:"external_slack_oidc_enabled"`
+	ExternalSlackOidcSecret                       *string `json:"external_slack_oidc_secret"`
+	ExternalSlackSecret                           *string `json:"external_slack_secret"`
+	ExternalSpotifyClientId                       *string `json:"external_spotify_client_id"`
+	ExternalSpotifyEnabled                        *bool   `json:"external_spotify_enabled"`
+	ExternalSpotifySecret                         *string `json:"external_spotify_secret"`
+	ExternalTwitchClientId                        *string `json:"external_twitch_client_id"`
+	ExternalTwitchEnabled                         *bool   `json:"external_twitch_enabled"`
+	ExternalTwitchSecret                          *string `json:"external_twitch_secret"`
+	ExternalTwitterClientId                       *string `json:"external_twitter_client_id"`
+	ExternalTwitterEnabled                        *bool   `json:"external_twitter_enabled"`
+	ExternalTwitterSecret                         *string `json:"external_twitter_secret"`
+	ExternalWorkosClientId                        *string `json:"external_workos_client_id"`
+	ExternalWorkosEnabled                         *bool   `json:"external_workos_enabled"`
+	ExternalWorkosSecret                          *string `json:"external_workos_secret"`
+	ExternalWorkosUrl                             *string `json:"external_workos_url"`
+	ExternalZoomClientId                          *string `json:"external_zoom_client_id"`
+	ExternalZoomEnabled                           *bool   `json:"external_zoom_enabled"`
+	ExternalZoomSecret                            *string `json:"external_zoom_secret"`
+	HookCustomAccessTokenEnabled                  *bool   `json:"hook_custom_access_token_enabled"`
+	HookCustomAccessTokenSecrets                  *string `json:"hook_custom_access_token_secrets"`
+	HookCustomAccessTokenUri                      *string `json:"hook_custom_access_token_uri"`
+	HookMfaVerificationAttemptEnabled             *bool   `json:"hook_mfa_verification_attempt_enabled"`
+	HookMfaVerificationAttemptSecrets             *string `json:"hook_mfa_verification_attempt_secrets"`
+	HookMfaVerificationAttemptUri                 *string `json:"hook_mfa_verification_attempt_uri"`
+	HookPasswordVerificationAttemptEnabled        *bool   `json:"hook_password_verification_attempt_enabled"`
+	HookPasswordVerificationAttemptSecrets        *string `json:"hook_password_verification_attempt_secrets"`
+	HookPasswordVerificationAttemptUri            *string `json:"hook_password_verification_attempt_uri"`
+	HookSendEmailEnabled                          *bool   `json:"hook_send_email_enabled"`
+	HookSendEmailSecrets                          *string `json:"hook_send_email_secrets"`
+	HookSendEmailUri                              *string `json:"hook_send_email_uri"`
+	HookSendSmsEnabled                            *bool   `json:"hook_send_sms_enabled"`
+	HookSendSmsSecrets                            *string `json:"hook_send_sms_secrets"`
+	HookSendSmsUri                                *string `json:"hook_send_sms_uri"`
+	JwtExp                                        *int    `json:"jwt_exp"`
+	MailerAllowUnverifiedEmailSignIns             *bool   `json:"mailer_allow_unverified_email_sign_ins"`
+	MailerAutoconfirm                             *bool   `json:"mailer_autoconfirm"`
+	MailerOtpExp                                  int     `json:"mailer_otp_exp"`
+	MailerOtpLength                               *int    `json:"mailer_otp_length"`
+	MailerSecureEmailChangeEnabled                *bool   `json:"mailer_secure_email_change_enabled"`
+	MailerSubjectsConfirmation                    *string `json:"mailer_subjects_confirmation"`
+	MailerSubjectsEmailChange                     *string `json:"mailer_subjects_email_change"`
+	MailerSubjectsInvite                          *string `json:"mailer_subjects_invite"`
+	MailerSubjectsMagicLink                       *string `json:"mailer_subjects_magic_link"`
+	MailerSubjectsReauthentication                *string `json:"mailer_subjects_reauthentication"`
+	MailerSubjectsRecovery                        *string `json:"mailer_subjects_recovery"`
+	MailerTemplatesConfirmationContent            *string `json:"mailer_templates_confirmation_content"`
+	MailerTemplatesEmailChangeContent             *string `json:"mailer_templates_email_change_content"`
+	MailerTemplatesInviteContent                  *string `json:"mailer_templates_invite_content"`
+	MailerTemplatesMagicLinkContent               *string `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesReauthenticationContent        *string `json:"mailer_templates_reauthentication_content"`
+	MailerTemplatesRecoveryContent                *string `json:"mailer_templates_recovery_content"`
+	MfaMaxEnrolledFactors                         *int    `json:"mfa_max_enrolled_factors"`
+	MfaPhoneEnrollEnabled                         *bool   `json:"mfa_phone_enroll_enabled"`
+	MfaPhoneMaxFrequency                          *int    `json:"mfa_phone_max_frequency"`
+	MfaPhoneOtpLength                             int     `json:"mfa_phone_otp_length"`
+	MfaPhoneTemplate                              *string `json:"mfa_phone_template"`
+	MfaPhoneVerifyEnabled                         *bool   `json:"mfa_phone_verify_enabled"`
+	MfaTotpEnrollEnabled                          *bool   `json:"mfa_totp_enroll_enabled"`
+	MfaTotpVerifyEnabled                          *bool   `json:"mfa_totp_verify_enabled"`
+	MfaWebAuthnEnrollEnabled                      *bool   `json:"mfa_web_authn_enroll_enabled"`
+	MfaWebAuthnVerifyEnabled                      *bool   `json:"mfa_web_authn_verify_enabled"`
+	PasswordHibpEnabled                           *bool   `json:"password_hibp_enabled"`
+	PasswordMinLength                             *int    `json:"password_min_length"`
+	PasswordRequiredCharacters                    *string `json:"password_required_characters"`
+	RateLimitAnonymousUsers                       *int    `json:"rate_limit_anonymous_users"`
+	RateLimitEmailSent                            *int    `json:"rate_limit_email_sent"`
+	RateLimitOtp                                  *int    `json:"rate_limit_otp"`
+	RateLimitSmsSent                              *int    `json:"rate_limit_sms_sent"`
+	RateLimitTokenRefresh                         *int    `json:"rate_limit_token_refresh"`
+	RateLimitVerify                               *int    `json:"rate_limit_verify"`
+	RefreshTokenRotationEnabled                   *bool   `json:"refresh_token_rotation_enabled"`
+	SamlAllowEncryptedAssertions                  *bool   `json:"saml_allow_encrypted_assertions"`
+	SamlEnabled                                   *bool   `json:"saml_enabled"`
+	SamlExternalUrl                               *string `json:"saml_external_url"`
+	SecurityCaptchaEnabled                        *bool   `json:"security_captcha_enabled"`
+	SecurityCaptchaProvider                       *string `json:"security_captcha_provider"`
+	SecurityCaptchaSecret                         *string `json:"security_captcha_secret"`
+	SecurityManualLinkingEnabled                  *bool   `json:"security_manual_linking_enabled"`
+	SecurityRefreshTokenReuseInterval             *int    `json:"security_refresh_token_reuse_interval"`
+	SecurityUpdatePasswordRequireReauthentication *bool   `json:"security_update_password_require_reauthentication"`
+	SessionsInactivityTimeout                     *int    `json:"sessions_inactivity_timeout"`
+	SessionsSinglePerUser                         *bool   `json:"sessions_single_per_user"`
+	SessionsTags                                  *string `json:"sessions_tags"`
+	SessionsTimebox                               *int    `json:"sessions_timebox"`
+	SiteUrl                                       *string `json:"site_url"`
+	SmsAutoconfirm                                *bool   `json:"sms_autoconfirm"`
+	SmsMaxFrequency                               *int    `json:"sms_max_frequency"`
+	SmsMessagebirdAccessKey                       *string `json:"sms_messagebird_access_key"`
+	SmsMessagebirdOriginator                      *string `json:"sms_messagebird_originator"`
+	SmsOtpExp                                     *int    `json:"sms_otp_exp"`
+	SmsOtpLength                                  int     `json:"sms_otp_length"`
+	SmsProvider                                   *string `json:"sms_provider"`
+	SmsTemplate                                   *string `json:"sms_template"`
+	SmsTestOtp                                    *string `json:"sms_test_otp"`
+	SmsTestOtpValidUntil                          *string `json:"sms_test_otp_valid_until"`
+	SmsTextlocalApiKey                            *string `json:"sms_textlocal_api_key"`
+	SmsTextlocalSender                            *string `json:"sms_textlocal_sender"`
+	SmsTwilioAccountSid                           *string `json:"sms_twilio_account_sid"`
+	SmsTwilioAuthToken                            *string `json:"sms_twilio_auth_token"`
+	SmsTwilioContentSid                           *string `json:"sms_twilio_content_sid"`
+	SmsTwilioMessageServiceSid                    *string `json:"sms_twilio_message_service_sid"`
+	SmsTwilioVerifyAccountSid                     *string `json:"sms_twilio_verify_account_sid"`
+	SmsTwilioVerifyAuthToken                      *string `json:"sms_twilio_verify_auth_token"`
+	SmsTwilioVerifyMessageServiceSid              *string `json:"sms_twilio_verify_message_service_sid"`
+	SmsVonageApiKey                               *string `json:"sms_vonage_api_key"`
+	SmsVonageApiSecret                            *string `json:"sms_vonage_api_secret"`
+	SmsVonageFrom                                 *string `json:"sms_vonage_from"`
+	SmtpAdminEmail                                *string `json:"smtp_admin_email"`
+	SmtpHost                                      *string `json:"smtp_host"`
+	SmtpMaxFrequency                              *int    `json:"smtp_max_frequency"`
+	SmtpPass                                      *string `json:"smtp_pass"`
+	SmtpPort                                      *string `json:"smtp_port"`
+	SmtpSenderName                                *string `json:"smtp_sender_name"`
+	SmtpUser                                      *string `json:"smtp_user"`
+	UriAllowList                                  *string `json:"uri_allow_list"`
 }
 
 // AuthHealthResponse defines model for AuthHealthResponse.
 type AuthHealthResponse struct {
-	Description string `json:"description"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
+	Name AuthHealthResponseName `json:"name"`
 }
+
+// AuthHealthResponseName defines model for AuthHealthResponse.Name.
+type AuthHealthResponseName string
 
 // BillingPlanId defines model for BillingPlanId.
 type BillingPlanId string
@@ -664,11 +670,11 @@ type BranchResponse struct {
 	GitBranch        *string              `json:"git_branch,omitempty"`
 	Id               string               `json:"id"`
 	IsDefault        bool                 `json:"is_default"`
-	LatestCheckRunId *float32             `json:"latest_check_run_id,omitempty"`
+	LatestCheckRunId *int64               `json:"latest_check_run_id,omitempty"`
 	Name             string               `json:"name"`
 	ParentProjectRef string               `json:"parent_project_ref"`
 	Persistent       bool                 `json:"persistent"`
-	PrNumber         *float32             `json:"pr_number,omitempty"`
+	PrNumber         *int32               `json:"pr_number,omitempty"`
 	ProjectRef       string               `json:"project_ref"`
 	ResetOnPush      bool                 `json:"reset_on_push"`
 	Status           BranchResponseStatus `json:"status"`
@@ -769,7 +775,7 @@ type DatabaseUpgradeStatus struct {
 	LatestStatusAt string                         `json:"latest_status_at"`
 	Progress       *DatabaseUpgradeStatusProgress `json:"progress,omitempty"`
 	Status         DatabaseUpgradeStatusStatus    `json:"status"`
-	TargetVersion  float32                        `json:"target_version"`
+	TargetVersion  int                            `json:"target_version"`
 }
 
 // DatabaseUpgradeStatusError defines model for DatabaseUpgradeStatus.Error.
@@ -779,7 +785,7 @@ type DatabaseUpgradeStatusError string
 type DatabaseUpgradeStatusProgress string
 
 // DatabaseUpgradeStatusStatus defines model for DatabaseUpgradeStatus.Status.
-type DatabaseUpgradeStatusStatus float32
+type DatabaseUpgradeStatusStatus int
 
 // DatabaseUpgradeStatusResponse defines model for DatabaseUpgradeStatusResponse.
 type DatabaseUpgradeStatusResponse struct {
@@ -808,7 +814,7 @@ type Domain struct {
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	CreatedAt      float32                `json:"created_at"`
+	CreatedAt      int64                  `json:"created_at"`
 	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
 	Id             string                 `json:"id"`
 	ImportMap      *bool                  `json:"import_map,omitempty"`
@@ -816,9 +822,9 @@ type FunctionResponse struct {
 	Name           string                 `json:"name"`
 	Slug           string                 `json:"slug"`
 	Status         FunctionResponseStatus `json:"status"`
-	UpdatedAt      float32                `json:"updated_at"`
+	UpdatedAt      int64                  `json:"updated_at"`
 	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
-	Version        float32                `json:"version"`
+	Version        int                    `json:"version"`
 }
 
 // FunctionResponseStatus defines model for FunctionResponse.Status.
@@ -826,7 +832,7 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	CreatedAt      float32                    `json:"created_at"`
+	CreatedAt      int64                      `json:"created_at"`
 	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
 	Id             string                     `json:"id"`
 	ImportMap      *bool                      `json:"import_map,omitempty"`
@@ -834,9 +840,9 @@ type FunctionSlugResponse struct {
 	Name           string                     `json:"name"`
 	Slug           string                     `json:"slug"`
 	Status         FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt      float32                    `json:"updated_at"`
+	UpdatedAt      int64                      `json:"updated_at"`
 	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
-	Version        float32                    `json:"version"`
+	Version        int                        `json:"version"`
 }
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
@@ -898,7 +904,7 @@ type OAuthTokenBodyGrantType string
 // OAuthTokenResponse defines model for OAuthTokenResponse.
 type OAuthTokenResponse struct {
 	AccessToken  string                      `json:"access_token"`
-	ExpiresIn    float32                     `json:"expires_in"`
+	ExpiresIn    int64                       `json:"expires_in"`
 	RefreshToken string                      `json:"refresh_token"`
 	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
 }
@@ -970,7 +976,7 @@ type PostgrestConfigWithJWTSecretResponse struct {
 type ProjectUpgradeEligibilityResponse struct {
 	CurrentAppVersion               string           `json:"current_app_version"`
 	CurrentAppVersionReleaseChannel ReleaseChannel   `json:"current_app_version_release_channel"`
-	DurationEstimateHours           float32          `json:"duration_estimate_hours"`
+	DurationEstimateHours           int              `json:"duration_estimate_hours"`
 	Eligible                        bool             `json:"eligible"`
 	ExtensionDependentObjects       []string         `json:"extension_dependent_objects"`
 	LatestAppVersion                string           `json:"latest_app_version"`
@@ -1011,9 +1017,7 @@ type ReadOnlyStatusResponse struct {
 
 // RealtimeHealthResponse defines model for RealtimeHealthResponse.
 type RealtimeHealthResponse struct {
-	ConnectedCluster float32 `json:"connected_cluster"`
-	DbConnected      bool    `json:"db_connected"`
-	Healthy          bool    `json:"healthy"`
+	ConnectedCluster int `json:"connected_cluster"`
 }
 
 // ReleaseChannel defines model for ReleaseChannel.
@@ -1087,8 +1091,8 @@ type SnippetMetaVisibility string
 
 // SnippetProject defines model for SnippetProject.
 type SnippetProject struct {
-	Id   float32 `json:"id"`
-	Name string  `json:"name"`
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // SnippetResponse defines model for SnippetResponse.
@@ -1114,8 +1118,8 @@ type SnippetResponseVisibility string
 
 // SnippetUser defines model for SnippetUser.
 type SnippetUser struct {
-	Id       float32 `json:"id"`
-	Username string  `json:"username"`
+	Id       int64  `json:"id"`
+	Username string `json:"username"`
 }
 
 // SslEnforcementRequest defines model for SslEnforcementRequest.
@@ -1144,7 +1148,7 @@ type SslValidation struct {
 // StorageConfigResponse defines model for StorageConfigResponse.
 type StorageConfigResponse struct {
 	Features      StorageFeatures `json:"features"`
-	FileSizeLimit float32         `json:"fileSizeLimit"`
+	FileSizeLimit int64           `json:"fileSizeLimit"`
 }
 
 // StorageFeatureImageTransformation defines model for StorageFeatureImageTransformation.
@@ -1168,12 +1172,12 @@ type SupavisorConfigResponse struct {
 	DatabaseType     SupavisorConfigResponseDatabaseType `json:"database_type"`
 	DbHost           string                              `json:"db_host"`
 	DbName           string                              `json:"db_name"`
-	DbPort           float32                             `json:"db_port"`
+	DbPort           int                                 `json:"db_port"`
 	DbUser           string                              `json:"db_user"`
-	DefaultPoolSize  *float32                            `json:"default_pool_size"`
+	DefaultPoolSize  *int                                `json:"default_pool_size"`
 	Identifier       string                              `json:"identifier"`
 	IsUsingScramAuth bool                                `json:"is_using_scram_auth"`
-	MaxClientConn    *float32                            `json:"max_client_conn"`
+	MaxClientConn    *int                                `json:"max_client_conn"`
 	PoolMode         SupavisorConfigResponsePoolMode     `json:"pool_mode"`
 }
 
@@ -1209,8 +1213,8 @@ type UpdateApiKeyBody struct {
 
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
-	ApiMaxRequestDuration                         *float32                                        `json:"api_max_request_duration,omitempty"`
-	DbMaxPoolSize                                 *float32                                        `json:"db_max_pool_size,omitempty"`
+	ApiMaxRequestDuration                         *int                                            `json:"api_max_request_duration,omitempty"`
+	DbMaxPoolSize                                 *int                                            `json:"db_max_pool_size,omitempty"`
 	DisableSignup                                 *bool                                           `json:"disable_signup,omitempty"`
 	ExternalAnonymousUsersEnabled                 *bool                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds              *string                                         `json:"external_apple_additional_client_ids,omitempty"`
@@ -1297,11 +1301,11 @@ type UpdateAuthConfigBody struct {
 	HookSendSmsEnabled                            *bool                                           `json:"hook_send_sms_enabled,omitempty"`
 	HookSendSmsSecrets                            *string                                         `json:"hook_send_sms_secrets,omitempty"`
 	HookSendSmsUri                                *string                                         `json:"hook_send_sms_uri,omitempty"`
-	JwtExp                                        *float32                                        `json:"jwt_exp,omitempty"`
+	JwtExp                                        *int                                            `json:"jwt_exp,omitempty"`
 	MailerAllowUnverifiedEmailSignIns             *bool                                           `json:"mailer_allow_unverified_email_sign_ins,omitempty"`
 	MailerAutoconfirm                             *bool                                           `json:"mailer_autoconfirm,omitempty"`
-	MailerOtpExp                                  *float32                                        `json:"mailer_otp_exp,omitempty"`
-	MailerOtpLength                               *float32                                        `json:"mailer_otp_length,omitempty"`
+	MailerOtpExp                                  *int                                            `json:"mailer_otp_exp,omitempty"`
+	MailerOtpLength                               *int                                            `json:"mailer_otp_length,omitempty"`
 	MailerSecureEmailChangeEnabled                *bool                                           `json:"mailer_secure_email_change_enabled,omitempty"`
 	MailerSubjectsConfirmation                    *string                                         `json:"mailer_subjects_confirmation,omitempty"`
 	MailerSubjectsEmailChange                     *string                                         `json:"mailer_subjects_email_change,omitempty"`
@@ -1315,10 +1319,10 @@ type UpdateAuthConfigBody struct {
 	MailerTemplatesMagicLinkContent               *string                                         `json:"mailer_templates_magic_link_content,omitempty"`
 	MailerTemplatesReauthenticationContent        *string                                         `json:"mailer_templates_reauthentication_content,omitempty"`
 	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content,omitempty"`
-	MfaMaxEnrolledFactors                         *float32                                        `json:"mfa_max_enrolled_factors,omitempty"`
+	MfaMaxEnrolledFactors                         *int                                            `json:"mfa_max_enrolled_factors,omitempty"`
 	MfaPhoneEnrollEnabled                         *bool                                           `json:"mfa_phone_enroll_enabled,omitempty"`
-	MfaPhoneMaxFrequency                          *float32                                        `json:"mfa_phone_max_frequency,omitempty"`
-	MfaPhoneOtpLength                             *float32                                        `json:"mfa_phone_otp_length,omitempty"`
+	MfaPhoneMaxFrequency                          *int                                            `json:"mfa_phone_max_frequency,omitempty"`
+	MfaPhoneOtpLength                             *int                                            `json:"mfa_phone_otp_length,omitempty"`
 	MfaPhoneTemplate                              *string                                         `json:"mfa_phone_template,omitempty"`
 	MfaPhoneVerifyEnabled                         *bool                                           `json:"mfa_phone_verify_enabled,omitempty"`
 	MfaTotpEnrollEnabled                          *bool                                           `json:"mfa_totp_enroll_enabled,omitempty"`
@@ -1326,14 +1330,14 @@ type UpdateAuthConfigBody struct {
 	MfaWebAuthnEnrollEnabled                      *bool                                           `json:"mfa_web_authn_enroll_enabled,omitempty"`
 	MfaWebAuthnVerifyEnabled                      *bool                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
 	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
-	PasswordMinLength                             *float32                                        `json:"password_min_length,omitempty"`
+	PasswordMinLength                             *int                                            `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
-	RateLimitAnonymousUsers                       *float32                                        `json:"rate_limit_anonymous_users,omitempty"`
-	RateLimitEmailSent                            *float32                                        `json:"rate_limit_email_sent,omitempty"`
-	RateLimitOtp                                  *float32                                        `json:"rate_limit_otp,omitempty"`
-	RateLimitSmsSent                              *float32                                        `json:"rate_limit_sms_sent,omitempty"`
-	RateLimitTokenRefresh                         *float32                                        `json:"rate_limit_token_refresh,omitempty"`
-	RateLimitVerify                               *float32                                        `json:"rate_limit_verify,omitempty"`
+	RateLimitAnonymousUsers                       *int                                            `json:"rate_limit_anonymous_users,omitempty"`
+	RateLimitEmailSent                            *int                                            `json:"rate_limit_email_sent,omitempty"`
+	RateLimitOtp                                  *int                                            `json:"rate_limit_otp,omitempty"`
+	RateLimitSmsSent                              *int                                            `json:"rate_limit_sms_sent,omitempty"`
+	RateLimitTokenRefresh                         *int                                            `json:"rate_limit_token_refresh,omitempty"`
+	RateLimitVerify                               *int                                            `json:"rate_limit_verify,omitempty"`
 	RefreshTokenRotationEnabled                   *bool                                           `json:"refresh_token_rotation_enabled,omitempty"`
 	SamlEnabled                                   *bool                                           `json:"saml_enabled,omitempty"`
 	SamlExternalUrl                               *string                                         `json:"saml_external_url,omitempty"`
@@ -1341,19 +1345,19 @@ type UpdateAuthConfigBody struct {
 	SecurityCaptchaProvider                       *string                                         `json:"security_captcha_provider,omitempty"`
 	SecurityCaptchaSecret                         *string                                         `json:"security_captcha_secret,omitempty"`
 	SecurityManualLinkingEnabled                  *bool                                           `json:"security_manual_linking_enabled,omitempty"`
-	SecurityRefreshTokenReuseInterval             *float32                                        `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecurityRefreshTokenReuseInterval             *int                                            `json:"security_refresh_token_reuse_interval,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication *bool                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                     *float32                                        `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsInactivityTimeout                     *int                                            `json:"sessions_inactivity_timeout,omitempty"`
 	SessionsSinglePerUser                         *bool                                           `json:"sessions_single_per_user,omitempty"`
 	SessionsTags                                  *string                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                               *float32                                        `json:"sessions_timebox,omitempty"`
+	SessionsTimebox                               *int                                            `json:"sessions_timebox,omitempty"`
 	SiteUrl                                       *string                                         `json:"site_url,omitempty"`
 	SmsAutoconfirm                                *bool                                           `json:"sms_autoconfirm,omitempty"`
-	SmsMaxFrequency                               *float32                                        `json:"sms_max_frequency,omitempty"`
+	SmsMaxFrequency                               *int                                            `json:"sms_max_frequency,omitempty"`
 	SmsMessagebirdAccessKey                       *string                                         `json:"sms_messagebird_access_key,omitempty"`
 	SmsMessagebirdOriginator                      *string                                         `json:"sms_messagebird_originator,omitempty"`
-	SmsOtpExp                                     *float32                                        `json:"sms_otp_exp,omitempty"`
-	SmsOtpLength                                  *float32                                        `json:"sms_otp_length,omitempty"`
+	SmsOtpExp                                     *int                                            `json:"sms_otp_exp,omitempty"`
+	SmsOtpLength                                  *int                                            `json:"sms_otp_length,omitempty"`
 	SmsProvider                                   *string                                         `json:"sms_provider,omitempty"`
 	SmsTemplate                                   *string                                         `json:"sms_template,omitempty"`
 	SmsTestOtp                                    *string                                         `json:"sms_test_otp,omitempty"`
@@ -1372,7 +1376,7 @@ type UpdateAuthConfigBody struct {
 	SmsVonageFrom                                 *string                                         `json:"sms_vonage_from,omitempty"`
 	SmtpAdminEmail                                *string                                         `json:"smtp_admin_email,omitempty"`
 	SmtpHost                                      *string                                         `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency                              *float32                                        `json:"smtp_max_frequency,omitempty"`
+	SmtpMaxFrequency                              *int                                            `json:"smtp_max_frequency,omitempty"`
 	SmtpPass                                      *string                                         `json:"smtp_pass,omitempty"`
 	SmtpPort                                      *string                                         `json:"smtp_port,omitempty"`
 	SmtpSenderName                                *string                                         `json:"smtp_sender_name,omitempty"`
@@ -1489,7 +1493,7 @@ type UpdateSupavisorConfigBodyPoolMode string
 
 // UpdateSupavisorConfigResponse defines model for UpdateSupavisorConfigResponse.
 type UpdateSupavisorConfigResponse struct {
-	DefaultPoolSize *float32                              `json:"default_pool_size"`
+	DefaultPoolSize *int                                  `json:"default_pool_size"`
 	PoolMode        UpdateSupavisorConfigResponsePoolMode `json:"pool_mode"`
 }
 
@@ -1616,8 +1620,8 @@ type V1PgbouncerConfigResponsePoolMode string
 
 // V1PhysicalBackup defines model for V1PhysicalBackup.
 type V1PhysicalBackup struct {
-	EarliestPhysicalBackupDateUnix *float32 `json:"earliest_physical_backup_date_unix,omitempty"`
-	LatestPhysicalBackupDateUnix   *float32 `json:"latest_physical_backup_date_unix,omitempty"`
+	EarliestPhysicalBackupDateUnix *int64 `json:"earliest_physical_backup_date_unix,omitempty"`
+	LatestPhysicalBackupDateUnix   *int64 `json:"latest_physical_backup_date_unix,omitempty"`
 }
 
 // V1PostgrestConfigResponse defines model for V1PostgrestConfigResponse.
@@ -1632,9 +1636,9 @@ type V1PostgrestConfigResponse struct {
 
 // V1ProjectRefResponse defines model for V1ProjectRefResponse.
 type V1ProjectRefResponse struct {
-	Id   float32 `json:"id"`
-	Name string  `json:"name"`
-	Ref  string  `json:"ref"`
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
+	Ref  string `json:"ref"`
 }
 
 // V1ProjectResponse defines model for V1ProjectResponse.
@@ -1662,7 +1666,7 @@ type V1ProjectResponseStatus string
 
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
-	RecoveryTimeTargetUnix float32 `json:"recovery_time_target_unix"`
+	RecoveryTimeTargetUnix int64 `json:"recovery_time_target_unix"`
 }
 
 // V1RunQueryBody defines model for V1RunQueryBody.
