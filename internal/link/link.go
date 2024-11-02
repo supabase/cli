@@ -232,10 +232,10 @@ func updatePoolerConfig(config api.SupavisorConfigResponse) {
 	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
 	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
 	if config.DefaultPoolSize != nil {
-		utils.Config.Db.Pooler.DefaultPoolSize = uint(*config.DefaultPoolSize)
+		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(*config.DefaultPoolSize)
 	}
 	if config.MaxClientConn != nil {
-		utils.Config.Db.Pooler.MaxClientConn = uint(*config.MaxClientConn)
+		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(*config.MaxClientConn)
 	}
 }
 
