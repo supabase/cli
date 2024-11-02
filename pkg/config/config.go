@@ -655,36 +655,39 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	}
 
 	// Load functions config
-	entries, err := fs.ReadDir(fsys, builder.FunctionsDir)
+	pattern := filepath.Join(builder.FunctionsDir, "*", "index.ts")
+	paths, err := fs.Glob(fsys, pattern)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return errors.Errorf("failed to read functions directory: %w", err)
+		return errors.Errorf("failed to glob function slugs: %w", err)
 	}
+
 	if c.Functions == nil {
 		c.Functions = make(FunctionConfig)
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+
+	for _, path := range paths {
+		slug := filepath.Base(filepath.Dir(path))
+		// Skip folders that don't match the function slug pattern
+		if !funcSlugPattern.MatchString(slug) {
 			continue
 		}
-		slug := entry.Name()
+
 		fn, exists := c.Functions[slug]
 		if !exists {
 			fn = function{}
 		}
+
 		functionDir := filepath.Join(builder.FunctionsDir, slug)
-		// TODO: support configuring alternative entrypoint path, such as index.js
+		// Set default entrypoint if not specified
 		if len(fn.Entrypoint) == 0 {
-			fn.Entrypoint = filepath.Join(functionDir, "index.ts")
+			fn.Entrypoint = path
 		} else if !filepath.IsAbs(fn.Entrypoint) {
-			// Append supabase/ because paths in configs are specified relative to config.toml
 			fn.Entrypoint = filepath.Join(builder.SupabaseDirPath, fn.Entrypoint)
 		}
+
+		// Check for import maps
 		denoJsonPath := filepath.Join(functionDir, "deno.json")
 		denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
-		// Functions may not use import map so we don't set a default value
 		if len(fn.ImportMap) > 0 && !filepath.IsAbs(fn.ImportMap) {
 			fn.ImportMap = filepath.Join(builder.SupabaseDirPath, fn.ImportMap)
 		} else if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
@@ -692,6 +695,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
 			fn.ImportMap = denoJsoncPath
 		}
+
 		c.Functions[slug] = fn
 	}
 
