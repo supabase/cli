@@ -356,3 +356,43 @@ func TestLoadEnv(t *testing.T) {
 	assert.Equal(t, "test-secret", config.Auth.JwtSecret)
 	assert.Equal(t, "test-root-key", config.Db.RootKey)
 }
+
+func TestLoadFunctionImportMap(t *testing.T) {
+	t.Run("uses deno.json as import map when present", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml":               &fs.MapFile{Data: []byte("project_id = \"test\"")},
+			"supabase/functions/hello/deno.json": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/hello/deno.json", config.Functions["hello"].ImportMap)
+	})
+	t.Run("uses deno.jsonc as import map when present", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml":                &fs.MapFile{Data: []byte("project_id = \"test\"")},
+			"supabase/functions/hello/deno.jsonc": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/hello/deno.jsonc", config.Functions["hello"].ImportMap)
+	})
+	t.Run("config.toml takes precedence over deno.json", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "test"
+			[functions]
+			hello.import_map = "custom_import_map.json"
+			`)},
+			"supabase/functions/hello/deno.json": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that config.toml takes precedence over deno.json
+		assert.Equal(t, "supabase/custom_import_map.json", config.Functions["hello"].ImportMap)
+	})
+}

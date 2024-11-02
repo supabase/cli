@@ -30,9 +30,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	"golang.org/x/mod/semver"
-
 	"github.com/supabase/cli/pkg/fetcher"
+	"golang.org/x/mod/semver"
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -654,19 +653,46 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
-	for slug, function := range c.Functions {
+
+	// Load functions config
+	entries, err := fs.ReadDir(fsys, builder.FunctionsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return errors.Errorf("failed to read functions directory: %w", err)
+	}
+	if c.Functions == nil {
+		c.Functions = make(FunctionConfig)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		slug := entry.Name()
+		fn, exists := c.Functions[slug]
+		if !exists {
+			fn = function{}
+		}
+		functionDir := filepath.Join(builder.FunctionsDir, slug)
 		// TODO: support configuring alternative entrypoint path, such as index.js
-		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join(builder.FunctionsDir, slug, "index.ts")
-		} else if !filepath.IsAbs(function.Entrypoint) {
+		if len(fn.Entrypoint) == 0 {
+			fn.Entrypoint = filepath.Join(functionDir, "index.ts")
+		} else if !filepath.IsAbs(fn.Entrypoint) {
 			// Append supabase/ because paths in configs are specified relative to config.toml
-			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
+			fn.Entrypoint = filepath.Join(builder.SupabaseDirPath, fn.Entrypoint)
 		}
+		denoJsonPath := filepath.Join(functionDir, "deno.json")
+		denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
 		// Functions may not use import map so we don't set a default value
-		if len(function.ImportMap) > 0 && !filepath.IsAbs(function.ImportMap) {
-			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
+		if len(fn.ImportMap) > 0 && !filepath.IsAbs(fn.ImportMap) {
+			fn.ImportMap = filepath.Join(builder.SupabaseDirPath, fn.ImportMap)
+		} else if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
+			fn.ImportMap = denoJsonPath
+		} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
+			fn.ImportMap = denoJsoncPath
 		}
-		c.Functions[slug] = function
+		c.Functions[slug] = fn
 	}
 
 	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
