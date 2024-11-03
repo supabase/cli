@@ -322,12 +322,16 @@ func TestImportMapPath(t *testing.T) {
 		}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Custom global import map loaded via cli flag
+		customImportMapPath := filepath.Join(utils.FunctionsDir, "custom_import_map.json")
+		require.NoError(t, afero.WriteFile(fsys, customImportMapPath, []byte("{}"), 0644))
+		// Create fallback import map to test precedence order
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
-		fc, err := GetFunctionConfig([]string{slug}, utils.FallbackImportMapPath, cast.Ptr(false), fsys)
+		fc, err := GetFunctionConfig([]string{slug}, customImportMapPath, cast.Ptr(false), fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc[slug].ImportMap)
+		assert.Equal(t, customImportMapPath, fc[slug].ImportMap)
 	})
 
 	t.Run("returns empty string if no fallback", func(t *testing.T) {

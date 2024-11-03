@@ -30,9 +30,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	"golang.org/x/mod/semver"
-
 	"github.com/supabase/cli/pkg/fetcher"
+	"golang.org/x/mod/semver"
 )
 
 // Type for turning human-friendly bytes string ("5MB", "32kB") into an int64 during toml decoding.
@@ -654,21 +653,29 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
+	// Resolve functions config
 	for slug, function := range c.Functions {
-		// TODO: support configuring alternative entrypoint path, such as index.js
 		if len(function.Entrypoint) == 0 {
 			function.Entrypoint = filepath.Join(builder.FunctionsDir, slug, "index.ts")
 		} else if !filepath.IsAbs(function.Entrypoint) {
 			// Append supabase/ because paths in configs are specified relative to config.toml
 			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
 		}
-		// Functions may not use import map so we don't set a default value
-		if len(function.ImportMap) > 0 && !filepath.IsAbs(function.ImportMap) {
+		if len(function.ImportMap) == 0 {
+			functionDir := filepath.Dir(function.Entrypoint)
+			denoJsonPath := filepath.Join(functionDir, "deno.json")
+			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
+			if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
+				function.ImportMap = denoJsonPath
+			} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
+				function.ImportMap = denoJsoncPath
+			}
+			// Functions may not use import map so we don't set a default value
+		} else if !filepath.IsAbs(function.ImportMap) {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 		c.Functions[slug] = function
 	}
-
 	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
 		return err
 	}
