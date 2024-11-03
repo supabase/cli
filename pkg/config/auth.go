@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -117,6 +119,7 @@ type (
 	emailTemplate struct {
 		Subject     string `toml:"subject"`
 		ContentPath string `toml:"content_path"`
+		Template    string `toml:"template"`
 	}
 
 	sessions struct {
@@ -214,6 +217,156 @@ func (a *auth) Clone() auth {
 	copy.Email.Template = maps.Clone(a.Email.Template)
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
+}
+
+func (a *auth) Validate(fsys fs.FS) error {
+
+	// Validate auth config
+	if a.Enabled {
+		if a.SiteUrl == "" {
+			return errors.New("Missing required field in config: auth.site_url")
+		}
+		var err error
+		if a.SiteUrl, err = maybeLoadEnv(a.SiteUrl); err != nil {
+			return err
+		}
+		for i, url := range a.AdditionalRedirectUrls {
+			if a.AdditionalRedirectUrls[i], err = maybeLoadEnv(url); err != nil {
+				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
+			}
+		}
+		// Validate email config
+		for name, tmpl := range a.Email.Template {
+			if tmpl.Template == "" && len(tmpl.ContentPath) > 0 {
+				if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+					return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
+				}
+				// Load the file content of the template within the config
+				content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath))
+				if err != nil {
+					return errors.Errorf("Failed to read template file %s: %v", tmpl.ContentPath, err)
+				}
+				tmpl.Template = string(content)
+				a.Email.Template[name] = tmpl
+			}
+		}
+		if a.Email.Smtp.Pass, err = maybeLoadEnv(a.Email.Smtp.Pass); err != nil {
+			return err
+		}
+		// Validate sms config
+		if a.Sms.Twilio.Enabled {
+			if len(a.Sms.Twilio.AccountSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
+			}
+			if len(a.Sms.Twilio.MessageServiceSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
+			}
+			if len(a.Sms.Twilio.AuthToken) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
+			}
+			if a.Sms.Twilio.AuthToken, err = maybeLoadEnv(a.Sms.Twilio.AuthToken); err != nil {
+				return err
+			}
+		}
+		if a.Sms.TwilioVerify.Enabled {
+			if len(a.Sms.TwilioVerify.AccountSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+			}
+			if len(a.Sms.TwilioVerify.MessageServiceSid) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
+			}
+			if len(a.Sms.TwilioVerify.AuthToken) == 0 {
+				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
+			}
+			if a.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(a.Sms.TwilioVerify.AuthToken); err != nil {
+				return err
+			}
+		}
+		if a.Sms.Messagebird.Enabled {
+			if len(a.Sms.Messagebird.Originator) == 0 {
+				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
+			}
+			if len(a.Sms.Messagebird.AccessKey) == 0 {
+				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
+			}
+			if a.Sms.Messagebird.AccessKey, err = maybeLoadEnv(a.Sms.Messagebird.AccessKey); err != nil {
+				return err
+			}
+		}
+		if a.Sms.Textlocal.Enabled {
+			if len(a.Sms.Textlocal.Sender) == 0 {
+				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
+			}
+			if len(a.Sms.Textlocal.ApiKey) == 0 {
+				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
+			}
+			if a.Sms.Textlocal.ApiKey, err = maybeLoadEnv(a.Sms.Textlocal.ApiKey); err != nil {
+				return err
+			}
+		}
+		if a.Sms.Vonage.Enabled {
+			if len(a.Sms.Vonage.From) == 0 {
+				return errors.New("Missing required field in config: auth.sms.vonage.from")
+			}
+			if len(a.Sms.Vonage.ApiKey) == 0 {
+				return errors.New("Missing required field in config: auth.sms.vonage.api_key")
+			}
+			if len(a.Sms.Vonage.ApiSecret) == 0 {
+				return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
+			}
+			if a.Sms.Vonage.ApiKey, err = maybeLoadEnv(a.Sms.Vonage.ApiKey); err != nil {
+				return err
+			}
+			if a.Sms.Vonage.ApiSecret, err = maybeLoadEnv(a.Sms.Vonage.ApiSecret); err != nil {
+				return err
+			}
+		}
+		if err := a.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+			return err
+		}
+		if err := a.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
+			return err
+		}
+		if err := a.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
+			return err
+		}
+		if err := a.Hook.SendSMS.HandleHook("send_sms"); err != nil {
+			return err
+		}
+		if err := a.Hook.SendEmail.HandleHook("send_email"); err != nil {
+			return err
+		}
+		// Validate oauth config
+		for ext, provider := range a.External {
+			if !provider.Enabled {
+				continue
+			}
+			if provider.ClientId == "" {
+				return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+			}
+			if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
+				return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+			}
+			if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
+				return err
+			}
+			if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
+				return err
+			}
+			if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
+				return err
+			}
+			if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
+				return err
+			}
+			a.External[ext] = provider
+		}
+	}
+	// Validate Third-Party Auth config
+	if err := a.ThirdParty.validate(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
@@ -358,19 +511,19 @@ func (a *auth) mapEmailTemplates(body *v1API.UpdateAuthConfigBody) {
 		switch name {
 		case "invite":
 			body.MailerSubjectsInvite = cast.Ptr(template.Subject)
-			body.MailerTemplatesInviteContent = cast.Ptr(template.ContentPath)
+			body.MailerTemplatesInviteContent = cast.Ptr(template.Template)
 		case "confirmation":
 			body.MailerSubjectsConfirmation = cast.Ptr(template.Subject)
-			body.MailerTemplatesConfirmationContent = cast.Ptr(template.ContentPath)
+			body.MailerTemplatesConfirmationContent = cast.Ptr(template.Template)
 		case "recovery":
 			body.MailerSubjectsRecovery = cast.Ptr(template.Subject)
-			body.MailerTemplatesRecoveryContent = cast.Ptr(template.ContentPath)
+			body.MailerTemplatesRecoveryContent = cast.Ptr(template.Template)
 		case "magic_link":
 			body.MailerSubjectsMagicLink = cast.Ptr(template.Subject)
-			body.MailerTemplatesMagicLinkContent = cast.Ptr(template.ContentPath)
+			body.MailerTemplatesMagicLinkContent = cast.Ptr(template.Template)
 		case "email_change":
 			body.MailerSubjectsEmailChange = cast.Ptr(template.Subject)
-			body.MailerTemplatesEmailChangeContent = cast.Ptr(template.ContentPath)
+			body.MailerTemplatesEmailChangeContent = cast.Ptr(template.Template)
 		}
 	}
 }
@@ -552,35 +705,35 @@ func (a *auth) mapRemoteEmailTemplates(remoteConfig v1API.AuthConfigResponse) {
 				template.Subject = *remoteConfig.MailerSubjectsInvite
 			}
 			if remoteConfig.MailerTemplatesInviteContent != nil {
-				template.ContentPath = *remoteConfig.MailerTemplatesInviteContent
+				template.Template = *remoteConfig.MailerTemplatesInviteContent
 			}
 		case "confirmation":
 			if remoteConfig.MailerSubjectsConfirmation != nil {
 				template.Subject = *remoteConfig.MailerSubjectsConfirmation
 			}
 			if remoteConfig.MailerTemplatesConfirmationContent != nil {
-				template.ContentPath = *remoteConfig.MailerTemplatesConfirmationContent
+				template.Template = *remoteConfig.MailerTemplatesConfirmationContent
 			}
 		case "recovery":
 			if remoteConfig.MailerSubjectsRecovery != nil {
 				template.Subject = *remoteConfig.MailerSubjectsRecovery
 			}
 			if remoteConfig.MailerTemplatesRecoveryContent != nil {
-				template.ContentPath = *remoteConfig.MailerTemplatesRecoveryContent
+				template.Template = *remoteConfig.MailerTemplatesRecoveryContent
 			}
 		case "magic_link":
 			if remoteConfig.MailerSubjectsMagicLink != nil {
 				template.Subject = *remoteConfig.MailerSubjectsMagicLink
 			}
 			if remoteConfig.MailerTemplatesMagicLinkContent != nil {
-				template.ContentPath = *remoteConfig.MailerTemplatesMagicLinkContent
+				template.Template = *remoteConfig.MailerTemplatesMagicLinkContent
 			}
 		case "email_change":
 			if remoteConfig.MailerSubjectsEmailChange != nil {
 				template.Subject = *remoteConfig.MailerSubjectsEmailChange
 			}
 			if remoteConfig.MailerTemplatesEmailChangeContent != nil {
-				template.ContentPath = *remoteConfig.MailerTemplatesEmailChangeContent
+				template.Template = *remoteConfig.MailerTemplatesEmailChangeContent
 			}
 		}
 		a.Email.Template[name] = template

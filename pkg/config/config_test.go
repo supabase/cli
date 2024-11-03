@@ -33,7 +33,7 @@ func TestConfigParsing(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{
 			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/templates/invite.html": &fs.MapFile{Data: []byte("<h2>You have been invited</h2>")},
 		}
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
@@ -50,6 +50,11 @@ func TestConfigParsing(t *testing.T) {
 			"https://127.0.0.1:3000",
 			"http://localhost:3000/auth/callback",
 		}, config.Auth.AdditionalRedirectUrls)
+		// Should read the template from the file
+		assert.Equal(t, "<h2>You have been invited</h2>", config.Auth.Email.Template["invite"].Template)
+		// Should bypass reading the file content if the template is directly declared
+		assert.Equal(t, "./supabase/templates/confirm.html", config.Auth.Email.Template["confirmation"].ContentPath)
+		assert.Equal(t, "\n<p> Here a confirmation template </p>\n", config.Auth.Email.Template["confirmation"].Template)
 	})
 
 	t.Run("config file with environment variables fails when unset", func(t *testing.T) {

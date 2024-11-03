@@ -138,7 +138,12 @@ otp_expiry = 3600
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+# template = """
+# <h2>You have been invited</h2>
+# 
+# <p>You have been invited to create a user on {{ `{{ .SiteURL }}` }}. Follow this link to accept the invite:</p>
+# <p><a href="{{ `{{ .ConfirmationURL }}` }}">Accept the invite</a></p>
+# """
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.

@@ -136,6 +136,15 @@ sender_name = "Admin"
 subject = "You have been invited"
 content_path = "./supabase/templates/invite.html"
 
+[auth.email.template.confirmation]
+subject = "Confirmation email"
+# This one should not be used because the litteral template is declared
+content_path ="./supabase/templates/confirm.html"
+template = """
+
+<p> Here a confirmation template </p>
+"""
+
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
 enable_signup = true
