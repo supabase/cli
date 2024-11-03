@@ -220,7 +220,6 @@ func (a *auth) Clone() auth {
 }
 
 func (a *auth) Validate(fsys fs.FS) error {
-
 	// Validate auth config
 	if a.Enabled {
 		if a.SiteUrl == "" {
