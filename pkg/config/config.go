@@ -653,52 +653,29 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
-
-	// Load functions config
-	pattern := filepath.Join(builder.FunctionsDir, "*", "index.ts")
-	paths, err := fs.Glob(fsys, pattern)
-	if err != nil {
-		return errors.Errorf("failed to glob function slugs: %w", err)
+	// Resolve functions config
+	for slug, function := range c.Functions {
+		if len(function.Entrypoint) == 0 {
+			function.Entrypoint = filepath.Join(builder.FunctionsDir, slug, "index.ts")
+		} else if !filepath.IsAbs(function.Entrypoint) {
+			// Append supabase/ because paths in configs are specified relative to config.toml
+			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
+		}
+		if len(function.ImportMap) == 0 {
+			functionDir := filepath.Dir(function.Entrypoint)
+			denoJsonPath := filepath.Join(functionDir, "deno.json")
+			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
+			if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
+				function.ImportMap = denoJsonPath
+			} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
+				function.ImportMap = denoJsoncPath
+			}
+			// Functions may not use import map so we don't set a default value
+		} else if !filepath.IsAbs(function.ImportMap) {
+			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
+		}
+		c.Functions[slug] = function
 	}
-
-	if c.Functions == nil {
-		c.Functions = make(FunctionConfig)
-	}
-
-	for _, path := range paths {
-		slug := filepath.Base(filepath.Dir(path))
-		// Skip folders that don't match the function slug pattern
-		if !funcSlugPattern.MatchString(slug) {
-			continue
-		}
-
-		fn, exists := c.Functions[slug]
-		if !exists {
-			fn = function{}
-		}
-
-		functionDir := filepath.Join(builder.FunctionsDir, slug)
-		// Set default entrypoint if not specified
-		if len(fn.Entrypoint) == 0 {
-			fn.Entrypoint = path
-		} else if !filepath.IsAbs(fn.Entrypoint) {
-			fn.Entrypoint = filepath.Join(builder.SupabaseDirPath, fn.Entrypoint)
-		}
-
-		// Check for import maps
-		denoJsonPath := filepath.Join(functionDir, "deno.json")
-		denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
-		if len(fn.ImportMap) > 0 && !filepath.IsAbs(fn.ImportMap) {
-			fn.ImportMap = filepath.Join(builder.SupabaseDirPath, fn.ImportMap)
-		} else if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
-			fn.ImportMap = denoJsonPath
-		} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
-			fn.ImportMap = denoJsoncPath
-		}
-
-		c.Functions[slug] = fn
-	}
-
 	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
 		return err
 	}
