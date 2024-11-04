@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Ref 1: https://github.com/sanathkr/go-npm
-// Ref 2: https://blog.xendit.engineer/how-we-repurposed-npm-to-publish-and-distribute-our-go-binaries-for-internal-cli-23981b80911b
+// Ref 2: https://medium.com/xendit-engineering/how-we-repurposed-npm-to-publish-and-distribute-our-go-binaries-for-internal-cli-23981b80911b
 "use strict";
 
 import binLinks from "bin-links";
