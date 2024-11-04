@@ -64,17 +64,15 @@ func (a *api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecre
 
 	result.Enabled = true
 	// Update Schemas if present in remoteConfig
-	schemas := strings.Split(remoteConfig.DbSchema, ",")
-	result.Schemas = make([]string, len(schemas))
+	result.Schemas = strToArr(remoteConfig.DbSchema)
 	// TODO: use slices.Map when upgrade go version
-	for i, schema := range schemas {
+	for i, schema := range result.Schemas {
 		result.Schemas[i] = strings.TrimSpace(schema)
 	}
 
 	// Update ExtraSearchPath if present in remoteConfig
-	extraSearchPath := strings.Split(remoteConfig.DbExtraSearchPath, ",")
-	result.ExtraSearchPath = make([]string, len(extraSearchPath))
-	for i, path := range extraSearchPath {
+	result.ExtraSearchPath = strToArr(remoteConfig.DbExtraSearchPath)
+	for i, path := range result.ExtraSearchPath {
 		result.ExtraSearchPath[i] = strings.TrimSpace(path)
 	}
 

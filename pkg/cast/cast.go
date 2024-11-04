@@ -1,18 +1,13 @@
 package cast
 
-import (
-	"math"
-	"strings"
-)
+import "math"
 
 // UintToInt converts a uint to an int, handling potential overflow
 func UintToInt(value uint) int {
 	if value <= math.MaxInt {
-		result := int(value)
-		return result
+		return int(value)
 	}
-	maxInt := math.MaxInt
-	return maxInt
+	return math.MaxInt
 }
 
 // IntToUint converts an int to a uint, handling negative values
@@ -46,12 +41,4 @@ func Val[T any](v *T, def T) T {
 		return def
 	}
 	return *v
-}
-
-func StrToArr(v string) []string {
-	// Avoid returning [""] if v is empty
-	if len(v) == 0 {
-		return nil
-	}
-	return strings.Split(v, ",")
 }

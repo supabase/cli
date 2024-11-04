@@ -79,3 +79,11 @@ func replaceImageTag(image string, tag string) string {
 	index := strings.IndexByte(image, ':')
 	return image[:index+1] + strings.TrimSpace(tag)
 }
+
+func strToArr(v string) []string {
+	// Avoid returning [""] if v is empty
+	if len(v) == 0 {
+		return nil
+	}
+	return strings.Split(v, ",")
+}
