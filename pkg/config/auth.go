@@ -180,14 +180,14 @@ type (
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
-		SiteUrl:                           cast.Ptr(a.SiteUrl),
+		SiteUrl:                           &a.SiteUrl,
 		UriAllowList:                      cast.Ptr(strings.Join(a.AdditionalRedirectUrls, ",")),
-		JwtExp:                            cast.Ptr(cast.UintToInt(a.JwtExpiry)),
-		RefreshTokenRotationEnabled:       cast.Ptr(a.EnableRefreshTokenRotation),
-		SecurityRefreshTokenReuseInterval: cast.Ptr(cast.UintToInt(a.RefreshTokenReuseInterval)),
-		SecurityManualLinkingEnabled:      cast.Ptr(a.EnableManualLinking),
+		JwtExp:                            cast.UintToIntPtr(&a.JwtExpiry),
+		RefreshTokenRotationEnabled:       &a.EnableRefreshTokenRotation,
+		SecurityRefreshTokenReuseInterval: cast.UintToIntPtr(&a.RefreshTokenReuseInterval),
+		SecurityManualLinkingEnabled:      &a.EnableManualLinking,
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
-		ExternalAnonymousUsersEnabled:     cast.Ptr(a.EnableAnonymousSignIns),
+		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
 	return body
 }
