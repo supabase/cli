@@ -195,7 +195,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth {
 	result := *a
 	result.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
-	result.AdditionalRedirectUrls = cast.StrToArr(cast.Val(remoteConfig.UriAllowList, ""))
+	result.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
 	result.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
 	result.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
 	result.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
