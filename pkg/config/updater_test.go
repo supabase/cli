@@ -155,6 +155,58 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 	})
 }
 
+func TestUpdateAuthConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("updates remote Auth config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{
+				SiteUrl: cast.Ptr("http://localhost:3000"),
+			})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK)
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{Enabled: true})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips update if no diff in Auth config", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
+			Enabled:      true,
+			EnableSignup: true,
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips update if disabled locally", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{})
+		// Check result
+		assert.NoError(t, err)
+	})
+}
+
 func TestUpdateStorageConfig(t *testing.T) {
 	server := "http://localhost"
 	client, err := v1API.NewClientWithResponses(server)
@@ -199,6 +251,14 @@ func TestUpdateStorageConfig(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, gock.IsDone())
 	})
+
+	t.Run("skips update if disabled locally", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Run test
+		err := updater.UpdateStorageConfig(context.Background(), "test-project", storage{})
+		// Check result
+		assert.NoError(t, err)
+	})
 }
 
 func TestUpdateRemoteConfig(t *testing.T) {
@@ -233,6 +293,14 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
+		// Auth config
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK)
 		// Storage config
 		gock.New(server).
 			Get("/v1/projects/test-project/config/storage").
@@ -258,6 +326,10 @@ func TestUpdateRemoteConfig(t *testing.T) {
 				Settings: settings{
 					MaxConnections: cast.Ptr(cast.IntToUint(100)),
 				},
+			},
+			Auth: auth{
+				Enabled: true,
+				SiteUrl: "http://localhost:3000",
 			},
 			Storage: storage{
 				Enabled:       true,

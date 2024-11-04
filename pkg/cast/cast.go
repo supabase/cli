@@ -1,6 +1,9 @@
 package cast
 
-import "math"
+import (
+	"math"
+	"strings"
+)
 
 // UintToInt converts a uint to an int, handling potential overflow
 func UintToInt(value uint) int {
@@ -36,4 +39,19 @@ func IntToUintPtr(value *int) *uint {
 
 func Ptr[T any](v T) *T {
 	return &v
+}
+
+func Val[T any](v *T, def T) T {
+	if v == nil {
+		return def
+	}
+	return *v
+}
+
+func StrToArr(v string) []string {
+	// Avoid returning [""] if v is empty
+	if len(v) == 0 {
+		return nil
+	}
+	return strings.Split(v, ",")
 }
