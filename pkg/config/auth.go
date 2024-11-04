@@ -1,7 +1,12 @@
 package config
 
 import (
+	"strings"
 	"time"
+
+	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/diff"
 )
 
 type (
@@ -172,3 +177,43 @@ type (
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
 )
+
+func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
+	body := v1API.UpdateAuthConfigBody{
+		SiteUrl:                           cast.Ptr(a.SiteUrl),
+		UriAllowList:                      cast.Ptr(strings.Join(a.AdditionalRedirectUrls, ",")),
+		JwtExp:                            cast.Ptr(cast.UintToInt(a.JwtExpiry)),
+		RefreshTokenRotationEnabled:       cast.Ptr(a.EnableRefreshTokenRotation),
+		SecurityRefreshTokenReuseInterval: cast.Ptr(cast.UintToInt(a.RefreshTokenReuseInterval)),
+		SecurityManualLinkingEnabled:      cast.Ptr(a.EnableManualLinking),
+		DisableSignup:                     cast.Ptr(!a.EnableSignup),
+		ExternalAnonymousUsersEnabled:     cast.Ptr(a.EnableAnonymousSignIns),
+	}
+	return body
+}
+
+func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth {
+	result := *a
+	result.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
+	result.AdditionalRedirectUrls = cast.StrToArr(cast.Val(remoteConfig.UriAllowList, ""))
+	result.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
+	result.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
+	result.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
+	result.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
+	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
+	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	return result
+}
+
+func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+	// Convert the config values into easily comparable remoteConfig values
+	currentValue, err := ToTomlBytes(a)
+	if err != nil {
+		return nil, err
+	}
+	remoteCompare, err := ToTomlBytes(a.fromRemoteAuthConfig(remoteConfig))
+	if err != nil {
+		return nil, err
+	}
+	return diff.Diff("remote[auth]", remoteCompare, "local[auth]", currentValue), nil
+}

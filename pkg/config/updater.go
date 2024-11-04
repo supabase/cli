@@ -24,6 +24,9 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db); err != nil {
 		return err
 	}
+	if err := u.UpdateAuthConfig(ctx, remote.ProjectId, remote.Auth); err != nil {
+		return err
+	}
 	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage); err != nil {
 		return err
 	}
@@ -91,6 +94,33 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db) error {
 	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string, c auth) error {
+	if !c.Enabled {
+		return nil
+	}
+	authConfig, err := u.client.V1GetAuthServiceConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read Auth config: %w", err)
+	} else if authConfig.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", authConfig.StatusCode(), string(authConfig.Body))
+	}
+	authDiff, err := c.DiffWithRemote(*authConfig.JSON200)
+	if err != nil {
+		return err
+	} else if len(authDiff) == 0 {
+		fmt.Fprintln(os.Stderr, "Remote Auth config is up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Updating Auth service with config:", string(authDiff))
+
+	if resp, err := u.client.V1UpdateAuthServiceConfigWithResponse(ctx, projectRef, c.ToUpdateAuthConfigBody()); err != nil {
+		return errors.Errorf("failed to update Auth config: %w", err)
+	} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+		return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
 	}
 	return nil
 }
