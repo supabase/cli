@@ -553,7 +553,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 	if c.ProjectId == "" {
 		return errors.New("Missing required field in config: project_id")
 	} else if sanitized := sanitizeProjectId(c.ProjectId); sanitized != c.ProjectId {
-		fmt.Fprintln(os.Stderr, "WARNING:", "project_id field in config is invalid. Auto-fixing to", sanitized)
+		fmt.Fprintln(os.Stderr, "WARN: project_id field in config is invalid. Auto-fixing to", sanitized)
 		c.ProjectId = sanitized
 	}
 	// Validate api config
@@ -665,7 +665,8 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			return err
 		}
 		// Validate sms config
-		if c.Auth.Sms.Twilio.Enabled {
+		switch {
+		case c.Auth.Sms.Twilio.Enabled:
 			if len(c.Auth.Sms.Twilio.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
 			}
@@ -678,8 +679,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			if c.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(c.Auth.Sms.Twilio.AuthToken); err != nil {
 				return err
 			}
-		}
-		if c.Auth.Sms.TwilioVerify.Enabled {
+		case c.Auth.Sms.TwilioVerify.Enabled:
 			if len(c.Auth.Sms.TwilioVerify.AccountSid) == 0 {
 				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
 			}
@@ -692,8 +692,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			if c.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(c.Auth.Sms.TwilioVerify.AuthToken); err != nil {
 				return err
 			}
-		}
-		if c.Auth.Sms.Messagebird.Enabled {
+		case c.Auth.Sms.Messagebird.Enabled:
 			if len(c.Auth.Sms.Messagebird.Originator) == 0 {
 				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 			}
@@ -703,8 +702,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			if c.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(c.Auth.Sms.Messagebird.AccessKey); err != nil {
 				return err
 			}
-		}
-		if c.Auth.Sms.Textlocal.Enabled {
+		case c.Auth.Sms.Textlocal.Enabled:
 			if len(c.Auth.Sms.Textlocal.Sender) == 0 {
 				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 			}
@@ -714,8 +712,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			if c.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(c.Auth.Sms.Textlocal.ApiKey); err != nil {
 				return err
 			}
-		}
-		if c.Auth.Sms.Vonage.Enabled {
+		case c.Auth.Sms.Vonage.Enabled:
 			if len(c.Auth.Sms.Vonage.From) == 0 {
 				return errors.New("Missing required field in config: auth.sms.vonage.from")
 			}
@@ -731,6 +728,9 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			if c.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(c.Auth.Sms.Vonage.ApiSecret); err != nil {
 				return err
 			}
+		case c.Auth.Sms.EnableSignup:
+			c.Auth.Sms.EnableSignup = false
+			fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
 		}
 		if err := c.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
 			return err
@@ -895,7 +895,7 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 			return errors.Errorf("failed to apply glob pattern: %w", err)
 		}
 		if len(matches) == 0 {
-			fmt.Fprintln(os.Stderr, "No seed files matched pattern:", pattern)
+			fmt.Fprintln(os.Stderr, "WARN: no seed files matched pattern:", pattern)
 		}
 		sort.Strings(matches)
 		// Remove duplicates
