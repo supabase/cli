@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 
-	"github.com/google/go-cmp/cmp"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -80,16 +79,6 @@ type (
 		SecretKeyBase    string   `toml:"-"`
 	}
 )
-
-// Compare two db config, if changes requires restart return true, return false otherwise
-func (a settings) requireDbRestart(b settings) bool {
-	return !cmp.Equal(a.MaxConnections, b.MaxConnections) ||
-		!cmp.Equal(a.MaxWorkerProcesses, b.MaxWorkerProcesses) ||
-		!cmp.Equal(a.MaxParallelWorkers, b.MaxParallelWorkers) ||
-		!cmp.Equal(a.MaxWalSenders, b.MaxWalSenders) ||
-		!cmp.Equal(a.MaxReplicationSlots, b.MaxReplicationSlots) ||
-		!cmp.Equal(a.SharedBuffers, b.SharedBuffers)
-}
 
 func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body := v1API.UpdatePostgresConfigBody{}
