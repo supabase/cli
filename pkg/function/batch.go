@@ -55,7 +55,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					VerifyJwt:      function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
-				}, eszipContentType, &body); err != nil {
+				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to update function: %w", err)
 				} else if resp.JSON200 == nil {
 					return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
@@ -67,7 +67,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					VerifyJwt:      function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
-				}, eszipContentType, &body); err != nil {
+				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to create function: %w", err)
 				} else if resp.JSON201 == nil {
 					return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
