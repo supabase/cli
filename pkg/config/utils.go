@@ -1,6 +1,10 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -86,4 +90,33 @@ func strToArr(v string) []string {
 		return nil
 	}
 	return strings.Split(v, ",")
+}
+
+func mapToEnv(input map[string]string) string {
+	var result []string
+	for k, v := range input {
+		kv := fmt.Sprintf("%s=%s", k, v)
+		result = append(result, kv)
+	}
+	return strings.Join(result, ",")
+}
+
+func envToMap(input string) map[string]string {
+	env := strToArr(input)
+	if len(env) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(env))
+	for _, kv := range env {
+		if parts := strings.Split(kv, "="); len(parts) > 1 {
+			result[parts[0]] = parts[1]
+		}
+	}
+	return result
+}
+
+func sha256Hmac(key, value string) string {
+	h := hmac.New(sha256.New, []byte(key))
+	h.Write([]byte(value))
+	return hex.EncodeToString(h.Sum(nil))
 }

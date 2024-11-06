@@ -189,6 +189,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
+	a.Sms.toAuthConfigBody(&body)
 	return body
 }
 
@@ -202,18 +203,152 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	result.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
 	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	result.Sms.fromAuthConfig(remoteConfig)
 	return result
 }
 
-func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalPhoneEnabled = &s.EnableSignup
+	body.SmsMaxFrequency = cast.Ptr(int(s.MaxFrequency.Seconds()))
+	body.SmsAutoconfirm = &s.EnableConfirmations
+	body.SmsTemplate = &s.Template
+	if otpString := mapToEnv(s.TestOTP); len(otpString) > 0 {
+		body.SmsTestOtp = &otpString
+		// Set a 10 year validity for test OTP
+		timestamp := time.Now().UTC().AddDate(10, 0, 0).Format(time.RFC3339)
+		body.SmsTestOtpValidUntil = &timestamp
+	}
+	// Api only overrides configs of enabled providers
+	switch {
+	case s.Twilio.Enabled:
+		body.SmsProvider = cast.Ptr("twilio")
+		body.SmsTwilioAuthToken = &s.Twilio.AuthToken
+		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
+		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
+	case s.TwilioVerify.Enabled:
+		body.SmsProvider = cast.Ptr("twilio_verify")
+		body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken
+		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
+		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
+	case s.Messagebird.Enabled:
+		body.SmsProvider = cast.Ptr("messagebird")
+		body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey
+		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
+	case s.Textlocal.Enabled:
+		body.SmsProvider = cast.Ptr("textlocal")
+		body.SmsTextlocalApiKey = &s.Textlocal.ApiKey
+		body.SmsTextlocalSender = &s.Textlocal.Sender
+	case s.Vonage.Enabled:
+		body.SmsProvider = cast.Ptr("vonage")
+		body.SmsVonageApiSecret = &s.Vonage.ApiSecret
+		body.SmsVonageApiKey = &s.Vonage.ApiKey
+		body.SmsVonageFrom = &s.Vonage.From
+	}
+}
+
+func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	s.EnableSignup = cast.Val(remoteConfig.ExternalPhoneEnabled, false)
+	s.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmsMaxFrequency, 0)) * time.Second
+	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
+	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
+	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
+	// We are only interested in the provider that's enabled locally
+	switch {
+	case s.Twilio.Enabled:
+		s.Twilio.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioAuthToken, "")
+		s.Twilio.AccountSid = cast.Val(remoteConfig.SmsTwilioAccountSid, "")
+		s.Twilio.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioMessageServiceSid, "")
+	case s.TwilioVerify.Enabled:
+		s.TwilioVerify.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
+		s.TwilioVerify.AccountSid = cast.Val(remoteConfig.SmsTwilioVerifyAccountSid, "")
+		s.TwilioVerify.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioVerifyMessageServiceSid, "")
+	case s.Messagebird.Enabled:
+		s.Messagebird.AccessKey = hashPrefix + cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
+		s.Messagebird.Originator = cast.Val(remoteConfig.SmsMessagebirdOriginator, "")
+	case s.Textlocal.Enabled:
+		s.Textlocal.ApiKey = hashPrefix + cast.Val(remoteConfig.SmsTextlocalApiKey, "")
+		s.Textlocal.Sender = cast.Val(remoteConfig.SmsTextlocalSender, "")
+	case s.Vonage.Enabled:
+		s.Vonage.ApiSecret = hashPrefix + cast.Val(remoteConfig.SmsVonageApiSecret, "")
+		s.Vonage.ApiKey = cast.Val(remoteConfig.SmsVonageApiKey, "")
+		s.Vonage.From = cast.Val(remoteConfig.SmsVonageFrom, "")
+	case !s.EnableSignup:
+		// Nothing to do if both local and remote providers are disabled.
+		return
+	}
+	if provider := cast.Val(remoteConfig.SmsProvider, ""); len(provider) > 0 {
+		s.Twilio.Enabled = provider == "twilio"
+		s.TwilioVerify.Enabled = provider == "twilio_verify"
+		s.Messagebird.Enabled = provider == "messagebird"
+		s.Textlocal.Enabled = provider == "textlocal"
+		s.Vonage.Enabled = provider == "vonage"
+	}
+}
+
+func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+	hashed := a.hashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(a)
+	currentValue, err := ToTomlBytes(hashed)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(a.fromRemoteAuthConfig(remoteConfig))
+	remoteCompare, err := ToTomlBytes(hashed.fromRemoteAuthConfig(remoteConfig))
 	if err != nil {
 		return nil, err
 	}
 	return diff.Diff("remote[auth]", remoteCompare, "local[auth]", currentValue), nil
+}
+
+const hashPrefix = "hash:"
+
+func (a *auth) hashSecrets(key string) auth {
+	hash := func(v string) string {
+		return hashPrefix + sha256Hmac(key, v)
+	}
+	result := *a
+	if len(result.Email.Smtp.Pass) > 0 {
+		result.Email.Smtp.Pass = hash(result.Email.Smtp.Pass)
+	}
+	// Only hash secrets for locally enabled providers because other envs won't be loaded
+	switch {
+	case result.Sms.Twilio.Enabled:
+		result.Sms.Twilio.AuthToken = hash(result.Sms.Twilio.AuthToken)
+	case result.Sms.TwilioVerify.Enabled:
+		result.Sms.TwilioVerify.AuthToken = hash(result.Sms.TwilioVerify.AuthToken)
+	case result.Sms.Messagebird.Enabled:
+		result.Sms.Messagebird.AccessKey = hash(result.Sms.Messagebird.AccessKey)
+	case result.Sms.Textlocal.Enabled:
+		result.Sms.Textlocal.ApiKey = hash(result.Sms.Textlocal.ApiKey)
+	case result.Sms.Vonage.Enabled:
+		result.Sms.Vonage.ApiSecret = hash(result.Sms.Vonage.ApiSecret)
+	}
+	if result.Hook.MFAVerificationAttempt.Enabled {
+		result.Hook.MFAVerificationAttempt.Secrets = hash(result.Hook.MFAVerificationAttempt.Secrets)
+	}
+	if result.Hook.PasswordVerificationAttempt.Enabled {
+		result.Hook.PasswordVerificationAttempt.Secrets = hash(result.Hook.PasswordVerificationAttempt.Secrets)
+	}
+	if result.Hook.CustomAccessToken.Enabled {
+		result.Hook.CustomAccessToken.Secrets = hash(result.Hook.CustomAccessToken.Secrets)
+	}
+	if result.Hook.SendSMS.Enabled {
+		result.Hook.SendSMS.Secrets = hash(result.Hook.SendSMS.Secrets)
+	}
+	if result.Hook.SendEmail.Enabled {
+		result.Hook.SendEmail.Secrets = hash(result.Hook.SendEmail.Secrets)
+	}
+	if size := len(a.External); size > 0 {
+		result.External = make(map[string]provider, size)
+	}
+	for name, provider := range a.External {
+		if provider.Enabled {
+			provider.Secret = hash(provider.Secret)
+		}
+		result.External[name] = provider
+	}
+	// Hide deprecated fields
+	delete(result.External, "slack")
+	delete(result.External, "linkedin")
+	// TODO: support SecurityCaptchaSecret in local config
+	return result
 }
