@@ -296,9 +296,11 @@ func NewConfig(editors ...ConfigEditor) config {
 				"bitbucket":     {},
 				"discord":       {},
 				"facebook":      {},
+				"figma":         {},
 				"github":        {},
 				"gitlab":        {},
 				"google":        {},
+				"kakao":         {},
 				"keycloak":      {},
 				"linkedin":      {}, // TODO: remove this field in v2
 				"linkedin_oidc": {},
@@ -748,6 +750,12 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			return err
 		}
 		// Validate oauth config
+		for _, ext := range []string{"linkedin", "slack"} {
+			if c.Auth.External[ext].Enabled {
+				fmt.Fprintf(os.Stderr, `WARN: disabling deprecated "%[1]s" provider. Please use [auth.external.%[1]s_oidc] instead\n`, ext)
+			}
+			delete(c.Auth.External, ext)
+		}
 		for ext, provider := range c.Auth.External {
 			if !provider.Enabled {
 				continue
