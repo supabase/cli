@@ -17,6 +17,33 @@ func NewConfigUpdater(client v1API.ClientWithResponses) ConfigUpdater {
 	return ConfigUpdater{client: client}
 }
 
+func (u *ConfigUpdater) UpdateLocalConfig(ctx context.Context, local baseConfig) error {
+	if err := u.UpdateLocalApiConfig(ctx, local.ProjectId, local.Api); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateLocalApiConfig(ctx context.Context, projectRef string, c api) error {
+	apiConfig, err := u.client.V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read API config: %w", err)
+	} else if apiConfig.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", apiConfig.StatusCode(), string(apiConfig.Body))
+	}
+	newConfig := c.fromRemoteApiConfig(*apiConfig.JSON200)
+	apiDiff, err := c.DiffWithRemote(*apiConfig.JSON200)
+	if err != nil {
+		return err
+	} else if len(apiDiff) == 0 {
+		fmt.Fprintln(os.Stderr, "Local API config is up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Updating local API config with remote values:", string(apiDiff))
+	c = newConfig
+	return nil
+}
+
 func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfig) error {
 	if err := u.UpdateApiConfig(ctx, remote.ProjectId, remote.Api); err != nil {
 		return err

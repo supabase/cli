@@ -25,10 +25,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
-	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/mod/semver"
@@ -1184,5 +1184,21 @@ func (e *experimental) validateWebhooks() error {
 			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
 		}
 	}
+	return nil
+}
+
+// SaveConfig writes the configuration back to config.toml
+func SaveConfig(conf config) error {
+	// Convert config to TOML format
+	data, err := ToTomlBytes(conf)
+	if err != nil {
+		return fmt.Errorf("failed to convert config to TOML: %w", err)
+	}
+
+	// Write to config.toml
+	if err := os.WriteFile("config.toml", data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
 	return nil
 }
