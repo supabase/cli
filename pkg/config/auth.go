@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"strings"
 	"time"
 
@@ -25,11 +26,11 @@ type (
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
 
-		EnableSignup           bool                `toml:"enable_signup"`
-		EnableAnonymousSignIns bool                `toml:"enable_anonymous_sign_ins"`
-		Email                  email               `toml:"email"`
-		Sms                    sms                 `toml:"sms"`
-		External               map[string]provider `toml:"external"`
+		EnableSignup           bool     `toml:"enable_signup"`
+		EnableAnonymousSignIns bool     `toml:"enable_anonymous_sign_ins"`
+		Email                  email    `toml:"email"`
+		Sms                    sms      `toml:"sms"`
+		External               external `toml:"external"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -38,6 +39,8 @@ type (
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}
+
+	external map[string]provider
 
 	thirdParty struct {
 		Firebase tpaFirebase `toml:"firebase"`
@@ -190,6 +193,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
 	a.Sms.toAuthConfigBody(&body)
+	a.External.toAuthConfigBody(&body)
 	return body
 }
 
@@ -204,6 +208,8 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
 	result.Sms.fromAuthConfig(remoteConfig)
+	result.External = maps.Clone(result.External)
+	result.External.fromAuthConfig(remoteConfig)
 	return result
 }
 
@@ -285,6 +291,265 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
+func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if len(e) == 0 {
+		return
+	}
+	var p *provider
+	// Ignore configs of disabled providers because their envs are not loaded
+	p = cast.Ptr(e["apple"])
+	if body.ExternalAppleEnabled = &p.Enabled; *body.ExternalAppleEnabled {
+		body.ExternalAppleClientId = &p.ClientId
+		body.ExternalAppleSecret = &p.Secret
+	}
+	p = cast.Ptr(e["azure"])
+	if body.ExternalAzureEnabled = &p.Enabled; *body.ExternalAzureEnabled {
+		body.ExternalAzureClientId = &p.ClientId
+		body.ExternalAzureSecret = &p.Secret
+		body.ExternalAzureUrl = &p.Url
+	}
+	p = cast.Ptr(e["bitbucket"])
+	if body.ExternalBitbucketEnabled = &p.Enabled; *body.ExternalBitbucketEnabled {
+		body.ExternalBitbucketClientId = &p.ClientId
+		body.ExternalBitbucketSecret = &p.Secret
+	}
+	p = cast.Ptr(e["discord"])
+	if body.ExternalDiscordEnabled = &p.Enabled; *body.ExternalDiscordEnabled {
+		body.ExternalDiscordClientId = &p.ClientId
+		body.ExternalDiscordSecret = &p.Secret
+	}
+	p = cast.Ptr(e["facebook"])
+	if body.ExternalFacebookEnabled = &p.Enabled; *body.ExternalFacebookEnabled {
+		body.ExternalFacebookClientId = &p.ClientId
+		body.ExternalFacebookSecret = &p.Secret
+	}
+	p = cast.Ptr(e["figma"])
+	if body.ExternalFigmaEnabled = &p.Enabled; *body.ExternalFigmaEnabled {
+		body.ExternalFigmaClientId = &p.ClientId
+		body.ExternalFigmaSecret = &p.Secret
+	}
+	p = cast.Ptr(e["github"])
+	if body.ExternalGithubEnabled = &p.Enabled; *body.ExternalGithubEnabled {
+		body.ExternalGithubClientId = &p.ClientId
+		body.ExternalGithubSecret = &p.Secret
+	}
+	p = cast.Ptr(e["gitlab"])
+	if body.ExternalGitlabEnabled = &p.Enabled; *body.ExternalGitlabEnabled {
+		body.ExternalGitlabClientId = &p.ClientId
+		body.ExternalGitlabSecret = &p.Secret
+		body.ExternalGitlabUrl = &p.Url
+	}
+	p = cast.Ptr(e["google"])
+	if body.ExternalGoogleEnabled = &p.Enabled; *body.ExternalGoogleEnabled {
+		body.ExternalGoogleClientId = &p.ClientId
+		body.ExternalGoogleSecret = &p.Secret
+		body.ExternalGoogleSkipNonceCheck = &p.SkipNonceCheck
+	}
+	p = cast.Ptr(e["kakao"])
+	if body.ExternalKakaoEnabled = &p.Enabled; *body.ExternalKakaoEnabled {
+		body.ExternalKakaoClientId = &p.ClientId
+		body.ExternalKakaoSecret = &p.Secret
+	}
+	p = cast.Ptr(e["keycloak"])
+	if body.ExternalKeycloakEnabled = &p.Enabled; *body.ExternalKeycloakEnabled {
+		body.ExternalKeycloakClientId = &p.ClientId
+		body.ExternalKeycloakSecret = &p.Secret
+		body.ExternalKeycloakUrl = &p.Url
+	}
+	p = cast.Ptr(e["linkedin_oidc"])
+	if body.ExternalLinkedinOidcEnabled = &p.Enabled; *body.ExternalLinkedinOidcEnabled {
+		body.ExternalLinkedinOidcClientId = &p.ClientId
+		body.ExternalLinkedinOidcSecret = &p.Secret
+	}
+	p = cast.Ptr(e["notion"])
+	if body.ExternalNotionEnabled = &p.Enabled; *body.ExternalNotionEnabled {
+		body.ExternalNotionClientId = &p.ClientId
+		body.ExternalNotionSecret = &p.Secret
+	}
+	p = cast.Ptr(e["slack_oidc"])
+	if body.ExternalSlackOidcEnabled = &p.Enabled; *body.ExternalSlackOidcEnabled {
+		body.ExternalSlackOidcClientId = &p.ClientId
+		body.ExternalSlackOidcSecret = &p.Secret
+	}
+	p = cast.Ptr(e["spotify"])
+	if body.ExternalSpotifyEnabled = &p.Enabled; *body.ExternalSpotifyEnabled {
+		body.ExternalSpotifyClientId = &p.ClientId
+		body.ExternalSpotifySecret = &p.Secret
+	}
+	p = cast.Ptr(e["twitch"])
+	if body.ExternalTwitchEnabled = &p.Enabled; *body.ExternalTwitchEnabled {
+		body.ExternalTwitchClientId = &p.ClientId
+		body.ExternalTwitchSecret = &p.Secret
+	}
+	p = cast.Ptr(e["twitter"])
+	if body.ExternalTwitterEnabled = &p.Enabled; *body.ExternalTwitterEnabled {
+		body.ExternalTwitterClientId = &p.ClientId
+		body.ExternalTwitterSecret = &p.Secret
+	}
+	p = cast.Ptr(e["workos"])
+	if body.ExternalWorkosEnabled = &p.Enabled; *body.ExternalWorkosEnabled {
+		body.ExternalWorkosClientId = &p.ClientId
+		body.ExternalWorkosSecret = &p.Secret
+		body.ExternalWorkosUrl = &p.Url
+	}
+	p = cast.Ptr(e["zoom"])
+	if body.ExternalZoomEnabled = &p.Enabled; *body.ExternalZoomEnabled {
+		body.ExternalZoomClientId = &p.ClientId
+		body.ExternalZoomSecret = &p.Secret
+	}
+}
+
+func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	if len(e) == 0 {
+		return
+	}
+	var p provider
+	// Ignore configs of disabled providers because their envs are not loaded
+	if p = e["apple"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalAppleClientId, "")
+		if ids := cast.Val(remoteConfig.ExternalAppleAdditionalClientIds, ""); len(ids) > 0 {
+			p.ClientId += "," + ids
+		}
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalAppleSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalAppleEnabled, false)
+	e["apple"] = p
+
+	if p = e["azure"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalAzureClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalAzureSecret, "")
+		p.Url = cast.Val(remoteConfig.ExternalAzureUrl, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalAzureEnabled, false)
+	e["azure"] = p
+
+	if p = e["bitbucket"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalBitbucketClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalBitbucketSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalBitbucketEnabled, false)
+	e["bitbucket"] = p
+
+	if p = e["discord"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalDiscordClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalDiscordSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalDiscordEnabled, false)
+	e["discord"] = p
+
+	if p = e["facebook"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalFacebookClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalFacebookSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalFacebookEnabled, false)
+	e["facebook"] = p
+
+	if p = e["figma"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalFigmaClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalFigmaSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalFigmaEnabled, false)
+	e["figma"] = p
+
+	if p = e["github"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalGithubClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGithubSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalGithubEnabled, false)
+	e["github"] = p
+
+	if p = e["gitlab"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalGitlabClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGitlabSecret, "")
+		p.Url = cast.Val(remoteConfig.ExternalGitlabUrl, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalGitlabEnabled, false)
+	e["gitlab"] = p
+
+	if p = e["google"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalGoogleClientId, "")
+		if ids := cast.Val(remoteConfig.ExternalGoogleAdditionalClientIds, ""); len(ids) > 0 {
+			p.ClientId += "," + ids
+		}
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGoogleSecret, "")
+		p.SkipNonceCheck = cast.Val(remoteConfig.ExternalGoogleSkipNonceCheck, false)
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalGoogleEnabled, false)
+	e["google"] = p
+
+	if p = e["kakao"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalKakaoClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalKakaoSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalKakaoEnabled, false)
+	e["kakao"] = p
+
+	if p = e["keycloak"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalKeycloakClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalKeycloakSecret, "")
+		p.Url = cast.Val(remoteConfig.ExternalKeycloakUrl, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalKeycloakEnabled, false)
+	e["keycloak"] = p
+
+	if p = e["linkedin_oidc"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalLinkedinOidcClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalLinkedinOidcSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalLinkedinOidcEnabled, false)
+	e["linkedin_oidc"] = p
+
+	if p = e["notion"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalNotionClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalNotionSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalNotionEnabled, false)
+	e["notion"] = p
+
+	if p = e["slack_oidc"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalSlackOidcClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalSlackOidcSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalSlackOidcEnabled, false)
+	e["slack_oidc"] = p
+
+	if p = e["spotify"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalSpotifyClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalSpotifySecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalSpotifyEnabled, false)
+	e["spotify"] = p
+
+	if p = e["twitch"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalTwitchClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalTwitchSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalTwitchEnabled, false)
+	e["twitch"] = p
+
+	if p = e["twitter"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalTwitterClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalTwitterSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalTwitterEnabled, false)
+	e["twitter"] = p
+
+	if p = e["workos"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalWorkosClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalWorkosSecret, "")
+		p.Url = cast.Val(remoteConfig.ExternalWorkosUrl, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalWorkosEnabled, false)
+	e["workos"] = p
+
+	if p = e["zoom"]; p.Enabled {
+		p.ClientId = cast.Val(remoteConfig.ExternalZoomClientId, "")
+		p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalZoomSecret, "")
+	}
+	p.Enabled = cast.Val(remoteConfig.ExternalZoomEnabled, false)
+	e["zoom"] = p
+}
+
 func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
 	hashed := a.hashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
@@ -346,9 +611,6 @@ func (a *auth) hashSecrets(key string) auth {
 		}
 		result.External[name] = provider
 	}
-	// Hide deprecated fields
-	delete(result.External, "slack")
-	delete(result.External, "linkedin")
 	// TODO: support SecurityCaptchaSecret in local config
 	return result
 }
