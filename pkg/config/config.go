@@ -25,10 +25,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
+	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
-	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/mod/semver"
