@@ -82,13 +82,22 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	for _, name := range slugs {
 		function := utils.Config.Functions[name]
 		// Precedence order: flag > config > fallback
+		functionDir := filepath.Join(utils.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join(utils.FunctionsDir, name, "index.ts")
+			function.Entrypoint = filepath.Join(functionDir, "index.ts")
 		}
 		if len(importMapPath) > 0 {
 			function.ImportMap = importMapPath
-		} else if len(function.ImportMap) == 0 && fallbackExists {
-			function.ImportMap = utils.FallbackImportMapPath
+		} else if len(function.ImportMap) == 0 {
+			denoJsonPath := filepath.Join(functionDir, "deno.json")
+			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
+			if _, err := fsys.Stat(denoJsonPath); err == nil {
+				function.ImportMap = denoJsonPath
+			} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
+				function.ImportMap = denoJsoncPath
+			} else if fallbackExists {
+				function.ImportMap = utils.FallbackImportMapPath
+			}
 		}
 		if noVerifyJWT != nil {
 			function.VerifyJWT = cast.Ptr(!*noVerifyJWT)
