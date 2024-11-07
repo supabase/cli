@@ -212,3 +212,206 @@ func TestSmsDiff(t *testing.T) {
 		assert.Empty(t, string(diff))
 	})
 }
+
+func TestExternalDiff(t *testing.T) {
+	t.Run("local and remote enabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, External: map[string]provider{
+			"apple":         {Enabled: true},
+			"azure":         {Enabled: true},
+			"bitbucket":     {Enabled: true},
+			"discord":       {Enabled: true},
+			"facebook":      {Enabled: true},
+			"figma":         {Enabled: true},
+			"github":        {Enabled: true},
+			"gitlab":        {Enabled: true},
+			"google":        {Enabled: true},
+			"kakao":         {Enabled: true},
+			"keycloak":      {Enabled: true},
+			"linkedin_oidc": {Enabled: true},
+			"notion":        {Enabled: true},
+			"slack_oidc":    {Enabled: true},
+			"spotify":       {Enabled: true},
+			"twitch":        {Enabled: true},
+			"twitter":       {Enabled: true},
+			"workos":        {Enabled: true},
+			"zoom":          {Enabled: true},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalAppleAdditionalClientIds:  cast.Ptr(""),
+			ExternalAppleClientId:             cast.Ptr(""),
+			ExternalAppleEnabled:              cast.Ptr(true),
+			ExternalAppleSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalAzureClientId:             cast.Ptr(""),
+			ExternalAzureEnabled:              cast.Ptr(true),
+			ExternalAzureSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalAzureUrl:                  cast.Ptr(""),
+			ExternalBitbucketClientId:         cast.Ptr(""),
+			ExternalBitbucketEnabled:          cast.Ptr(true),
+			ExternalBitbucketSecret:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalDiscordClientId:           cast.Ptr(""),
+			ExternalDiscordEnabled:            cast.Ptr(true),
+			ExternalDiscordSecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalFacebookClientId:          cast.Ptr(""),
+			ExternalFacebookEnabled:           cast.Ptr(true),
+			ExternalFacebookSecret:            cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalFigmaClientId:             cast.Ptr(""),
+			ExternalFigmaEnabled:              cast.Ptr(true),
+			ExternalFigmaSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGithubClientId:            cast.Ptr(""),
+			ExternalGithubEnabled:             cast.Ptr(true),
+			ExternalGithubSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGitlabClientId:            cast.Ptr(""),
+			ExternalGitlabEnabled:             cast.Ptr(true),
+			ExternalGitlabSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGitlabUrl:                 cast.Ptr(""),
+			ExternalGoogleAdditionalClientIds: cast.Ptr(""),
+			ExternalGoogleClientId:            cast.Ptr(""),
+			ExternalGoogleEnabled:             cast.Ptr(true),
+			ExternalGoogleSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGoogleSkipNonceCheck:      cast.Ptr(false),
+			ExternalKakaoClientId:             cast.Ptr(""),
+			ExternalKakaoEnabled:              cast.Ptr(true),
+			ExternalKakaoSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalKeycloakClientId:          cast.Ptr(""),
+			ExternalKeycloakEnabled:           cast.Ptr(true),
+			ExternalKeycloakSecret:            cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalKeycloakUrl:               cast.Ptr(""),
+			ExternalLinkedinOidcClientId:      cast.Ptr(""),
+			ExternalLinkedinOidcEnabled:       cast.Ptr(true),
+			ExternalLinkedinOidcSecret:        cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalNotionClientId:            cast.Ptr(""),
+			ExternalNotionEnabled:             cast.Ptr(true),
+			ExternalNotionSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalSlackOidcClientId:         cast.Ptr(""),
+			ExternalSlackOidcEnabled:          cast.Ptr(true),
+			ExternalSlackOidcSecret:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalSpotifyClientId:           cast.Ptr(""),
+			ExternalSpotifyEnabled:            cast.Ptr(true),
+			ExternalSpotifySecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalTwitchClientId:            cast.Ptr(""),
+			ExternalTwitchEnabled:             cast.Ptr(true),
+			ExternalTwitchSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalTwitterClientId:           cast.Ptr(""),
+			ExternalTwitterEnabled:            cast.Ptr(true),
+			ExternalTwitterSecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalWorkosClientId:            cast.Ptr(""),
+			ExternalWorkosEnabled:             cast.Ptr(true),
+			ExternalWorkosSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalWorkosUrl:                 cast.Ptr(""),
+			ExternalZoomClientId:              cast.Ptr(""),
+			ExternalZoomEnabled:               cast.Ptr(true),
+			ExternalZoomSecret:                cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			// Deprecated fields should be ignored
+			ExternalSlackClientId: cast.Ptr(""),
+			ExternalSlackEnabled:  cast.Ptr(true),
+			ExternalSlackSecret:   cast.Ptr(""),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local enabled and disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, External: map[string]provider{
+			"apple": {
+				Enabled:  true,
+				ClientId: "test-client-1,test-client-2",
+				Secret:   "test-secret",
+			},
+			"azure":         {},
+			"bitbucket":     {},
+			"discord":       {},
+			"facebook":      {},
+			"figma":         {},
+			"github":        {},
+			"gitlab":        {},
+			"google":        {},
+			"kakao":         {},
+			"keycloak":      {},
+			"linkedin_oidc": {},
+			"notion":        {},
+			"slack_oidc":    {},
+			"spotify":       {},
+			"twitch":        {},
+			"twitter":       {},
+			"workos":        {},
+			"zoom":          {},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalAppleAdditionalClientIds:  cast.Ptr("test-client-2"),
+			ExternalAppleClientId:             cast.Ptr("test-client-1"),
+			ExternalAppleEnabled:              cast.Ptr(false),
+			ExternalAppleSecret:               cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			ExternalGoogleAdditionalClientIds: cast.Ptr("test-client-2"),
+			ExternalGoogleClientId:            cast.Ptr("test-client-1"),
+			ExternalGoogleEnabled:             cast.Ptr(true),
+			ExternalGoogleSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGoogleSkipNonceCheck:      cast.Ptr(true),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Contains(t, string(diff), `[external.apple]`)
+		assert.Contains(t, string(diff), `-enabled = false`)
+		assert.Contains(t, string(diff), `+enabled = true`)
+		assert.Contains(t, string(diff), `client_id = "test-client-1,test-client-2"`)
+		assert.Contains(t, string(diff), `secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"`)
+
+		assert.Contains(t, string(diff), `[external.google]`)
+		assert.Contains(t, string(diff), `-enabled = true`)
+		assert.Contains(t, string(diff), `+enabled = false`)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, External: map[string]provider{
+			"apple":         {},
+			"azure":         {},
+			"bitbucket":     {},
+			"discord":       {},
+			"facebook":      {},
+			"figma":         {},
+			"github":        {},
+			"gitlab":        {},
+			"google":        {},
+			"kakao":         {},
+			"keycloak":      {},
+			"linkedin_oidc": {},
+			"notion":        {},
+			"slack_oidc":    {},
+			"spotify":       {},
+			"twitch":        {},
+			"twitter":       {},
+			"workos":        {},
+			"zoom":          {},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalAppleEnabled:         cast.Ptr(false),
+			ExternalAzureEnabled:         cast.Ptr(false),
+			ExternalBitbucketEnabled:     cast.Ptr(false),
+			ExternalDiscordEnabled:       cast.Ptr(false),
+			ExternalFacebookEnabled:      cast.Ptr(false),
+			ExternalFigmaEnabled:         cast.Ptr(false),
+			ExternalGithubEnabled:        cast.Ptr(false),
+			ExternalGitlabEnabled:        cast.Ptr(false),
+			ExternalGoogleEnabled:        cast.Ptr(false),
+			ExternalGoogleSkipNonceCheck: cast.Ptr(false),
+			ExternalKakaoEnabled:         cast.Ptr(false),
+			ExternalKeycloakEnabled:      cast.Ptr(false),
+			ExternalLinkedinOidcEnabled:  cast.Ptr(false),
+			ExternalNotionEnabled:        cast.Ptr(false),
+			ExternalSlackOidcEnabled:     cast.Ptr(false),
+			ExternalSpotifyEnabled:       cast.Ptr(false),
+			ExternalTwitchEnabled:        cast.Ptr(false),
+			ExternalTwitterEnabled:       cast.Ptr(false),
+			ExternalWorkosEnabled:        cast.Ptr(false),
+			ExternalZoomEnabled:          cast.Ptr(false),
+			// Deprecated fields should be ignored
+			ExternalSlackEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}

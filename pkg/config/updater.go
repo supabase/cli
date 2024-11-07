@@ -102,14 +102,7 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
-
-	remoteConfig := s.fromRemoteConfig(*dbConfig.JSON200)
-	restartRequired := s.requireDbRestart(remoteConfig)
-	if restartRequired {
-		fmt.Fprintln(os.Stderr, "Database will be restarted to apply config updates...")
-	}
 	updateBody := s.ToUpdatePostgresConfigBody()
-	updateBody.RestartDatabase = &restartRequired
 	if resp, err := u.client.V1UpdatePostgresConfigWithResponse(ctx, projectRef, updateBody); err != nil {
 		return errors.Errorf("failed to update DB config: %w", err)
 	} else if resp.JSON200 == nil {
