@@ -14,6 +14,13 @@ const (
 	Oauth2Scopes = "oauth2.Scopes"
 )
 
+// Defines values for ApiKeyResponseType.
+const (
+	ApiKeyResponseTypeLegacy      ApiKeyResponseType = "legacy"
+	ApiKeyResponseTypePublishable ApiKeyResponseType = "publishable"
+	ApiKeyResponseTypeSecret      ApiKeyResponseType = "secret"
+)
+
 // Defines values for AuthHealthResponseName.
 const (
 	GoTrue AuthHealthResponseName = "GoTrue"
@@ -58,8 +65,8 @@ const (
 
 // Defines values for CreateApiKeyBodyType.
 const (
-	Publishable CreateApiKeyBodyType = "publishable"
-	Secret      CreateApiKeyBodyType = "secret"
+	CreateApiKeyBodyTypePublishable CreateApiKeyBodyType = "publishable"
+	CreateApiKeyBodyTypeSecret      CreateApiKeyBodyType = "secret"
 )
 
 // Defines values for CreateProviderBodyType.
@@ -412,9 +419,12 @@ type ApiKeyResponse struct {
 	Name              string                   `json:"name"`
 	Prefix            *string                  `json:"prefix"`
 	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
-	Type              *map[string]interface{}  `json:"type"`
+	Type              *ApiKeyResponseType      `json:"type"`
 	UpdatedAt         *string                  `json:"updated_at"`
 }
+
+// ApiKeyResponseType defines model for ApiKeyResponse.Type.
+type ApiKeyResponseType string
 
 // ApiKeySecretJWTTemplate defines model for ApiKeySecretJWTTemplate.
 type ApiKeySecretJWTTemplate struct {
@@ -950,6 +960,7 @@ type PostgresConfigResponse struct {
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
+	TrackCommitTimestamp          *bool                                         `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                       `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                       `json:"wal_sender_timeout,omitempty"`
 	WorkMem                       *string                                       `json:"work_mem,omitempty"`
@@ -1440,6 +1451,7 @@ type UpdatePostgresConfigBody struct {
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
+	TrackCommitTimestamp          *bool                                           `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                         `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                         `json:"wal_sender_timeout,omitempty"`
 	WorkMem                       *string                                         `json:"work_mem,omitempty"`
