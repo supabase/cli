@@ -1519,6 +1519,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/V1ServiceHealthResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve project's service health status
       tags:
@@ -3063,6 +3065,13 @@ components:
     ApiKeyResponse:
       type: object
       properties:
+        type:
+          nullable: true
+          type: string
+          enum:
+            - publishable
+            - secret
+            - legacy
         name:
           type: string
         api_key:
@@ -3070,9 +3079,6 @@ components:
         id:
           type: string
           nullable: true
-        type:
-          nullable: true
-          type: object
         prefix:
           type: string
           nullable: true
@@ -3786,6 +3792,8 @@ components:
           type: string
         statement_timeout:
           type: string
+        track_commit_timestamp:
+          type: boolean
         wal_keep_size:
           type: string
         wal_sender_timeout:
@@ -3847,6 +3855,8 @@ components:
           type: string
         statement_timeout:
           type: string
+        track_commit_timestamp:
+          type: boolean
         wal_keep_size:
           type: string
         wal_sender_timeout:
