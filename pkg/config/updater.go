@@ -15,7 +15,7 @@ func NewConfigUpdater(client v1API.ClientWithResponses) ConfigUpdater {
 }
 
 func (u *ConfigUpdater) UpdateLocalConfig(ctx context.Context, local baseConfig) error {
-	if err := u.UpdateLocalApiConfig(ctx, local.ProjectId, local.Api); err != nil {
+	if err := u.UpdateLocalApiConfig(ctx, local.ProjectId, &local.Api); err != nil {
 		return err
 	}
 	return nil

@@ -8,7 +8,7 @@ import (
 	"github.com/go-errors/errors"
 )
 
-func (u *ConfigUpdater) UpdateLocalApiConfig(ctx context.Context, projectRef string, c api) error {
+func (u *ConfigUpdater) UpdateLocalApiConfig(ctx context.Context, projectRef string, c *api) error {
 	apiConfig, err := u.client.V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read API config: %w", err)
@@ -24,6 +24,6 @@ func (u *ConfigUpdater) UpdateLocalApiConfig(ctx context.Context, projectRef str
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Diff found between local API config with remote values:", string(apiDiff))
-	c = newConfig
+	*c = newConfig
 	return nil
 }
