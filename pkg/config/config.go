@@ -734,19 +734,10 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			c.Auth.Sms.EnableSignup = false
 			fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
 		}
-		if err := c.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
-		if err := c.Auth.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
-			return err
-		}
-		if err := c.Auth.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
-			return err
-		}
-		if err := c.Auth.Hook.SendSMS.HandleHook("send_sms"); err != nil {
-			return err
-		}
-		if err := c.Auth.Hook.SendEmail.HandleHook("send_email"); err != nil {
+		if err := c.Auth.MFA.validate(); err != nil {
 			return err
 		}
 		// Validate oauth config
@@ -917,16 +908,33 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 	return nil
 }
 
-func (h *hookConfig) HandleHook(hookType string) error {
+func (h *hook) validate() error {
+	if err := h.MFAVerificationAttempt.validate("mfa_verification_attempt"); err != nil {
+		return err
+	}
+	if err := h.PasswordVerificationAttempt.validate("password_verification_attempt"); err != nil {
+		return err
+	}
+	if err := h.CustomAccessToken.validate("custom_access_token"); err != nil {
+		return err
+	}
+	if err := h.SendSMS.validate("send_sms"); err != nil {
+		return err
+	}
+	return h.SendEmail.validate("send_email")
+}
+
+func (h *hookConfig) validate(hookType string) error {
 	// If not enabled do nothing
 	if !h.Enabled {
 		return nil
 	}
 	if h.URI == "" {
 		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
-	}
-	if err := validateHookURI(h.URI, hookType); err != nil {
-		return err
+	} else if parsed, err := url.Parse(h.URI); err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	} else if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
 	}
 	var err error
 	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
@@ -935,13 +943,15 @@ func (h *hookConfig) HandleHook(hookType string) error {
 	return nil
 }
 
-func validateHookURI(uri, hookName string) error {
-	parsed, err := url.Parse(uri)
-	if err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
+func (m *mfa) validate() error {
+	if m.TOTP.EnrollEnabled && !m.TOTP.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled")
 	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
+	if m.Phone.EnrollEnabled && !m.Phone.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.phone.enroll_enabled requires verify_enabled")
+	}
+	if m.WebAuthn.EnrollEnabled && !m.WebAuthn.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.web_authn.enroll_enabled requires verify_enabled")
 	}
 	return nil
 }
