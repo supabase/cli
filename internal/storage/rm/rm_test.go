@@ -13,16 +13,17 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
 	"github.com/supabase/cli/pkg/storage"
 )
 
 var mockFile = storage.ObjectResponse{
 	Name:           "abstract.pdf",
-	Id:             utils.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
-	UpdatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-	CreatedAt:      utils.Ptr("2023-10-13T18:08:22.068Z"),
-	LastAccessedAt: utils.Ptr("2023-10-13T18:08:22.068Z"),
+	Id:             cast.Ptr("9b7f9f48-17a6-4ca8-b14a-39b0205a63e9"),
+	UpdatedAt:      cast.Ptr("2023-10-13T18:08:22.068Z"),
+	CreatedAt:      cast.Ptr("2023-10-13T18:08:22.068Z"),
+	LastAccessedAt: cast.Ptr("2023-10-13T18:08:22.068Z"),
 	Metadata: &storage.ObjectMetadata{
 		ETag:           `"887ea9be3c68e6f2fca7fd2d7c77d8fe"`,
 		Size:           82702,
@@ -72,7 +73,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes multiple objects", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
@@ -111,7 +112,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("removes buckets and directories", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
@@ -181,7 +182,7 @@ func TestStorageRM(t *testing.T) {
 	})
 
 	t.Run("throws error on delete failure", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api

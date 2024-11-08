@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestServeCommand(t *testing.T) {
@@ -34,7 +35,7 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.EdgeRuntimeImage), containerId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 		// Run test
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
@@ -100,7 +101,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), ".env", utils.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
+		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})

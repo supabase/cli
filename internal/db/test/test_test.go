@@ -12,8 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -40,7 +41,7 @@ func TestRunCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		containerId := "test-pg-prove"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.PgProveImage), containerId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.PgProveImage), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "Result: SUCCESS"))
 		// Run test
 		err := Run(context.Background(), []string{"nested"}, dbConfig, fsys, conn.Intercept)
@@ -89,7 +90,7 @@ func TestRunCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.PgProveImage) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(config.PgProveImage) + "/json").
 			ReplyError(errNetwork)
 		// Run test
 		err := Run(context.Background(), nil, dbConfig, fsys, conn.Intercept)

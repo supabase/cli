@@ -23,7 +23,7 @@ var dbConfig = pgconn.Config{
 }
 
 func TestPullCommand(t *testing.T) {
-	imageUrl := utils.GetRegistryImageUrl(utils.Pg15Image)
+	imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 	const containerId = "test-container"
 
 	t.Run("pulls from remote", func(t *testing.T) {
@@ -52,7 +52,7 @@ func TestPullCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Run test
 		err := Run(context.Background(), "", dbConfig, []string{"public"}, nil, false, false, false, false, false, fsys)
 		// Check error
@@ -83,7 +83,7 @@ func TestPullCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
-		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Run test
 		err := Run(context.Background(), "schema.sql", dbConfig, nil, nil, false, false, false, false, false, fsys)
 		// Check error

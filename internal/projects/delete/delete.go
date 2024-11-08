@@ -43,7 +43,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	}
 
 	// Unlink project
-	if err := credentials.Delete(ref); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if err := credentials.StoreProvider.Delete(ref); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	if match, err := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {

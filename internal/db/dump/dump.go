@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	cliConfig "github.com/supabase/cli/pkg/config"
 )
 
 var (
@@ -99,6 +100,7 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		// "storage",
 		// "supabase_functions",
 		"supabase_migrations",
+		// TODO: Remove in a few version in favor of _supabase internal db
 		"_analytics",
 		"_realtime",
 		"_supavisor",
@@ -170,7 +172,7 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.Pg15Image,
+			Image: cliConfig.Pg15Image,
 			Env:   allEnvs,
 			Cmd:   []string{"bash", "-c", script, "--"},
 		},

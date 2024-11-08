@@ -21,10 +21,10 @@
     "supabase": "bin/supabase"
   },
   "dependencies": {
-    "bin-links": "^4.0.3",
+    "bin-links": "^5.0.0",
     "https-proxy-agent": "^7.0.2",
     "node-fetch": "^3.3.2",
-    "tar": "7.4.0"
+    "tar": "7.4.3"
   },
   "release": {
     "branches": [

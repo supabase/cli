@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
@@ -84,7 +85,7 @@ func DiffSchemaPgAdmin(ctx context.Context, source, target string, schema []stri
 	if len(schema) == 0 {
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
-			utils.DifferImage,
+			config.DifferImage,
 			nil,
 			args,
 			stream.Stdout(),
@@ -97,7 +98,7 @@ func DiffSchemaPgAdmin(ctx context.Context, source, target string, schema []stri
 		p.Send(utils.StatusMsg("Diffing schema: " + s))
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
-			utils.DifferImage,
+			config.DifferImage,
 			nil,
 			append([]string{"--schema", s}, args...),
 			stream.Stdout(),

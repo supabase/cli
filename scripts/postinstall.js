@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Ref 1: https://github.com/sanathkr/go-npm
-// Ref 2: https://blog.xendit.engineer/how-we-repurposed-npm-to-publish-and-distribute-our-go-binaries-for-internal-cli-23981b80911b
+// Ref 2: https://medium.com/xendit-engineering/how-we-repurposed-npm-to-publish-and-distribute-our-go-binaries-for-internal-cli-23981b80911b
 "use strict";
 
 import binLinks from "bin-links";
@@ -98,45 +98,53 @@ async function main() {
     throw errUnsupported;
   }
 
+  // Read from package.json and prepare for the installation.
   const pkg = await readPackageJson();
   if (platform === "windows") {
     // Update bin path in package.json
     pkg.bin[pkg.name] += ".exe";
   }
 
+  // Prepare the installation path by creating the directory if it doesn't exist.
   const binPath = pkg.bin[pkg.name];
   const binDir = path.dirname(binPath);
   await fs.promises.mkdir(binDir, { recursive: true });
 
-  // First we will Un-GZip, then we will untar.
-  const ungz = zlib.createGunzip();
-  const binName = path.basename(binPath);
-  const untar = extract({ cwd: binDir }, [binName]);
-
-  const url = getDownloadUrl(pkg);
-  console.info("Downloading", url);
+  // Create the agent that will be used for all the fetch requests later.
   const proxyUrl =
     process.env.npm_config_https_proxy ||
     process.env.npm_config_http_proxy ||
     process.env.npm_config_proxy;
-
   // Keeps the TCP connection alive when sending multiple requests
   // Ref: https://github.com/node-fetch/node-fetch/issues/1735
   const agent = proxyUrl
     ? new HttpsProxyAgent(proxyUrl, { keepAlive: true })
     : new Agent({ keepAlive: true });
-  const resp = await fetch(url, { agent });
 
-  const hash = createHash("sha256");
-  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
+  // First, fetch the checksum map.
   const checksumMap = await fetchAndParseCheckSumFile(pkg, agent);
 
+  // Then, download the binary.
+  const url = getDownloadUrl(pkg);
+  console.info("Downloading", url);
+  const resp = await fetch(url, { agent });
+  const hash = createHash("sha256");
+  const pkgNameWithPlatform = `${pkg.name}_${platform}_${arch}.tar.gz`;
+
+  // Then, decompress the binary -- we will first Un-GZip, then we will untar.
+  const ungz = zlib.createGunzip();
+  const binName = path.basename(binPath);
+  const untar = extract({ cwd: binDir }, [binName]);
+
+  // Update the hash with the binary data as it's being downloaded.
   resp.body
     .on("data", (chunk) => {
       hash.update(chunk);
     })
+    // Pipe the data to the ungz stream.
     .pipe(ungz);
 
+  // After the ungz stream has ended, verify the checksum.
   ungz
     .on("end", () => {
       const expectedChecksum = checksumMap?.[pkgNameWithPlatform];
@@ -151,8 +159,10 @@ async function main() {
       }
       console.info("Checksum verified.");
     })
+    // Pipe the data to the untar stream.
     .pipe(untar);
 
+  // Wait for the untar stream to finish.
   await new Promise((resolve, reject) => {
     untar.on("error", reject);
     untar.on("end", () => resolve());

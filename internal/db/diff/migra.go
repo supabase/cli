@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 //go:embed templates/migra.sh
@@ -25,7 +26,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: utils.MigraImage,
+			Image: config.MigraImage,
 			Env:   env,
 			Cmd:   cmd,
 		},

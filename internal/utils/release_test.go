@@ -10,6 +10,7 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestLatestRelease(t *testing.T) {
@@ -19,7 +20,7 @@ func TestLatestRelease(t *testing.T) {
 		gock.New("https://api.github.com").
 			Get("/repos/supabase/cli/releases/latest").
 			Reply(http.StatusOK).
-			JSON(github.RepositoryRelease{TagName: Ptr("v2")})
+			JSON(github.RepositoryRelease{TagName: cast.Ptr("v2")})
 		// Run test
 		version, err := GetLatestRelease(context.Background())
 		// Check error

@@ -33,10 +33,6 @@ var (
 	ssoDomains              []string
 	ssoAddDomains           []string
 	ssoRemoveDomains        []string
-	ssoOutput               = utils.EnumFlag{
-		Allowed: utils.OutputDefaultAllowed,
-		Value:   utils.OutputPretty,
-	}
 
 	ssoAddCmd = &cobra.Command{
 		Use:     "add",
@@ -47,7 +43,7 @@ var (
 			return create.Run(cmd.Context(), create.RunParams{
 				ProjectRef:        flags.ProjectRef,
 				Type:              ssoProviderType.String(),
-				Format:            ssoOutput.Value,
+				Format:            utils.OutputFormat.Value,
 				MetadataFile:      ssoMetadataFile,
 				MetadataURL:       ssoMetadataURL,
 				SkipURLValidation: ssoSkipURLValidation,
@@ -68,7 +64,7 @@ var (
 				return errors.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
-			return remove.Run(cmd.Context(), flags.ProjectRef, args[0], ssoOutput.Value)
+			return remove.Run(cmd.Context(), flags.ProjectRef, args[0], utils.OutputFormat.Value)
 		},
 	}
 
@@ -86,7 +82,7 @@ var (
 			return update.Run(cmd.Context(), update.RunParams{
 				ProjectRef: flags.ProjectRef,
 				ProviderID: args[0],
-				Format:     ssoOutput.Value,
+				Format:     utils.OutputFormat.Value,
 
 				MetadataFile:      ssoMetadataFile,
 				MetadataURL:       ssoMetadataURL,
@@ -110,7 +106,7 @@ var (
 				return errors.Errorf("identity provider ID %q is not a UUID", args[0])
 			}
 
-			format := ssoOutput.Value
+			format := utils.OutputFormat.Value
 			if ssoMetadata {
 				format = utils.OutputMetadata
 			}
@@ -125,7 +121,7 @@ var (
 		Long:    "List all connections to a SSO identity provider to your Supabase project.",
 		Example: `  supabase sso list --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return list.Run(cmd.Context(), flags.ProjectRef, ssoOutput.Value)
+			return list.Run(cmd.Context(), flags.ProjectRef, utils.OutputFormat.Value)
 		},
 	}
 
@@ -135,7 +131,7 @@ var (
 		Long:    "Returns all of the important SSO information necessary for your project to be registered with a SAML 2.0 compatible identity provider.",
 		Example: `  supabase sso info --project-ref mwjylndxudmiehsxhmmz`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return info.Run(cmd.Context(), flags.ProjectRef, ssoOutput.Value)
+			return info.Run(cmd.Context(), flags.ProjectRef, utils.OutputFormat.Value)
 		},
 	}
 )
@@ -143,7 +139,6 @@ var (
 func init() {
 	persistentFlags := ssoCmd.PersistentFlags()
 	persistentFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	persistentFlags.VarP(&ssoOutput, "output", "o", "Output format")
 	ssoAddFlags := ssoAddCmd.Flags()
 	ssoAddFlags.VarP(&ssoProviderType, "type", "t", "Type of identity provider (according to supported protocol).")
 	ssoAddFlags.StringSliceVar(&ssoDomains, "domains", nil, "Comma separated list of email domains to associate with the added identity provider.")

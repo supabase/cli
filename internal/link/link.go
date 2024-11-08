@@ -3,39 +3,41 @@ package link
 import (
 	"context"
 	"fmt"
-	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/migration/history"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
+	cliConfig "github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/diff"
+	"github.com/supabase/cli/pkg/migration"
 )
 
-var updatedConfig ConfigCopy
-
-type ConfigCopy struct {
-	Api    interface{} `toml:"api"`
-	Db     interface{} `toml:"db"`
-	Pooler interface{} `toml:"db.pooler"`
-}
-
-func (c ConfigCopy) IsEmpty() bool {
-	return c.Api == nil && c.Db == nil && c.Pooler == nil
-}
-
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	original, err := cliConfig.ToTomlBytes(map[string]interface{}{
+		"api": utils.Config.Api,
+		"db":  utils.Config.Db,
+	})
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+
+	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
+		return err
+	}
+
 	// 1. Check service config
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
@@ -50,25 +52,29 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 			return err
 		}
 		// Save database password
-		if err := credentials.Set(projectRef, config.Password); err != nil {
+		if err := credentials.StoreProvider.Set(projectRef, config.Password); err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
 		}
 	}
 
 	// 3. Save project ref
-	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
-}
-
-func PostRun(projectRef string, stdout io.Writer, fsys afero.Fs) error {
-	fmt.Fprintln(stdout, "Finished "+utils.Aqua("supabase link")+".")
-	if updatedConfig.IsEmpty() {
-		return nil
+	if err := utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys); err != nil {
+		return err
 	}
-	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
-	enc := toml.NewEncoder(stdout)
-	enc.Indent = ""
-	if err := enc.Encode(updatedConfig); err != nil {
-		return errors.Errorf("failed to marshal toml config: %w", err)
+	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
+
+	// 4. Suggest config update
+	updated, err := cliConfig.ToTomlBytes(map[string]interface{}{
+		"api": utils.Config.Api,
+		"db":  utils.Config.Db,
+	})
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+
+	if lineDiff := diff.Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
+		fmt.Println(string(lineDiff))
 	}
 	return nil
 }
@@ -138,16 +144,9 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 }
 
 func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	copy := utils.Config.Api
-	copy.MaxRows = uint(config.MaxRows)
-	copy.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
-	copy.Schemas = readCsv(config.DbSchema)
-	changed := utils.Config.Api.MaxRows != copy.MaxRows ||
-		!utils.SliceEqual(utils.Config.Api.ExtraSearchPath, copy.ExtraSearchPath) ||
-		!utils.SliceEqual(utils.Config.Api.Schemas, copy.Schemas)
-	if changed {
-		updatedConfig.Api = copy
-	}
+	utils.Config.Api.MaxRows = cast.IntToUint(config.MaxRows)
+	utils.Config.Api.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
+	utils.Config.Api.Schemas = readCsv(config.DbSchema)
 }
 
 func readCsv(line string) []string {
@@ -186,7 +185,10 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
 	// If `schema_migrations` doesn't exist on the remote database, create it.
-	return history.CreateMigrationTable(ctx, conn)
+	if err := migration.CreateMigrationTable(ctx, conn); err != nil {
+		return err
+	}
+	return migration.CreateSeedTable(ctx, conn)
 }
 
 func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -204,46 +206,65 @@ func updatePostgresConfig(conn *pgx.Conn) {
 	if majorDigits > 2 {
 		majorDigits = 2
 	}
-	dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7)
 	// Treat error as unchanged
-	if err == nil && uint64(utils.Config.Db.MajorVersion) != dbMajorVersion {
-		copy := utils.Config.Db
-		copy.MajorVersion = uint(dbMajorVersion)
-		updatedConfig.Db = copy
+	if dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7); err == nil {
+		utils.Config.Db.MajorVersion = uint(dbMajorVersion)
 	}
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetProjectPgbouncerConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetSupavisorConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}
 	if resp.JSON200 == nil {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
-	updatePoolerConfig(*resp.JSON200)
-	if resp.JSON200.ConnectionString != nil {
-		utils.Config.Db.Pooler.ConnectionString = *resp.JSON200.ConnectionString
-		return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
+	for _, config := range *resp.JSON200 {
+		if config.DatabaseType == api.PRIMARY {
+			updatePoolerConfig(config)
+		}
 	}
-	return nil
+	return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
 }
 
-func updatePoolerConfig(config api.V1PgbouncerConfigResponse) {
-	copy := utils.Config.Db.Pooler
-	if config.PoolMode != nil {
-		copy.PoolMode = utils.PoolMode(*config.PoolMode)
-	}
+func updatePoolerConfig(config api.SupavisorConfigResponse) {
+	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
+	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
 	if config.DefaultPoolSize != nil {
-		copy.DefaultPoolSize = uint(*config.DefaultPoolSize)
+		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(*config.DefaultPoolSize)
 	}
 	if config.MaxClientConn != nil {
-		copy.MaxClientConn = uint(*config.MaxClientConn)
+		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(*config.MaxClientConn)
 	}
-	changed := utils.Config.Db.Pooler.PoolMode != copy.PoolMode ||
-		utils.Config.Db.Pooler.DefaultPoolSize != copy.DefaultPoolSize ||
-		utils.Config.Db.Pooler.MaxClientConn != copy.MaxClientConn
-	if changed {
-		updatedConfig.Pooler = copy
+}
+
+var errProjectPaused = errors.New("project is paused")
+
+func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to retrieve remote project status: %w", err)
 	}
+	switch resp.StatusCode() {
+	case http.StatusNotFound:
+		// Ignore not found error to support linking branch projects
+		return nil
+	case http.StatusOK:
+		// resp.JSON200 is not nil, proceed
+	default:
+		return errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
+	}
+
+	switch resp.JSON200.Status {
+	case api.V1ProjectResponseStatusINACTIVE:
+		utils.CmdSuggestion = fmt.Sprintf("An admin must unpause it from the Supabase dashboard at %s", utils.Aqua(fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), projectRef)))
+		return errors.New(errProjectPaused)
+	case api.V1ProjectResponseStatusACTIVEHEALTHY:
+		// Project is in the desired state, do nothing
+	default:
+		fmt.Fprintf(os.Stderr, "%s: Project status is %s instead of Active Healthy. Some operations might fail.\n", utils.Yellow("WARNING"), resp.JSON200.Status)
+	}
+
+	return nil
 }

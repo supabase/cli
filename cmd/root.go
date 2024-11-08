@@ -12,7 +12,6 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/go-errors/errors"
-	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -153,7 +152,8 @@ func Execute() {
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {
 	if shouldFetchRelease(fsys) {
 		version, err := utils.GetLatestRelease(ctx)
-		if exists, _ := afero.DirExists(fsys, utils.SupabaseDirPath); exists && len(version) > 0 {
+		if exists, _ := afero.DirExists(fsys, utils.SupabaseDirPath); exists {
+			// If user is offline, write an empty file to skip subsequent checks
 			err = utils.WriteFile(utils.CliVersionPath, []byte(version), fsys)
 		}
 		return version, err
@@ -222,18 +222,8 @@ func recoverAndExit() {
 
 func init() {
 	cobra.OnInitialize(func() {
-		// Allow overriding config object with automatic env
-		// Ref: https://github.com/spf13/viper/issues/761
-		envKeysMap := map[string]interface{}{}
-		dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-			Result:               &envKeysMap,
-			IgnoreUntaggedFields: true,
-		})
-		cobra.CheckErr(err)
-		cobra.CheckErr(dec.Decode(utils.Config))
-		cobra.CheckErr(viper.MergeConfigMap(envKeysMap))
 		viper.SetEnvPrefix("SUPABASE")
-		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 		viper.AutomaticEnv()
 	})
 
@@ -242,6 +232,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.String("network-id", "", "use the specified docker network instead of a generated one")
+	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
 	cobra.CheckErr(viper.BindPFlags(flags))

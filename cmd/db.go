@@ -183,10 +183,15 @@ var (
 		},
 	}
 
+	noSeed bool
+
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if noSeed {
+				utils.Config.Db.Seed.Enabled = false
+			}
 			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
@@ -196,11 +201,16 @@ var (
 		Value:   lint.AllowedLevels[0],
 	}
 
+	lintFailOn = utils.EnumFlag{
+		Allowed: append([]string{"none"}, lint.AllowedLevels...),
+		Value:   "none",
+	}
+
 	dbLintCmd = &cobra.Command{
 		Use:   "lint",
 		Short: "Checks local database for typing error",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, flags.DbConfig, afero.NewOsFs())
+			return lint.Run(cmd.Context(), schema, level.Value, lintFailOn.Value, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -266,7 +276,7 @@ func init() {
 	pushFlags := dbPushCmd.Flags()
 	pushFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
 	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
-	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from "+utils.SeedDataPath+".")
+	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from your config.")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
 	pushFlags.String("db-url", "", "Pushes to the database specified by the connection string (must be percent-encoded).")
 	pushFlags.Bool("linked", true, "Pushes to the linked project.")
@@ -299,6 +309,7 @@ func init() {
 	resetFlags.String("db-url", "", "Resets the database specified by the connection string (must be percent-encoded).")
 	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
 	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
+	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	dbCmd.AddCommand(dbResetCmd)
@@ -310,6 +321,7 @@ func init() {
 	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	lintFlags.Var(&level, "level", "Error level to emit.")
+	lintFlags.Var(&lintFailOn, "fail-on", "Error level to exit with non-zero status.")
 	dbCmd.AddCommand(dbLintCmd)
 	// Build start command
 	dbCmd.AddCommand(dbStartCmd)

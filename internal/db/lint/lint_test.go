@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -65,7 +65,7 @@ func TestLintCommand(t *testing.T) {
 		Reply("SELECT 1", []interface{}{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
-	err = Run(context.Background(), []string{"public"}, "warning", dbConfig, fsys, conn.Intercept)
+	err = Run(context.Background(), []string{"public"}, "warning", "none", dbConfig, fsys, conn.Intercept)
 	// Check error
 	assert.NoError(t, err)
 	assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -121,13 +121,8 @@ func TestLintDatabase(t *testing.T) {
 				[]interface{}{"f2", string(r2)},
 			).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		result, err := LintDatabase(ctx, mock, []string{"public"})
+		result, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
 		assert.NoError(t, err)
 		// Validate result
 		assert.ElementsMatch(t, expected, result)
@@ -167,15 +162,10 @@ func TestLintDatabase(t *testing.T) {
 			Query(checkSchemaScript, "private").
 			Reply("SELECT 1", []interface{}{"f2", string(r2)}).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		result, err := LintDatabase(ctx, mock, []string{"public", "private"})
+		result, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public", "private"})
+		// Check error
 		assert.NoError(t, err)
-		// Validate result
 		assert.ElementsMatch(t, expected, result)
 	})
 
@@ -187,13 +177,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			ReplyError(pgerrcode.UndefinedFile, `could not open extension control file "/usr/share/postgresql/14/extension/plpgsql_check.control": No such file or directory"`).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = LintDatabase(ctx, mock, []string{"public"})
+		_, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
+		// Check error
 		assert.Error(t, err)
 	})
 
@@ -207,13 +193,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 1", []interface{}{"f1", "malformed"}).
 			Query("rollback").Reply("ROLLBACK")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = LintDatabase(ctx, mock, []string{"public"})
+		_, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
+		// Check error
 		assert.Error(t, err)
 	})
 }
@@ -239,7 +221,8 @@ func TestPrintResult(t *testing.T) {
 	t.Run("filters warning level", func(t *testing.T) {
 		// Run test
 		var out bytes.Buffer
-		assert.NoError(t, printResultJSON(result, toEnum("warning"), &out))
+		filtered := filterResult(result, toEnum("warning"))
+		assert.NoError(t, printResultJSON(filtered, &out))
 		// Validate output
 		var actual []Result
 		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))
@@ -249,7 +232,8 @@ func TestPrintResult(t *testing.T) {
 	t.Run("filters error level", func(t *testing.T) {
 		// Run test
 		var out bytes.Buffer
-		assert.NoError(t, printResultJSON(result, toEnum("error"), &out))
+		filtered := filterResult(result, toEnum("error"))
+		assert.NoError(t, printResultJSON(filtered, &out))
 		// Validate output
 		var actual []Result
 		assert.NoError(t, json.Unmarshal(out.Bytes(), &actual))
@@ -257,5 +241,59 @@ func TestPrintResult(t *testing.T) {
 			Function: result[0].Function,
 			Issues:   []Issue{result[0].Issues[1]},
 		}}, actual)
+	})
+
+	t.Run("exits with non-zero status on warning", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(ENABLE_PGSQL_CHECK).
+			Reply("CREATE EXTENSION").
+			Query(checkSchemaScript, "public").
+			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"warning","message":"test warning"}]}`}).
+			Query("rollback").Reply("ROLLBACK")
+		// Run test
+		err := Run(context.Background(), []string{"public"}, "warning", "warning", dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "fail-on is set to warning, non-zero exit")
+	})
+
+	t.Run("exits with non-zero status on error", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(ENABLE_PGSQL_CHECK).
+			Reply("CREATE EXTENSION").
+			Query(checkSchemaScript, "public").
+			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
+			Query("rollback").Reply("ROLLBACK")
+		// Run test
+		err := Run(context.Background(), []string{"public"}, "warning", "error", dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, "fail-on is set to error, non-zero exit")
+	})
+
+	t.Run("does not exit with non-zero status when fail-on is none", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(ENABLE_PGSQL_CHECK).
+			Reply("CREATE EXTENSION").
+			Query(checkSchemaScript, "public").
+			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
+			Query("rollback").Reply("ROLLBACK")
+		// Run test
+		err := Run(context.Background(), []string{"public"}, "warning", "none", dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
 	})
 }

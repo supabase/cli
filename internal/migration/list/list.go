@@ -4,23 +4,16 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"regexp"
 	"strconv"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/pgxv5"
+	"github.com/supabase/cli/pkg/migration"
 )
-
-const LIST_MIGRATION_VERSION = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"
-
-var initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	remoteVersions, err := loadRemoteVersions(ctx, config, options...)
@@ -41,27 +34,7 @@ func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...fu
 		return nil, err
 	}
 	defer conn.Close(context.Background())
-	return LoadRemoteMigrations(ctx, conn)
-}
-
-func LoadRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {
-	versions, err := listMigrationVersions(ctx, conn)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable {
-			// If migration history table is undefined, the remote project has no migrations
-			return nil, nil
-		}
-	}
-	return versions, err
-}
-
-func listMigrationVersions(ctx context.Context, conn *pgx.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, LIST_MIGRATION_VERSION)
-	if err != nil {
-		return nil, errors.Errorf("failed to query rows: %w", err)
-	}
-	return pgxv5.CollectStrings(rows)
+	return migration.ListRemoteMigrations(ctx, conn)
 }
 
 func makeTable(remoteMigrations, localMigrations []string) string {
@@ -115,56 +88,18 @@ func RenderTable(markdown string) error {
 }
 
 func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
-	names, err := LoadLocalMigrations(fsys)
-	if err != nil {
-		return nil, err
-	}
 	var versions []string
-	for _, filename := range names {
-		// LoadLocalMigrations guarantees we always have a match
-		version := utils.MigrateFilePattern.FindStringSubmatch(filename)[1]
-		versions = append(versions, version)
+	filter := func(v string) bool {
+		versions = append(versions, v)
+		return true
 	}
-	return versions, nil
-}
-
-func LoadLocalMigrations(fsys afero.Fs) ([]string, error) {
-	return LoadPartialMigrations("", fsys)
+	_, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
+	return versions, err
 }
 
 func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
-	localMigrations, err := afero.ReadDir(fsys, utils.MigrationsDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, errors.Errorf("failed to read directory: %w", err)
+	filter := func(v string) bool {
+		return version == "" || v <= version
 	}
-	var names []string
-	for i, migration := range localMigrations {
-		filename := migration.Name()
-		if i == 0 && shouldSkip(filename) {
-			fmt.Fprintln(os.Stderr, "Skipping migration "+utils.Bold(filename)+`... (replace "init" with a different file name to apply this migration)`)
-			continue
-		}
-		matches := utils.MigrateFilePattern.FindStringSubmatch(filename)
-		if len(matches) == 0 {
-			fmt.Fprintln(os.Stderr, "Skipping migration "+utils.Bold(filename)+`... (file name must match pattern "<timestamp>_name.sql")`)
-			continue
-		}
-		names = append(names, filename)
-		if matches[1] == version {
-			break
-		}
-	}
-	return names, nil
-}
-
-func shouldSkip(name string) bool {
-	// NOTE: To handle backward-compatibility. `<timestamp>_init.sql` as
-	// the first migration (prev versions of the CLI) is deprecated.
-	matches := initSchemaPattern.FindStringSubmatch(name)
-	if len(matches) == 2 {
-		if timestamp, err := strconv.ParseUint(matches[1], 10, 64); err == nil && timestamp < 20211209000000 {
-			return true
-		}
-	}
-	return false
+	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
 }

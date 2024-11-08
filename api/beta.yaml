@@ -22,7 +22,7 @@ paths:
         '500':
           description: Failed to retrieve database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     patch:
@@ -52,7 +52,7 @@ paths:
         '500':
           description: Failed to update database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     delete:
@@ -76,7 +76,7 @@ paths:
         '500':
           description: Failed to delete database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/branches/{branch_id}/reset:
@@ -101,7 +101,7 @@ paths:
         '500':
           description: Failed to reset database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/projects:
@@ -120,7 +120,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/V1ProjectResponse'
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
     post:
@@ -141,7 +141,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/V1ProjectResponse'
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/organizations:
@@ -162,7 +162,7 @@ paths:
         '500':
           description: Unexpected error listing organizations
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
     post:
@@ -185,7 +185,7 @@ paths:
         '500':
           description: Unexpected error creating an organization
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
   /v1/oauth/authorize:
@@ -245,7 +245,7 @@ paths:
         '303':
           description: ''
       tags:
-        - oauth
+        - OAuth
       security:
         - oauth2:
             - read
@@ -268,7 +268,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse'
       tags:
-        - oauth
+        - OAuth
       security:
         - oauth2:
             - write
@@ -292,7 +292,7 @@ paths:
         '500':
           description: Failed to list user's SQL snippets
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/snippets/{id}:
@@ -315,7 +315,7 @@ paths:
         '500':
           description: Failed to retrieve SQL snippet
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/api-keys:
@@ -340,10 +340,102 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+    post:
+      operationId: createApiKey
+      summary: '[Alpha] Creates a new API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+  /v1/projects/{ref}/api-keys/{id}:
+    patch:
+      operationId: updateApiKey
+      summary: '[Alpha] Updates an API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateApiKeyBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
+      tags:
+        - Secrets
+      security:
+        - bearer: []
+    delete:
+      operationId: deleteApiKey
+      summary: '[Alpha] Deletes an API key for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyResponse'
         '403':
           description: ''
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/branches:
@@ -372,7 +464,7 @@ paths:
         '500':
           description: Failed to retrieve database branches
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     post:
@@ -404,7 +496,7 @@ paths:
         '500':
           description: Failed to create database branch
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
     delete:
@@ -426,7 +518,7 @@ paths:
         '500':
           description: Failed to disable preview branching
       tags:
-        - environments
+        - Environments
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname:
@@ -454,7 +546,7 @@ paths:
         '500':
           description: Failed to retrieve project's custom hostname config
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
     delete:
@@ -477,7 +569,7 @@ paths:
         '500':
           description: Failed to delete project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/initialize:
@@ -511,7 +603,7 @@ paths:
         '500':
           description: Failed to update project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/reverify:
@@ -541,7 +633,7 @@ paths:
         '500':
           description: Failed to verify project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/custom-hostname/activate:
@@ -569,7 +661,7 @@ paths:
         '500':
           description: Failed to activate project custom hostname configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/network-bans/retrieve:
@@ -597,7 +689,7 @@ paths:
         '500':
           description: Failed to retrieve project's network bans
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-bans:
@@ -627,7 +719,7 @@ paths:
         '500':
           description: Failed to remove network bans.
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-restrictions:
@@ -655,7 +747,7 @@ paths:
         '500':
           description: Failed to retrieve project's network restrictions
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/network-restrictions/apply:
@@ -689,7 +781,7 @@ paths:
         '500':
           description: Failed to update project network restrictions
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/pgsodium:
@@ -717,7 +809,7 @@ paths:
         '500':
           description: Failed to retrieve project's pgsodium config
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     put:
@@ -752,7 +844,7 @@ paths:
         '500':
           description: Failed to update project's pgsodium config
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/postgrest:
@@ -780,7 +872,7 @@ paths:
         '500':
           description: Failed to retrieve project's postgrest config
       tags:
-        - rest
+        - Rest
       security:
         - bearer: []
     patch:
@@ -813,12 +905,37 @@ paths:
         '500':
           description: Failed to update project's postgrest config
       tags:
-        - rest
+        - Rest
       security:
         - bearer: []
   /v1/projects/{ref}:
+    get:
+      operationId: v1-get-project
+      summary: Gets a specific project that belongs to the authenticated user
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ProjectResponse'
+        '500':
+          description: Failed to retrieve project
+      tags:
+        - Projects
+      security:
+        - bearer: []
     delete:
-      operationId: v1-Delete a project
+      operationId: v1-delete-a-project
       summary: Deletes the given project
       parameters:
         - name: ref
@@ -839,7 +956,7 @@ paths:
         '403':
           description: ''
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/secrets:
@@ -870,7 +987,7 @@ paths:
         '500':
           description: Failed to retrieve project's secrets
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     post:
@@ -902,7 +1019,7 @@ paths:
         '500':
           description: Failed to create project's secrets
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
     delete:
@@ -938,7 +1055,7 @@ paths:
         '500':
           description: Failed to delete secrets with given names
       tags:
-        - secrets
+        - Secrets
       security:
         - bearer: []
   /v1/projects/{ref}/ssl-enforcement:
@@ -966,7 +1083,7 @@ paths:
         '500':
           description: Failed to retrieve project's SSL enforcement config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     put:
@@ -999,7 +1116,7 @@ paths:
         '500':
           description: Failed to update project's SSL enforcement configuration.
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/types/typescript:
@@ -1034,7 +1151,7 @@ paths:
         '500':
           description: Failed to generate TypeScript types
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain:
@@ -1062,7 +1179,7 @@ paths:
         '500':
           description: Failed to get project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
     delete:
@@ -1085,7 +1202,7 @@ paths:
         '500':
           description: Failed to delete project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain/check-availability:
@@ -1119,7 +1236,7 @@ paths:
         '500':
           description: Failed to check project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/vanity-subdomain/activate:
@@ -1153,7 +1270,7 @@ paths:
         '500':
           description: Failed to activate project vanity subdomain configuration
       tags:
-        - domains
+        - Domains
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade:
@@ -1187,12 +1304,12 @@ paths:
         '500':
           description: Failed to initiate project upgrade
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade/eligibility:
     get:
-      operationId: v1-get-postgrest-upgrade-eligibility
+      operationId: v1-get-postgres-upgrade-eligibility
       summary: '[Beta] Returns the project''s eligibility for upgrades'
       parameters:
         - name: ref
@@ -1215,12 +1332,12 @@ paths:
         '500':
           description: Failed to determine project upgrade eligibility
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/upgrade/status:
     get:
-      operationId: v1-get-postgrest-upgrade-status
+      operationId: v1-get-postgres-upgrade-status
       summary: '[Beta] Gets the latest status of the project''s upgrade'
       parameters:
         - name: ref
@@ -1230,6 +1347,11 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            type: string
+        - name: tracking_id
+          required: false
+          in: query
+          schema:
             type: string
       responses:
         '200':
@@ -1243,7 +1365,7 @@ paths:
         '500':
           description: Failed to retrieve project upgrade status
       tags:
-        - projects
+        - Projects
       security:
         - bearer: []
   /v1/projects/{ref}/readonly:
@@ -1269,7 +1391,7 @@ paths:
         '500':
           description: Failed to get project readonly mode status
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/readonly/temporary-disable:
@@ -1291,7 +1413,7 @@ paths:
         '500':
           description: Failed to disable project's readonly mode
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/read-replicas/setup:
@@ -1316,10 +1438,12 @@ paths:
       responses:
         '201':
           description: ''
+        '403':
+          description: ''
         '500':
           description: Failed to set up read replica
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/read-replicas/remove:
@@ -1344,10 +1468,12 @@ paths:
       responses:
         '201':
           description: ''
+        '403':
+          description: ''
         '500':
           description: Failed to remove read replica
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/health:
@@ -1393,10 +1519,69 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/V1ServiceHealthResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve project's service health status
       tags:
-        - projects
+        - Projects
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/storage:
+    get:
+      operationId: v1-get-storage-config
+      summary: Gets project's storage config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageConfigResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's storage config
+      tags:
+        - Storage
+      security:
+        - bearer: []
+    patch:
+      operationId: v1-update-storage-config
+      summary: Updates project's storage config
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStorageConfigBody'
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to update project's storage config
+      tags:
+        - Storage
       security:
         - bearer: []
   /v1/projects/{ref}/config/database/postgres:
@@ -1422,7 +1607,7 @@ paths:
         '500':
           description: Failed to retrieve project's Postgres config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     put:
@@ -1450,10 +1635,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostgresConfigResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to update project's Postgres config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/config/database/pgbouncer:
@@ -1479,7 +1666,7 @@ paths:
         '500':
           description: Failed to retrieve project's pgbouncer config
       tags:
-        - database
+        - Database
   /v1/projects/{ref}/config/database/pooler:
     get:
       operationId: v1-get-supavisor-config
@@ -1505,7 +1692,7 @@ paths:
         '500':
           description: Failed to retrieve project's supavisor config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
     patch:
@@ -1538,7 +1725,7 @@ paths:
         '500':
           description: Failed to update project's supavisor config
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth:
@@ -1566,7 +1753,7 @@ paths:
         '500':
           description: Failed to retrieve project's auth config
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     patch:
@@ -1599,7 +1786,127 @@ paths:
         '500':
           description: Failed to update project's auth config
       tags:
-        - auth
+        - Auth
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth:
+    post:
+      operationId: createTPAForProject
+      summary: Creates a new third-party auth integration
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateThirdPartyAuthBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    get:
+      operationId: listTPAForProject
+      summary: '[Alpha] Lists all third-party auth integrations'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/third-party-auth/{tpa_id}:
+    delete:
+      operationId: deleteTPAForProject
+      summary: '[Alpha] Removes a third-party auth integration'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    get:
+      operationId: getTPAForProject
+      summary: '[Alpha] Get a third-party integration'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            type: string
+        - name: tpa_id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
+      tags:
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/database/query:
@@ -1633,7 +1940,7 @@ paths:
         '500':
           description: Failed to run sql query
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/database/webhooks/enable:
@@ -1657,12 +1964,12 @@ paths:
         '500':
           description: Failed to enable Database Webhooks on the project
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/functions:
     post:
-      operationId: createFunction
+      operationId: v1-create-a-function
       summary: Create a function
       description: Creates a function and adds it to the specified project.
       parameters:
@@ -1726,7 +2033,7 @@ paths:
         '500':
           description: Failed to create project's function
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     get:
@@ -1756,7 +2063,7 @@ paths:
         '500':
           description: Failed to retrieve project's functions
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/functions/{function_slug}:
@@ -1792,7 +2099,7 @@ paths:
         '500':
           description: Failed to retrieve function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     patch:
@@ -1867,7 +2174,7 @@ paths:
         '500':
           description: Failed to update function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
     delete:
@@ -1898,7 +2205,7 @@ paths:
         '500':
           description: Failed to delete function with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/functions/{function_slug}/body:
@@ -1930,7 +2237,7 @@ paths:
         '500':
           description: Failed to retrieve function body with given slug
       tags:
-        - edge functions
+        - Edge Functions
       security:
         - bearer: []
   /v1/projects/{ref}/storage/buckets:
@@ -1960,7 +2267,7 @@ paths:
         '500':
           description: Failed to get list of buckets
       tags:
-        - storage
+        - Storage
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers:
@@ -1994,7 +2301,7 @@ paths:
         '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     get:
@@ -2021,7 +2328,7 @@ paths:
         '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/config/auth/sso/providers/{provider_id}:
@@ -2056,7 +2363,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     put:
@@ -2096,7 +2403,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
     delete:
@@ -2130,7 +2437,7 @@ paths:
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
       tags:
-        - auth
+        - Auth
       security:
         - bearer: []
   /v1/projects/{ref}/database/backups:
@@ -2156,7 +2463,7 @@ paths:
         '500':
           description: Failed to get backups
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/projects/{ref}/database/backups/restore-pitr:
@@ -2182,7 +2489,7 @@ paths:
         '201':
           description: ''
       tags:
-        - database
+        - Database
       security:
         - bearer: []
   /v1/organizations/{slug}/members:
@@ -2205,7 +2512,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/V1OrganizationMemberResponse'
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
   /v1/organizations/{slug}:
@@ -2226,19 +2533,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/V1OrganizationSlugResponse'
       tags:
-        - organizations
+        - Organizations
       security:
         - bearer: []
 info:
   title: Supabase API (v1)
-  description: ''
+  description: >-
+    Supabase API generated from the OpenAPI specification.<br>Visit
+    [https://supabase.com/docs](https://supabase.com/docs) for a complete
+    documentation.
   version: 1.0.0
   contact: {}
 tags:
-  - name: organizations
-    description: Organization endpoints
-  - name: projects
-    description: Project endpoints
+  - name: Auth
+    description: Auth related endpoints
+  - name: Database
+    description: Database related endpoints
+  - name: Domains
+    description: Domains related endpoints
+  - name: Edge Functions
+    description: Edge related endpoints
+  - name: Environments
+    description: Environments related endpoints
+  - name: OAuth
+    description: OAuth related endpoints
+  - name: Organizations
+    description: Organizations related endpoints
+  - name: Projects
+    description: Projects related endpoints
+  - name: Rest
+    description: Rest related endpoints
+  - name: Secrets
+    description: Secrets related endpoints
+  - name: Storage
+    description: Storage related endpoints
 servers: []
 components:
   securitySchemes:
@@ -2256,6 +2584,10 @@ components:
           type: string
         postgres_version:
           type: string
+        postgres_engine:
+          type: string
+        release_channel:
+          type: string
         status:
           enum:
             - ACTIVE_HEALTHY
@@ -2265,10 +2597,14 @@ components:
             - INACTIVE
             - INIT_FAILED
             - REMOVED
-            - RESTORING
+            - RESTARTING
             - UNKNOWN
             - UPGRADING
             - PAUSING
+            - RESTORING
+            - RESTORE_FAILED
+            - PAUSE_FAILED
+            - RESIZING
           type: string
         db_host:
           type: string
@@ -2282,6 +2618,8 @@ components:
         - db_port
         - ref
         - postgres_version
+        - postgres_engine
+        - release_channel
         - status
         - db_host
     UpdateBranchBody:
@@ -2295,9 +2633,24 @@ components:
           type: boolean
         persistent:
           type: boolean
+        status:
+          enum:
+            - CREATING_PROJECT
+            - RUNNING_MIGRATIONS
+            - MIGRATIONS_PASSED
+            - MIGRATIONS_FAILED
+            - FUNCTIONS_DEPLOYED
+            - FUNCTIONS_FAILED
+          type: string
     BranchResponse:
       type: object
       properties:
+        pr_number:
+          type: integer
+          format: int32
+        latest_check_run_id:
+          type: integer
+          format: int64
         id:
           type: string
         name:
@@ -2310,10 +2663,6 @@ components:
           type: boolean
         git_branch:
           type: string
-        pr_number:
-          type: number
-        latest_check_run_id:
-          type: number
         reset_on_push:
           type: boolean
         persistent:
@@ -2352,9 +2701,12 @@ components:
     BranchResetResponse:
       type: object
       properties:
+        workflow_run_id:
+          type: string
         message:
           type: string
       required:
+        - workflow_run_id
         - message
     V1DatabaseResponse:
       type: object
@@ -2365,9 +2717,17 @@ components:
         version:
           type: string
           description: Database version
+        postgres_engine:
+          type: string
+          description: Database engine
+        release_channel:
+          type: string
+          description: Release channel
       required:
         - host
         - version
+        - postgres_engine
+        - release_channel
     V1ProjectResponse:
       type: object
       properties:
@@ -2399,10 +2759,14 @@ components:
             - INACTIVE
             - INIT_FAILED
             - REMOVED
-            - RESTORING
+            - RESTARTING
             - UNKNOWN
             - UPGRADING
             - PAUSING
+            - RESTORING
+            - RESTORE_FAILED
+            - PAUSE_FAILED
+            - RESIZING
           type: string
       required:
         - id
@@ -2424,6 +2788,21 @@ components:
         - 8xlarge
         - 12xlarge
         - 16xlarge
+    ReleaseChannel:
+      type: string
+      enum:
+        - internal
+        - alpha
+        - beta
+        - ga
+        - withdrawn
+    PostgresEngine:
+      type: string
+      description: >-
+        Postgres engine version. If not provided, the latest version will be
+        used.
+      enum:
+        - '15'
     V1CreateProjectBody:
       type: object
       properties:
@@ -2442,7 +2821,7 @@ components:
             - free
             - pro
           description: >-
-            Subscription plan is now set on organization level and is ignored in
+            Subscription Plan is now set on organization level and is ignored in
             this request
           example: free
           deprecated: true
@@ -2450,6 +2829,7 @@ components:
           type: string
           enum:
             - us-east-1
+            - us-east-2
             - us-west-1
             - us-west-2
             - ap-east-1
@@ -2460,7 +2840,9 @@ components:
             - eu-west-1
             - eu-west-2
             - eu-west-3
+            - eu-north-1
             - eu-central-1
+            - eu-central-2
             - ca-central-1
             - ap-south-1
             - sa-east-1
@@ -2477,6 +2859,10 @@ components:
           description: Template URL used to create the project from the CLI.
           example: >-
             https://github.com/supabase/supabase/tree/master/examples/slack-clone/nextjs-slack-clone
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
+        postgres_engine:
+          $ref: '#/components/schemas/PostgresEngine'
       required:
         - db_pass
         - name
@@ -2526,6 +2912,9 @@ components:
     OAuthTokenResponse:
       type: object
       properties:
+        expires_in:
+          type: integer
+          format: int64
         token_type:
           type: string
           enum:
@@ -2534,18 +2923,17 @@ components:
           type: string
         refresh_token:
           type: string
-        expires_in:
-          type: number
       required:
+        - expires_in
         - token_type
         - access_token
         - refresh_token
-        - expires_in
     SnippetProject:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         name:
           type: string
       required:
@@ -2555,7 +2943,8 @@ components:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         username:
           type: string
       required:
@@ -2666,27 +3055,190 @@ components:
         - owner
         - updated_by
         - content
+    ApiKeySecretJWTTemplate:
+      type: object
+      properties:
+        role:
+          type: string
+      required:
+        - role
     ApiKeyResponse:
       type: object
       properties:
+        type:
+          nullable: true
+          type: string
+          enum:
+            - publishable
+            - secret
+            - legacy
         name:
           type: string
         api_key:
           type: string
+        id:
+          type: string
+          nullable: true
+        prefix:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        hash:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
+        inserted_at:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          nullable: true
       required:
         - name
         - api_key
+    CreateApiKeyBody:
+      type: object
+      properties:
+        type:
+          enum:
+            - publishable
+            - secret
+          type: string
+        description:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
+      required:
+        - type
+    UpdateApiKeyBody:
+      type: object
+      properties:
+        description:
+          type: string
+          nullable: true
+        secret_jwt_template:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
     CreateBranchBody:
       type: object
       properties:
+        desired_instance_size:
+          $ref: '#/components/schemas/DesiredInstanceSize'
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
+        postgres_engine:
+          $ref: '#/components/schemas/PostgresEngine'
         branch_name:
           type: string
         git_branch:
           type: string
+        persistent:
+          type: boolean
         region:
           type: string
       required:
         - branch_name
+    ValidationRecord:
+      type: object
+      properties:
+        txt_name:
+          type: string
+        txt_value:
+          type: string
+      required:
+        - txt_name
+        - txt_value
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    SslValidation:
+      type: object
+      properties:
+        status:
+          type: string
+        validation_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationRecord'
+        validation_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+      required:
+        - status
+        - validation_records
+    OwnershipVerification:
+      type: object
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - type
+        - name
+        - value
+    CustomHostnameDetails:
+      type: object
+      properties:
+        id:
+          type: string
+        hostname:
+          type: string
+        ssl:
+          $ref: '#/components/schemas/SslValidation'
+        ownership_verification:
+          $ref: '#/components/schemas/OwnershipVerification'
+        custom_origin_server:
+          type: string
+        verification_errors:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+      required:
+        - id
+        - hostname
+        - ssl
+        - ownership_verification
+        - custom_origin_server
+        - status
+    CfResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: object
+        messages:
+          type: array
+          items:
+            type: object
+        result:
+          $ref: '#/components/schemas/CustomHostnameDetails'
+      required:
+        - success
+        - errors
+        - messages
+        - result
     UpdateCustomHostnameResponse:
       type: object
       properties:
@@ -2701,7 +3253,7 @@ components:
         custom_hostname:
           type: string
         data:
-          type: object
+          $ref: '#/components/schemas/CfResponse'
       required:
         - status
         - custom_hostname
@@ -2838,7 +3390,8 @@ components:
       type: object
       properties:
         id:
-          type: number
+          type: integer
+          format: int64
         ref:
           type: string
         name:
@@ -2940,9 +3493,12 @@ components:
     UpgradeDatabaseBody:
       type: object
       properties:
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
         target_version:
-          type: number
+          type: string
       required:
+        - release_channel
         - target_version
     ProjectUpgradeInitiateResponse:
       type: object
@@ -2955,15 +3511,22 @@ components:
       type: object
       properties:
         postgres_version:
-          type: number
+          $ref: '#/components/schemas/PostgresEngine'
+        release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
         app_version:
           type: string
       required:
         - postgres_version
+        - release_channel
         - app_version
     ProjectUpgradeEligibilityResponse:
       type: object
       properties:
+        current_app_version_release_channel:
+          $ref: '#/components/schemas/ReleaseChannel'
+        duration_estimate_hours:
+          type: integer
         eligible:
           type: boolean
         current_app_version:
@@ -2978,8 +3541,6 @@ components:
           type: array
           items:
             type: string
-        duration_estimate_hours:
-          type: number
         legacy_auth_custom_roles:
           type: array
           items:
@@ -2989,21 +3550,30 @@ components:
           items:
             type: string
       required:
+        - current_app_version_release_channel
+        - duration_estimate_hours
         - eligible
         - current_app_version
         - latest_app_version
         - target_upgrade_versions
         - potential_breaking_changes
-        - duration_estimate_hours
         - legacy_auth_custom_roles
         - extension_dependent_objects
     DatabaseUpgradeStatus:
       type: object
       properties:
+        target_version:
+          type: integer
+        status:
+          enum:
+            - 0
+            - 1
+            - 2
+          type: integer
         initiated_at:
           type: string
-        target_version:
-          type: number
+        latest_status_at:
+          type: string
         error:
           type: string
           enum:
@@ -3015,6 +3585,7 @@ components:
             - 6_volume_detachchment_from_original_instance_failed
             - 7_volume_attachment_to_upgraded_instance_failed
             - 8_upgrade_completion_failed
+            - 9_post_physical_backup_failed
         progress:
           type: string
           enum:
@@ -3028,16 +3599,12 @@ components:
             - 7_detached_volume_from_original_instance
             - 8_attached_volume_to_upgraded_instance
             - 9_completed_upgrade
-        status:
-          type: number
-          enum:
-            - 0
-            - 1
-            - 2
+            - 10_completed_post_physical_backup
       required:
-        - initiated_at
         - target_version
         - status
+        - initiated_at
+        - latest_status_at
     DatabaseUpgradeStatusResponse:
       type: object
       properties:
@@ -3067,6 +3634,7 @@ components:
           type: string
           enum:
             - us-east-1
+            - us-east-2
             - us-west-1
             - us-west-2
             - ap-east-1
@@ -3077,7 +3645,9 @@ components:
             - eu-west-1
             - eu-west-2
             - eu-west-3
+            - eu-north-1
             - eu-central-1
+            - eu-central-2
             - ca-central-1
             - ap-south-1
             - sa-east-1
@@ -3097,26 +3667,16 @@ components:
       properties:
         name:
           type: string
-        version:
-          type: string
-        description:
-          type: string
+          enum:
+            - GoTrue
       required:
         - name
-        - version
-        - description
     RealtimeHealthResponse:
       type: object
       properties:
-        healthy:
-          type: boolean
-        db_connected:
-          type: boolean
         connected_cluster:
-          type: number
+          type: integer
       required:
-        - healthy
-        - db_connected
         - connected_cluster
     V1ServiceHealthResponse:
       type: object
@@ -3148,12 +3708,47 @@ components:
         - name
         - healthy
         - status
+    StorageFeatureImageTransformation:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+      required:
+        - enabled
+    StorageFeatures:
+      type: object
+      properties:
+        imageTransformation:
+          $ref: '#/components/schemas/StorageFeatureImageTransformation'
+      required:
+        - imageTransformation
+    StorageConfigResponse:
+      type: object
+      properties:
+        fileSizeLimit:
+          type: integer
+          format: int64
+        features:
+          $ref: '#/components/schemas/StorageFeatures'
+      required:
+        - fileSizeLimit
+        - features
+    UpdateStorageConfigBody:
+      type: object
+      properties:
+        fileSizeLimit:
+          type: integer
+          minimum: 0
+          maximum: 53687091200
+          format: int64
+        features:
+          $ref: '#/components/schemas/StorageFeatures'
     PostgresConfigResponse:
       type: object
       properties:
-        statement_timeout:
-          type: string
         effective_cache_size:
+          type: string
+        logical_decoding_work_mem:
           type: string
         maintenance_work_mem:
           type: string
@@ -3177,15 +3772,31 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_replication_slots:
+          type: integer
+        max_slot_wal_keep_size:
+          type: string
         max_standby_archive_delay:
           type: string
         max_standby_streaming_delay:
           type: string
+        max_wal_size:
+          type: string
+        max_wal_senders:
+          type: integer
         max_worker_processes:
           type: integer
           minimum: 0
           maximum: 262143
         shared_buffers:
+          type: string
+        statement_timeout:
+          type: string
+        track_commit_timestamp:
+          type: boolean
+        wal_keep_size:
+          type: string
+        wal_sender_timeout:
           type: string
         work_mem:
           type: string
@@ -3198,9 +3809,9 @@ components:
     UpdatePostgresConfigBody:
       type: object
       properties:
-        statement_timeout:
-          type: string
         effective_cache_size:
+          type: string
+        logical_decoding_work_mem:
           type: string
         maintenance_work_mem:
           type: string
@@ -3224,18 +3835,36 @@ components:
           type: integer
           minimum: 0
           maximum: 1024
+        max_replication_slots:
+          type: integer
+        max_slot_wal_keep_size:
+          type: string
         max_standby_archive_delay:
           type: string
         max_standby_streaming_delay:
           type: string
+        max_wal_size:
+          type: string
+        max_wal_senders:
+          type: integer
         max_worker_processes:
           type: integer
           minimum: 0
           maximum: 262143
         shared_buffers:
           type: string
+        statement_timeout:
+          type: string
+        track_commit_timestamp:
+          type: boolean
+        wal_keep_size:
+          type: string
+        wal_sender_timeout:
+          type: string
         work_mem:
           type: string
+        restart_database:
+          type: boolean
         session_replication_role:
           enum:
             - origin
@@ -3262,6 +3891,14 @@ components:
     SupavisorConfigResponse:
       type: object
       properties:
+        db_port:
+          type: integer
+        default_pool_size:
+          type: integer
+          nullable: true
+        max_client_conn:
+          type: integer
+          nullable: true
         identifier:
           type: string
         database_type:
@@ -3275,34 +3912,26 @@ components:
           type: string
         db_host:
           type: string
-        db_port:
-          type: number
         db_name:
           type: string
         connectionString:
           type: string
-        default_pool_size:
-          type: number
-          nullable: true
-        max_client_conn:
-          type: number
-          nullable: true
         pool_mode:
           enum:
             - transaction
             - session
           type: string
       required:
+        - db_port
+        - default_pool_size
+        - max_client_conn
         - identifier
         - database_type
         - is_using_scram_auth
         - db_user
         - db_host
-        - db_port
         - db_name
         - connectionString
-        - default_pool_size
-        - max_client_conn
         - pool_mode
     UpdateSupavisorConfigBody:
       type: object
@@ -3323,7 +3952,7 @@ components:
       type: object
       properties:
         default_pool_size:
-          type: number
+          type: integer
           nullable: true
         pool_mode:
           enum:
@@ -3337,10 +3966,67 @@ components:
       type: object
       properties:
         api_max_request_duration:
-          type: number
+          type: integer
           nullable: true
         db_max_pool_size:
-          type: number
+          type: integer
+          nullable: true
+        jwt_exp:
+          type: integer
+          nullable: true
+        mailer_otp_exp:
+          type: integer
+        mailer_otp_length:
+          type: integer
+          nullable: true
+        mfa_max_enrolled_factors:
+          type: integer
+          nullable: true
+        mfa_phone_otp_length:
+          type: integer
+        mfa_phone_max_frequency:
+          type: integer
+          nullable: true
+        password_min_length:
+          type: integer
+          nullable: true
+        rate_limit_anonymous_users:
+          type: integer
+          nullable: true
+        rate_limit_email_sent:
+          type: integer
+          nullable: true
+        rate_limit_sms_sent:
+          type: integer
+          nullable: true
+        rate_limit_token_refresh:
+          type: integer
+          nullable: true
+        rate_limit_verify:
+          type: integer
+          nullable: true
+        rate_limit_otp:
+          type: integer
+          nullable: true
+        security_refresh_token_reuse_interval:
+          type: integer
+          nullable: true
+        sessions_inactivity_timeout:
+          type: integer
+          nullable: true
+        sessions_timebox:
+          type: integer
+          nullable: true
+        sms_max_frequency:
+          type: integer
+          nullable: true
+        sms_otp_exp:
+          type: integer
+          nullable: true
+        sms_otp_length:
+          type: integer
+        smtp_max_frequency:
+          type: integer
           nullable: true
         disable_signup:
           type: boolean
@@ -3477,6 +4163,15 @@ components:
         external_linkedin_oidc_secret:
           type: string
           nullable: true
+        external_slack_oidc_client_id:
+          type: string
+          nullable: true
+        external_slack_oidc_enabled:
+          type: boolean
+          nullable: true
+        external_slack_oidc_secret:
+          type: string
+          nullable: true
         external_notion_client_id:
           type: string
           nullable: true
@@ -3591,19 +4286,11 @@ components:
         hook_send_email_secrets:
           type: string
           nullable: true
-        jwt_exp:
-          type: number
-          nullable: true
         mailer_allow_unverified_email_sign_ins:
           type: boolean
           nullable: true
         mailer_autoconfirm:
           type: boolean
-          nullable: true
-        mailer_otp_exp:
-          type: number
-        mailer_otp_length:
-          type: number
           nullable: true
         mailer_secure_email_change_enabled:
           type: boolean
@@ -3644,37 +4331,43 @@ components:
         mailer_templates_recovery_content:
           type: string
           nullable: true
-        mfa_max_enrolled_factors:
-          type: number
+        mfa_totp_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_totp_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_web_authn_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_web_authn_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_template:
+          type: string
           nullable: true
         password_hibp_enabled:
           type: boolean
           nullable: true
-        password_min_length:
-          type: number
-          nullable: true
         password_required_characters:
           type: string
-          nullable: true
-        rate_limit_anonymous_users:
-          type: number
-          nullable: true
-        rate_limit_email_sent:
-          type: number
-          nullable: true
-        rate_limit_sms_sent:
-          type: number
-          nullable: true
-        rate_limit_token_refresh:
-          type: number
-          nullable: true
-        rate_limit_verify:
-          type: number
           nullable: true
         refresh_token_rotation_enabled:
           type: boolean
           nullable: true
         saml_enabled:
+          type: boolean
+          nullable: true
+        saml_external_url:
+          type: string
+          nullable: true
+        saml_allow_encrypted_assertions:
           type: boolean
           nullable: true
         security_captcha_enabled:
@@ -3689,14 +4382,8 @@ components:
         security_manual_linking_enabled:
           type: boolean
           nullable: true
-        security_refresh_token_reuse_interval:
-          type: number
-          nullable: true
         security_update_password_require_reauthentication:
           type: boolean
-          nullable: true
-        sessions_inactivity_timeout:
-          type: number
           nullable: true
         sessions_single_per_user:
           type: boolean
@@ -3704,17 +4391,11 @@ components:
         sessions_tags:
           type: string
           nullable: true
-        sessions_timebox:
-          type: number
-          nullable: true
         site_url:
           type: string
           nullable: true
         sms_autoconfirm:
           type: boolean
-          nullable: true
-        sms_max_frequency:
-          type: number
           nullable: true
         sms_messagebird_access_key:
           type: string
@@ -3722,11 +4403,6 @@ components:
         sms_messagebird_originator:
           type: string
           nullable: true
-        sms_otp_exp:
-          type: number
-          nullable: true
-        sms_otp_length:
-          type: number
         sms_provider:
           type: string
           nullable: true
@@ -3781,9 +4457,6 @@ components:
         smtp_host:
           type: string
           nullable: true
-        smtp_max_frequency:
-          type: number
-          nullable: true
         smtp_pass:
           type: string
           nullable: true
@@ -3802,6 +4475,26 @@ components:
       required:
         - api_max_request_duration
         - db_max_pool_size
+        - jwt_exp
+        - mailer_otp_exp
+        - mailer_otp_length
+        - mfa_max_enrolled_factors
+        - mfa_phone_otp_length
+        - mfa_phone_max_frequency
+        - password_min_length
+        - rate_limit_anonymous_users
+        - rate_limit_email_sent
+        - rate_limit_sms_sent
+        - rate_limit_token_refresh
+        - rate_limit_verify
+        - rate_limit_otp
+        - security_refresh_token_reuse_interval
+        - sessions_inactivity_timeout
+        - sessions_timebox
+        - sms_max_frequency
+        - sms_otp_exp
+        - sms_otp_length
+        - smtp_max_frequency
         - disable_signup
         - external_anonymous_users_enabled
         - external_apple_additional_client_ids
@@ -3847,6 +4540,9 @@ components:
         - external_linkedin_oidc_client_id
         - external_linkedin_oidc_enabled
         - external_linkedin_oidc_secret
+        - external_slack_oidc_client_id
+        - external_slack_oidc_enabled
+        - external_slack_oidc_secret
         - external_notion_client_id
         - external_notion_enabled
         - external_notion_secret
@@ -3885,11 +4581,8 @@ components:
         - hook_send_email_enabled
         - hook_send_email_uri
         - hook_send_email_secrets
-        - jwt_exp
         - mailer_allow_unverified_email_sign_ins
         - mailer_autoconfirm
-        - mailer_otp_exp
-        - mailer_otp_length
         - mailer_secure_email_change_enabled
         - mailer_subjects_confirmation
         - mailer_subjects_email_change
@@ -3903,34 +4596,30 @@ components:
         - mailer_templates_magic_link_content
         - mailer_templates_reauthentication_content
         - mailer_templates_recovery_content
-        - mfa_max_enrolled_factors
+        - mfa_totp_enroll_enabled
+        - mfa_totp_verify_enabled
+        - mfa_phone_enroll_enabled
+        - mfa_phone_verify_enabled
+        - mfa_web_authn_enroll_enabled
+        - mfa_web_authn_verify_enabled
+        - mfa_phone_template
         - password_hibp_enabled
-        - password_min_length
         - password_required_characters
-        - rate_limit_anonymous_users
-        - rate_limit_email_sent
-        - rate_limit_sms_sent
-        - rate_limit_token_refresh
-        - rate_limit_verify
         - refresh_token_rotation_enabled
         - saml_enabled
+        - saml_external_url
+        - saml_allow_encrypted_assertions
         - security_captcha_enabled
         - security_captcha_provider
         - security_captcha_secret
         - security_manual_linking_enabled
-        - security_refresh_token_reuse_interval
         - security_update_password_require_reauthentication
-        - sessions_inactivity_timeout
         - sessions_single_per_user
         - sessions_tags
-        - sessions_timebox
         - site_url
         - sms_autoconfirm
-        - sms_max_frequency
         - sms_messagebird_access_key
         - sms_messagebird_originator
-        - sms_otp_exp
-        - sms_otp_length
         - sms_provider
         - sms_template
         - sms_test_otp
@@ -3949,7 +4638,6 @@ components:
         - sms_vonage_from
         - smtp_admin_email
         - smtp_host
-        - smtp_max_frequency
         - smtp_pass
         - smtp_port
         - smtp_sender_name
@@ -3958,15 +4646,93 @@ components:
     UpdateAuthConfigBody:
       type: object
       properties:
+        jwt_exp:
+          type: integer
+          minimum: 0
+          maximum: 604800
+        smtp_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        mfa_max_enrolled_factors:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        sessions_timebox:
+          type: integer
+          minimum: 0
+        sessions_inactivity_timeout:
+          type: integer
+          minimum: 0
+        rate_limit_anonymous_users:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_email_sent:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_sms_sent:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_verify:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_token_refresh:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        rate_limit_otp:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        password_min_length:
+          type: integer
+          minimum: 6
+          maximum: 32767
+        security_refresh_token_reuse_interval:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        mailer_otp_exp:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        mailer_otp_length:
+          type: integer
+          minimum: 6
+          maximum: 10
+        sms_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        sms_otp_exp:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        sms_otp_length:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        db_max_pool_size:
+          type: integer
+        api_max_request_duration:
+          type: integer
+        mfa_phone_max_frequency:
+          type: integer
+          minimum: 0
+          maximum: 32767
+        mfa_phone_otp_length:
+          type: integer
+          minimum: 0
+          maximum: 32767
         site_url:
           type: string
           pattern: /^[^,]+$/
         disable_signup:
           type: boolean
-        jwt_exp:
-          type: number
-          minimum: 0
-          maximum: 604800
         smtp_admin_email:
           type: string
         smtp_host:
@@ -3977,10 +4743,6 @@ components:
           type: string
         smtp_pass:
           type: string
-        smtp_max_frequency:
-          type: number
-          minimum: 0
-          maximum: 32767
         smtp_sender_name:
           type: string
         mailer_allow_unverified_email_sign_ins:
@@ -4011,10 +4773,6 @@ components:
           type: string
         mailer_templates_reauthentication_content:
           type: string
-        mfa_max_enrolled_factors:
-          type: number
-          minimum: 0
-          maximum: 2147483647
         uri_allow_list:
           type: string
         external_anonymous_users_enabled:
@@ -4025,53 +4783,26 @@ components:
           type: boolean
         saml_enabled:
           type: boolean
+        saml_external_url:
+          type: string
+          pattern: /^[^,]+$/
         security_captcha_enabled:
           type: boolean
         security_captcha_provider:
           type: string
         security_captcha_secret:
           type: string
-        sessions_timebox:
-          type: number
-          minimum: 0
-        sessions_inactivity_timeout:
-          type: number
-          minimum: 0
         sessions_single_per_user:
           type: boolean
         sessions_tags:
           type: string
           pattern: /^\s*([a-z0-9_-]+(\s*,+\s*)?)*\s*$/i
-        rate_limit_anonymous_users:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_email_sent:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_sms_sent:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_verify:
-          type: number
-          minimum: 1
-          maximum: 2147483647
-        rate_limit_token_refresh:
-          type: number
-          minimum: 1
-          maximum: 2147483647
         mailer_secure_email_change_enabled:
           type: boolean
         refresh_token_rotation_enabled:
           type: boolean
         password_hibp_enabled:
           type: boolean
-        password_min_length:
-          type: number
-          minimum: 6
-          maximum: 32767
         password_required_characters:
           type: string
           enum:
@@ -4083,32 +4814,8 @@ components:
           type: boolean
         security_update_password_require_reauthentication:
           type: boolean
-        security_refresh_token_reuse_interval:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        mailer_otp_exp:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        mailer_otp_length:
-          type: number
-          minimum: 6
-          maximum: 10
         sms_autoconfirm:
           type: boolean
-        sms_max_frequency:
-          type: number
-          minimum: 0
-          maximum: 32767
-        sms_otp_exp:
-          type: number
-          minimum: 0
-          maximum: 2147483647
-        sms_otp_length:
-          type: number
-          minimum: 0
-          maximum: 32767
         sms_provider:
           type: string
         sms_messagebird_access_key:
@@ -4260,6 +4967,12 @@ components:
           type: string
         external_linkedin_oidc_secret:
           type: string
+        external_slack_oidc_enabled:
+          type: boolean
+        external_slack_oidc_client_id:
+          type: string
+        external_slack_oidc_secret:
+          type: string
         external_notion_enabled:
           type: boolean
         external_notion_client_id:
@@ -4304,10 +5017,60 @@ components:
           type: string
         external_zoom_secret:
           type: string
-        db_max_pool_size:
-          type: number
-        api_max_request_duration:
-          type: number
+        mfa_totp_enroll_enabled:
+          type: boolean
+        mfa_totp_verify_enabled:
+          type: boolean
+        mfa_web_authn_enroll_enabled:
+          type: boolean
+        mfa_web_authn_verify_enabled:
+          type: boolean
+        mfa_phone_enroll_enabled:
+          type: boolean
+        mfa_phone_verify_enabled:
+          type: boolean
+        mfa_phone_template:
+          type: string
+    CreateThirdPartyAuthBody:
+      type: object
+      properties:
+        oidc_issuer_url:
+          type: string
+        jwks_url:
+          type: string
+        custom_jwks:
+          type: object
+    ThirdPartyAuth:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        oidc_issuer_url:
+          type: string
+          nullable: true
+        jwks_url:
+          type: string
+          nullable: true
+        custom_jwks:
+          type: object
+          nullable: true
+        resolved_jwks:
+          type: object
+          nullable: true
+        inserted_at:
+          type: string
+        updated_at:
+          type: string
+        resolved_at:
+          type: string
+          nullable: true
+      required:
+        - id
+        - type
+        - inserted_at
+        - updated_at
     V1RunQueryBody:
       type: object
       properties:
@@ -4334,6 +5097,14 @@ components:
     FunctionResponse:
       type: object
       properties:
+        version:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
         id:
           type: string
         slug:
@@ -4346,12 +5117,6 @@ components:
             - REMOVED
             - THROTTLED
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
         verify_jwt:
           type: boolean
         import_map:
@@ -4361,16 +5126,24 @@ components:
         import_map_path:
           type: string
       required:
+        - version
+        - created_at
+        - updated_at
         - id
         - slug
         - name
         - status
-        - version
-        - created_at
-        - updated_at
     FunctionSlugResponse:
       type: object
       properties:
+        version:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
         id:
           type: string
         slug:
@@ -4383,12 +5156,6 @@ components:
             - REMOVED
             - THROTTLED
           type: string
-        version:
-          type: number
-        created_at:
-          type: number
-        updated_at:
-          type: number
         verify_jwt:
           type: boolean
         import_map:
@@ -4398,13 +5165,13 @@ components:
         import_map_path:
           type: string
       required:
+        - version
+        - created_at
+        - updated_at
         - id
         - slug
         - name
         - status
-        - version
-        - created_at
-        - updated_at
     V1UpdateFunctionBody:
       type: object
       properties:
@@ -4451,6 +5218,8 @@ components:
           type: array
           items:
             type: string
+        array:
+          type: boolean
     AttributeMapping:
       type: object
       properties:
@@ -4627,6 +5396,7 @@ components:
             - PENDING
             - REMOVED
             - ARCHIVED
+            - CANCELLED
         is_physical_backup:
           type: boolean
         inserted_at:
@@ -4639,9 +5409,11 @@ components:
       type: object
       properties:
         earliest_physical_backup_date_unix:
-          type: number
+          type: integer
+          format: int64
         latest_physical_backup_date_unix:
-          type: number
+          type: integer
+          format: int64
     V1BackupsResponse:
       type: object
       properties:
@@ -4667,7 +5439,9 @@ components:
       type: object
       properties:
         recovery_time_target_unix:
-          type: number
+          type: integer
+          minimum: 0
+          format: int64
       required:
         - recovery_time_target_unix
     V1OrganizationMemberResponse:
@@ -4706,11 +5480,16 @@ components:
             type: string
             enum:
               - AI_SQL_GENERATOR_OPT_IN
+        allowed_release_channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseChannel'
         id:
           type: string
         name:
           type: string
       required:
         - opt_in_tags
+        - allowed_release_channels
         - id
         - name

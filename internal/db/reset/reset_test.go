@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,8 +20,11 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 func TestResetCommand(t *testing.T) {
@@ -35,6 +39,69 @@ func TestResetCommand(t *testing.T) {
 		Database: "postgres",
 	}
 
+	t.Run("seeds storage after reset", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		utils.ConfigId = "test-config"
+		utils.Config.Db.MajorVersion = 15
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{})
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
+			Reply(http.StatusOK)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), utils.DbId)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: types.Healthy},
+				},
+			}})
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		for _, container := range listServicesToRestart() {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
+		}
+		// Seeds storage
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health:  &types.Health{Status: types.Healthy},
+				},
+			}})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		// Run test
+		err := Run(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on context canceled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -45,7 +112,7 @@ func TestResetCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on invalid port", func(t *testing.T) {
-		defer fstest.MockStdin(t, "y")()
+		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -96,11 +163,11 @@ func TestResetCommand(t *testing.T) {
 func TestInitDatabase(t *testing.T) {
 	t.Run("initializes postgres database", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
+		conn.Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA")
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
@@ -116,11 +183,11 @@ func TestInitDatabase(t *testing.T) {
 
 	t.Run("throws error on duplicate schema", func(t *testing.T) {
 		utils.Config.Db.Port = 54322
-		utils.InitialSchemaSql = "CREATE SCHEMA public"
+		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(utils.InitialSchemaSql).
+		conn.Query(utils.InitialSchemaPg14Sql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
 		err := initDatabase(context.Background(), conn.Intercept)
@@ -142,6 +209,10 @@ func TestRecreateDatabase(t *testing.T) {
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
+			Reply("CREATE DATABASE").
+			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
+			Reply("DROP DATABASE").
+			Query("CREATE DATABASE _supabase WITH OWNER postgres").
 			Reply("CREATE DATABASE")
 		// Run test
 		assert.NoError(t, recreateDatabase(context.Background(), conn.Intercept))
@@ -191,8 +262,11 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
-			Query("CREATE DATABASE postgres WITH OWNER postgres")
-		// Run test
+			Query("CREATE DATABASE postgres WITH OWNER postgres").
+			Query("DROP DATABASE IF EXISTS _supabase WITH (FORCE)").
+			Reply("DROP DATABASE").
+			Query("CREATE DATABASE _supabase WITH OWNER postgres").
+			Reply("CREATE DATABASE")
 		err := recreateDatabase(context.Background(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" is used by an active logical replication slot (SQLSTATE 55006)`)
@@ -215,14 +289,15 @@ func TestRestartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
-		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
+		utils.PoolerId = "test-pooler"
+		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusOK)
@@ -249,24 +324,28 @@ func TestRestartDatabase(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health:  &types.Health{Status: "healthy"},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
 		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusServiceUnavailable)
 		}
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.PoolerId + "/restart").
+			Reply(http.StatusNotFound)
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to restart "+utils.StorageId)
-		assert.ErrorContains(t, err, "Failed to restart "+utils.GotrueId)
-		assert.ErrorContains(t, err, "Failed to restart "+utils.RealtimeId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.StorageId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.GotrueId)
+		assert.ErrorContains(t, err, "failed to restart "+utils.RealtimeId)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -315,20 +394,7 @@ func TestRestartDatabase(t *testing.T) {
 	})
 }
 
-var escapedSchemas = []string{
-	"extensions",
-	"public",
-	`\_analytics`,
-	`\_realtime`,
-	`\_supavisor`,
-	"pgbouncer",
-	"pgsodium",
-	"pgtle",
-	`supabase\_migrations`,
-	"vault",
-	`information\_schema`,
-	`pg\_%`,
-}
+var escapedSchemas = append(migration.ManagedSchemas, "extensions", "public")
 
 func TestResetRemote(t *testing.T) {
 	dbConfig := pgconn.Config{
@@ -342,18 +408,50 @@ func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
+		conn.Query(migration.ListSchemas, escapedSchemas).
 			Reply("SELECT 1", []interface{}{"private"}).
 			Query("DROP SCHEMA IF EXISTS private CASCADE").
 			Reply("DROP SCHEMA").
-			Query(dropObjects).
+			Query(migration.DropObjects).
 			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
 		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
+		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		// Will raise an error when seeding
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query(migration.DropObjects).
+			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
+		utils.Config.Db.Seed.Enabled = false
+		// Run test
+		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		// No error should be raised since we're skipping the seed
 		assert.NoError(t, err)
 	})
 
@@ -366,29 +464,15 @@ func TestResetRemote(t *testing.T) {
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
 
-	t.Run("throws error on list schema failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation information_schema")
-		// Run test
-		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, "ERROR: permission denied for relation information_schema (SQLSTATE 42501)")
-	})
-
 	t.Run("throws error on drop schema failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(ListSchemas, escapedSchemas).
+		conn.Query(migration.ListSchemas, escapedSchemas).
 			Reply("SELECT 0").
-			Query(dropObjects).
+			Query(migration.DropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := resetRemote(context.Background(), "", dbConfig, fsys, conn.Intercept)

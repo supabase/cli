@@ -3,7 +3,7 @@
 // This enables autocomplete, go to definition, etc.
 
 // Setup type definitions for built-in Supabase Runtime APIs
-import "https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts"
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 console.log("Hello from Functions!")
 
@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
   1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
   2. Make an HTTP request:
 
-  curl -i --location --request POST 'http://127.0.0.1:{{ .Port }}/functions/v1/{{ .Slug }}' \
+  curl -i --location --request POST '{{ .URL }}' \
     --header 'Authorization: Bearer {{ .Token }}' \
     --header 'Content-Type: application/json' \
     --data '{"name":"Functions"}'

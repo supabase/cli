@@ -13,7 +13,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, projectRef string, values []string, replaceOverrides bool, fsys afero.Fs) error {
+func Run(ctx context.Context, projectRef string, values []string, replaceOverrides, noRestart bool, fsys afero.Fs) error {
 	// 1. Prepare config overrides
 	newConfigOverrides := make(map[string]string)
 	for _, config := range values {
@@ -39,16 +39,20 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 		for k, v := range newConfigOverrides {
 			// this is hacky - if we're able to convert the value to an integer, we do so
 			// if we start supporting config fields with e.g. floating pt overrides this'll need to be updated
-			attemptedConvert, err := strconv.Atoi(v)
-			if err != nil {
-				finalOverrides[k] = v
+			if vInt, err := strconv.Atoi(v); err == nil {
+				finalOverrides[k] = vInt
+			} else if vBool, err := strconv.ParseBool(v); err == nil {
+				finalOverrides[k] = vBool
 			} else {
-				finalOverrides[k] = attemptedConvert
+				finalOverrides[k] = v
 			}
 		}
 	}
 	// 4. update config overrides and print out final result
 	{
+		if noRestart {
+			finalOverrides["restart_database"] = false
+		}
 		bts, err := json.Marshal(finalOverrides)
 		if err != nil {
 			return errors.Errorf("failed to serialize config overrides: %w", err)

@@ -50,6 +50,11 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Update connection config
 	switch connType {
 	case direct:
+		if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
 		if flag := flagSet.Lookup("db-url"); flag != nil {
 			config, err := pgconn.ParseConfig(flag.Value.String())
 			if err != nil {
@@ -104,9 +109,11 @@ func getPassword(projectRef string) string {
 	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
 		return password
 	}
-	if password, err := credentials.Get(projectRef); err == nil {
+	if password, err := credentials.StoreProvider.Get(projectRef); err == nil {
 		return password
 	}
+	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
+	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
 	fmt.Fprint(os.Stderr, "Enter your database password: ")
 	return credentials.PromptMasked(os.Stdin)
 }

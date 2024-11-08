@@ -5,6 +5,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -28,10 +30,12 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
+	"golang.org/x/mod/semver"
 )
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
-	cmd := "You are running outdated service versions locally:\n"
+	cmd := fmt.Sprintln(utils.Yellow("WARNING:"), "You are running different service versions locally than your linked project:")
 	for k, v := range serviceImages {
 		cmd += fmt.Sprintf("%s => %s\n", k, v)
 	}
@@ -82,7 +86,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
-			if err := utils.DockerRemoveAll(context.Background(), os.Stderr); err != nil {
+			if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
 			return err
@@ -102,14 +106,23 @@ type kongConfig struct {
 	PgmetaId      string
 	EdgeRuntimeId string
 	LogflareId    string
+	PoolerId      string
 	ApiHost       string
 	ApiPort       uint16
+}
+
+// TODO: deprecate after removing storage headers from kong
+func StorageVersionBelow(target string) bool {
+	parts := strings.Split(utils.Config.Storage.Image, ":v")
+	return semver.Compare(parts[len(parts)-1], target) < 0
 }
 
 var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
-	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
+	kongConfigTemplate = template.Must(template.New("kongConfig").Funcs(template.FuncMap{
+		"StorageVersionBelow": StorageVersionBelow,
+	}).Parse(kongConfigEmbed))
 
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
@@ -143,7 +156,7 @@ type poolerTenant struct {
 	DbDatabase        string
 	DbPassword        string
 	ExternalId        string
-	ModeType          utils.PoolMode
+	ModeType          config.PoolMode
 	DefaultMaxClients uint
 	DefaultPoolSize   uint
 }
@@ -162,6 +175,11 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
@@ -171,12 +189,13 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	var started []string
+	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.LogflareImage, excluded) {
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
-			"DB_DATABASE=" + dbConfig.Database,
+			"DB_DATABASE=_supabase",
 			"DB_HOSTNAME=" + dbConfig.Host,
 			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 			"DB_SCHEMA=_analytics",
@@ -194,7 +213,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		bind := []string{}
 
 		switch utils.Config.Analytics.Backend {
-		case utils.LogflareBigQuery:
+		case config.LogflareBigQuery:
 			workdir, err := os.Getwd()
 			if err != nil {
 				return errors.Errorf("failed to get working directory: %w", err)
@@ -207,9 +226,9 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 				"GOOGLE_PROJECT_ID="+utils.Config.Analytics.GcpProjectId,
 				"GOOGLE_PROJECT_NUMBER="+utils.Config.Analytics.GcpProjectNumber,
 			)
-		case utils.LogflarePostgres:
+		case config.LogflarePostgres:
 			env = append(env,
-				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+				fmt.Sprintf("POSTGRES_BACKEND_URL=postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, "_supabase"),
 				"POSTGRES_BACKEND_SCHEMA=_analytics",
 			)
 		}
@@ -218,7 +237,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			ctx,
 			container.Config{
 				Hostname: "127.0.0.1",
-				Image:    utils.LogflareImage,
+				Image:    utils.Config.Analytics.Image,
 				Env:      env,
 				// Original entrypoint conflicts with healthcheck due to 15 seconds sleep:
 				// https://github.com/Logflare/logflare/blob/staging/run.sh#L35
@@ -258,9 +277,9 @@ EOF
 	}
 
 	// Start vector
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.VectorImage, excluded) {
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
 		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Execute(&vectorConfigBuf, vectorConfig{
+		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
 			VectorId:      utils.VectorId,
 			LogflareId:    utils.LogflareId,
@@ -274,26 +293,38 @@ EOF
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
-		var binds []string
-		env := []string{
-			"VECTOR_CONFIG=/etc/vector/vector.yaml",
-		}
+		var binds, env []string
 		// Special case for GitLab pipeline
-		host := utils.Docker.DaemonHost()
-		if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
-			env = append(env, "DOCKER_HOST="+host)
-		} else if parsed, err := client.ParseHostURL(client.DefaultDockerHost); err == nil {
-			if host != client.DefaultDockerHost {
+		parsed, err := client.ParseHostURL(utils.Docker.DaemonHost())
+		if err != nil {
+			return errors.Errorf("failed to parse docker host: %w", err)
+		}
+		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
+		dindHost := url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+		switch parsed.Scheme {
+		case "tcp":
+			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
+				dindHost.Host = net.JoinHostPort(utils.DinDHost, port)
+			}
+			env = append(env, "DOCKER_HOST="+dindHost.String())
+		case "npipe":
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
+			env = append(env, "DOCKER_HOST="+dindHost.String())
+		case "unix":
+			if parsed, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
+				return errors.Errorf("failed to parse default host: %w", err)
+			}
+			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
 			}
-			binds = append(binds, parsed.Host+":/var/run/docker.sock:ro")
+			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", parsed.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.VectorImage,
+				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
 `},
@@ -325,9 +356,9 @@ EOF
 	}
 
 	// Start Kong.
-	if !isContainerExcluded(utils.KongImage, excluded) {
+	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
 		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Execute(&kongConfigBuf, kongConfig{
+		if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig{
 			GotrueId:      utils.GotrueId,
 			RestId:        utils.RestId,
 			RealtimeId:    utils.Config.Realtime.TenantId,
@@ -335,6 +366,7 @@ EOF
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			LogflareId:    utils.LogflareId,
+			PoolerId:      utils.PoolerId,
 			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
 		}); err != nil {
@@ -358,32 +390,55 @@ EOF
 			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
 		}
 
+		dockerPort := uint16(8000)
+		if utils.Config.Api.Tls.Enabled {
+			dockerPort = 8443
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.KongImage,
+				Image: utils.Config.Api.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors",
+					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
+					// Use modern TLS certificate
+					"KONG_SSL_CERT=/home/kong/localhost.crt",
+					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && cat <<'EOF' > /home/kong/custom_nginx.template && ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && \
+cat <<'EOF' > /home/kong/custom_nginx.template && \
+cat <<'EOF' > /home/kong/localhost.crt && \
+cat <<'EOF' > /home/kong/localhost.key && \
+./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
 EOF
 ` + nginxConfigEmbed + `
 EOF
+` + status.KongCert + `
+EOF
+` + status.KongKey + `
+EOF
 `},
+				ExposedPorts: nat.PortSet{
+					"8000/tcp": {},
+					"8443/tcp": {},
+					nat.Port(fmt.Sprintf("%d/tcp", nginxTemplateServerPort)): {},
+				},
 			},
 			container.HostConfig{
-				Binds:         binds,
-				PortBindings:  nat.PortMap{"8000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}}},
+				Binds: binds,
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -408,7 +463,7 @@ EOF
 		}
 
 		env := []string{
-			fmt.Sprintf("API_EXTERNAL_URL=http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port),
+			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
@@ -425,11 +480,13 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-			fmt.Sprintf("GOTRUE_JWT_ISSUER=http://%s:%d/auth/v1", utils.Config.Hostname, utils.Config.Api.Port),
+			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
+			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
+			fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
@@ -441,13 +498,10 @@ EOF
 			fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-			// TODO: To be reverted to `/auth/v1/verify` once
-			// https://github.com/supabase/supabase/issues/16100
-			// is fixed on upstream GoTrue.
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=http://%s:%d/auth/v1/verify", utils.Config.Hostname, utils.Config.Api.Port),
+			"GOTRUE_MAILER_URLPATHS_INVITE=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_RECOVERY=" + utils.GetApiUrl("/auth/v1/verify"),
+			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -461,6 +515,14 @@ EOF
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+			fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.EnrollEnabled),
+			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.VerifyEnabled),
+			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
 		if utils.Config.Auth.Sessions.Timebox > 0 {
@@ -575,6 +637,14 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
+		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
+			env = append(
+				env,
+				"GOTRUE_MFA_PHONE_TEMPLATE="+utils.Config.Auth.MFA.Phone.Template,
+				fmt.Sprintf("GOTRUE_MFA_PHONE_OTP_LENGTH=%v", utils.Config.Auth.MFA.Phone.OtpLength),
+				fmt.Sprintf("GOTRUE_MFA_PHONE_MAX_FREQUENCY=%v", utils.Config.Auth.MFA.Phone.MaxFrequency),
+			)
+		}
 
 		for name, config := range utils.Config.Auth.External {
 			env = append(
@@ -591,7 +661,7 @@ EOF
 				)
 			} else {
 				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=http://%s:%d/auth/v1/callback", strings.ToUpper(name), utils.Config.Hostname, utils.Config.Api.Port),
+					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), utils.GetApiUrl("/auth/v1/callback")),
 				)
 			}
 
@@ -635,7 +705,7 @@ EOF
 	}
 
 	// Start Inbucket.
-	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.InbucketImage, excluded) {
+	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
 		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
 			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
@@ -646,7 +716,7 @@ EOF
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.InbucketImage,
+				Image: utils.Config.Inbucket.Image,
 			},
 			container.HostConfig{
 				Binds: []string{
@@ -688,12 +758,13 @@ EOF
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("API_JWT_JWKS=%s", jwks),
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
 					"DNS_NODES=''",
-					"RLIMIT_NOFILE=10000",
+					"RLIMIT_NOFILE=",
 					"SEED_SELF_HOST=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
@@ -738,7 +809,7 @@ EOF
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					"PGRST_DB_ANON_ROLE=anon",
-					"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("PGRST_JWT_SECRET=%s", jwks),
 					"PGRST_ADMIN_SERVER_PORT=3001",
 				},
 				// PostgREST does not expose a shell for health check
@@ -761,7 +832,7 @@ EOF
 	}
 
 	// Start Storage.
-	if utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded) {
+	if isStorageEnabled {
 		dockerStoragePath := "/mnt"
 		if _, err := utils.DockerStart(
 			ctx,
@@ -771,6 +842,7 @@ EOF
 					"ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					fmt.Sprintf("AUTH_JWT_JWKS=%s", jwks),
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
@@ -785,7 +857,7 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
-					"S3_ALLOW_FORWARDED_HEADER=true",
+					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%v", StorageVersionBelow("1.10.1")),
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
@@ -818,11 +890,11 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if utils.Config.Storage.Enabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.ImageProxyImage, excluded) {
+	if isStorageEnabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.ImageProxyImage,
+				Image: utils.Config.Storage.ImageTransformation.Image,
 				Env: []string{
 					"IMGPROXY_BIND=:5001",
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
@@ -854,7 +926,7 @@ EOF
 	}
 
 	// Start all functions.
-	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.EdgeRuntimeImage, excluded) {
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
@@ -877,7 +949,7 @@ EOF
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:8080/health").then((r) => {if (r.status !== 200) throw new Error(r.status)})'`},
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -910,12 +982,12 @@ EOF
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					fmt.Sprintf("SUPABASE_PUBLIC_URL=%s:%v/", utils.Config.Studio.ApiUrl, utils.Config.Api.Port),
+					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
-					"OPENAI_KEY=" + utils.Config.Studio.OpenaiApiKey,
+					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
@@ -923,7 +995,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "node", `--eval='fetch("http://127.0.0.1:3000/api/profile", (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})'`},
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -952,12 +1024,12 @@ EOF
 		portSession := uint16(5432)
 		portTransaction := uint16(6543)
 		dockerPort := portTransaction
-		if utils.Config.Db.Pooler.PoolMode == utils.SessionMode {
+		if utils.Config.Db.Pooler.PoolMode == config.SessionMode {
 			dockerPort = portSession
 		}
 		// Create pooler tenant
 		var poolerTenantBuf bytes.Buffer
-		if err := poolerTenantTemplate.Execute(&poolerTenantBuf, poolerTenant{
+		if err := poolerTenantTemplate.Option("missingkey=error").Execute(&poolerTenantBuf, poolerTenant{
 			DbHost:            dbConfig.Host,
 			DbPort:            dbConfig.Port,
 			DbDatabase:        dbConfig.Database,
@@ -977,7 +1049,7 @@ EOF
 					"PORT=4000",
 					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),
 					fmt.Sprintf("PROXY_PORT_TRANSACTION=%d", portTransaction),
-					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, "_supabase"),
 					"CLUSTER_POSTGRES=true",
 					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
 					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
@@ -1027,7 +1099,8 @@ EOF
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err
 		}
-		if err := buckets.Run(ctx); err != nil {
+		// Disable prompts when seeding
+		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
 		}
 	}
@@ -1042,7 +1115,7 @@ func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 
 func ExcludableContainers() []string {
 	names := []string{}
-	for _, image := range utils.ServiceImages {
+	for _, image := range config.ServiceImages {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names

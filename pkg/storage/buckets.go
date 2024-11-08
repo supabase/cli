@@ -23,20 +23,15 @@ func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]BucketResponse](resp.Body)
 }
 
-type BucketProps struct {
-	Public           bool     `json:"public,omitempty"`             // false,
-	FileSizeLimit    int      `json:"file_size_limit,omitempty"`    // 0,
-	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
-}
-
 type CreateBucketRequest struct {
-	Name string `json:"name"`         // "string",
-	Id   string `json:"id,omitempty"` // "string",
-	*BucketProps
+	Name             string   `json:"name"`                         // "string",
+	Id               string   `json:"id,omitempty"`                 // "string",
+	Public           *bool    `json:"public,omitempty"`             // false,
+	FileSizeLimit    int64    `json:"file_size_limit,omitempty"`    // 0,
+	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
 }
 
 type CreateBucketResponse struct {
@@ -48,13 +43,14 @@ func (s *StorageAPI) CreateBucket(ctx context.Context, body CreateBucketRequest)
 	if err != nil {
 		return CreateBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[CreateBucketResponse](resp.Body)
 }
 
 type UpdateBucketRequest struct {
-	Id string `json:"id"`
-	*BucketProps
+	Id               string   `json:"-"`
+	Public           *bool    `json:"public,omitempty"`             // false,
+	FileSizeLimit    int64    `json:"file_size_limit,omitempty"`    // 0,
+	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
 }
 
 type UpdateBucketResponse struct {
@@ -62,11 +58,10 @@ type UpdateBucketResponse struct {
 }
 
 func (s *StorageAPI) UpdateBucket(ctx context.Context, body UpdateBucketRequest) (UpdateBucketResponse, error) {
-	resp, err := s.Send(ctx, http.MethodPut, "/storage/v1/bucket/"+body.Id, body.BucketProps)
+	resp, err := s.Send(ctx, http.MethodPut, "/storage/v1/bucket/"+body.Id, body)
 	if err != nil {
 		return UpdateBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[UpdateBucketResponse](resp.Body)
 }
 
@@ -79,6 +74,5 @@ func (s *StorageAPI) DeleteBucket(ctx context.Context, bucketId string) (DeleteB
 	if err != nil {
 		return DeleteBucketResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[DeleteBucketResponse](resp.Body)
 }

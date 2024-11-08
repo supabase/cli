@@ -29,8 +29,9 @@ var (
 	}
 
 	branchRegion = utils.EnumFlag{
-		Allowed: make([]string, len(utils.FlyRegions)),
+		Allowed: flyRegions(),
 	}
+	persistent bool
 
 	branchCreateCmd = &cobra.Command{
 		Use:   "create [name]",
@@ -38,11 +39,21 @@ var (
 		Long:  "Create a preview branch for the linked project.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var name string
+			var body api.CreateBranchBody
 			if len(args) > 0 {
-				name = args[0]
+				body.BranchName = args[0]
 			}
-			return create.Run(cmd.Context(), name, branchRegion.Value, afero.NewOsFs())
+			cmdFlags := cmd.Flags()
+			if cmdFlags.Changed("region") {
+				body.Region = &branchRegion.Value
+			}
+			if cmdFlags.Changed("size") {
+				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
+			}
+			if cmdFlags.Changed("persistent") {
+				body.Persistent = &persistent
+			}
+			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
 	}
 
@@ -76,6 +87,15 @@ var (
 		},
 	}
 
+	branchStatus = utils.EnumFlag{
+		Allowed: []string{
+			string(api.BranchResponseStatusRUNNINGMIGRATIONS),
+			string(api.BranchResponseStatusMIGRATIONSPASSED),
+			string(api.BranchResponseStatusMIGRATIONSFAILED),
+			string(api.BranchResponseStatusFUNCTIONSDEPLOYED),
+			string(api.BranchResponseStatusFUNCTIONSFAILED),
+		},
+	}
 	branchName  string
 	gitBranch   string
 	resetOnPush bool
@@ -84,17 +104,24 @@ var (
 		Use:   "update [branch-id]",
 		Short: "Update a preview branch",
 		Long:  "Update a preview branch by its ID.",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmdFlags := cmd.Flags()
 			var body api.UpdateBranchBody
-			if cmd.Flags().Changed("name") {
+			if cmdFlags.Changed("name") {
 				body.BranchName = &branchName
 			}
-			if cmd.Flags().Changed("git-branch") {
+			if cmdFlags.Changed("git-branch") {
 				body.GitBranch = &gitBranch
 			}
-			if cmd.Flags().Changed("reset-on-push") {
+			if cmdFlags.Changed("reset-on-push") {
 				body.ResetOnPush = &resetOnPush
+			}
+			if cmdFlags.Changed("persistent") {
+				body.Persistent = &persistent
+			}
+			if cmdFlags.Changed("status") {
+				body.Status = (*api.UpdateBranchBodyStatus)(&branchStatus.Value)
 			}
 			ctx := cmd.Context()
 			if len(args) == 0 {
@@ -139,15 +166,10 @@ var (
 func init() {
 	branchFlags := branchesCmd.PersistentFlags()
 	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	// Setup enum flags
-	i := 0
-	for k := range utils.FlyRegions {
-		branchRegion.Allowed[i] = k
-		i++
-	}
-	sort.Strings(branchRegion.Allowed)
 	createFlags := branchCreateCmd.Flags()
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
+	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
+	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
@@ -155,10 +177,23 @@ func init() {
 	updateFlags.StringVar(&branchName, "name", "", "Rename the preview branch.")
 	updateFlags.StringVar(&gitBranch, "git-branch", "", "Change the associated git branch.")
 	updateFlags.BoolVar(&resetOnPush, "reset-on-push", false, "Reset the preview branch on git push.")
+	updateFlags.BoolVar(&persistent, "persistent", false, "Switch between ephemeral and persistent branch.")
+	updateFlags.Var(&branchStatus, "status", "Override the current branch status.")
 	branchesCmd.AddCommand(branchUpdateCmd)
 	branchesCmd.AddCommand(branchDeleteCmd)
 	branchesCmd.AddCommand(branchDisableCmd)
 	rootCmd.AddCommand(branchesCmd)
+}
+
+func flyRegions() []string {
+	result := make([]string, len(utils.FlyRegions))
+	i := 0
+	for k := range utils.FlyRegions {
+		result[i] = k
+		i++
+	}
+	sort.Strings(result)
+	return result
 }
 
 func promptBranchId(ctx context.Context, ref string) error {

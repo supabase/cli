@@ -13,12 +13,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{
@@ -27,19 +26,6 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
-}
-
-var escapedSchemas = []string{
-	`\_analytics`,
-	`\_realtime`,
-	`\_supavisor`,
-	"pgbouncer",
-	"pgsodium",
-	"pgtle",
-	`supabase\_migrations`,
-	"vault",
-	`information\_schema`,
-	`pg\_%`,
 }
 
 func TestPullCommand(t *testing.T) {
@@ -71,7 +57,7 @@ func TestPullCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`)
 		// Run test
 		err := Run(context.Background(), nil, dbConfig, "", fsys, conn.Intercept)
@@ -88,21 +74,16 @@ func TestPullSchema(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Pg15Image), "test-db")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", "test"))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, nil, "0_test.sql", mock, fsys)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, ctx, nil, "0_test.sql", conn.MockClient(t), fsys)
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -120,18 +101,13 @@ func TestPullSchema(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"}).
-			Query(reset.ListSchemas, escapedSchemas).
+			Query(migration.ListSchemas, migration.ManagedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, nil, "", mock, fsys)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, ctx, nil, "", conn.MockClient(t), fsys)
 		})
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
@@ -151,16 +127,11 @@ func TestPullSchema(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, []string{"public"}, "", mock, fsys)
+		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
+			return run(p, ctx, []string{"public"}, "", conn.MockClient(t), fsys)
 		})
 		// Check error
 		assert.ErrorContains(t, err, "network error")
@@ -175,15 +146,10 @@ func TestSyncRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = assertRemoteInSync(ctx, mock, fsys)
+		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -197,15 +163,10 @@ func TestSyncRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = assertRemoteInSync(ctx, mock, fsys)
+		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, errConflict)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -219,15 +180,10 @@ func TestSyncRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"20220727064247"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = assertRemoteInSync(ctx, mock, fsys)
+		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, errConflict)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -239,15 +195,10 @@ func TestSyncRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectByConfig(ctx, dbConfig, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		err = assertRemoteInSync(ctx, mock, fsys)
+		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, errMissing)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

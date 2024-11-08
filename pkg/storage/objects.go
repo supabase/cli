@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 
@@ -50,16 +52,16 @@ func (s *StorageAPI) ListObjects(ctx context.Context, bucket, prefix string, pag
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]ObjectResponse](resp.Body)
 }
 
 type FileOptions struct {
 	CacheControl string
 	ContentType  string
+	Overwrite    bool
 }
 
-func ParseFileOptions(f afero.File, opts ...func(*FileOptions)) (*FileOptions, error) {
+func ParseFileOptions(f fs.File, opts ...func(*FileOptions)) (*FileOptions, error) {
 	// Customise file options
 	fo := &FileOptions{}
 	for _, apply := range opts {
@@ -77,8 +79,9 @@ func ParseFileOptions(f afero.File, opts ...func(*FileOptions)) (*FileOptions, e
 			return nil, errors.Errorf("failed to read file: %w", err)
 		}
 		fo.ContentType = http.DetectContentType(buf)
-		_, err = f.Seek(0, io.SeekStart)
-		if err != nil {
+		if s, ok := f.(io.Seeker); !ok {
+			return nil, errors.Errorf("file is not seekable")
+		} else if _, err = s.Seek(0, io.SeekStart); err != nil {
 			return nil, errors.Errorf("failed to seek file: %w", err)
 		}
 	}
@@ -95,13 +98,24 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 	if err != nil {
 		return err
 	}
+	return s.UploadObjectStream(ctx, remotePath, f, *fo)
+}
+
+func (s *StorageAPI) UploadObjectStream(ctx context.Context, remotePath string, localFile io.Reader, fo FileOptions) error {
 	headers := func(req *http.Request) {
-		req.Header.Add("Content-Type", fo.ContentType)
-		req.Header.Add("Cache-Control", fo.CacheControl)
+		if len(fo.ContentType) > 0 {
+			req.Header.Add("Content-Type", fo.ContentType)
+		}
+		if len(fo.CacheControl) > 0 {
+			req.Header.Add("Cache-Control", fo.CacheControl)
+		}
+		if fo.Overwrite {
+			req.Header.Add("x-upsert", "true")
+		}
 	}
 	// Prepare request
 	remotePath = strings.TrimPrefix(remotePath, "/")
-	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, f, headers)
+	resp, err := s.Send(ctx, http.MethodPost, "/storage/v1/object/"+remotePath, io.NopCloser(localFile), headers)
 	if err != nil {
 		return err
 	}
@@ -110,16 +124,23 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 }
 
 func (s *StorageAPI) DownloadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs) error {
+	f, err := fsys.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return errors.Errorf("failed to create file: %w", err)
+	}
+	defer f.Close()
+	return s.DownloadObjectStream(ctx, remotePath, f)
+}
+
+func (s *StorageAPI) DownloadObjectStream(ctx context.Context, remotePath string, localFile io.Writer) error {
 	remotePath = strings.TrimPrefix(remotePath, "/")
 	resp, err := s.Send(ctx, http.MethodGet, "/storage/v1/object/"+remotePath, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if err := afero.WriteReader(fsys, localPath, resp.Body); err != nil {
-		return errors.Errorf("failed to write file: %w", err)
-	}
-	return nil
+	_, err = io.Copy(localFile, resp.Body)
+	return err
 }
 
 type MoveObjectRequest struct {
@@ -140,7 +161,6 @@ func (s *StorageAPI) MoveObject(ctx context.Context, bucketId, srcPath, dstPath 
 	if err != nil {
 		return MoveObjectResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[MoveObjectResponse](resp.Body)
 }
 
@@ -160,7 +180,6 @@ func (s *StorageAPI) CopyObject(ctx context.Context, bucketId, srcPath, dstPath 
 	if err != nil {
 		return CopyObjectResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[CopyObjectResponse](resp.Body)
 }
 
@@ -187,6 +206,5 @@ func (s *StorageAPI) DeleteObjects(ctx context.Context, bucket string, prefixes 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[[]DeleteObjectsResponse](resp.Body)
 }

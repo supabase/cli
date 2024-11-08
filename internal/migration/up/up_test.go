@@ -6,14 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/pgtest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 func TestPendingMigrations(t *testing.T) {
@@ -21,27 +20,21 @@ func TestPendingMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			"20221201000000_test.sql",
-			"20221201000001_test.sql",
-			"20221201000002_test.sql",
-			"20221201000003_test.sql",
+			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
 		}
-		for _, name := range files {
-			path := filepath.Join(utils.MigrationsDir, name)
+		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		pending, err := GetPendingMigrations(ctx, false, mock, fsys)
+		pending, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, files[2:], pending)
@@ -53,15 +46,10 @@ func TestPendingMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = GetPendingMigrations(ctx, false, mock, fsys)
+		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -72,17 +60,12 @@ func TestPendingMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = GetPendingMigrations(ctx, false, mock, fsys)
+		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
-		assert.ErrorIs(t, err, errMissingLocal)
+		assert.ErrorIs(t, err, migration.ErrMissingLocal)
 		assert.Contains(t, utils.CmdSuggestion, "supabase migration repair --status reverted 0")
 	})
 
@@ -97,17 +80,12 @@ func TestPendingMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"1"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = GetPendingMigrations(ctx, false, mock, fsys)
+		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
-		assert.ErrorIs(t, err, errMissingRemote)
+		assert.ErrorIs(t, err, migration.ErrMissingRemote)
 	})
 }
 
@@ -116,27 +94,21 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			"20221201000000_test.sql",
-			"20221201000001_test.sql",
-			"20221201000002_test.sql",
-			"20221201000003_test.sql",
+			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
 		}
-		for _, name := range files {
-			path := filepath.Join(utils.MigrationsDir, name)
+		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000002"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		pending, err := GetPendingMigrations(ctx, true, mock, fsys)
+		pending, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{files[1], files[3]}, pending)
@@ -146,29 +118,23 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			"20221201000000_test.sql",
-			"20221201000001_test.sql",
-			"20221201000002_test.sql",
-			"20221201000003_test.sql",
+			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
 		}
-		for _, name := range files {
-			path := filepath.Join(utils.MigrationsDir, name)
+		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 2", []interface{}{"20221201000002"}, []interface{}{"20221201000004"})
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = GetPendingMigrations(ctx, true, mock, fsys)
+		_, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)
 		// Check error
-		assert.ErrorIs(t, err, errMissingLocal)
+		assert.ErrorIs(t, err, migration.ErrMissingLocal)
 		assert.Contains(t, utils.CmdSuggestion, "supabase migration repair --status reverted 20221201000004")
 	})
 
@@ -176,17 +142,16 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			"20221201000000_test.sql",
-			"20221201000002_test.sql",
+			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
 		}
-		for _, name := range files {
-			path := filepath.Join(utils.MigrationsDir, name)
+		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(list.LIST_MIGRATION_VERSION).
+		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 5",
 				[]interface{}{"20221201000000"},
 				[]interface{}{"20221201000001"},
@@ -194,15 +159,10 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 				[]interface{}{"20221201000003"},
 				[]interface{}{"20221201000004"},
 			)
-		// Connect to mock
-		ctx := context.Background()
-		mock, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Port: 5432}, conn.Intercept)
-		require.NoError(t, err)
-		defer mock.Close(ctx)
 		// Run test
-		_, err = GetPendingMigrations(ctx, true, mock, fsys)
+		_, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)
 		// Check error
-		assert.ErrorIs(t, err, errMissingLocal)
+		assert.ErrorIs(t, err, migration.ErrMissingLocal)
 		assert.Contains(t, utils.CmdSuggestion, "supabase migration repair --status reverted 20221201000001 20221201000003 20221201000004")
 	})
 }

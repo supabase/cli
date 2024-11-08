@@ -2,6 +2,9 @@ package status
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -38,8 +42,8 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
 	}
 	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
-		values[c.ApiURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
-		values[c.GraphqlURL] = fmt.Sprintf("http://%s:%d/graphql/v1", utils.Config.Hostname, utils.Config.Api.Port)
+		values[c.ApiURL] = utils.Config.Api.ExternalUrl
+		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
 	}
 	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
@@ -49,11 +53,11 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.AnonKey] = utils.Config.Auth.AnonKey
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
 	}
-	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.InbucketImage)) {
+	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
-		values[c.StorageS3URL] = fmt.Sprintf("http://%s:%d/storage/v1/s3", utils.Config.Hostname, utils.Config.Api.Port)
+		values[c.StorageS3URL] = utils.GetApiUrl("/storage/v1/s3")
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
 		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
@@ -69,7 +73,6 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
 		return err
 	}
-
 	stopped, err := checkServiceHealth(ctx)
 	if err != nil {
 		return err
@@ -87,7 +90,7 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
 	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
-		Filters: utils.CliProjectFilter(),
+		Filters: utils.CliProjectFilter(utils.Config.ProjectId),
 	})
 	if err != nil {
 		return nil, errors.Errorf("failed to list running containers: %w", err)
@@ -112,7 +115,7 @@ func assertContainerHealthy(ctx context.Context, container string) error {
 		return errors.Errorf("failed to inspect container health: %w", err)
 	} else if !resp.State.Running {
 		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
-	} else if resp.State.Health != nil && resp.State.Health.Status != "healthy" {
+	} else if resp.State.Health != nil && resp.State.Health.Status != types.Healthy {
 		return errors.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
 	}
 	return nil
@@ -131,19 +134,52 @@ func IsServiceReady(ctx context.Context, container string) error {
 }
 
 var (
+	//go:embed kong.local.crt
+	KongCert string
+	//go:embed kong.local.key
+	KongKey string
+)
+
+// To regenerate local certificate pair:
+//
+//	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
+//	  -nodes -keyout kong.local.key -out kong.local.crt -subj "/CN=localhost" \
+//	  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+func NewKongClient() *http.Client {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+			pool = x509.NewCertPool()
+		}
+		// No need to replace TLS config if we fail to append cert
+		if pool.AppendCertsFromPEM([]byte(KongCert)) {
+			rt := t.Clone()
+			rt.TLSClientConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    pool,
+			}
+			client.Transport = rt
+		}
+	}
+	return client
+}
+
+var (
 	healthClient *fetcher.Fetcher
 	healthOnce   sync.Once
 )
 
 func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
-		server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
+		server := utils.Config.Api.ExternalUrl
 		header := func(req *http.Request) {
 			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
 		}
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-		}
+		client := NewKongClient()
 		healthClient = fetcher.NewFetcher(
 			server,
 			fetcher.WithHTTPClient(client),
@@ -152,8 +188,12 @@ func checkHTTPHead(ctx context.Context, path string) error {
 		)
 	})
 	// HEAD method does not return response body
-	_, err := healthClient.Send(ctx, http.MethodHead, path, nil)
-	return err
+	resp, err := healthClient.Send(ctx, http.MethodHead, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 func printStatus(names CustomName, format string, w io.Writer, exclude ...string) (err error) {

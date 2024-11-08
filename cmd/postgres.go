@@ -29,12 +29,13 @@ var (
 		Long: `Overriding the default Postgres config could result in unstable database behavior.
 Custom configuration also overrides the optimizations generated based on the compute add-ons in use.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return update.Run(cmd.Context(), flags.ProjectRef, postgresConfigValues, postgresConfigUpdateReplaceMode, afero.NewOsFs())
+			return update.Run(cmd.Context(), flags.ProjectRef, postgresConfigValues, postgresConfigUpdateReplaceMode, noRestart, afero.NewOsFs())
 		},
 	}
 
 	postgresConfigValues            []string
 	postgresConfigUpdateReplaceMode bool
+	noRestart                       bool
 )
 
 func init() {
@@ -42,8 +43,10 @@ func init() {
 	postgresCmd.AddCommand(postgresConfigGetCmd)
 	postgresCmd.AddCommand(postgresConfigUpdateCmd)
 
-	postgresConfigUpdateCmd.Flags().StringSliceVar(&postgresConfigValues, "config", []string{}, "Config overrides specified as a 'key=value' pair")
-	postgresConfigUpdateCmd.Flags().BoolVar(&postgresConfigUpdateReplaceMode, "replace-existing-overrides", false, "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.")
+	updateFlags := postgresConfigUpdateCmd.Flags()
+	updateFlags.StringSliceVar(&postgresConfigValues, "config", []string{}, "Config overrides specified as a 'key=value' pair")
+	updateFlags.BoolVar(&postgresConfigUpdateReplaceMode, "replace-existing-overrides", false, "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.")
+	updateFlags.BoolVar(&noRestart, "no-restart", false, "Do not restart the database after updating config.")
 
 	rootCmd.AddCommand(postgresCmd)
 }

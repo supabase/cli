@@ -3,17 +3,17 @@ package push
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,53 +29,97 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	if err != nil {
 		return err
 	}
-	if len(pending) == 0 {
+	var seeds []migration.SeedFile
+	if includeSeed {
+		if remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !remote.Db.Seed.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
+		} else if seeds, err = migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys)); err != nil {
+			return err
+		}
+	}
+	var globals []string
+	if includeRoles {
+		if exists, err := afero.Exists(fsys, utils.CustomRolesPath); err != nil {
+			return errors.Errorf("failed to find custom roles: %w", err)
+		} else if exists {
+			globals = append(globals, utils.CustomRolesPath)
+		}
+	}
+	if len(pending) == 0 && len(seeds) == 0 && len(globals) == 0 {
 		fmt.Println("Remote database is up to date.")
 		return nil
 	}
 	// Push pending migrations
 	if dryRun {
-		if includeRoles {
-			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
+		if len(globals) > 0 {
+			fmt.Fprintln(os.Stderr, "Would create custom roles "+utils.Bold(globals[0])+"...")
 		}
-		for _, filename := range pending {
-			fmt.Fprintln(os.Stderr, "Would push migration "+utils.Bold(filename)+"...")
+		if len(pending) > 0 {
+			fmt.Fprintln(os.Stderr, "Would push these migrations:")
+			fmt.Fprint(os.Stderr, confirmPushAll(pending))
 		}
-		if includeSeed {
-			fmt.Fprintln(os.Stderr, "Would seed data "+utils.Bold(utils.SeedDataPath)+"...")
+		if len(seeds) > 0 {
+			fmt.Fprintln(os.Stderr, "Would seed these files:")
+			fmt.Fprint(os.Stderr, confirmSeedAll(seeds))
 		}
 	} else {
-		msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n • %s\n\n", strings.Join(pending, "\n • "))
-		if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
-			return err
-		} else if !shouldPush {
-			return errors.New(context.Canceled)
-		}
-		if includeRoles {
-			if err := CreateCustomRoles(ctx, conn, os.Stderr, fsys); err != nil {
+		if len(globals) > 0 {
+			msg := "Do you want to create custom roles in the database cluster?"
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.SeedGlobals(ctx, globals, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
 		}
-		if err := apply.MigrateUp(ctx, conn, pending, fsys); err != nil {
-			return err
-		}
-		if includeSeed {
-			if err := apply.SeedDatabase(ctx, conn, fsys); err != nil {
+		if len(pending) > 0 {
+			msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
+		} else {
+			fmt.Fprintln(os.Stderr, "Schema migrations are up to date.")
+		}
+		if len(seeds) > 0 {
+			msg := fmt.Sprintf("Do you want to seed the remote database with these files?\n%s\n", confirmSeedAll(seeds))
+			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
+				return err
+			} else if !shouldPush {
+				return errors.New(context.Canceled)
+			}
+			if err := migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys)); err != nil {
+				return err
+			}
+		} else if includeSeed {
+			fmt.Fprintln(os.Stderr, "Seed files are up to date.")
 		}
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
 }
 
-func CreateCustomRoles(ctx context.Context, conn *pgx.Conn, w io.Writer, fsys afero.Fs) error {
-	roles, err := fsys.Open(utils.CustomRolesPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return errors.Errorf("failed to load custom roles: %w", err)
+func confirmPushAll(pending []string) (msg string) {
+	for _, path := range pending {
+		filename := filepath.Base(path)
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(filename))
 	}
-	fmt.Fprintln(w, "Creating custom roles "+utils.Bold(utils.CustomRolesPath)+"...")
-	return apply.BatchExecDDL(ctx, conn, roles)
+	return msg
+}
+
+func confirmSeedAll(pending []migration.SeedFile) (msg string) {
+	for _, seed := range pending {
+		notice := seed.Path
+		if seed.Dirty {
+			notice += " (hash update)"
+		}
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(notice))
+	}
+	return msg
 }

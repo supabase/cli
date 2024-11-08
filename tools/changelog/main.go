@@ -30,7 +30,7 @@ func main() {
 }
 
 func showChangeLog(ctx context.Context, slackChannel string) error {
-	client := utils.GetGtihubClient(ctx)
+	client := utils.GetGitHubClient(ctx)
 	releases, _, err := client.Repositories.ListReleases(ctx, utils.CLI_OWNER, utils.CLI_REPO, &github.ListOptions{})
 	if err != nil {
 		return err

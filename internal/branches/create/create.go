@@ -12,23 +12,20 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, name, region string, fsys afero.Fs) error {
+func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 	gitBranch := keys.GetGitBranchOrDefault("", fsys)
-	if len(name) == 0 && len(gitBranch) > 0 {
+	if len(body.BranchName) == 0 && len(gitBranch) > 0 {
 		title := fmt.Sprintf("Do you want to create a branch named %s?", utils.Aqua(gitBranch))
 		if shouldCreate, err := utils.NewConsole().PromptYesNo(ctx, title, true); err != nil {
 			return err
 		} else if !shouldCreate {
 			return errors.New(context.Canceled)
 		}
-		name = gitBranch
+		body.BranchName = gitBranch
 	}
+	body.GitBranch = &gitBranch
 
-	resp, err := utils.GetSupabase().V1CreateABranchWithResponse(ctx, flags.ProjectRef, api.V1CreateABranchJSONRequestBody{
-		BranchName: name,
-		GitBranch:  &gitBranch,
-		Region:     &region,
-	})
+	resp, err := utils.GetSupabase().V1CreateABranchWithResponse(ctx, flags.ProjectRef, body)
 	if err != nil {
 		return errors.Errorf("failed to create preview branch: %w", err)
 	}

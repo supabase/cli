@@ -150,6 +150,5 @@ func (c *CloudflareAPI) DNSQuery(ctx context.Context, params DNSParams) (DNSResp
 	if err != nil {
 		return DNSResponse{}, err
 	}
-	defer resp.Body.Close()
 	return fetcher.ParseJSON[DNSResponse](resp.Body)
 }

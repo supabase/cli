@@ -110,7 +110,8 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 	return resp, nil
 }
 
-func ParseJSON[T any](r io.Reader) (T, error) {
+func ParseJSON[T any](r io.ReadCloser) (T, error) {
+	defer r.Close()
 	var data T
 	dec := json.NewDecoder(r)
 	if err := dec.Decode(&data); err != nil {

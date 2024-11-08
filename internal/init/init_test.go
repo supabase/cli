@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -26,10 +27,6 @@ func TestInitCommand(t *testing.T) {
 		assert.True(t, exists)
 		// Validate generated .gitignore
 		exists, err = afero.Exists(fsys, utils.GitIgnorePath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-		// Validate generated seed.sql
-		exists, err = afero.Exists(fsys, utils.SeedDataPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate vscode settings file isn't generated
@@ -70,20 +67,11 @@ func TestInitCommand(t *testing.T) {
 		assert.Error(t, Run(context.Background(), fsys, nil, nil, utils.InitParams{}))
 	})
 
-	t.Run("throws error on seed failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.SeedDataPath}
-		// Run test
-		err := Run(context.Background(), fsys, nil, nil, utils.InitParams{})
-		// Check error
-		assert.ErrorIs(t, err, os.ErrPermission)
-	})
-
 	t.Run("creates vscode settings file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, utils.Ptr(true), nil, utils.InitParams{}))
+		assert.NoError(t, Run(context.Background(), fsys, cast.Ptr(true), nil, utils.InitParams{}))
 		// Validate generated vscode settings
 		exists, err := afero.Exists(fsys, settingsPath)
 		assert.NoError(t, err)
@@ -97,7 +85,7 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, utils.Ptr(false), nil, utils.InitParams{}))
+		assert.NoError(t, Run(context.Background(), fsys, cast.Ptr(false), nil, utils.InitParams{}))
 		// Validate vscode settings file isn't generated
 		exists, err := afero.Exists(fsys, settingsPath)
 		assert.NoError(t, err)
@@ -111,7 +99,7 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, nil, utils.Ptr(true), utils.InitParams{}))
+		assert.NoError(t, Run(context.Background(), fsys, nil, cast.Ptr(true), utils.InitParams{}))
 		// Validate generated intellij deno config
 		exists, err := afero.Exists(fsys, denoPath)
 		assert.NoError(t, err)
@@ -122,7 +110,7 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, nil, utils.Ptr(false), utils.InitParams{}))
+		assert.NoError(t, Run(context.Background(), fsys, nil, cast.Ptr(false), utils.InitParams{}))
 		// Validate intellij deno config file isn't generated
 		exists, err := afero.Exists(fsys, denoPath)
 		assert.NoError(t, err)

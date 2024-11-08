@@ -23,54 +23,6 @@ var (
 	SentryDsn string
 )
 
-const (
-	Pg13Image = "supabase/postgres:13.3.0"
-	Pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.1.1.61"
-	// Append to ServiceImages when adding new dependencies below
-	// TODO: try https://github.com/axllent/mailpit
-	KongImage        = "library/kong:2.8.1"
-	InbucketImage    = "inbucket/inbucket:3.0.3"
-	PostgrestImage   = "postgrest/postgrest:v12.2.0"
-	DifferImage      = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage       = "supabase/migra:3.0.1663481299"
-	PgmetaImage      = "supabase/postgres-meta:v0.80.0"
-	StudioImage      = "supabase/studio:20240422-5cf8f30"
-	ImageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	EdgeRuntimeImage = "supabase/edge-runtime:v1.54.9"
-	VectorImage      = "timberio/vector:0.28.1-alpine"
-	SupavisorImage   = "supabase/supavisor:1.1.56"
-	PgProveImage     = "supabase/pg_prove:3.36"
-	GotrueImage      = "supabase/gotrue:v2.151.0"
-	RealtimeImage    = "supabase/realtime:v2.29.13"
-	StorageImage     = "supabase/storage-api:v1.0.6"
-	LogflareImage    = "supabase/logflare:1.4.0"
-	// Should be kept in-sync with EdgeRuntimeImage
-	DenoVersion = "1.30.3"
-)
-
-var ServiceImages = []string{
-	GotrueImage,
-	RealtimeImage,
-	StorageImage,
-	ImageProxyImage,
-	KongImage,
-	InbucketImage,
-	PostgrestImage,
-	PgmetaImage,
-	StudioImage,
-	EdgeRuntimeImage,
-	LogflareImage,
-	VectorImage,
-	SupavisorImage,
-}
-
-var JobImages = []string{
-	DifferImage,
-	MigraImage,
-	PgProveImage,
-}
-
 func ShortContainerImageName(imageName string) string {
 	matches := ImageNamePattern.FindStringSubmatch(imageName)
 	if len(matches) < 2 {
@@ -105,7 +57,6 @@ var (
 	ProjectRefPattern  = regexp.MustCompile(`^[a-z]{20}$`)
 	UUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	ProjectHostPattern = regexp.MustCompile(`^(db\.)([a-z]{20})\.supabase\.(co|red)$`)
-	MigrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	BranchNamePattern  = regexp.MustCompile(`[[:word:]-]+`)
 	FuncSlugPattern    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
@@ -116,16 +67,6 @@ var (
 		"pg_*", // Wildcard pattern follows pg_dump
 	}
 	// Initialised by postgres image and owned by postgres role
-	ManagedSchemas = append([]string{
-		"_analytics",
-		"_realtime",
-		"_supavisor",
-		"pgbouncer",
-		"pgsodium",
-		"pgtle",
-		"supabase_migrations",
-		"vault",
-	}, PgSchemas...)
 	InternalSchemas = append([]string{
 		"_analytics",
 		"_realtime",
@@ -207,7 +148,6 @@ var (
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
-	SeedDataPath          = filepath.Join(SupabaseDirPath, "seed.sql")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
 
 	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
@@ -353,10 +293,6 @@ func ValidateFunctionSlug(slug string) error {
 	}
 
 	return nil
-}
-
-func Ptr[T any](v T) *T {
-	return &v
 }
 
 func GetHostname() string {

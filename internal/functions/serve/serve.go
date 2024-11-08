@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -108,11 +109,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return err
 	}
-	hostFuncDir, err := filepath.Abs(utils.FunctionsDir)
-	if err != nil {
-		return errors.Errorf("failed to resolve functions dir: %w", err)
-	}
-	dockerFuncDir := utils.ToDockerPath(hostFuncDir)
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey,
@@ -120,7 +116,6 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_DB_URL="+dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
-		"SUPABASE_INTERNAL_FUNCTIONS_PATH="+dockerFuncDir,
 	)
 	if viper.GetBool("DEBUG") {
 		env = append(env, "SUPABASE_INTERNAL_DEBUG=true")
@@ -129,22 +124,20 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		env = append(env, "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0")
 	}
 	// 3. Parse custom import map
-	binds, functionsConfigString, err := populatePerFunctionConfigs(importMapPath, noVerifyJWT, fsys)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
+	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
-	binds = append(binds,
-		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
-		// https://denolib.gitbook.io/guide/advanced/deno_dir-code-fetch-and-cache
-		utils.EdgeRuntimeId+":/root/.cache/deno:rw",
-		hostFuncDir+":"+dockerFuncDir+":rw",
-	)
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 	// 4. Parse entrypoint script
 	cmd := append([]string{
 		"edge-runtime",
 		"start",
-		"--main-service=.",
+		"--main-service=/root",
 		fmt.Sprintf("--port=%d", dockerRuntimeServerPort),
 		fmt.Sprintf("--policy=%s", utils.Config.EdgeRuntime.Policy),
 	}, runtimeOption.toArgs()...)
@@ -152,28 +145,30 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		cmd = append(cmd, "--verbose")
 	}
 	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
+	entrypoint := []string{"sh", "-c", `cat <<'EOF' > /root/index.ts && ` + cmdString + `
 ` + mainFuncEmbed + `
 EOF
 `}
 	// 5. Parse exposed ports
-	ports := []string{fmt.Sprintf("::%d/tcp", dockerRuntimeServerPort)}
+	dockerRuntimePort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeServerPort))
+	exposedPorts := nat.PortSet{dockerRuntimePort: struct{}{}}
+	portBindings := nat.PortMap{}
 	if runtimeOption.InspectMode != nil {
-		ports = append(ports, fmt.Sprintf(":%d:%d/tcp", utils.Config.EdgeRuntime.InspectorPort, dockerRuntimeInspectorPort))
-	}
-	exposedPorts, portBindings, err := nat.ParsePortSpecs(ports)
-	if err != nil {
-		return errors.Errorf("failed to expose ports: %w", err)
+		dockerInspectorPort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeInspectorPort))
+		exposedPorts[dockerInspectorPort] = struct{}{}
+		portBindings[dockerInspectorPort] = []nat.PortBinding{{
+			HostPort: strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10),
+		}}
 	}
 	// 6. Start container
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
-			Image:        utils.EdgeRuntimeImage,
+			Image:        utils.Config.EdgeRuntime.Image,
 			Env:          env,
 			Entrypoint:   entrypoint,
 			ExposedPorts: exposedPorts,
-			WorkingDir:   utils.DockerDenoDir,
+			WorkingDir:   utils.ToDockerPath(cwd),
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		container.HostConfig{
@@ -211,31 +206,33 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, nil
 }
 
-func populatePerFunctionConfigs(importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
 	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
 	}
-
-	binds := []string{}
-	functionsConfig := make(map[string]interface{}, len(slugs))
-	for _, functionName := range slugs {
-		fc := utils.GetFunctionConfig(functionName, importMapPath, noVerifyJWT, fsys)
-		if fc.ImportMap != "" {
-			modules, dockerImportMapPath, err := utils.BindImportMap(fc.ImportMap, fsys)
-			if err != nil {
-				return nil, "", err
-			}
-			binds = append(binds, modules...)
-			fc.ImportMap = dockerImportMapPath
-		}
-		functionsConfig[functionName] = fc
+	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
+	if err != nil {
+		return nil, "", err
 	}
-
+	binds := []string{}
+	for slug, fc := range functionsConfig {
+		if !fc.IsEnabled() {
+			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			continue
+		}
+		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
+		if err != nil {
+			return nil, "", err
+		}
+		binds = append(binds, modules...)
+		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
+		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
+		functionsConfig[slug] = fc
+	}
 	functionsConfigBytes, err := json.Marshal(functionsConfig)
 	if err != nil {
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
-
 	return utils.RemoveDuplicates(binds), string(functionsConfigBytes), nil
 }

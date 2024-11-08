@@ -76,11 +76,22 @@ services:
             headers:
               - "Content-Profile: graphql_public"
   - name: realtime-v1-ws
-    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/websocket"
     url: http://{{ .RealtimeId }}:4000/socket
     protocol: ws
     routes:
       - name: realtime-v1-ws
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+  - name: realtime-v1-longpoll
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
+    url: http://{{ .RealtimeId }}:4000/socket
+    protocol: http
+    routes:
+      - name: realtime-v1-longpoll
         strip_path: true
         paths:
           - /realtime/v1/
@@ -108,11 +119,13 @@ services:
           - /storage/v1/
     plugins:
       - name: cors
+{{if StorageVersionBelow "1.10.1" }}
       - name: request-transformer
         config:
           add:
             headers:
               - "Forwarded: host={{ .ApiHost }}:{{ .ApiPort }};proto=http"
+{{end}}
   - name: pg-meta
     _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
     url: http://{{ .PgmetaId }}:8080/
@@ -140,3 +153,14 @@ services:
         strip_path: true
         paths:
           - /analytics/v1/
+  - name: pooler-v2-ws
+    _comment: "Pooler: /pooler/v2/* -> ws://pooler:4000/v2/*"
+    url: http://{{ .PoolerId }}:4000/v2
+    protocol: ws
+    routes:
+      - name: pooler-v2-ws
+        strip_path: true
+        paths:
+          - /pooler/v2/
+    plugins:
+      - name: cors

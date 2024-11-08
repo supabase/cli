@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/cloudflare"
 	supabase "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 const (
@@ -60,7 +61,7 @@ func FallbackLookupIP(ctx context.Context, host string) ([]string, error) {
 func ResolveCNAME(ctx context.Context, host string) (string, error) {
 	// Ref: https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json
 	cf := cloudflare.NewCloudflareAPI()
-	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host, Type: Ptr(cloudflare.TypeCNAME)})
+	data, err := cf.DNSQuery(ctx, cloudflare.DNSParams{Name: host, Type: cast.Ptr(cloudflare.TypeCNAME)})
 	if err != nil {
 		return "", err
 	}
@@ -264,7 +265,7 @@ func GetSupabaseDashboardURL() string {
 	case DefaultApiHost, DeprecatedApiHost:
 		return "https://supabase.com/dashboard"
 	case "https://api.supabase.green":
-		return "https://app.supabase.green"
+		return "https://supabase.green/dashboard"
 	default:
 		return "http://127.0.0.1:8082"
 	}

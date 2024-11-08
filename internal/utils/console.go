@@ -4,31 +4,29 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/pkg/cast"
 	"golang.org/x/term"
 )
 
 type Console struct {
-	IsTTY  bool
-	stdin  *bufio.Scanner
-	logger io.Writer
-	token  chan string
-	mu     sync.Mutex
+	IsTTY bool
+	stdin *bufio.Scanner
+	token chan string
+	mu    sync.Mutex
 }
 
 func NewConsole() *Console {
 	return &Console{
-		IsTTY:  term.IsTerminal(int(os.Stdin.Fd())),
-		stdin:  bufio.NewScanner(os.Stdin),
-		logger: GetDebugLogger(),
-		token:  make(chan string),
-		mu:     sync.Mutex{},
+		IsTTY: term.IsTerminal(int(os.Stdin.Fd())),
+		stdin: bufio.NewScanner(os.Stdin),
+		token: make(chan string),
+		mu:    sync.Mutex{},
 	}
 }
 
@@ -81,10 +79,10 @@ func (c *Console) PromptYesNo(ctx context.Context, label string, def bool) (bool
 func parseYesNo(s string) *bool {
 	s = strings.ToLower(s)
 	if s == "y" || s == "yes" {
-		return Ptr(true)
+		return cast.Ptr(true)
 	}
 	if s == "n" || s == "no" {
-		return Ptr(false)
+		return cast.Ptr(false)
 	}
 	return nil
 }

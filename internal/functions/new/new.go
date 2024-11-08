@@ -20,8 +20,7 @@ var (
 )
 
 type indexConfig struct {
-	Port  uint16
-	Slug  string
+	URL   string
 	Token string
 }
 
@@ -46,16 +45,14 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		}
 		defer f.Close()
 		// Templatize index.ts by config.toml if available
-		utils.Config.Api.Port = 54321
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			utils.CmdSuggestion = ""
 		}
 		config := indexConfig{
-			Port:  utils.Config.Api.Port,
-			Slug:  slug,
+			URL:   utils.GetApiUrl("/functions/v1/" + slug),
 			Token: utils.Config.Auth.AnonKey,
 		}
-		if err := indexTemplate.Execute(f, config); err != nil {
+		if err := indexTemplate.Option("missingkey=error").Execute(f, config); err != nil {
 			return errors.Errorf("failed to initialise function entrypoint: %w", err)
 		}
 	}

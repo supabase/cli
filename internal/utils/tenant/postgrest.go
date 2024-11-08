@@ -27,7 +27,6 @@ func (t *TenantAPI) GetPostgrestVersion(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 	data, err := fetcher.ParseJSON[SwaggerResponse](resp.Body)
 	if err != nil {
 		return "", err
@@ -35,6 +34,6 @@ func (t *TenantAPI) GetPostgrestVersion(ctx context.Context) (string, error) {
 	if len(data.Info.Version) == 0 {
 		return "", errors.New(errPostgrestVersion)
 	}
-	parts := strings.Split(data.Info.Version, " ")
+	parts := strings.Fields(data.Info.Version)
 	return "v" + parts[0], nil
 }

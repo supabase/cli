@@ -2,9 +2,10 @@ package client
 
 import (
 	"context"
-	"fmt"
+	"net/http"
 
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -12,23 +13,36 @@ import (
 )
 
 func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, error) {
-	server := fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Api.Port)
-	token := utils.Config.Auth.ServiceRoleKey
-	if len(projectRef) > 0 {
-		server = "https://" + utils.GetSupabaseHost(projectRef)
+	client := storage.StorageAPI{}
+	if len(projectRef) == 0 {
+		client.Fetcher = newLocalClient()
+	} else if viper.IsSet("AUTH_SERVICE_ROLE_KEY") {
 		// Special case for calling storage API without personal access token
-		if !viper.IsSet("AUTH_SERVICE_ROLE_KEY") {
-			apiKey, err := tenant.GetApiKeys(ctx, projectRef)
-			if err != nil {
-				return storage.StorageAPI{}, err
-			}
-			token = apiKey.ServiceRole
-		}
+		client.Fetcher = newRemoteClient(projectRef, utils.Config.Auth.ServiceRoleKey)
+	} else if apiKey, err := tenant.GetApiKeys(ctx, projectRef); err == nil {
+		client.Fetcher = newRemoteClient(projectRef, apiKey.ServiceRole)
+	} else {
+		return client, err
 	}
-	api := storage.StorageAPI{Fetcher: fetcher.NewFetcher(
-		server,
+	return client, nil
+}
+
+func newLocalClient() *fetcher.Fetcher {
+	client := status.NewKongClient()
+	return fetcher.NewFetcher(
+		utils.Config.Api.ExternalUrl,
+		fetcher.WithHTTPClient(client),
+		fetcher.WithBearerToken(utils.Config.Auth.ServiceRoleKey),
+		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
+		fetcher.WithExpectedStatus(http.StatusOK),
+	)
+}
+
+func newRemoteClient(projectRef, token string) *fetcher.Fetcher {
+	return fetcher.NewFetcher(
+		"https://"+utils.GetSupabaseHost(projectRef),
 		fetcher.WithBearerToken(token),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
-	)}
-	return api, nil
+		fetcher.WithExpectedStatus(http.StatusOK),
+	)
 }

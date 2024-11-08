@@ -8,7 +8,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/errdefs"
@@ -21,15 +23,9 @@ import (
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/pgxv5"
-)
-
-var (
-	//go:embed templates/drop.sql
-	dropObjects string
-	//go:embed templates/list.sql
-	ListSchemas string
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -50,17 +46,25 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
-
 	// Config file is loaded before parsing --linked or --local flags
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return err
 	}
-
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
 	if err := resetDatabase(ctx, version, fsys, options...); err != nil {
 		return err
 	}
-
+	// Seed objects from supabase/buckets directory
+	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); err == nil {
+		if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
+			if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+				return err
+			}
+		}
+		if err := buckets.Run(ctx, "", false, fsys); err != nil {
+			return err
+		}
+	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
 	return nil
@@ -96,11 +100,6 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 		return err
 	}
 	defer conn.Close(context.Background())
-	if utils.Config.Db.MajorVersion > 14 {
-		if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-			return err
-		}
-	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
@@ -110,10 +109,6 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	}
 	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
 		return errors.Errorf("failed to remove volume: %w", err)
-	}
-	// Skip syslog if vector container is not started
-	if _, err := utils.Docker.ContainerInspect(ctx, utils.VectorId); err != nil {
-		utils.Config.Analytics.Enabled = false
 	}
 	config := start.NewContainerConfig()
 	hostConfig := start.NewHostConfig()
@@ -131,15 +126,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, utils.DbId, os.Stderr, fsys); err != nil {
-		return err
-	}
-	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
+	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Restarting containers...")
@@ -152,7 +139,7 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	return apply.BatchExecDDL(ctx, conn, strings.NewReader(utils.InitialSchemaSql))
+	return start.InitSchema14(ctx, conn)
 }
 
 // Recreate postgres database by connecting to template1
@@ -166,10 +153,12 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 		return err
 	}
 	// We are not dropping roles here because they are cluster level entities. Use stop && start instead.
-	sql := repair.MigrationFile{
-		Lines: []string{
+	sql := migration.MigrationFile{
+		Statements: []string{
 			"DROP DATABASE IF EXISTS postgres WITH (FORCE)",
 			"CREATE DATABASE postgres WITH OWNER postgres",
+			"DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
+			"CREATE DATABASE _supabase WITH OWNER postgres",
 		},
 	}
 	return sql.ExecBatch(ctx, conn)
@@ -206,15 +195,19 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 
 func restartServices(ctx context.Context) error {
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
-	services := []string{utils.StorageId, utils.GotrueId, utils.RealtimeId}
+	services := listServicesToRestart()
 	result := utils.WaitAll(services, func(id string) error {
 		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
-			return errors.Errorf("Failed to restart %s: %w", id, err)
+			return errors.Errorf("failed to restart %s: %w", id, err)
 		}
 		return nil
 	})
 	// Do not wait for service healthy as those services may be excluded from starting
 	return errors.Join(result...)
+}
+
+func listServicesToRestart() []string {
+	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId}
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -224,42 +217,10 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	defer conn.Close(context.Background())
-	// Only drop objects in extensions and public schema
-	excludes := append([]string{
-		"extensions",
-		"public",
-	}, utils.ManagedSchemas...)
-	userSchemas, err := LoadUserSchemas(ctx, conn, excludes...)
-	if err != nil {
-		return err
-	}
-	// Drop all user defined schemas
-	migration := repair.MigrationFile{}
-	for _, schema := range userSchemas {
-		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
-		migration.Lines = append(migration.Lines, sql)
-	}
-	// If an extension uses a schema it doesn't create, dropping the schema will cascade to also
-	// drop the extension. But if an extension creates its own schema, dropping the schema will
-	// throw an error. Hence, we drop the extension instead so it cascades to its own schema.
-	migration.Lines = append(migration.Lines, dropObjects)
-	if err := migration.ExecBatch(ctx, conn); err != nil {
+	if err := migration.DropUserSchemas(ctx, conn); err != nil {
 		return err
 	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
-}
-
-func LoadUserSchemas(ctx context.Context, conn *pgx.Conn, exclude ...string) ([]string, error) {
-	if len(exclude) == 0 {
-		exclude = utils.ManagedSchemas
-	}
-	exclude = LikeEscapeSchema(exclude)
-	rows, err := conn.Query(ctx, ListSchemas, exclude)
-	if err != nil {
-		return nil, errors.Errorf("failed to list schemas: %w", err)
-	}
-	// TODO: show detail and hint from pgconn.PgError
-	return pgxv5.CollectStrings(rows)
 }
 
 func LikeEscapeSchema(schemas []string) (result []string) {

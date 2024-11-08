@@ -30,6 +30,7 @@ import (
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/pkg/queue"
 	"golang.org/x/term"
 )
 
@@ -56,7 +57,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}
 	// 0. Download starter template
 	if len(starter.Url) > 0 {
-		client := utils.GetGtihubClient(ctx)
+		client := utils.GetGitHubClient(ctx)
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
@@ -362,14 +363,14 @@ func downloadSample(ctx context.Context, client *github.Client, templateUrl stri
 
 type Downloader struct {
 	api   *fetcher.Fetcher
-	queue *utils.JobQueue
+	queue *queue.JobQueue
 	fsys  afero.Fs
 }
 
 func NewDownloader(concurrency uint, fsys afero.Fs) *Downloader {
 	return &Downloader{
 		api:   fetcher.NewFetcher("", fetcher.WithExpectedStatus(http.StatusOK)),
-		queue: utils.NewJobQueue(concurrency),
+		queue: queue.NewJobQueue(concurrency),
 		fsys:  fsys,
 	}
 }

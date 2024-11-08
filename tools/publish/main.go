@@ -66,7 +66,7 @@ func publishPackages(ctx context.Context, version string, beta bool) error {
 		config.Description += " (Beta)"
 		filename += "-beta"
 	}
-	client := utils.GetGtihubClient(ctx)
+	client := utils.GetGitHubClient(ctx)
 	if err := updatePackage(ctx, client, HOMEBREW_REPO, filename+".rb", brewFormulaTemplate, config); err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func updatePackage(ctx context.Context, client *github.Client, repo, path string
 	fmt.Fprintf(os.Stderr, "Updating %s: %s\n", repo, path)
 	// Render formula from template
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, config); err != nil {
+	if err := tmpl.Option("missingkey=error").Execute(&buf, config); err != nil {
 		return err
 	}
 	branch := "release/cli"
