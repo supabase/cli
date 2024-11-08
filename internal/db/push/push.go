@@ -29,12 +29,11 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	if err != nil {
 		return err
 	}
-	iofs := afero.NewIOFS(fsys)
 	var seeds []migration.SeedFile
 	if includeSeed {
-		if baseConfig, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !baseConfig.Db.Seed.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", baseConfig.ProjectId)
-		} else if seeds, err = migration.GetPendingSeeds(ctx, baseConfig.Db.Seed.SqlPaths, conn, iofs); err != nil {
+		if remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !baseConfig.Db.Seed.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
+		} else if seeds, err = migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
 		}
 	}
@@ -71,7 +70,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.SeedGlobals(ctx, globals, conn, iofs); err != nil {
+			if err := migration.SeedGlobals(ctx, globals, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
 		}
@@ -82,7 +81,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.ApplyMigrations(ctx, pending, conn, iofs); err != nil {
+			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
 		} else {
@@ -95,7 +94,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.SeedData(ctx, seeds, conn, iofs); err != nil {
+			if err := migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
 		} else if includeSeed {
