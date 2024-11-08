@@ -31,7 +31,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	var seeds []migration.SeedFile
 	if includeSeed {
-		if remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !baseConfig.Db.Seed.Enabled {
+		if remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !remote.Db.Seed.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
 		} else if seeds, err = migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
