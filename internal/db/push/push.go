@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -28,10 +29,12 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	if err != nil {
 		return err
 	}
+	iofs := afero.NewIOFS(fsys)
 	var seeds []migration.SeedFile
 	if includeSeed {
-		seeds, err = migration.GetPendingSeeds(ctx, utils.Config.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
-		if err != nil {
+		if baseConfig, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !baseConfig.Db.Seed.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", baseConfig.ProjectId)
+		} else if seeds, err = migration.GetPendingSeeds(ctx, baseConfig.Db.Seed.SqlPaths, conn, iofs); err != nil {
 			return err
 		}
 	}
@@ -68,7 +71,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.SeedGlobals(ctx, globals, conn, afero.NewIOFS(fsys)); err != nil {
+			if err := migration.SeedGlobals(ctx, globals, conn, iofs); err != nil {
 				return err
 			}
 		}
@@ -79,7 +82,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
+			if err := migration.ApplyMigrations(ctx, pending, conn, iofs); err != nil {
 				return err
 			}
 		} else {
@@ -92,7 +95,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys)); err != nil {
+			if err := migration.SeedData(ctx, seeds, conn, iofs); err != nil {
 				return err
 			}
 		} else if includeSeed {
