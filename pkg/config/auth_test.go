@@ -9,6 +9,84 @@ import (
 	"github.com/supabase/cli/pkg/cast"
 )
 
+func TestHookDiff(t *testing.T) {
+	t.Run("local and remote enabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, Hook: hook{
+			CustomAccessToken:           hookConfig{Enabled: true},
+			SendSMS:                     hookConfig{Enabled: true},
+			SendEmail:                   hookConfig{Enabled: true},
+			MFAVerificationAttempt:      hookConfig{Enabled: true},
+			PasswordVerificationAttempt: hookConfig{Enabled: true},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:           cast.Ptr(true),
+			HookCustomAccessTokenUri:               cast.Ptr(""),
+			HookCustomAccessTokenSecrets:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookSendEmailEnabled:                   cast.Ptr(true),
+			HookSendEmailUri:                       cast.Ptr(""),
+			HookSendEmailSecrets:                   cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookSendSmsEnabled:                     cast.Ptr(true),
+			HookSendSmsUri:                         cast.Ptr(""),
+			HookSendSmsSecrets:                     cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
+			HookMfaVerificationAttemptUri:          cast.Ptr(""),
+			HookMfaVerificationAttemptSecrets:      cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
+			HookPasswordVerificationAttemptUri:     cast.Ptr(""),
+			HookPasswordVerificationAttemptSecrets: cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local enabled and disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, Hook: hook{
+			CustomAccessToken:      hookConfig{Enabled: true},
+			MFAVerificationAttempt: hookConfig{Enabled: false},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:      cast.Ptr(false),
+			HookCustomAccessTokenUri:          cast.Ptr(""),
+			HookCustomAccessTokenSecrets:      cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookMfaVerificationAttemptEnabled: cast.Ptr(true),
+			HookMfaVerificationAttemptUri:     cast.Ptr(""),
+			HookMfaVerificationAttemptSecrets: cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+		})
+		// Check error
+		assert.NoError(t, err)
+
+		assert.Contains(t, string(diff), `[hook.mfa_verification_attempt]`)
+		assert.Contains(t, string(diff), `-enabled = true`)
+		assert.Contains(t, string(diff), `+enabled = false`)
+		assert.Contains(t, string(diff), `uri = ""`)
+		assert.Contains(t, string(diff), `secrets = ""`)
+
+		assert.Contains(t, string(diff), `[hook.custom_access_token]`)
+		assert.Contains(t, string(diff), `-enabled = false`)
+		assert.Contains(t, string(diff), `+enabled = true`)
+		assert.Contains(t, string(diff), `uri = ""`)
+		assert.Contains(t, string(diff), `secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"`)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:           cast.Ptr(false),
+			HookSendEmailEnabled:                   cast.Ptr(false),
+			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestSmsDiff(t *testing.T) {
 	t.Run("local enabled remote enabled", func(t *testing.T) {
 		c := auth{EnableSignup: true, Sms: sms{
