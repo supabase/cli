@@ -43,6 +43,7 @@ type (
 		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role"`
 		SharedBuffers                 *string                 `toml:"shared_buffers"`
 		StatementTimeout              *string                 `toml:"statement_timeout"`
+		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp"`
 		WalKeepSize                   *string                 `toml:"wal_keep_size"`
 		WalSenderTimeout              *string                 `toml:"wal_sender_timeout"`
 		WorkMem                       *string                 `toml:"work_mem"`
@@ -104,6 +105,7 @@ func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body.MaxWalSize = a.MaxWalSize
 	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.SessionReplicationRole)
 	body.StatementTimeout = a.StatementTimeout
+	body.TrackCommitTimestamp = a.TrackCommitTimestamp
 	body.WalKeepSize = a.WalKeepSize
 	body.WalSenderTimeout = a.WalSenderTimeout
 	body.WorkMem = a.WorkMem
@@ -131,6 +133,7 @@ func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) s
 	result.SessionReplicationRole = (*SessionReplicationRole)(remoteConfig.SessionReplicationRole)
 	result.SharedBuffers = remoteConfig.SharedBuffers
 	result.StatementTimeout = remoteConfig.StatementTimeout
+	result.TrackCommitTimestamp = remoteConfig.TrackCommitTimestamp
 	result.WalKeepSize = remoteConfig.WalKeepSize
 	result.WalSenderTimeout = remoteConfig.WalSenderTimeout
 	result.WorkMem = remoteConfig.WorkMem
