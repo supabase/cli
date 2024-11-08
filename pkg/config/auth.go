@@ -193,7 +193,9 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
 	a.Hook.toAuthConfigBody(&body)
-	// TODO: mfa, sessions, email
+	a.MFA.toAuthConfigBody(&body)
+	a.Sessions.toAuthConfigBody(&body)
+	// TODO: email
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
 	return body
@@ -210,6 +212,8 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
 	result.Hook.fromAuthConfig(remoteConfig)
+	result.MFA.fromAuthConfig(remoteConfig)
+	result.Sessions.fromAuthConfig(remoteConfig)
 	result.Sms.fromAuthConfig(remoteConfig)
 	result.External = maps.Clone(result.External)
 	result.External.fromAuthConfig(remoteConfig)
@@ -268,6 +272,42 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		h.PasswordVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
 	}
 	h.PasswordVerificationAttempt.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
+}
+
+func (m mfa) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.MfaMaxEnrolledFactors = cast.UintToIntPtr(&m.MaxEnrolledFactors)
+	body.MfaTotpEnrollEnabled = &m.TOTP.EnrollEnabled
+	body.MfaTotpVerifyEnabled = &m.TOTP.VerifyEnabled
+	body.MfaPhoneEnrollEnabled = &m.Phone.EnrollEnabled
+	body.MfaPhoneVerifyEnabled = &m.Phone.VerifyEnabled
+	body.MfaPhoneOtpLength = cast.UintToIntPtr(&m.Phone.OtpLength)
+	body.MfaPhoneTemplate = &m.Phone.Template
+	body.MfaPhoneMaxFrequency = cast.Ptr(int(m.Phone.MaxFrequency.Seconds()))
+	body.MfaWebAuthnEnrollEnabled = &m.WebAuthn.EnrollEnabled
+	body.MfaWebAuthnVerifyEnabled = &m.WebAuthn.VerifyEnabled
+}
+
+func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	m.MaxEnrolledFactors = cast.IntToUint(cast.Val(remoteConfig.MfaMaxEnrolledFactors, 0))
+	m.TOTP.EnrollEnabled = cast.Val(remoteConfig.MfaTotpEnrollEnabled, false)
+	m.TOTP.VerifyEnabled = cast.Val(remoteConfig.MfaTotpVerifyEnabled, false)
+	m.Phone.EnrollEnabled = cast.Val(remoteConfig.MfaPhoneEnrollEnabled, false)
+	m.Phone.VerifyEnabled = cast.Val(remoteConfig.MfaPhoneVerifyEnabled, false)
+	m.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
+	m.Phone.Template = cast.Val(remoteConfig.MfaPhoneTemplate, "")
+	m.Phone.MaxFrequency = time.Duration(cast.Val(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
+	m.WebAuthn.EnrollEnabled = cast.Val(remoteConfig.MfaWebAuthnEnrollEnabled, false)
+	m.WebAuthn.VerifyEnabled = cast.Val(remoteConfig.MfaWebAuthnVerifyEnabled, false)
+}
+
+func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.SessionsTimebox = cast.Ptr(int(s.Timebox.Seconds()))
+	body.SessionsInactivityTimeout = cast.Ptr(int(s.InactivityTimeout.Seconds()))
+}
+
+func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Second
+	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Second
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {

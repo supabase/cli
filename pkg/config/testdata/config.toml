@@ -188,8 +188,8 @@ verify_enabled = true
 enroll_enabled = true
 verify_enabled = true
 otp_length = 6
-template = "Your code is {{ `{{ .Code }}` }} ."
-max_frequency = "10s"
+template = "Your code is {{ `{{ .Code }}` }}"
+max_frequency = "5s"
 
 # Configure Multi-factor-authentication via Phone Messaging
 [auth.mfa.web_authn]

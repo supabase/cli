@@ -87,6 +87,124 @@ func TestHookDiff(t *testing.T) {
 	})
 }
 
+func TestMfaDiff(t *testing.T) {
+	t.Run("local and remote enabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, MFA: mfa{
+			TOTP: factorTypeConfiguration{
+				EnrollEnabled: true,
+				VerifyEnabled: true,
+			},
+			Phone: phoneFactorTypeConfiguration{
+				factorTypeConfiguration: factorTypeConfiguration{
+					EnrollEnabled: true,
+					VerifyEnabled: true,
+				},
+				OtpLength:    6,
+				Template:     "Your code is {{ .Code }}",
+				MaxFrequency: 5 * time.Second,
+			},
+			WebAuthn: factorTypeConfiguration{
+				EnrollEnabled: true,
+				VerifyEnabled: true,
+			},
+			MaxEnrolledFactors: 10,
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			MfaMaxEnrolledFactors:    cast.Ptr(10),
+			MfaTotpEnrollEnabled:     cast.Ptr(true),
+			MfaTotpVerifyEnabled:     cast.Ptr(true),
+			MfaPhoneEnrollEnabled:    cast.Ptr(true),
+			MfaPhoneVerifyEnabled:    cast.Ptr(true),
+			MfaPhoneOtpLength:        6,
+			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     cast.Ptr(5),
+			MfaWebAuthnEnrollEnabled: cast.Ptr(true),
+			MfaWebAuthnVerifyEnabled: cast.Ptr(true),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local enabled and disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, MFA: mfa{
+			TOTP: factorTypeConfiguration{
+				EnrollEnabled: false,
+				VerifyEnabled: false,
+			},
+			Phone: phoneFactorTypeConfiguration{
+				factorTypeConfiguration: factorTypeConfiguration{
+					EnrollEnabled: true,
+					VerifyEnabled: true,
+				},
+			},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			MfaMaxEnrolledFactors:    cast.Ptr(10),
+			MfaTotpEnrollEnabled:     cast.Ptr(false),
+			MfaTotpVerifyEnabled:     cast.Ptr(false),
+			MfaPhoneEnrollEnabled:    cast.Ptr(false),
+			MfaPhoneVerifyEnabled:    cast.Ptr(false),
+			MfaPhoneOtpLength:        6,
+			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     cast.Ptr(5),
+			MfaWebAuthnEnrollEnabled: cast.Ptr(false),
+			MfaWebAuthnVerifyEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Contains(t, string(diff), ` [mfa]`)
+		assert.Contains(t, string(diff), `-max_enrolled_factors = 10`)
+		assert.Contains(t, string(diff), `+max_enrolled_factors = 0`)
+		assert.Contains(t, string(diff), ` [mfa.totp]`)
+		assert.Contains(t, string(diff), ` enroll_enabled = false`)
+		assert.Contains(t, string(diff), ` verify_enabled = false`)
+		assert.Contains(t, string(diff), ` [mfa.phone]`)
+		assert.Contains(t, string(diff), `-enroll_enabled = false`)
+		assert.Contains(t, string(diff), `-verify_enabled = false`)
+		assert.Contains(t, string(diff), `-otp_length = 6`)
+		assert.Contains(t, string(diff), `-template = "Your code is {{ .Code }}"`)
+		assert.Contains(t, string(diff), `-max_frequency = "5s"`)
+		assert.Contains(t, string(diff), `+enroll_enabled = true`)
+		assert.Contains(t, string(diff), `+verify_enabled = true`)
+		assert.Contains(t, string(diff), `+otp_length = 0`)
+		assert.Contains(t, string(diff), `+template = ""`)
+		assert.Contains(t, string(diff), `+max_frequency = "0s"`)
+		assert.Contains(t, string(diff), ` [mfa.web_authn]`)
+		assert.Contains(t, string(diff), ` enroll_enabled = false`)
+		assert.Contains(t, string(diff), ` verify_enabled = false`)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := auth{EnableSignup: true, MFA: mfa{
+			MaxEnrolledFactors: 10,
+			Phone: phoneFactorTypeConfiguration{
+				OtpLength:    6,
+				Template:     "Your code is {{ .Code }}",
+				MaxFrequency: 5 * time.Second,
+			},
+		}}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			MfaMaxEnrolledFactors:    cast.Ptr(10),
+			MfaTotpEnrollEnabled:     cast.Ptr(false),
+			MfaTotpVerifyEnabled:     cast.Ptr(false),
+			MfaPhoneEnrollEnabled:    cast.Ptr(false),
+			MfaPhoneVerifyEnabled:    cast.Ptr(false),
+			MfaPhoneOtpLength:        6,
+			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     cast.Ptr(5),
+			MfaWebAuthnEnrollEnabled: cast.Ptr(false),
+			MfaWebAuthnVerifyEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestSmsDiff(t *testing.T) {
 	t.Run("local enabled remote enabled", func(t *testing.T) {
 		c := auth{EnableSignup: true, Sms: sms{
