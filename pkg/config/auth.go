@@ -12,25 +12,24 @@ import (
 
 type (
 	auth struct {
-		Enabled                bool     `toml:"enabled"`
-		Image                  string   `toml:"-"`
-		SiteUrl                string   `toml:"site_url"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
+		Enabled bool   `toml:"enabled"`
+		Image   string `toml:"-"`
 
-		JwtExpiry                  uint `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		SiteUrl                    string   `toml:"site_url"`
+		AdditionalRedirectUrls     []string `toml:"additional_redirect_urls"`
+		JwtExpiry                  uint     `toml:"jwt_expiry"`
+		EnableRefreshTokenRotation bool     `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint     `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool     `toml:"enable_manual_linking"`
+		EnableSignup               bool     `toml:"enable_signup"`
+		EnableAnonymousSignIns     bool     `toml:"enable_anonymous_sign_ins"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
-
-		EnableSignup           bool     `toml:"enable_signup"`
-		EnableAnonymousSignIns bool     `toml:"enable_anonymous_sign_ins"`
-		Email                  email    `toml:"email"`
-		Sms                    sms      `toml:"sms"`
-		External               external `toml:"external"`
+		Email    email    `toml:"email"`
+		Sms      sms      `toml:"sms"`
+		External external `toml:"external"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
