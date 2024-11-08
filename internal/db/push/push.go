@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -30,8 +31,9 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	var seeds []migration.SeedFile
 	if includeSeed {
-		seeds, err = migration.GetPendingSeeds(ctx, utils.Config.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
-		if err != nil {
+		if remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef); !remote.Db.Seed.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
+		} else if seeds, err = migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
 		}
 	}
