@@ -192,6 +192,8 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
+	a.Hook.toAuthConfigBody(&body)
+	// TODO: mfa, sessions, email
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
 	return body
@@ -207,10 +209,65 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	result.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
 	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	result.Hook.fromAuthConfig(remoteConfig)
 	result.Sms.fromAuthConfig(remoteConfig)
 	result.External = maps.Clone(result.External)
 	result.External.fromAuthConfig(remoteConfig)
 	return result
+}
+
+func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if body.HookCustomAccessTokenEnabled = &h.CustomAccessToken.Enabled; *body.HookCustomAccessTokenEnabled {
+		body.HookCustomAccessTokenUri = &h.CustomAccessToken.URI
+		body.HookCustomAccessTokenSecrets = &h.CustomAccessToken.Secrets
+	}
+	if body.HookSendEmailEnabled = &h.SendEmail.Enabled; *body.HookSendEmailEnabled {
+		body.HookSendEmailUri = &h.SendEmail.URI
+		body.HookSendEmailSecrets = &h.SendEmail.Secrets
+	}
+	if body.HookSendSmsEnabled = &h.SendSMS.Enabled; *body.HookSendSmsEnabled {
+		body.HookSendSmsUri = &h.SendSMS.URI
+		body.HookSendSmsSecrets = &h.SendSMS.Secrets
+	}
+	// Enterprise and team only features
+	if body.HookMfaVerificationAttemptEnabled = &h.MFAVerificationAttempt.Enabled; *body.HookMfaVerificationAttemptEnabled {
+		body.HookMfaVerificationAttemptUri = &h.MFAVerificationAttempt.URI
+		body.HookMfaVerificationAttemptSecrets = &h.MFAVerificationAttempt.Secrets
+	}
+	if body.HookPasswordVerificationAttemptEnabled = &h.PasswordVerificationAttempt.Enabled; *body.HookPasswordVerificationAttemptEnabled {
+		body.HookPasswordVerificationAttemptUri = &h.PasswordVerificationAttempt.URI
+		body.HookPasswordVerificationAttemptSecrets = &h.PasswordVerificationAttempt.Secrets
+	}
+}
+
+func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	// Ignore disabled hooks because their envs are not loaded
+	if h.CustomAccessToken.Enabled {
+		h.CustomAccessToken.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
+		h.CustomAccessToken.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+	}
+	h.CustomAccessToken.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
+	if h.SendEmail.Enabled {
+		h.SendEmail.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
+		h.SendEmail.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
+	}
+	h.SendEmail.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
+	if h.SendSMS.Enabled {
+		h.SendSMS.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
+		h.SendSMS.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
+	}
+	h.SendSMS.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
+	// Enterprise and team only features
+	if h.MFAVerificationAttempt.Enabled {
+		h.MFAVerificationAttempt.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
+		h.MFAVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+	}
+	h.MFAVerificationAttempt.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
+	if h.PasswordVerificationAttempt.Enabled {
+		h.PasswordVerificationAttempt.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
+		h.PasswordVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+	}
+	h.PasswordVerificationAttempt.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
