@@ -247,7 +247,12 @@ func TestValidateHookURI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateHookURI(tt.uri, tt.hookName)
+			h := hookConfig{
+				Enabled: true,
+				URI:     tt.uri,
+				Secrets: "test-secret",
+			}
+			err := h.validate(tt.hookName)
 			if tt.shouldErr {
 				assert.Error(t, err, "Expected an error for %v", tt.name)
 				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
