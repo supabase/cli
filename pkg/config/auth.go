@@ -2,6 +2,7 @@ package config
 
 import (
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ type (
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		SecurePasswordChange bool                     `toml:"secure_password_change"`
 		Template             map[string]emailTemplate `toml:"template"`
-		Smtp                 smtp                     `toml:"smtp"`
+		Smtp                 *smtp                    `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 		OtpLength            uint                     `toml:"otp_length"`
 		OtpExpiry            uint                     `toml:"otp_expiry"`
@@ -194,7 +195,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
 	a.Sessions.toAuthConfigBody(&body)
-	// TODO: email
+	a.Email.toAuthConfigBody(&body)
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
 	return body
@@ -213,6 +214,7 @@ func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth 
 	result.Hook.fromAuthConfig(remoteConfig)
 	result.MFA.fromAuthConfig(remoteConfig)
 	result.Sessions.fromAuthConfig(remoteConfig)
+	result.Email.fromAuthConfig(remoteConfig)
 	result.Sms.fromAuthConfig(remoteConfig)
 	result.External = maps.Clone(result.External)
 	result.External.fromAuthConfig(remoteConfig)
@@ -307,6 +309,53 @@ func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Second
 	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Second
+}
+
+func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalEmailEnabled = &e.EnableSignup
+	body.MailerSecureEmailChangeEnabled = &e.DoubleConfirmChanges
+	body.MailerAutoconfirm = cast.Ptr(!e.EnableConfirmations)
+	body.MailerOtpLength = cast.UintToIntPtr(&e.OtpLength)
+	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
+	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
+	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+	if e.Smtp != nil {
+		body.SmtpHost = &e.Smtp.Host
+		body.SmtpPort = cast.Ptr(strconv.Itoa(int(e.Smtp.Port)))
+		body.SmtpUser = &e.Smtp.User
+		body.SmtpPass = &e.Smtp.Pass
+		body.SmtpAdminEmail = &e.Smtp.AdminEmail
+		body.SmtpSenderName = &e.Smtp.SenderName
+	} else {
+		// Setting a single empty string disables SMTP
+		body.SmtpHost = cast.Ptr("")
+	}
+}
+
+func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	e.EnableSignup = cast.Val(remoteConfig.ExternalEmailEnabled, false)
+	e.DoubleConfirmChanges = cast.Val(remoteConfig.MailerSecureEmailChangeEnabled, false)
+	e.EnableConfirmations = !cast.Val(remoteConfig.MailerAutoconfirm, false)
+	e.OtpLength = cast.IntToUint(cast.Val(remoteConfig.MailerOtpLength, 0))
+	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
+	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
+	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
+	// Api resets all values when SMTP is disabled
+	if remoteConfig.SmtpHost != nil {
+		e.Smtp = &smtp{
+			Host:       *remoteConfig.SmtpHost,
+			User:       cast.Val(remoteConfig.SmtpUser, ""),
+			Pass:       hashPrefix + cast.Val(remoteConfig.SmtpPass, ""),
+			AdminEmail: cast.Val(remoteConfig.SmtpAdminEmail, ""),
+			SenderName: cast.Val(remoteConfig.SmtpSenderName, ""),
+		}
+		portStr := cast.Val(remoteConfig.SmtpPort, "")
+		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
+			e.Smtp.Port = uint16(port)
+		}
+	} else {
+		e.Smtp = nil
+	}
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -667,8 +716,10 @@ func (a *auth) hashSecrets(key string) auth {
 		return hashPrefix + sha256Hmac(key, v)
 	}
 	result := *a
-	if len(result.Email.Smtp.Pass) > 0 {
-		result.Email.Smtp.Pass = hash(result.Email.Smtp.Pass)
+	if result.Email.Smtp != nil && len(result.Email.Smtp.Pass) > 0 {
+		copy := *result.Email.Smtp
+		copy.Pass = hash(result.Email.Smtp.Pass)
+		result.Email.Smtp = &copy
 	}
 	// Only hash secrets for locally enabled providers because other envs won't be loaded
 	switch {

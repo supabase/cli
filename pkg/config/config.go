@@ -219,8 +219,16 @@ func (c *baseConfig) Clone() baseConfig {
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth.External = maps.Clone(c.Auth.External)
+	if c.Auth.Email.Smtp != nil {
+		mailer := *c.Auth.Email.Smtp
+		copy.Auth.Email.Smtp = &mailer
+	}
 	copy.Auth.Email.Template = maps.Clone(c.Auth.Email.Template)
 	copy.Auth.Sms.TestOTP = maps.Clone(c.Auth.Sms.TestOTP)
+	if c.Experimental.Webhooks != nil {
+		webhooks := *c.Experimental.Webhooks
+		copy.Experimental.Webhooks = &webhooks
+	}
 	return copy
 }
 
@@ -283,11 +291,6 @@ func NewConfig(editors ...ConfigEditor) config {
 					"recovery":     {},
 					"magic_link":   {},
 					"email_change": {},
-				},
-				Smtp: smtp{
-					Host:       "inbucket",
-					Port:       2500,
-					AdminEmail: "admin@email.com",
 				},
 			},
 			External: map[string]provider{
@@ -655,21 +658,13 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
 			}
 		}
-		// Validate email config
-		for name, tmpl := range c.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 {
-				if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
-					return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
-				}
-			}
-		}
-		if c.Auth.Email.Smtp.Pass, err = maybeLoadEnv(c.Auth.Email.Smtp.Pass); err != nil {
-			return err
-		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
 		if err := c.Auth.MFA.validate(); err != nil {
+			return err
+		}
+		if err := c.Auth.Email.validate(fsys); err != nil {
 			return err
 		}
 		if err := c.Auth.Sms.validate(); err != nil {
@@ -809,6 +804,37 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 				set[item] = struct{}{}
 				c.SqlPaths = append(c.SqlPaths, item)
 			}
+		}
+	}
+	return nil
+}
+
+func (e *email) validate(fsys fs.FS) (err error) {
+	for name, tmpl := range e.Template {
+		if len(tmpl.ContentPath) > 0 {
+			if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+				return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
+			}
+		}
+	}
+	if e.Smtp != nil {
+		if len(e.Smtp.Host) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.host")
+		}
+		if e.Smtp.Port == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.port")
+		}
+		if len(e.Smtp.User) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.user")
+		}
+		if len(e.Smtp.Pass) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.pass")
+		}
+		if len(e.Smtp.AdminEmail) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.admin_email")
+		}
+		if e.Smtp.Pass, err = maybeLoadEnv(e.Smtp.Pass); err != nil {
+			return err
 		}
 	}
 	return nil

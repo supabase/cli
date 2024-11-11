@@ -9,15 +9,25 @@ import (
 	"github.com/supabase/cli/pkg/cast"
 )
 
+func newWithDefaults() auth {
+	return auth{
+		EnableSignup: true,
+		Email: email{
+			EnableConfirmations: true,
+		},
+	}
+}
+
 func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, Hook: hook{
+		c := newWithDefaults()
+		c.Hook = hook{
 			CustomAccessToken:           hookConfig{Enabled: true},
 			SendSMS:                     hookConfig{Enabled: true},
 			SendEmail:                   hookConfig{Enabled: true},
 			MFAVerificationAttempt:      hookConfig{Enabled: true},
 			PasswordVerificationAttempt: hookConfig{Enabled: true},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(true),
@@ -42,10 +52,11 @@ func TestHookDiff(t *testing.T) {
 	})
 
 	t.Run("local enabled and disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, Hook: hook{
+		c := newWithDefaults()
+		c.Hook = hook{
 			CustomAccessToken:      hookConfig{Enabled: true},
 			MFAVerificationAttempt: hookConfig{Enabled: false},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:      cast.Ptr(false),
@@ -72,7 +83,7 @@ func TestHookDiff(t *testing.T) {
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true}
+		c := newWithDefaults()
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
@@ -89,7 +100,8 @@ func TestHookDiff(t *testing.T) {
 
 func TestMfaDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, MFA: mfa{
+		c := newWithDefaults()
+		c.MFA = mfa{
 			TOTP: factorTypeConfiguration{
 				EnrollEnabled: true,
 				VerifyEnabled: true,
@@ -108,7 +120,7 @@ func TestMfaDiff(t *testing.T) {
 				VerifyEnabled: true,
 			},
 			MaxEnrolledFactors: 10,
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
@@ -128,7 +140,8 @@ func TestMfaDiff(t *testing.T) {
 	})
 
 	t.Run("local enabled and disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, MFA: mfa{
+		c := newWithDefaults()
+		c.MFA = mfa{
 			TOTP: factorTypeConfiguration{
 				EnrollEnabled: false,
 				VerifyEnabled: false,
@@ -139,7 +152,7 @@ func TestMfaDiff(t *testing.T) {
 					VerifyEnabled: true,
 				},
 			},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
@@ -178,14 +191,15 @@ func TestMfaDiff(t *testing.T) {
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, MFA: mfa{
+		c := newWithDefaults()
+		c.MFA = mfa{
 			MaxEnrolledFactors: 10,
 			Phone: phoneFactorTypeConfiguration{
 				OtpLength:    6,
 				Template:     "Your code is {{ .Code }}",
 				MaxFrequency: 5 * time.Second,
 			},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
@@ -205,9 +219,203 @@ func TestMfaDiff(t *testing.T) {
 	})
 }
 
+func TestEmailDiff(t *testing.T) {
+	t.Run("local enabled remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Email = email{
+			EnableSignup:         true,
+			DoubleConfirmChanges: true,
+			EnableConfirmations:  true,
+			SecurePasswordChange: true,
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+			Smtp: &smtp{
+				Host:       "smtp.sendgrid.net",
+				Port:       587,
+				User:       "apikey",
+				Pass:       "test-key",
+				AdminEmail: "admin@email.com",
+				SenderName: "Admin",
+			},
+			MaxFrequency: time.Second,
+			OtpLength:    6,
+			OtpExpiry:    3600,
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalEmailEnabled:           cast.Ptr(true),
+			MailerSecureEmailChangeEnabled: cast.Ptr(true),
+			MailerAutoconfirm:              cast.Ptr(false),
+			MailerOtpLength:                cast.Ptr(6),
+			MailerOtpExp:                   3600,
+			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
+			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
+			SmtpPort:         cast.Ptr("587"),
+			SmtpUser:         cast.Ptr("apikey"),
+			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
+			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
+			SmtpSenderName:   cast.Ptr("Admin"),
+			SmtpMaxFrequency: cast.Ptr(1),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local enabled remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Email = email{
+			EnableSignup:         true,
+			DoubleConfirmChanges: true,
+			EnableConfirmations:  true,
+			SecurePasswordChange: true,
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+			Smtp: &smtp{
+				Host:       "smtp.sendgrid.net",
+				Port:       587,
+				User:       "apikey",
+				Pass:       "test-key",
+				AdminEmail: "admin@email.com",
+				SenderName: "Admin",
+			},
+			MaxFrequency: time.Second,
+			OtpLength:    8,
+			OtpExpiry:    86400,
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalEmailEnabled:           cast.Ptr(false),
+			MailerSecureEmailChangeEnabled: cast.Ptr(false),
+			MailerAutoconfirm:              cast.Ptr(true),
+			MailerOtpLength:                cast.Ptr(6),
+			MailerOtpExp:                   3600,
+			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
+			SmtpMaxFrequency: cast.Ptr(60),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Contains(t, string(diff), ` [email]`)
+		assert.Contains(t, string(diff), `-enable_signup = false`)
+		assert.Contains(t, string(diff), `-double_confirm_changes = false`)
+		assert.Contains(t, string(diff), `-enable_confirmations = false`)
+		assert.Contains(t, string(diff), `-secure_password_change = false`)
+		assert.Contains(t, string(diff), `-max_frequency = "1m0s"`)
+		assert.Contains(t, string(diff), `-otp_length = 6`)
+		assert.Contains(t, string(diff), `-otp_expiry = 3600`)
+		assert.Contains(t, string(diff), `+enable_signup = true`)
+		assert.Contains(t, string(diff), `+double_confirm_changes = true`)
+		assert.Contains(t, string(diff), `+enable_confirmations = true`)
+		assert.Contains(t, string(diff), `+secure_password_change = true`)
+		assert.Contains(t, string(diff), `+max_frequency = "1s"`)
+		assert.Contains(t, string(diff), `+otp_length = 8`)
+		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
+	})
+
+	t.Run("local disabled remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Email = email{
+			EnableConfirmations: false,
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+			MaxFrequency: time.Minute,
+			OtpLength:    8,
+			OtpExpiry:    86400,
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalEmailEnabled:           cast.Ptr(true),
+			MailerSecureEmailChangeEnabled: cast.Ptr(true),
+			MailerAutoconfirm:              cast.Ptr(false),
+			MailerOtpLength:                cast.Ptr(6),
+			MailerOtpExp:                   3600,
+			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
+			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
+			SmtpPort:         cast.Ptr("587"),
+			SmtpUser:         cast.Ptr("apikey"),
+			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
+			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
+			SmtpSenderName:   cast.Ptr("Admin"),
+			SmtpMaxFrequency: cast.Ptr(1),
+		})
+		// Check error
+		assert.NoError(t, err)
+
+		assert.Contains(t, string(diff), ` [email]`)
+		assert.Contains(t, string(diff), `-enable_signup = true`)
+		assert.Contains(t, string(diff), `-double_confirm_changes = true`)
+		assert.Contains(t, string(diff), `-enable_confirmations = true`)
+		assert.Contains(t, string(diff), `-secure_password_change = true`)
+		assert.Contains(t, string(diff), `-max_frequency = "1s"`)
+		assert.Contains(t, string(diff), `-otp_length = 6`)
+		assert.Contains(t, string(diff), `-otp_expiry = 3600`)
+		assert.Contains(t, string(diff), `+enable_signup = false`)
+		assert.Contains(t, string(diff), `+double_confirm_changes = false`)
+		assert.Contains(t, string(diff), `+enable_confirmations = false`)
+		assert.Contains(t, string(diff), `+secure_password_change = false`)
+		assert.Contains(t, string(diff), `+max_frequency = "1m0s"`)
+		assert.Contains(t, string(diff), `+otp_length = 8`)
+		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
+
+		assert.Contains(t, string(diff), `-[email.smtp]`)
+		assert.Contains(t, string(diff), `-host = "smtp.sendgrid.net"`)
+		assert.Contains(t, string(diff), `-port = 587`)
+		assert.Contains(t, string(diff), `-user = "apikey"`)
+		assert.Contains(t, string(diff), `-pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"`)
+		assert.Contains(t, string(diff), `-admin_email = "admin@email.com"`)
+		assert.Contains(t, string(diff), `-sender_name = "Admin"`)
+	})
+
+	t.Run("local disabled remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Email = email{
+			EnableConfirmations: false,
+			Template: map[string]emailTemplate{
+				"invite":       {},
+				"confirmation": {},
+				"recovery":     {},
+				"magic_link":   {},
+				"email_change": {},
+			},
+			MaxFrequency: time.Minute,
+			OtpLength:    6,
+			OtpExpiry:    3600,
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			ExternalEmailEnabled:           cast.Ptr(false),
+			MailerSecureEmailChangeEnabled: cast.Ptr(false),
+			MailerAutoconfirm:              cast.Ptr(true),
+			MailerOtpLength:                cast.Ptr(6),
+			MailerOtpExp:                   3600,
+			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
+			SmtpMaxFrequency: cast.Ptr(60),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestSmsDiff(t *testing.T) {
 	t.Run("local enabled remote enabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, Sms: sms{
+		c := newWithDefaults()
+		c.Sms = sms{
 			EnableSignup:        true,
 			EnableConfirmations: true,
 			Template:            "Your code is {{ .Code }}",
@@ -219,7 +427,7 @@ func TestSmsDiff(t *testing.T) {
 				MessageServiceSid: "test-service",
 				AuthToken:         "test-token",
 			},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(true),
@@ -253,7 +461,7 @@ func TestSmsDiff(t *testing.T) {
 	})
 
 	t.Run("local disabled remote enabled", func(t *testing.T) {
-		c := auth{EnableSignup: true}
+		c := newWithDefaults()
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(true),
@@ -292,7 +500,8 @@ func TestSmsDiff(t *testing.T) {
 	})
 
 	t.Run("local enabled remote disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, Sms: sms{
+		c := newWithDefaults()
+		c.Sms = sms{
 			EnableSignup:        true,
 			EnableConfirmations: true,
 			Template:            "Your code is {{ .Code }}",
@@ -303,7 +512,7 @@ func TestSmsDiff(t *testing.T) {
 				Originator: "test-originator",
 				AccessKey:  "test-access-key",
 			},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(false),
@@ -347,13 +556,14 @@ func TestSmsDiff(t *testing.T) {
 	})
 
 	t.Run("local disabled remote disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, Sms: sms{
+		c := newWithDefaults()
+		c.Sms = sms{
 			EnableSignup:        false,
 			EnableConfirmations: true,
 			Template:            "Your code is {{ .Code }}",
 			TestOTP:             map[string]string{"123": "456"},
 			MaxFrequency:        time.Minute,
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:     cast.Ptr(false),
@@ -376,9 +586,10 @@ func TestSmsDiff(t *testing.T) {
 	t.Run("enable sign up without provider", func(t *testing.T) {
 		// This is not a valid config because platform requires a SMS provider.
 		// For consistency, we handle this in config.Load and emit a warning.
-		c := auth{EnableSignup: true, Sms: sms{
+		c := newWithDefaults()
+		c.Sms = sms{
 			EnableSignup: true,
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled: cast.Ptr(false),
@@ -392,11 +603,12 @@ func TestSmsDiff(t *testing.T) {
 	})
 
 	t.Run("enable provider without sign up", func(t *testing.T) {
-		c := auth{EnableSignup: true, Sms: sms{
+		c := newWithDefaults()
+		c.Sms = sms{
 			Messagebird: messagebirdConfig{
 				Enabled: true,
 			},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:    cast.Ptr(false),
@@ -411,7 +623,8 @@ func TestSmsDiff(t *testing.T) {
 
 func TestExternalDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, External: map[string]provider{
+		c := newWithDefaults()
+		c.External = map[string]provider{
 			"apple":         {Enabled: true},
 			"azure":         {Enabled: true},
 			"bitbucket":     {Enabled: true},
@@ -431,7 +644,7 @@ func TestExternalDiff(t *testing.T) {
 			"twitter":       {Enabled: true},
 			"workos":        {Enabled: true},
 			"zoom":          {Enabled: true},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalAppleAdditionalClientIds:  cast.Ptr(""),
@@ -509,7 +722,8 @@ func TestExternalDiff(t *testing.T) {
 	})
 
 	t.Run("local enabled and disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, External: map[string]provider{
+		c := newWithDefaults()
+		c.External = map[string]provider{
 			"apple": {
 				Enabled:  true,
 				ClientId: "test-client-1,test-client-2",
@@ -533,7 +747,7 @@ func TestExternalDiff(t *testing.T) {
 			"twitter":       {},
 			"workos":        {},
 			"zoom":          {},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalAppleAdditionalClientIds:  cast.Ptr("test-client-2"),
@@ -560,7 +774,8 @@ func TestExternalDiff(t *testing.T) {
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
-		c := auth{EnableSignup: true, External: map[string]provider{
+		c := newWithDefaults()
+		c.External = map[string]provider{
 			"apple":         {},
 			"azure":         {},
 			"bitbucket":     {},
@@ -580,7 +795,7 @@ func TestExternalDiff(t *testing.T) {
 			"twitter":       {},
 			"workos":        {},
 			"zoom":          {},
-		}}
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalAppleEnabled:         cast.Ptr(false),
