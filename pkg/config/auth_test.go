@@ -58,17 +58,17 @@ func TestHookDiff(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), `[hook.mfa_verification_attempt]`)
+		assert.Contains(t, string(diff), ` [hook.mfa_verification_attempt]`)
 		assert.Contains(t, string(diff), `-enabled = true`)
 		assert.Contains(t, string(diff), `+enabled = false`)
-		assert.Contains(t, string(diff), `uri = ""`)
-		assert.Contains(t, string(diff), `secrets = ""`)
+		assert.Contains(t, string(diff), ` uri = ""`)
+		assert.Contains(t, string(diff), ` secrets = ""`)
 
-		assert.Contains(t, string(diff), `[hook.custom_access_token]`)
+		assert.Contains(t, string(diff), ` [hook.custom_access_token]`)
 		assert.Contains(t, string(diff), `-enabled = false`)
 		assert.Contains(t, string(diff), `+enabled = true`)
-		assert.Contains(t, string(diff), `uri = ""`)
-		assert.Contains(t, string(diff), `secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"`)
+		assert.Contains(t, string(diff), ` uri = ""`)
+		assert.Contains(t, string(diff), ` secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"`)
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
@@ -282,7 +282,7 @@ func TestSmsDiff(t *testing.T) {
 		assert.Contains(t, string(diff), `+template = ""`)
 		assert.Contains(t, string(diff), `+max_frequency = "0s"`)
 
-		assert.Contains(t, string(diff), `[sms.twilio]`)
+		assert.Contains(t, string(diff), ` [sms.twilio]`)
 		assert.Contains(t, string(diff), `-enabled = true`)
 		assert.Contains(t, string(diff), `+enabled = false`)
 
@@ -330,11 +330,11 @@ func TestSmsDiff(t *testing.T) {
 		assert.Contains(t, string(diff), `+template = "Your code is {{ .Code }}"`)
 		assert.Contains(t, string(diff), `+max_frequency = "1m0s"`)
 
-		assert.Contains(t, string(diff), `[sms.twilio]`)
+		assert.Contains(t, string(diff), ` [sms.twilio]`)
 		assert.Contains(t, string(diff), `-enabled = true`)
 		assert.Contains(t, string(diff), `+enabled = false`)
 
-		assert.Contains(t, string(diff), `[sms.messagebird]`)
+		assert.Contains(t, string(diff), ` [sms.messagebird]`)
 		assert.Contains(t, string(diff), `-enabled = false`)
 		assert.Contains(t, string(diff), `-originator = ""`)
 		assert.Contains(t, string(diff), `-access_key = "hash:"`)
@@ -386,7 +386,7 @@ func TestSmsDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), `[sms]`)
+		assert.Contains(t, string(diff), ` [sms]`)
 		assert.Contains(t, string(diff), `-enable_signup = false`)
 		assert.Contains(t, string(diff), `+enable_signup = true`)
 	})
@@ -548,13 +548,13 @@ func TestExternalDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), `[external.apple]`)
+		assert.Contains(t, string(diff), ` [external.apple]`)
 		assert.Contains(t, string(diff), `-enabled = false`)
 		assert.Contains(t, string(diff), `+enabled = true`)
-		assert.Contains(t, string(diff), `client_id = "test-client-1,test-client-2"`)
-		assert.Contains(t, string(diff), `secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"`)
+		assert.Contains(t, string(diff), ` client_id = "test-client-1,test-client-2"`)
+		assert.Contains(t, string(diff), ` secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"`)
 
-		assert.Contains(t, string(diff), `[external.google]`)
+		assert.Contains(t, string(diff), ` [external.google]`)
 		assert.Contains(t, string(diff), `-enabled = true`)
 		assert.Contains(t, string(diff), `+enabled = false`)
 	})
