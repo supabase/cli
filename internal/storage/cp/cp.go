@@ -35,7 +35,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 	if err != nil {
 		return err
 	}
-	if strings.ToLower(srcParsed.Scheme) == client.STORAGE_SCHEME && dstParsed.Scheme == "" {
+	if strings.EqualFold(srcParsed.Scheme, client.STORAGE_SCHEME) && dstParsed.Scheme == "" {
 		localPath := dst
 		if !filepath.IsAbs(dst) {
 			localPath = filepath.Join(utils.CurrentDirAbs, dst)
@@ -44,7 +44,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 			return DownloadStorageObjectAll(ctx, api, srcParsed.Path, localPath, maxJobs, fsys)
 		}
 		return api.DownloadObject(ctx, srcParsed.Path, localPath, fsys)
-	} else if srcParsed.Scheme == "" && strings.ToLower(dstParsed.Scheme) == client.STORAGE_SCHEME {
+	} else if srcParsed.Scheme == "" && strings.EqualFold(dstParsed.Scheme, client.STORAGE_SCHEME) {
 		localPath := src
 		if !filepath.IsAbs(localPath) {
 			localPath = filepath.Join(utils.CurrentDirAbs, localPath)
@@ -53,7 +53,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 			return UploadStorageObjectAll(ctx, api, dstParsed.Path, localPath, maxJobs, fsys, opts...)
 		}
 		return api.UploadObject(ctx, dstParsed.Path, src, fsys, opts...)
-	} else if strings.ToLower(srcParsed.Scheme) == client.STORAGE_SCHEME && strings.ToLower(dstParsed.Scheme) == client.STORAGE_SCHEME {
+	} else if strings.EqualFold(srcParsed.Scheme, client.STORAGE_SCHEME) && strings.EqualFold(dstParsed.Scheme, client.STORAGE_SCHEME) {
 		return errors.New("Copying between buckets is not supported")
 	}
 	utils.CmdSuggestion = fmt.Sprintf("Run %s to copy between local directories.", utils.Aqua("cp -r <src> <dst>"))

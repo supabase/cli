@@ -65,7 +65,7 @@ func ValidateMetadataURL(ctx context.Context, metadataURL string) error {
 		return errors.Errorf("failed to parse metadata uri: %w", err)
 	}
 
-	if strings.ToLower(parsed.Scheme) != "https" {
+	if !strings.EqualFold(parsed.Scheme, "https") {
 		return errors.New("only HTTPS Metadata URLs are supported")
 	}
 
