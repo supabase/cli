@@ -228,11 +228,30 @@ func TestEmailDiff(t *testing.T) {
 			EnableConfirmations:  true,
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite": {
+					Subject: "invite-subject",
+					Content: "invite-content",
+				},
+				"confirmation": {
+					Subject: "confirmation-subject",
+					Content: "confirmation-content",
+				},
+				"recovery": {
+					Subject: "recovery-subject",
+					Content: "recovery-content",
+				},
+				"magic_link": {
+					Subject: "magic-link-subject",
+					Content: "magic-link-content",
+				},
+				"email_change": {
+					Subject: "email-change-subject",
+					Content: "email-change-content",
+				},
+				"reauthentication": {
+					Subject: "reauthentication-subject",
+					Content: "reauthentication-content",
+				},
 			},
 			Smtp: &smtp{
 				Host:       "smtp.sendgrid.net",
@@ -261,6 +280,19 @@ func TestEmailDiff(t *testing.T) {
 			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
 			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
+			// Custom templates
+			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
+			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
+			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
+			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
+			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
+			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
+			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -275,11 +307,28 @@ func TestEmailDiff(t *testing.T) {
 			EnableConfirmations:  true,
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite": {
+					Subject: "invite-subject",
+					Content: "invite-content",
+				},
+				"confirmation": {
+					Subject: "confirmation-subject",
+				},
+				"recovery": {
+					Content: "recovery-content",
+				},
+				"magic_link": {
+					Subject: "magic-link-subject",
+					Content: "magic-link-content",
+				},
+				"email_change": {
+					Subject: "email-change-subject",
+					Content: "email-change-content",
+				},
+				"reauthentication": {
+					Subject: "reauthentication-subject",
+					Content: "reauthentication-content",
+				},
 			},
 			Smtp: &smtp{
 				Host:       "smtp.sendgrid.net",
@@ -302,9 +351,15 @@ func TestEmailDiff(t *testing.T) {
 			MailerOtpExp:                   3600,
 			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
 			SmtpMaxFrequency: cast.Ptr(60),
+			// Custom templates
+			MailerTemplatesConfirmationContent: cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:             cast.Ptr("recovery-subject"),
+			MailerSubjectsMagicLink:            cast.Ptr("magic-link-subject"),
+			MailerTemplatesEmailChangeContent:  cast.Ptr("email-change-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
+
 		assert.Contains(t, string(diff), ` [email]`)
 		assert.Contains(t, string(diff), `-enable_signup = false`)
 		assert.Contains(t, string(diff), `-double_confirm_changes = false`)
@@ -320,6 +375,43 @@ func TestEmailDiff(t *testing.T) {
 		assert.Contains(t, string(diff), `+max_frequency = "1s"`)
 		assert.Contains(t, string(diff), `+otp_length = 8`)
 		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
+
+		assert.Contains(t, string(diff), `+[email.smtp]`)
+		assert.Contains(t, string(diff), `+host = "smtp.sendgrid.net"`)
+		assert.Contains(t, string(diff), `+port = 587`)
+		assert.Contains(t, string(diff), `+user = "apikey"`)
+		assert.Contains(t, string(diff), `+pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"`)
+		assert.Contains(t, string(diff), `+admin_email = "admin@email.com"`)
+		assert.Contains(t, string(diff), `+sender_name = "Admin"`)
+
+		assert.Contains(t, string(diff), ` [email.template]`)
+		assert.Contains(t, string(diff), ` [email.template.confirmation]`)
+		assert.Contains(t, string(diff), `-subject = ""`)
+		assert.Contains(t, string(diff), `+subject = "confirmation-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), ` content = ""`)
+		assert.Contains(t, string(diff), ` [email.template.email_change]`)
+		assert.Contains(t, string(diff), `-subject = ""`)
+		assert.Contains(t, string(diff), `+subject = "email-change-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), ` content = "email-change-content"`)
+		assert.Contains(t, string(diff), ` [email.template.invite]`)
+		assert.Contains(t, string(diff), `-subject = ""`)
+		assert.Contains(t, string(diff), `-content_path = ""`)
+		assert.Contains(t, string(diff), `-content = ""`)
+		assert.Contains(t, string(diff), `+subject = "invite-subject"`)
+		assert.Contains(t, string(diff), `+content_path = ""`)
+		assert.Contains(t, string(diff), `+content = "invite-content"`)
+		assert.Contains(t, string(diff), ` [email.template.magic_link]`)
+		assert.Contains(t, string(diff), ` subject = "magic-link-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), `-content = ""`)
+		assert.Contains(t, string(diff), `+content = "magic-link-content"`)
+		assert.Contains(t, string(diff), ` [email.template.recovery]`)
+		assert.Contains(t, string(diff), ` subject = ""`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), `-content = ""`)
+		assert.Contains(t, string(diff), `+content = "recovery-content"`)
 	})
 
 	t.Run("local disabled remote enabled", func(t *testing.T) {
@@ -327,11 +419,12 @@ func TestEmailDiff(t *testing.T) {
 		c.Email = email{
 			EnableConfirmations: false,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite":           {},
+				"confirmation":     {},
+				"recovery":         {},
+				"magic_link":       {},
+				"email_change":     {},
+				"reauthentication": {},
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    8,
@@ -352,6 +445,19 @@ func TestEmailDiff(t *testing.T) {
 			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
 			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
+			// Custom templates
+			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
+			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
+			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
+			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
+			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
+			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
+			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -386,11 +492,12 @@ func TestEmailDiff(t *testing.T) {
 		c.Email = email{
 			EnableConfirmations: false,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite":           {},
+				"confirmation":     {},
+				"recovery":         {},
+				"magic_link":       {},
+				"email_change":     {},
+				"reauthentication": {},
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    6,

@@ -292,11 +292,12 @@ func NewConfig(editors ...ConfigEditor) config {
 			Image: gotrueImage,
 			Email: email{
 				Template: map[string]emailTemplate{
-					"invite":       {},
-					"confirmation": {},
-					"recovery":     {},
-					"magic_link":   {},
-					"email_change": {},
+					"invite":           {},
+					"confirmation":     {},
+					"recovery":         {},
+					"magic_link":       {},
+					"email_change":     {},
+					"reauthentication": {},
 				},
 			},
 			External: map[string]provider{
@@ -817,11 +818,19 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 
 func (e *email) validate(fsys fs.FS) (err error) {
 	for name, tmpl := range e.Template {
-		if len(tmpl.ContentPath) > 0 {
-			if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
-				return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
+		if len(tmpl.ContentPath) == 0 {
+			if len(tmpl.Content) > 0 {
+				return errors.Errorf("Invalid config for auth.email.%s.content: please use content_path instead", name)
 			}
+			continue
 		}
+		// Load the file content of the template within the config
+		if content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
+		} else {
+			tmpl.Content = string(content)
+		}
+		e.Template[name] = tmpl
 	}
 	if e.Smtp != nil {
 		if len(e.Smtp.Host) == 0 {
