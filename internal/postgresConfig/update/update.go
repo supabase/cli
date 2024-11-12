@@ -50,9 +50,8 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 	}
 	// 4. update config overrides and print out final result
 	{
-		if noRestart {
-			finalOverrides["restart_database"] = false
-		}
+		// Should always restart database except if --no-restart flag is provided
+		finalOverrides["restart_database"] = !noRestart
 		bts, err := json.Marshal(finalOverrides)
 		if err != nil {
 			return errors.Errorf("failed to serialize config overrides: %w", err)
