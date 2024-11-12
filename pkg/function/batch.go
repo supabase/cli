@@ -44,6 +44,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 				continue
 			}
 		}
+		resourceMultiplier := function.ResourceMultiplier
 		var body bytes.Buffer
 		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, &body); err != nil {
 			return err
@@ -55,7 +56,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					VerifyJwt:          function.VerifyJWT,
 					ImportMapPath:      toFileURL(function.ImportMap),
 					EntrypointPath:     toFileURL(function.Entrypoint),
-					ResourceMultiplier: function.ResourceMultiplier,
+					ResourceMultiplier: resourceMultiplier,
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to update function: %w", err)
 				} else if resp.JSON200 == nil {
@@ -68,7 +69,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 					VerifyJwt:          function.VerifyJWT,
 					ImportMapPath:      toFileURL(function.ImportMap),
 					EntrypointPath:     toFileURL(function.Entrypoint),
-					ResourceMultiplier: function.ResourceMultiplier,
+					ResourceMultiplier: resourceMultiplier,
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to create function: %w", err)
 				} else if resp.JSON201 == nil {

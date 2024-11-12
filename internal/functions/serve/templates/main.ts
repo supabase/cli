@@ -149,7 +149,8 @@ Deno.serve({
     console.error(`serving the request with ${servicePath}`);
 
     // Ref: https://supabase.com/docs/guides/functions/limits
-    const memoryLimitMb = 256;
+    const resourceMultiplier = Math.max(Math.min(parseFloat(functionsConfig[functionName].resourceMultiplier ?? '1'), 4), 1)
+    const memoryLimitMb = 256 * resourceMultiplier;
     const workerTimeoutMs = isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
@@ -161,7 +162,7 @@ Deno.serve({
     const forceCreate = false;
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
-    const cpuTimeHardLimitMs = 2000;
+    const cpuTimeHardLimitMs = 2000 * resourceMultiplier;
 
     // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
     // but in my opinion, we should probably expose this to customers at some
@@ -187,7 +188,9 @@ Deno.serve({
         maybeEntrypoint
       });
 
-      return await worker.fetch(req);
+      const res = await worker.fetch(req);
+      res.headers.set('x-sb-resource-multiplier', resourceMultiplier)
+      return res
     } catch (e) {
       console.error(e);
 

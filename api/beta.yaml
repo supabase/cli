@@ -2012,6 +2012,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: resource_multiplier
+          required: false
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -2149,6 +2154,11 @@ paths:
           schema:
             type: string
         - name: import_map_path
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: resource_multiplier
           required: false
           in: query
           schema:
@@ -5090,6 +5100,8 @@ components:
           type: string
         verify_jwt:
           type: boolean
+        resource_multiplier:
+          type: string
       required:
         - slug
         - name
@@ -5124,6 +5136,8 @@ components:
         entrypoint_path:
           type: string
         import_map_path:
+          type: string
+        resource_multiplier:
           type: string
       required:
         - version
@@ -5163,6 +5177,8 @@ components:
         entrypoint_path:
           type: string
         import_map_path:
+          type: string
+        resource_multiplier:
           type: string
       required:
         - version
