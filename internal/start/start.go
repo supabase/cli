@@ -539,7 +539,6 @@ EOF
 		if utils.Config.Auth.Sessions.Timebox > 0 {
 			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_TIMEBOX=%v", utils.Config.Auth.Sessions.Timebox))
 		}
-
 		if utils.Config.Auth.Sessions.InactivityTimeout > 0 {
 			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
 		}
@@ -561,7 +560,8 @@ EOF
 			}
 		}
 
-		if utils.Config.Auth.Sms.Twilio.Enabled {
+		switch {
+		case utils.Config.Auth.Sms.Twilio.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio",
@@ -569,8 +569,7 @@ EOF
 				"GOTRUE_SMS_TWILIO_AUTH_TOKEN="+utils.Config.Auth.Sms.Twilio.AuthToken,
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
-		}
-		if utils.Config.Auth.Sms.TwilioVerify.Enabled {
+		case utils.Config.Auth.Sms.TwilioVerify.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio_verify",
@@ -578,24 +577,21 @@ EOF
 				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN="+utils.Config.Auth.Sms.TwilioVerify.AuthToken,
 				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.TwilioVerify.MessageServiceSid,
 			)
-		}
-		if utils.Config.Auth.Sms.Messagebird.Enabled {
+		case utils.Config.Auth.Sms.Messagebird.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=messagebird",
 				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY="+utils.Config.Auth.Sms.Messagebird.AccessKey,
 				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
 			)
-		}
-		if utils.Config.Auth.Sms.Textlocal.Enabled {
+		case utils.Config.Auth.Sms.Textlocal.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=textlocal",
 				"GOTRUE_SMS_TEXTLOCAL_API_KEY="+utils.Config.Auth.Sms.Textlocal.ApiKey,
 				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
 			)
-		}
-		if utils.Config.Auth.Sms.Vonage.Enabled {
+		case utils.Config.Auth.Sms.Vonage.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=vonage",
@@ -604,6 +600,7 @@ EOF
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
+
 		if utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
 			env = append(
 				env,
@@ -612,7 +609,6 @@ EOF
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets,
 			)
 		}
-
 		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
 			env = append(
 				env,
@@ -621,7 +617,6 @@ EOF
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets,
 			)
 		}
-
 		if utils.Config.Auth.Hook.CustomAccessToken.Enabled {
 			env = append(
 				env,
@@ -630,7 +625,6 @@ EOF
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+utils.Config.Auth.Hook.CustomAccessToken.Secrets,
 			)
 		}
-
 		if utils.Config.Auth.Hook.SendSMS.Enabled {
 			env = append(
 				env,
@@ -639,7 +633,6 @@ EOF
 				"GOTRUE_HOOK_SEND_SMS_SECRETS="+utils.Config.Auth.Hook.SendSMS.Secrets,
 			)
 		}
-
 		if utils.Config.Auth.Hook.SendEmail.Enabled {
 			env = append(
 				env,
@@ -648,6 +641,7 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
 			)
 		}
+
 		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
 			env = append(
 				env,
@@ -666,20 +660,14 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
 			)
 
-			if config.RedirectUri != "" {
-				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri),
-				)
-			} else {
-				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), utils.GetApiUrl("/auth/v1/callback")),
-				)
+			redirectUri := config.RedirectUri
+			if redirectUri == "" {
+				redirectUri = utils.GetApiUrl("/auth/v1/callback")
 			}
+			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri))
 
 			if config.Url != "" {
-				env = append(env,
-					fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url),
-				)
+				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
 
