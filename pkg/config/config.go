@@ -214,17 +214,23 @@ func (f function) IsEnabled() bool {
 	return f.Enabled == nil || *f.Enabled
 }
 
+func (a *auth) Clone() auth {
+	copy := *a
+	copy.External = maps.Clone(a.External)
+	if a.Email.Smtp != nil {
+		mailer := *a.Email.Smtp
+		copy.Email.Smtp = &mailer
+	}
+	copy.Email.Template = maps.Clone(a.Email.Template)
+	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
+	return copy
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
 	copy.Functions = maps.Clone(c.Functions)
-	copy.Auth.External = maps.Clone(c.Auth.External)
-	if c.Auth.Email.Smtp != nil {
-		mailer := *c.Auth.Email.Smtp
-		copy.Auth.Email.Smtp = &mailer
-	}
-	copy.Auth.Email.Template = maps.Clone(c.Auth.Email.Template)
-	copy.Auth.Sms.TestOTP = maps.Clone(c.Auth.Sms.TestOTP)
+	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
 		webhooks := *c.Experimental.Webhooks
 		copy.Experimental.Webhooks = &webhooks

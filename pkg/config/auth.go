@@ -1,7 +1,6 @@
 package config
 
 import (
-	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -201,24 +200,21 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	return body
 }
 
-func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth {
-	result := *a
-	result.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
-	result.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
-	result.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
-	result.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
-	result.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
-	result.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
-	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
-	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
-	result.Hook.fromAuthConfig(remoteConfig)
-	result.MFA.fromAuthConfig(remoteConfig)
-	result.Sessions.fromAuthConfig(remoteConfig)
-	result.Email.fromAuthConfig(remoteConfig)
-	result.Sms.fromAuthConfig(remoteConfig)
-	result.External = maps.Clone(result.External)
-	result.External.fromAuthConfig(remoteConfig)
-	return result
+func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
+	a.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
+	a.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
+	a.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
+	a.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
+	a.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
+	a.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
+	a.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	a.Hook.fromAuthConfig(remoteConfig)
+	a.MFA.fromAuthConfig(remoteConfig)
+	a.Sessions.fromAuthConfig(remoteConfig)
+	a.Email.fromAuthConfig(remoteConfig)
+	a.Sms.fromAuthConfig(remoteConfig)
+	a.External.fromAuthConfig(remoteConfig)
 }
 
 func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -696,13 +692,15 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 }
 
 func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
-	hashed := a.hashSecrets(projectRef)
+	copy := a.Clone()
+	copy.hashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(hashed)
+	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(hashed.fromRemoteAuthConfig(remoteConfig))
+	copy.fromRemoteAuthConfig(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
@@ -711,53 +709,46 @@ func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigRe
 
 const hashPrefix = "hash:"
 
-func (a *auth) hashSecrets(key string) auth {
+func (a *auth) hashSecrets(key string) {
 	hash := func(v string) string {
 		return hashPrefix + sha256Hmac(key, v)
 	}
-	result := *a
-	if result.Email.Smtp != nil && len(result.Email.Smtp.Pass) > 0 {
-		copy := *result.Email.Smtp
-		copy.Pass = hash(result.Email.Smtp.Pass)
-		result.Email.Smtp = &copy
+	if a.Email.Smtp != nil && len(a.Email.Smtp.Pass) > 0 {
+		a.Email.Smtp.Pass = hash(a.Email.Smtp.Pass)
 	}
 	// Only hash secrets for locally enabled providers because other envs won't be loaded
 	switch {
-	case result.Sms.Twilio.Enabled:
-		result.Sms.Twilio.AuthToken = hash(result.Sms.Twilio.AuthToken)
-	case result.Sms.TwilioVerify.Enabled:
-		result.Sms.TwilioVerify.AuthToken = hash(result.Sms.TwilioVerify.AuthToken)
-	case result.Sms.Messagebird.Enabled:
-		result.Sms.Messagebird.AccessKey = hash(result.Sms.Messagebird.AccessKey)
-	case result.Sms.Textlocal.Enabled:
-		result.Sms.Textlocal.ApiKey = hash(result.Sms.Textlocal.ApiKey)
-	case result.Sms.Vonage.Enabled:
-		result.Sms.Vonage.ApiSecret = hash(result.Sms.Vonage.ApiSecret)
+	case a.Sms.Twilio.Enabled:
+		a.Sms.Twilio.AuthToken = hash(a.Sms.Twilio.AuthToken)
+	case a.Sms.TwilioVerify.Enabled:
+		a.Sms.TwilioVerify.AuthToken = hash(a.Sms.TwilioVerify.AuthToken)
+	case a.Sms.Messagebird.Enabled:
+		a.Sms.Messagebird.AccessKey = hash(a.Sms.Messagebird.AccessKey)
+	case a.Sms.Textlocal.Enabled:
+		a.Sms.Textlocal.ApiKey = hash(a.Sms.Textlocal.ApiKey)
+	case a.Sms.Vonage.Enabled:
+		a.Sms.Vonage.ApiSecret = hash(a.Sms.Vonage.ApiSecret)
 	}
-	if result.Hook.MFAVerificationAttempt.Enabled {
-		result.Hook.MFAVerificationAttempt.Secrets = hash(result.Hook.MFAVerificationAttempt.Secrets)
+	if a.Hook.MFAVerificationAttempt.Enabled {
+		a.Hook.MFAVerificationAttempt.Secrets = hash(a.Hook.MFAVerificationAttempt.Secrets)
 	}
-	if result.Hook.PasswordVerificationAttempt.Enabled {
-		result.Hook.PasswordVerificationAttempt.Secrets = hash(result.Hook.PasswordVerificationAttempt.Secrets)
+	if a.Hook.PasswordVerificationAttempt.Enabled {
+		a.Hook.PasswordVerificationAttempt.Secrets = hash(a.Hook.PasswordVerificationAttempt.Secrets)
 	}
-	if result.Hook.CustomAccessToken.Enabled {
-		result.Hook.CustomAccessToken.Secrets = hash(result.Hook.CustomAccessToken.Secrets)
+	if a.Hook.CustomAccessToken.Enabled {
+		a.Hook.CustomAccessToken.Secrets = hash(a.Hook.CustomAccessToken.Secrets)
 	}
-	if result.Hook.SendSMS.Enabled {
-		result.Hook.SendSMS.Secrets = hash(result.Hook.SendSMS.Secrets)
+	if a.Hook.SendSMS.Enabled {
+		a.Hook.SendSMS.Secrets = hash(a.Hook.SendSMS.Secrets)
 	}
-	if result.Hook.SendEmail.Enabled {
-		result.Hook.SendEmail.Secrets = hash(result.Hook.SendEmail.Secrets)
-	}
-	if size := len(a.External); size > 0 {
-		result.External = make(map[string]provider, size)
+	if a.Hook.SendEmail.Enabled {
+		a.Hook.SendEmail.Secrets = hash(a.Hook.SendEmail.Secrets)
 	}
 	for name, provider := range a.External {
 		if provider.Enabled {
 			provider.Secret = hash(provider.Secret)
 		}
-		result.External[name] = provider
+		a.External[name] = provider
 	}
 	// TODO: support SecurityCaptchaSecret in local config
-	return result
 }
