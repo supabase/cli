@@ -55,40 +55,37 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	return body
 }
 
-func (a *api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) api {
-	result := *a
-	if remoteConfig.DbSchema == "" {
-		result.Enabled = false
-		return result
+func (a *api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) {
+	if a.Enabled = len(remoteConfig.DbSchema) > 0; !a.Enabled {
+		return
 	}
 
-	result.Enabled = true
 	// Update Schemas if present in remoteConfig
-	result.Schemas = strToArr(remoteConfig.DbSchema)
+	a.Schemas = strToArr(remoteConfig.DbSchema)
 	// TODO: use slices.Map when upgrade go version
-	for i, schema := range result.Schemas {
-		result.Schemas[i] = strings.TrimSpace(schema)
+	for i, schema := range a.Schemas {
+		a.Schemas[i] = strings.TrimSpace(schema)
 	}
 
 	// Update ExtraSearchPath if present in remoteConfig
-	result.ExtraSearchPath = strToArr(remoteConfig.DbExtraSearchPath)
-	for i, path := range result.ExtraSearchPath {
-		result.ExtraSearchPath[i] = strings.TrimSpace(path)
+	a.ExtraSearchPath = strToArr(remoteConfig.DbExtraSearchPath)
+	for i, path := range a.ExtraSearchPath {
+		a.ExtraSearchPath[i] = strings.TrimSpace(path)
 	}
 
 	// Update MaxRows if present in remoteConfig
-	result.MaxRows = cast.IntToUint(remoteConfig.MaxRows)
-
-	return result
+	a.MaxRows = cast.IntToUint(remoteConfig.MaxRows)
 }
 
 func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) ([]byte, error) {
+	copy := *a
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(a)
+	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(a.fromRemoteApiConfig(remoteConfig))
+	copy.fromRemoteApiConfig(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
