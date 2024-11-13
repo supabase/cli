@@ -1,0 +1,55 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -49,28 +49,43 @@
+ inactivity_timeout = "0s"
+ 
+ [email]
+-enable_signup = false
+-double_confirm_changes = false
+-enable_confirmations = false
+-secure_password_change = false
+-max_frequency = "1m0s"
+-otp_length = 6
+-otp_expiry = 3600
++enable_signup = true
++double_confirm_changes = true
++enable_confirmations = true
++secure_password_change = true
++max_frequency = "1s"
++otp_length = 8
++otp_expiry = 86400
+ [email.template]
+ [email.template.confirmation]
++subject = "confirmation-subject"
+ content_path = ""
+ [email.template.email_change]
++subject = "email-change-subject"
+ content = "email-change-content"
+ content_path = ""
+ [email.template.invite]
++subject = "invite-subject"
++content = "invite-content"
+ content_path = ""
+ [email.template.magic_link]
+ subject = "magic-link-subject"
++content = "magic-link-content"
+ content_path = ""
+ [email.template.reauthentication]
++subject = ""
++content = ""
+ content_path = ""
+ [email.template.recovery]
+-content_path = ""
++content = "recovery-content"
++content_path = ""
++[email.smtp]
++host = "smtp.sendgrid.net"
++port = 587
++user = "apikey"
++pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"
++admin_email = "admin@email.com"
++sender_name = "Admin"
+ 
+ [sms]
+ enable_signup = false

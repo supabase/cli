@@ -1,0 +1,26 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -30,16 +30,16 @@
+ secrets = ""
+ 
+ [mfa]
+-max_enrolled_factors = 10
++max_enrolled_factors = 0
+ [mfa.totp]
+ enroll_enabled = false
+ verify_enabled = false
+ [mfa.phone]
+-enroll_enabled = false
+-verify_enabled = false
+-otp_length = 6
+-template = "Your code is {{ .Code }}"
+-max_frequency = "5s"
++enroll_enabled = true
++verify_enabled = true
++otp_length = 0
++template = ""
++max_frequency = "0s"
+ [mfa.web_authn]
+ enroll_enabled = false
+ verify_enabled = false
