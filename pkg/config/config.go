@@ -30,6 +30,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/mod/semver"
 )
@@ -819,16 +820,15 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 func (e *email) validate(fsys fs.FS) (err error) {
 	for name, tmpl := range e.Template {
 		if len(tmpl.ContentPath) == 0 {
-			if len(tmpl.Content) > 0 {
+			if tmpl.Content != nil {
 				return errors.Errorf("Invalid config for auth.email.%s.content: please use content_path instead", name)
 			}
 			continue
 		}
-		// Load the file content of the template within the config
 		if content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
 			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
 		} else {
-			tmpl.Content = string(content)
+			tmpl.Content = cast.Ptr(string(content))
 		}
 		e.Template[name] = tmpl
 	}

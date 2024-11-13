@@ -552,10 +552,10 @@ EOF
 					id+filepath.Ext(tmpl.ContentPath),
 				))
 			}
-			if len(tmpl.Subject) > 0 {
+			if tmpl.Subject != nil {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
 					strings.ToUpper(id),
-					tmpl.Subject,
+					*tmpl.Subject,
 				))
 			}
 		}
