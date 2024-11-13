@@ -89,10 +89,10 @@ type (
 	}
 
 	emailTemplate struct {
-		Subject     string `toml:"subject"`
+		Subject *string `toml:"subject"`
+		Content *string `toml:"content"`
+		// Only content path is accepted in config.toml
 		ContentPath string `toml:"content_path"`
-		// Exposed for remote diff only, not valid in config.toml
-		Content string `toml:"content"`
 	}
 
 	sms struct {
@@ -332,49 +332,24 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 		return
 	}
 	var tmpl *emailTemplate
-	// When local config is not set, we assume platform defaults should not change
 	tmpl = cast.Ptr(e.Template["invite"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsInvite = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesInviteContent = &tmpl.Content
-	}
+	body.MailerSubjectsInvite = tmpl.Subject
+	body.MailerTemplatesInviteContent = tmpl.Content
 	tmpl = cast.Ptr(e.Template["confirmation"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsConfirmation = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesConfirmationContent = &tmpl.Content
-	}
+	body.MailerSubjectsConfirmation = tmpl.Subject
+	body.MailerTemplatesConfirmationContent = tmpl.Content
 	tmpl = cast.Ptr(e.Template["recovery"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsRecovery = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesRecoveryContent = &tmpl.Content
-	}
+	body.MailerSubjectsRecovery = tmpl.Subject
+	body.MailerTemplatesRecoveryContent = tmpl.Content
 	tmpl = cast.Ptr(e.Template["magic_link"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsMagicLink = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesMagicLinkContent = &tmpl.Content
-	}
+	body.MailerSubjectsMagicLink = tmpl.Subject
+	body.MailerTemplatesMagicLinkContent = tmpl.Content
 	tmpl = cast.Ptr(e.Template["email_change"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsEmailChange = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesEmailChangeContent = &tmpl.Content
-	}
+	body.MailerSubjectsEmailChange = tmpl.Subject
+	body.MailerTemplatesEmailChangeContent = tmpl.Content
 	tmpl = cast.Ptr(e.Template["reauthentication"])
-	if len(tmpl.Subject) > 0 {
-		body.MailerSubjectsReauthentication = &tmpl.Subject
-	}
-	if len(tmpl.Content) > 0 {
-		body.MailerTemplatesReauthenticationContent = &tmpl.Content
-	}
+	body.MailerSubjectsReauthentication = tmpl.Subject
+	body.MailerTemplatesReauthenticationContent = tmpl.Content
 }
 
 func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -405,57 +380,58 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		return
 	}
 	var tmpl emailTemplate
+	// When local config is not set, we assume platform defaults should not change
 	tmpl = e.Template["invite"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsInvite, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsInvite
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesInviteContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesInviteContent
 	}
 	e.Template["invite"] = tmpl
 
 	tmpl = e.Template["confirmation"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsConfirmation, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsConfirmation
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesConfirmationContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesConfirmationContent
 	}
 	e.Template["confirmation"] = tmpl
 
 	tmpl = e.Template["recovery"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsRecovery, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsRecovery
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesRecoveryContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesRecoveryContent
 	}
 	e.Template["recovery"] = tmpl
 
 	tmpl = e.Template["magic_link"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsMagicLink, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsMagicLink
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesMagicLinkContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesMagicLinkContent
 	}
 	e.Template["magic_link"] = tmpl
 
 	tmpl = e.Template["email_change"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsEmailChange, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsEmailChange
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesEmailChangeContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesEmailChangeContent
 	}
 	e.Template["email_change"] = tmpl
 
 	tmpl = e.Template["reauthentication"]
-	if len(tmpl.Subject) > 0 {
-		tmpl.Subject = cast.Val(remoteConfig.MailerSubjectsReauthentication, "")
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsReauthentication
 	}
-	if len(tmpl.Content) > 0 {
-		tmpl.Content = cast.Val(remoteConfig.MailerTemplatesReauthenticationContent, "")
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesReauthenticationContent
 	}
 	e.Template["reauthentication"] = tmpl
 }

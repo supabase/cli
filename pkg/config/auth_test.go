@@ -229,28 +229,28 @@ func TestEmailDiff(t *testing.T) {
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
 				"invite": {
-					Subject: "invite-subject",
-					Content: "invite-content",
+					Subject: cast.Ptr("invite-subject"),
+					Content: cast.Ptr("invite-content"),
 				},
 				"confirmation": {
-					Subject: "confirmation-subject",
-					Content: "confirmation-content",
+					Subject: cast.Ptr("confirmation-subject"),
+					Content: cast.Ptr("confirmation-content"),
 				},
 				"recovery": {
-					Subject: "recovery-subject",
-					Content: "recovery-content",
+					Subject: cast.Ptr("recovery-subject"),
+					Content: cast.Ptr("recovery-content"),
 				},
 				"magic_link": {
-					Subject: "magic-link-subject",
-					Content: "magic-link-content",
+					Subject: cast.Ptr("magic-link-subject"),
+					Content: cast.Ptr("magic-link-content"),
 				},
 				"email_change": {
-					Subject: "email-change-subject",
-					Content: "email-change-content",
+					Subject: cast.Ptr("email-change-subject"),
+					Content: cast.Ptr("email-change-content"),
 				},
 				"reauthentication": {
-					Subject: "reauthentication-subject",
-					Content: "reauthentication-content",
+					Subject: cast.Ptr("reauthentication-subject"),
+					Content: cast.Ptr("reauthentication-content"),
 				},
 			},
 			Smtp: &smtp{
@@ -308,26 +308,26 @@ func TestEmailDiff(t *testing.T) {
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
 				"invite": {
-					Subject: "invite-subject",
-					Content: "invite-content",
+					Subject: cast.Ptr("invite-subject"),
+					Content: cast.Ptr("invite-content"),
 				},
 				"confirmation": {
-					Subject: "confirmation-subject",
+					Subject: cast.Ptr("confirmation-subject"),
 				},
 				"recovery": {
-					Content: "recovery-content",
+					Content: cast.Ptr("recovery-content"),
 				},
 				"magic_link": {
-					Subject: "magic-link-subject",
-					Content: "magic-link-content",
+					Subject: cast.Ptr("magic-link-subject"),
+					Content: cast.Ptr("magic-link-content"),
 				},
 				"email_change": {
-					Subject: "email-change-subject",
-					Content: "email-change-content",
+					Subject: cast.Ptr("email-change-subject"),
+					Content: cast.Ptr("email-change-content"),
 				},
 				"reauthentication": {
-					Subject: "reauthentication-subject",
-					Content: "reauthentication-content",
+					Subject: cast.Ptr(""),
+					Content: cast.Ptr(""),
 				},
 			},
 			Smtp: &smtp{
@@ -376,6 +376,32 @@ func TestEmailDiff(t *testing.T) {
 		assert.Contains(t, string(diff), `+otp_length = 8`)
 		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
 
+		assert.Contains(t, string(diff), ` [email.template]`)
+		assert.Contains(t, string(diff), ` [email.template.confirmation]`)
+		assert.Contains(t, string(diff), `+subject = "confirmation-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), ` [email.template.email_change]`)
+		assert.Contains(t, string(diff), `+subject = "email-change-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), ` content = "email-change-content"`)
+		assert.Contains(t, string(diff), ` [email.template.invite]`)
+		assert.Contains(t, string(diff), `-content_path = ""`)
+		assert.Contains(t, string(diff), `+subject = "invite-subject"`)
+		assert.Contains(t, string(diff), `+content_path = ""`)
+		assert.Contains(t, string(diff), `+content = "invite-content"`)
+		assert.Contains(t, string(diff), ` [email.template.magic_link]`)
+		assert.Contains(t, string(diff), ` subject = "magic-link-subject"`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), `+content = "magic-link-content"`)
+		assert.Contains(t, string(diff), ` [email.template.reauthentication]`)
+		assert.Contains(t, string(diff), `-content_path = ""`)
+		assert.Contains(t, string(diff), `+subject = ""`)
+		assert.Contains(t, string(diff), `+content_path = ""`)
+		assert.Contains(t, string(diff), `+content = ""`)
+		assert.Contains(t, string(diff), ` [email.template.recovery]`)
+		assert.Contains(t, string(diff), ` content_path = ""`)
+		assert.Contains(t, string(diff), `+content = "recovery-content"`)
+
 		assert.Contains(t, string(diff), `+[email.smtp]`)
 		assert.Contains(t, string(diff), `+host = "smtp.sendgrid.net"`)
 		assert.Contains(t, string(diff), `+port = 587`)
@@ -383,35 +409,6 @@ func TestEmailDiff(t *testing.T) {
 		assert.Contains(t, string(diff), `+pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"`)
 		assert.Contains(t, string(diff), `+admin_email = "admin@email.com"`)
 		assert.Contains(t, string(diff), `+sender_name = "Admin"`)
-
-		assert.Contains(t, string(diff), ` [email.template]`)
-		assert.Contains(t, string(diff), ` [email.template.confirmation]`)
-		assert.Contains(t, string(diff), `-subject = ""`)
-		assert.Contains(t, string(diff), `+subject = "confirmation-subject"`)
-		assert.Contains(t, string(diff), ` content_path = ""`)
-		assert.Contains(t, string(diff), ` content = ""`)
-		assert.Contains(t, string(diff), ` [email.template.email_change]`)
-		assert.Contains(t, string(diff), `-subject = ""`)
-		assert.Contains(t, string(diff), `+subject = "email-change-subject"`)
-		assert.Contains(t, string(diff), ` content_path = ""`)
-		assert.Contains(t, string(diff), ` content = "email-change-content"`)
-		assert.Contains(t, string(diff), ` [email.template.invite]`)
-		assert.Contains(t, string(diff), `-subject = ""`)
-		assert.Contains(t, string(diff), `-content_path = ""`)
-		assert.Contains(t, string(diff), `-content = ""`)
-		assert.Contains(t, string(diff), `+subject = "invite-subject"`)
-		assert.Contains(t, string(diff), `+content_path = ""`)
-		assert.Contains(t, string(diff), `+content = "invite-content"`)
-		assert.Contains(t, string(diff), ` [email.template.magic_link]`)
-		assert.Contains(t, string(diff), ` subject = "magic-link-subject"`)
-		assert.Contains(t, string(diff), ` content_path = ""`)
-		assert.Contains(t, string(diff), `-content = ""`)
-		assert.Contains(t, string(diff), `+content = "magic-link-content"`)
-		assert.Contains(t, string(diff), ` [email.template.recovery]`)
-		assert.Contains(t, string(diff), ` subject = ""`)
-		assert.Contains(t, string(diff), ` content_path = ""`)
-		assert.Contains(t, string(diff), `-content = ""`)
-		assert.Contains(t, string(diff), `+content = "recovery-content"`)
 	})
 
 	t.Run("local disabled remote enabled", func(t *testing.T) {
