@@ -89,7 +89,9 @@ type (
 	}
 
 	emailTemplate struct {
-		Subject     string `toml:"subject"`
+		Subject *string `toml:"subject"`
+		Content *string `toml:"content"`
+		// Only content path is accepted in config.toml
 		ContentPath string `toml:"content_path"`
 	}
 
@@ -326,6 +328,28 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 		// Setting a single empty string disables SMTP
 		body.SmtpHost = cast.Ptr("")
 	}
+	if len(e.Template) == 0 {
+		return
+	}
+	var tmpl *emailTemplate
+	tmpl = cast.Ptr(e.Template["invite"])
+	body.MailerSubjectsInvite = tmpl.Subject
+	body.MailerTemplatesInviteContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["confirmation"])
+	body.MailerSubjectsConfirmation = tmpl.Subject
+	body.MailerTemplatesConfirmationContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["recovery"])
+	body.MailerSubjectsRecovery = tmpl.Subject
+	body.MailerTemplatesRecoveryContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["magic_link"])
+	body.MailerSubjectsMagicLink = tmpl.Subject
+	body.MailerTemplatesMagicLinkContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["email_change"])
+	body.MailerSubjectsEmailChange = tmpl.Subject
+	body.MailerTemplatesEmailChangeContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["reauthentication"])
+	body.MailerSubjectsReauthentication = tmpl.Subject
+	body.MailerTemplatesReauthenticationContent = tmpl.Content
 }
 
 func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -352,6 +376,64 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	} else {
 		e.Smtp = nil
 	}
+	if len(e.Template) == 0 {
+		return
+	}
+	var tmpl emailTemplate
+	// When local config is not set, we assume platform defaults should not change
+	tmpl = e.Template["invite"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsInvite
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesInviteContent
+	}
+	e.Template["invite"] = tmpl
+
+	tmpl = e.Template["confirmation"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsConfirmation
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesConfirmationContent
+	}
+	e.Template["confirmation"] = tmpl
+
+	tmpl = e.Template["recovery"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsRecovery
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesRecoveryContent
+	}
+	e.Template["recovery"] = tmpl
+
+	tmpl = e.Template["magic_link"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsMagicLink
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesMagicLinkContent
+	}
+	e.Template["magic_link"] = tmpl
+
+	tmpl = e.Template["email_change"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsEmailChange
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesEmailChangeContent
+	}
+	e.Template["email_change"] = tmpl
+
+	tmpl = e.Template["reauthentication"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsReauthentication
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesReauthenticationContent
+	}
+	e.Template["reauthentication"] = tmpl
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {

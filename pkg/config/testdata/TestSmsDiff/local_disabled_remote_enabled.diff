@@ -1,0 +1,31 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -58,12 +58,12 @@
+ otp_expiry = 0
+ 
+ [sms]
+-enable_signup = true
+-enable_confirmations = true
+-template = "Your code is {{ .Code }}"
+-max_frequency = "1m0s"
++enable_signup = false
++enable_confirmations = false
++template = ""
++max_frequency = "0s"
+ [sms.twilio]
+-enabled = true
++enabled = false
+ account_sid = ""
+ message_service_sid = ""
+ auth_token = ""
+@@ -85,9 +85,6 @@
+ from = ""
+ api_key = ""
+ api_secret = ""
+-[sms.test_otp]
+-123 = "456"
+-456 = "123"
+ 
+ [third_party]
+ [third_party.firebase]

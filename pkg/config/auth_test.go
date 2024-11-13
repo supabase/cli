@@ -1,9 +1,12 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/stretchr/testify/assert"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -16,6 +19,16 @@ func newWithDefaults() auth {
 			EnableConfirmations: true,
 		},
 	}
+}
+
+func assertSnapshotEqual(t *testing.T, actual []byte) {
+	snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
+	expected, err := os.ReadFile(snapshot)
+	if errors.Is(err, os.ErrNotExist) {
+		assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
+		assert.NoError(t, os.WriteFile(snapshot, actual, 0600))
+	}
+	assert.Equal(t, string(expected), string(actual))
 }
 
 func TestHookDiff(t *testing.T) {
@@ -68,18 +81,7 @@ func TestHookDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-
-		assert.Contains(t, string(diff), ` [hook.mfa_verification_attempt]`)
-		assert.Contains(t, string(diff), `-enabled = true`)
-		assert.Contains(t, string(diff), `+enabled = false`)
-		assert.Contains(t, string(diff), ` uri = ""`)
-		assert.Contains(t, string(diff), ` secrets = ""`)
-
-		assert.Contains(t, string(diff), ` [hook.custom_access_token]`)
-		assert.Contains(t, string(diff), `-enabled = false`)
-		assert.Contains(t, string(diff), `+enabled = true`)
-		assert.Contains(t, string(diff), ` uri = ""`)
-		assert.Contains(t, string(diff), ` secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
@@ -168,26 +170,7 @@ func TestMfaDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), ` [mfa]`)
-		assert.Contains(t, string(diff), `-max_enrolled_factors = 10`)
-		assert.Contains(t, string(diff), `+max_enrolled_factors = 0`)
-		assert.Contains(t, string(diff), ` [mfa.totp]`)
-		assert.Contains(t, string(diff), ` enroll_enabled = false`)
-		assert.Contains(t, string(diff), ` verify_enabled = false`)
-		assert.Contains(t, string(diff), ` [mfa.phone]`)
-		assert.Contains(t, string(diff), `-enroll_enabled = false`)
-		assert.Contains(t, string(diff), `-verify_enabled = false`)
-		assert.Contains(t, string(diff), `-otp_length = 6`)
-		assert.Contains(t, string(diff), `-template = "Your code is {{ .Code }}"`)
-		assert.Contains(t, string(diff), `-max_frequency = "5s"`)
-		assert.Contains(t, string(diff), `+enroll_enabled = true`)
-		assert.Contains(t, string(diff), `+verify_enabled = true`)
-		assert.Contains(t, string(diff), `+otp_length = 0`)
-		assert.Contains(t, string(diff), `+template = ""`)
-		assert.Contains(t, string(diff), `+max_frequency = "0s"`)
-		assert.Contains(t, string(diff), ` [mfa.web_authn]`)
-		assert.Contains(t, string(diff), ` enroll_enabled = false`)
-		assert.Contains(t, string(diff), ` verify_enabled = false`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {
@@ -228,11 +211,30 @@ func TestEmailDiff(t *testing.T) {
 			EnableConfirmations:  true,
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite": {
+					Subject: cast.Ptr("invite-subject"),
+					Content: cast.Ptr("invite-content"),
+				},
+				"confirmation": {
+					Subject: cast.Ptr("confirmation-subject"),
+					Content: cast.Ptr("confirmation-content"),
+				},
+				"recovery": {
+					Subject: cast.Ptr("recovery-subject"),
+					Content: cast.Ptr("recovery-content"),
+				},
+				"magic_link": {
+					Subject: cast.Ptr("magic-link-subject"),
+					Content: cast.Ptr("magic-link-content"),
+				},
+				"email_change": {
+					Subject: cast.Ptr("email-change-subject"),
+					Content: cast.Ptr("email-change-content"),
+				},
+				"reauthentication": {
+					Subject: cast.Ptr("reauthentication-subject"),
+					Content: cast.Ptr("reauthentication-content"),
+				},
 			},
 			Smtp: &smtp{
 				Host:       "smtp.sendgrid.net",
@@ -261,6 +263,19 @@ func TestEmailDiff(t *testing.T) {
 			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
 			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
+			// Custom templates
+			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
+			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
+			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
+			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
+			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
+			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
+			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -275,11 +290,28 @@ func TestEmailDiff(t *testing.T) {
 			EnableConfirmations:  true,
 			SecurePasswordChange: true,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite": {
+					Subject: cast.Ptr("invite-subject"),
+					Content: cast.Ptr("invite-content"),
+				},
+				"confirmation": {
+					Subject: cast.Ptr("confirmation-subject"),
+				},
+				"recovery": {
+					Content: cast.Ptr("recovery-content"),
+				},
+				"magic_link": {
+					Subject: cast.Ptr("magic-link-subject"),
+					Content: cast.Ptr("magic-link-content"),
+				},
+				"email_change": {
+					Subject: cast.Ptr("email-change-subject"),
+					Content: cast.Ptr("email-change-content"),
+				},
+				"reauthentication": {
+					Subject: cast.Ptr(""),
+					Content: cast.Ptr(""),
+				},
 			},
 			Smtp: &smtp{
 				Host:       "smtp.sendgrid.net",
@@ -302,24 +334,15 @@ func TestEmailDiff(t *testing.T) {
 			MailerOtpExp:                   3600,
 			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
 			SmtpMaxFrequency: cast.Ptr(60),
+			// Custom templates
+			MailerTemplatesConfirmationContent: cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:             cast.Ptr("recovery-subject"),
+			MailerSubjectsMagicLink:            cast.Ptr("magic-link-subject"),
+			MailerTemplatesEmailChangeContent:  cast.Ptr("email-change-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), ` [email]`)
-		assert.Contains(t, string(diff), `-enable_signup = false`)
-		assert.Contains(t, string(diff), `-double_confirm_changes = false`)
-		assert.Contains(t, string(diff), `-enable_confirmations = false`)
-		assert.Contains(t, string(diff), `-secure_password_change = false`)
-		assert.Contains(t, string(diff), `-max_frequency = "1m0s"`)
-		assert.Contains(t, string(diff), `-otp_length = 6`)
-		assert.Contains(t, string(diff), `-otp_expiry = 3600`)
-		assert.Contains(t, string(diff), `+enable_signup = true`)
-		assert.Contains(t, string(diff), `+double_confirm_changes = true`)
-		assert.Contains(t, string(diff), `+enable_confirmations = true`)
-		assert.Contains(t, string(diff), `+secure_password_change = true`)
-		assert.Contains(t, string(diff), `+max_frequency = "1s"`)
-		assert.Contains(t, string(diff), `+otp_length = 8`)
-		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local disabled remote enabled", func(t *testing.T) {
@@ -327,11 +350,12 @@ func TestEmailDiff(t *testing.T) {
 		c.Email = email{
 			EnableConfirmations: false,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite":           {},
+				"confirmation":     {},
+				"recovery":         {},
+				"magic_link":       {},
+				"email_change":     {},
+				"reauthentication": {},
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    8,
@@ -352,33 +376,23 @@ func TestEmailDiff(t *testing.T) {
 			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
 			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
+			// Custom templates
+			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
+			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
+			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
+			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
+			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
+			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
+			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
+			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
-
-		assert.Contains(t, string(diff), ` [email]`)
-		assert.Contains(t, string(diff), `-enable_signup = true`)
-		assert.Contains(t, string(diff), `-double_confirm_changes = true`)
-		assert.Contains(t, string(diff), `-enable_confirmations = true`)
-		assert.Contains(t, string(diff), `-secure_password_change = true`)
-		assert.Contains(t, string(diff), `-max_frequency = "1s"`)
-		assert.Contains(t, string(diff), `-otp_length = 6`)
-		assert.Contains(t, string(diff), `-otp_expiry = 3600`)
-		assert.Contains(t, string(diff), `+enable_signup = false`)
-		assert.Contains(t, string(diff), `+double_confirm_changes = false`)
-		assert.Contains(t, string(diff), `+enable_confirmations = false`)
-		assert.Contains(t, string(diff), `+secure_password_change = false`)
-		assert.Contains(t, string(diff), `+max_frequency = "1m0s"`)
-		assert.Contains(t, string(diff), `+otp_length = 8`)
-		assert.Contains(t, string(diff), `+otp_expiry = 86400`)
-
-		assert.Contains(t, string(diff), `-[email.smtp]`)
-		assert.Contains(t, string(diff), `-host = "smtp.sendgrid.net"`)
-		assert.Contains(t, string(diff), `-port = 587`)
-		assert.Contains(t, string(diff), `-user = "apikey"`)
-		assert.Contains(t, string(diff), `-pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"`)
-		assert.Contains(t, string(diff), `-admin_email = "admin@email.com"`)
-		assert.Contains(t, string(diff), `-sender_name = "Admin"`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local disabled remote disabled", func(t *testing.T) {
@@ -386,11 +400,12 @@ func TestEmailDiff(t *testing.T) {
 		c.Email = email{
 			EnableConfirmations: false,
 			Template: map[string]emailTemplate{
-				"invite":       {},
-				"confirmation": {},
-				"recovery":     {},
-				"magic_link":   {},
-				"email_change": {},
+				"invite":           {},
+				"confirmation":     {},
+				"recovery":         {},
+				"magic_link":       {},
+				"email_change":     {},
+				"reauthentication": {},
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    6,
@@ -480,23 +495,7 @@ func TestSmsDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), `-enable_signup = true`)
-		assert.Contains(t, string(diff), `-enable_confirmations = true`)
-		assert.Contains(t, string(diff), `-template = "Your code is {{ .Code }}"`)
-		assert.Contains(t, string(diff), `-max_frequency = "1m0s"`)
-
-		assert.Contains(t, string(diff), `+enable_signup = false`)
-		assert.Contains(t, string(diff), `+enable_confirmations = false`)
-		assert.Contains(t, string(diff), `+template = ""`)
-		assert.Contains(t, string(diff), `+max_frequency = "0s"`)
-
-		assert.Contains(t, string(diff), ` [sms.twilio]`)
-		assert.Contains(t, string(diff), `-enabled = true`)
-		assert.Contains(t, string(diff), `+enabled = false`)
-
-		assert.Contains(t, string(diff), `-[sms.test_otp]`)
-		assert.Contains(t, string(diff), `-123 = "456"`)
-		assert.Contains(t, string(diff), `-456 = "123"`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local enabled remote disabled", func(t *testing.T) {
@@ -529,30 +528,7 @@ func TestSmsDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), `-enable_signup = false`)
-		assert.Contains(t, string(diff), `-enable_confirmations = false`)
-		assert.Contains(t, string(diff), `-template = ""`)
-		assert.Contains(t, string(diff), `-max_frequency = "0s"`)
-
-		assert.Contains(t, string(diff), `+enable_signup = true`)
-		assert.Contains(t, string(diff), `+enable_confirmations = true`)
-		assert.Contains(t, string(diff), `+template = "Your code is {{ .Code }}"`)
-		assert.Contains(t, string(diff), `+max_frequency = "1m0s"`)
-
-		assert.Contains(t, string(diff), ` [sms.twilio]`)
-		assert.Contains(t, string(diff), `-enabled = true`)
-		assert.Contains(t, string(diff), `+enabled = false`)
-
-		assert.Contains(t, string(diff), ` [sms.messagebird]`)
-		assert.Contains(t, string(diff), `-enabled = false`)
-		assert.Contains(t, string(diff), `-originator = ""`)
-		assert.Contains(t, string(diff), `-access_key = "hash:"`)
-		assert.Contains(t, string(diff), `+enabled = true`)
-		assert.Contains(t, string(diff), `+originator = "test-originator"`)
-		assert.Contains(t, string(diff), `+access_key = "hash:ab60d03fc809fb02dae838582f3ddc13d1d6cb32ffba77c4b969dd3caa496f13"`)
-
-		assert.Contains(t, string(diff), `+[sms.test_otp]`)
-		assert.Contains(t, string(diff), `+123 = "456"`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local disabled remote disabled", func(t *testing.T) {
@@ -597,9 +573,7 @@ func TestSmsDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), ` [sms]`)
-		assert.Contains(t, string(diff), `-enable_signup = false`)
-		assert.Contains(t, string(diff), `+enable_signup = true`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("enable provider without sign up", func(t *testing.T) {
@@ -762,15 +736,7 @@ func TestExternalDiff(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), ` [external.apple]`)
-		assert.Contains(t, string(diff), `-enabled = false`)
-		assert.Contains(t, string(diff), `+enabled = true`)
-		assert.Contains(t, string(diff), ` client_id = "test-client-1,test-client-2"`)
-		assert.Contains(t, string(diff), ` secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"`)
-
-		assert.Contains(t, string(diff), ` [external.google]`)
-		assert.Contains(t, string(diff), `-enabled = true`)
-		assert.Contains(t, string(diff), `+enabled = false`)
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local and remote disabled", func(t *testing.T) {

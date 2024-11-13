@@ -16,7 +16,7 @@ func ParseStorageURL(objectURL string) (string, error) {
 	if err != nil {
 		return "", errors.Errorf("failed to parse storage url: %w", err)
 	}
-	if strings.ToLower(parsed.Scheme) != STORAGE_SCHEME || len(parsed.Path) == 0 || len(parsed.Host) > 0 {
+	if !strings.EqualFold(parsed.Scheme, STORAGE_SCHEME) || len(parsed.Path) == 0 || len(parsed.Host) > 0 {
 		return "", errors.New(ErrInvalidURL)
 	}
 	return parsed.Path, nil

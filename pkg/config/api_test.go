@@ -33,7 +33,7 @@ func TestApiToUpdatePostgrestConfigBody(t *testing.T) {
 	})
 }
 
-func TestApiDiffWithRemote(t *testing.T) {
+func TestApiDiff(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
 		api := &api{
 			Enabled:         true,
@@ -49,14 +49,9 @@ func TestApiDiffWithRemote(t *testing.T) {
 		}
 
 		diff, err := api.DiffWithRemote(remoteConfig)
-		assert.NoError(t, err, string(diff))
+		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "-schemas = [\"public\"]")
-		assert.Contains(t, string(diff), "+schemas = [\"public\", \"private\"]")
-		assert.Contains(t, string(diff), "-extra_search_path = [\"public\"]")
-		assert.Contains(t, string(diff), "+extra_search_path = [\"extensions\", \"public\"]")
-		assert.Contains(t, string(diff), "-max_rows = 500")
-		assert.Contains(t, string(diff), "+max_rows = 1000")
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("handles no differences", func(t *testing.T) {
@@ -114,10 +109,9 @@ func TestApiDiffWithRemote(t *testing.T) {
 		}
 
 		diff, err := api.DiffWithRemote(remoteConfig)
-		assert.NoError(t, err, string(diff))
+		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "-enabled = false")
-		assert.Contains(t, string(diff), "+enabled = true")
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("handles api disabled on local side", func(t *testing.T) {
@@ -135,9 +129,8 @@ func TestApiDiffWithRemote(t *testing.T) {
 		}
 
 		diff, err := api.DiffWithRemote(remoteConfig)
-		assert.NoError(t, err, string(diff))
+		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "-enabled = true")
-		assert.Contains(t, string(diff), "+enabled = false")
+		assertSnapshotEqual(t, diff)
 	})
 }

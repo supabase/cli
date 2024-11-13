@@ -1,0 +1,21 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -88,7 +88,7 @@
+ 
+ [external]
+ [external.apple]
+-enabled = false
++enabled = true
+ client_id = "test-client-1,test-client-2"
+ secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
+ url = ""
+@@ -144,7 +144,7 @@
+ redirect_uri = ""
+ skip_nonce_check = false
+ [external.google]
+-enabled = true
++enabled = false
+ client_id = ""
+ secret = ""
+ url = ""

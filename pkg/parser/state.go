@@ -47,7 +47,7 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 		fallthrough
 	case 'C':
 		offset := len(data) - len(BEGIN_ATOMIC)
-		if offset >= 0 && strings.ToUpper(string(data[offset:])) == BEGIN_ATOMIC {
+		if offset >= 0 && strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
 			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
 		}
 	}
@@ -176,7 +176,7 @@ func (s *AtomicState) Next(r rune, data []byte) State {
 	if _, ok := s.prev.(*ReadyState); ok {
 		window := data[len(data)-len(s.delimiter):]
 		// Treat delimiter as case insensitive
-		if strings.ToUpper(string(window)) == string(s.delimiter) {
+		if strings.EqualFold(string(window), string(s.delimiter)) {
 			return &ReadyState{}
 		}
 	}
