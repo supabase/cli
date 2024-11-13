@@ -15,7 +15,8 @@ func (u *ConfigUpdater) UpdateLocalApiConfig(ctx context.Context, projectRef str
 	} else if apiConfig.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", apiConfig.StatusCode(), string(apiConfig.Body))
 	}
-	newConfig := c.fromRemoteApiConfig(*apiConfig.JSON200)
+	newConfig := *c
+	newConfig.fromRemoteApiConfig(*apiConfig.JSON200)
 	apiDiff, err := c.DiffWithRemote(*apiConfig.JSON200)
 	if err != nil {
 		return err
@@ -43,7 +44,8 @@ func (u *ConfigUpdater) UpdateLocalDbSettingsConfig(ctx context.Context, project
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating local DB config with remote values:", string(dbDiff))
-	newSettings := s.fromRemoteConfig(*dbConfig.JSON200)
+	newSettings := *s
+	newSettings.fromRemoteConfig(*dbConfig.JSON200)
 	*s = newSettings
 	return nil
 }
@@ -72,7 +74,8 @@ func (u *ConfigUpdater) UpdateLocalAuthConfig(ctx context.Context, projectRef st
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating local Auth config with remote values:", string(authDiff))
-	newAuthConfig := c.fromRemoteAuthConfig(*authConfig.JSON200)
+	newAuthConfig := *c
+	newAuthConfig.fromRemoteAuthConfig(*authConfig.JSON200)
 	*c = newAuthConfig
 	return nil
 }
@@ -95,7 +98,8 @@ func (u *ConfigUpdater) UpdateLocalStorageConfig(ctx context.Context, projectRef
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating local Storage config with remote values:", string(storageDiff))
-	newStorageConfig := c.fromRemoteStorageConfig(*storageConfig.JSON200)
+	newStorageConfig := *c
+	newStorageConfig.fromRemoteStorageConfig(*storageConfig.JSON200)
 	*c = newStorageConfig
 	return nil
 }
