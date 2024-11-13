@@ -3921,6 +3921,22 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		}
 
+		if params.ResourceMultiplier != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "resource_multiplier", runtime.ParamLocationQuery, *params.ResourceMultiplier); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -4146,6 +4162,22 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 		if params.ImportMapPath != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ResourceMultiplier != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "resource_multiplier", runtime.ParamLocationQuery, *params.ResourceMultiplier); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

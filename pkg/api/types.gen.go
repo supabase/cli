@@ -824,17 +824,18 @@ type Domain struct {
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	CreatedAt      int64                  `json:"created_at"`
-	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
-	Id             string                 `json:"id"`
-	ImportMap      *bool                  `json:"import_map,omitempty"`
-	ImportMapPath  *string                `json:"import_map_path,omitempty"`
-	Name           string                 `json:"name"`
-	Slug           string                 `json:"slug"`
-	Status         FunctionResponseStatus `json:"status"`
-	UpdatedAt      int64                  `json:"updated_at"`
-	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
-	Version        int                    `json:"version"`
+	CreatedAt          int64                  `json:"created_at"`
+	EntrypointPath     *string                `json:"entrypoint_path,omitempty"`
+	Id                 string                 `json:"id"`
+	ImportMap          *bool                  `json:"import_map,omitempty"`
+	ImportMapPath      *string                `json:"import_map_path,omitempty"`
+	Name               string                 `json:"name"`
+	ResourceMultiplier *string                `json:"resource_multiplier,omitempty"`
+	Slug               string                 `json:"slug"`
+	Status             FunctionResponseStatus `json:"status"`
+	UpdatedAt          int64                  `json:"updated_at"`
+	VerifyJwt          *bool                  `json:"verify_jwt,omitempty"`
+	Version            int                    `json:"version"`
 }
 
 // FunctionResponseStatus defines model for FunctionResponse.Status.
@@ -842,17 +843,18 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	CreatedAt      int64                      `json:"created_at"`
-	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
-	Id             string                     `json:"id"`
-	ImportMap      *bool                      `json:"import_map,omitempty"`
-	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
-	Name           string                     `json:"name"`
-	Slug           string                     `json:"slug"`
-	Status         FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt      int64                      `json:"updated_at"`
-	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
-	Version        int                        `json:"version"`
+	CreatedAt          int64                      `json:"created_at"`
+	EntrypointPath     *string                    `json:"entrypoint_path,omitempty"`
+	Id                 string                     `json:"id"`
+	ImportMap          *bool                      `json:"import_map,omitempty"`
+	ImportMapPath      *string                    `json:"import_map_path,omitempty"`
+	Name               string                     `json:"name"`
+	ResourceMultiplier *string                    `json:"resource_multiplier,omitempty"`
+	Slug               string                     `json:"slug"`
+	Status             FunctionSlugResponseStatus `json:"status"`
+	UpdatedAt          int64                      `json:"updated_at"`
+	VerifyJwt          *bool                      `json:"verify_jwt,omitempty"`
+	Version            int                        `json:"version"`
 }
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
@@ -1539,10 +1541,11 @@ type V1BackupsResponse struct {
 
 // V1CreateFunctionBody defines model for V1CreateFunctionBody.
 type V1CreateFunctionBody struct {
-	Body      string `json:"body"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
+	Body               string  `json:"body"`
+	Name               string  `json:"name"`
+	ResourceMultiplier *string `json:"resource_multiplier,omitempty"`
+	Slug               string  `json:"slug"`
+	VerifyJwt          *bool   `json:"verify_jwt,omitempty"`
 }
 
 // V1CreateProjectBody defines model for V1CreateProjectBody.
@@ -1768,22 +1771,24 @@ type V1AuthorizeUserParamsCodeChallengeMethod string
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name           *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Slug               *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name               *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt          *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap          *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath     *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath      *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	ResourceMultiplier *string `form:"resource_multiplier,omitempty" json:"resource_multiplier,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name           *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Slug               *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name               *string `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt          *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap          *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath     *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath      *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	ResourceMultiplier *string `form:"resource_multiplier,omitempty" json:"resource_multiplier,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
