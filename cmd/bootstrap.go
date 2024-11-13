@@ -43,15 +43,15 @@ var (
 				return err
 			}
 			if len(args) > 0 {
-				name := strings.ToLower(args[0])
+				name := args[0]
 				for _, t := range templates {
-					if t.Name == name {
+					if strings.EqualFold(t.Name, name) {
 						starter = t
 						break
 					}
 				}
-				if name != starter.Name {
-					return errors.New("Invalid template: " + args[0])
+				if !strings.EqualFold(starter.Name, name) {
+					return errors.New("Invalid template: " + name)
 				}
 			} else {
 				if err := promptStarterTemplate(ctx, templates); err != nil {
