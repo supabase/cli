@@ -1,0 +1,43 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -58,12 +58,12 @@
+ otp_expiry = 0
+ 
+ [sms]
+-enable_signup = false
+-enable_confirmations = false
+-template = ""
+-max_frequency = "0s"
++enable_signup = true
++enable_confirmations = true
++template = "Your code is {{ .Code }}"
++max_frequency = "1m0s"
+ [sms.twilio]
+-enabled = true
++enabled = false
+ account_sid = ""
+ message_service_sid = ""
+ auth_token = ""
+@@ -73,9 +73,9 @@
+ message_service_sid = ""
+ auth_token = ""
+ [sms.messagebird]
+-enabled = false
+-originator = ""
+-access_key = "hash:"
++enabled = true
++originator = "test-originator"
++access_key = "hash:ab60d03fc809fb02dae838582f3ddc13d1d6cb32ffba77c4b969dd3caa496f13"
+ [sms.textlocal]
+ enabled = false
+ sender = ""
+@@ -85,6 +85,8 @@
+ from = ""
+ api_key = ""
+ api_secret = ""
++[sms.test_otp]
++123 = "456"
+ 
+ [third_party]
+ [third_party.firebase]
