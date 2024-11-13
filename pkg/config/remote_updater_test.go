@@ -192,6 +192,7 @@ func TestUpdateAuthConfig(t *testing.T) {
 		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
 			Enabled:      true,
 			EnableSignup: true,
+			Email:        email{EnableConfirmations: true},
 		})
 		// Check result
 		assert.NoError(t, err)

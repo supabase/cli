@@ -30,6 +30,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/mod/semver"
 )
@@ -214,13 +215,27 @@ func (f function) IsEnabled() bool {
 	return f.Enabled == nil || *f.Enabled
 }
 
+func (a *auth) Clone() auth {
+	copy := *a
+	copy.External = maps.Clone(a.External)
+	if a.Email.Smtp != nil {
+		mailer := *a.Email.Smtp
+		copy.Email.Smtp = &mailer
+	}
+	copy.Email.Template = maps.Clone(a.Email.Template)
+	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
+	return copy
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
 	copy.Functions = maps.Clone(c.Functions)
-	copy.Auth.External = maps.Clone(c.Auth.External)
-	copy.Auth.Email.Template = maps.Clone(c.Auth.Email.Template)
-	copy.Auth.Sms.TestOTP = maps.Clone(c.Auth.Sms.TestOTP)
+	copy.Auth = c.Auth.Clone()
+	if c.Experimental.Webhooks != nil {
+		webhooks := *c.Experimental.Webhooks
+		copy.Experimental.Webhooks = &webhooks
+	}
 	return copy
 }
 
@@ -278,16 +293,12 @@ func NewConfig(editors ...ConfigEditor) config {
 			Image: gotrueImage,
 			Email: email{
 				Template: map[string]emailTemplate{
-					"invite":       {},
-					"confirmation": {},
-					"recovery":     {},
-					"magic_link":   {},
-					"email_change": {},
-				},
-				Smtp: smtp{
-					Host:       "inbucket",
-					Port:       2500,
-					AdminEmail: "admin@email.com",
+					"invite":           {},
+					"confirmation":     {},
+					"recovery":         {},
+					"magic_link":       {},
+					"email_change":     {},
+					"reauthentication": {},
 				},
 			},
 			External: map[string]provider{
@@ -655,135 +666,24 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
 			}
 		}
-		// Validate email config
-		for name, tmpl := range c.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 {
-				if _, err = fs.Stat(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
-					return errors.Errorf("Invalid config for auth.email.%s.content_path: %s", name, tmpl.ContentPath)
-				}
-			}
-		}
-		if c.Auth.Email.Smtp.Pass, err = maybeLoadEnv(c.Auth.Email.Smtp.Pass); err != nil {
+		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
-		// Validate sms config
-		switch {
-		case c.Auth.Sms.Twilio.Enabled:
-			if len(c.Auth.Sms.Twilio.AccountSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
-			}
-			if len(c.Auth.Sms.Twilio.MessageServiceSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
-			}
-			if len(c.Auth.Sms.Twilio.AuthToken) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
-			}
-			if c.Auth.Sms.Twilio.AuthToken, err = maybeLoadEnv(c.Auth.Sms.Twilio.AuthToken); err != nil {
-				return err
-			}
-		case c.Auth.Sms.TwilioVerify.Enabled:
-			if len(c.Auth.Sms.TwilioVerify.AccountSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
-			}
-			if len(c.Auth.Sms.TwilioVerify.MessageServiceSid) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
-			}
-			if len(c.Auth.Sms.TwilioVerify.AuthToken) == 0 {
-				return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
-			}
-			if c.Auth.Sms.TwilioVerify.AuthToken, err = maybeLoadEnv(c.Auth.Sms.TwilioVerify.AuthToken); err != nil {
-				return err
-			}
-		case c.Auth.Sms.Messagebird.Enabled:
-			if len(c.Auth.Sms.Messagebird.Originator) == 0 {
-				return errors.New("Missing required field in config: auth.sms.messagebird.originator")
-			}
-			if len(c.Auth.Sms.Messagebird.AccessKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
-			}
-			if c.Auth.Sms.Messagebird.AccessKey, err = maybeLoadEnv(c.Auth.Sms.Messagebird.AccessKey); err != nil {
-				return err
-			}
-		case c.Auth.Sms.Textlocal.Enabled:
-			if len(c.Auth.Sms.Textlocal.Sender) == 0 {
-				return errors.New("Missing required field in config: auth.sms.textlocal.sender")
-			}
-			if len(c.Auth.Sms.Textlocal.ApiKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
-			}
-			if c.Auth.Sms.Textlocal.ApiKey, err = maybeLoadEnv(c.Auth.Sms.Textlocal.ApiKey); err != nil {
-				return err
-			}
-		case c.Auth.Sms.Vonage.Enabled:
-			if len(c.Auth.Sms.Vonage.From) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.from")
-			}
-			if len(c.Auth.Sms.Vonage.ApiKey) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.api_key")
-			}
-			if len(c.Auth.Sms.Vonage.ApiSecret) == 0 {
-				return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
-			}
-			if c.Auth.Sms.Vonage.ApiKey, err = maybeLoadEnv(c.Auth.Sms.Vonage.ApiKey); err != nil {
-				return err
-			}
-			if c.Auth.Sms.Vonage.ApiSecret, err = maybeLoadEnv(c.Auth.Sms.Vonage.ApiSecret); err != nil {
-				return err
-			}
-		case c.Auth.Sms.EnableSignup:
-			c.Auth.Sms.EnableSignup = false
-			fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
-		}
-		if err := c.Auth.Hook.MFAVerificationAttempt.HandleHook("mfa_verification_attempt"); err != nil {
+		if err := c.Auth.MFA.validate(); err != nil {
 			return err
 		}
-		if err := c.Auth.Hook.PasswordVerificationAttempt.HandleHook("password_verification_attempt"); err != nil {
+		if err := c.Auth.Email.validate(fsys); err != nil {
 			return err
 		}
-		if err := c.Auth.Hook.CustomAccessToken.HandleHook("custom_access_token"); err != nil {
+		if err := c.Auth.Sms.validate(); err != nil {
 			return err
 		}
-		if err := c.Auth.Hook.SendSMS.HandleHook("send_sms"); err != nil {
+		if err := c.Auth.External.validate(); err != nil {
 			return err
 		}
-		if err := c.Auth.Hook.SendEmail.HandleHook("send_email"); err != nil {
+		if err := c.Auth.ThirdParty.validate(); err != nil {
 			return err
 		}
-		// Validate oauth config
-		for _, ext := range []string{"linkedin", "slack"} {
-			if c.Auth.External[ext].Enabled {
-				fmt.Fprintf(os.Stderr, `WARN: disabling deprecated "%[1]s" provider. Please use [auth.external.%[1]s_oidc] instead\n`, ext)
-			}
-			delete(c.Auth.External, ext)
-		}
-		for ext, provider := range c.Auth.External {
-			if !provider.Enabled {
-				continue
-			}
-			if provider.ClientId == "" {
-				return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
-			}
-			if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
-				return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
-			}
-			if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
-				return err
-			}
-			if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
-				return err
-			}
-			if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
-				return err
-			}
-			if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
-				return err
-			}
-			c.Auth.External[ext] = provider
-		}
-	}
-	// Validate Third-Party Auth config
-	if err := c.Auth.ThirdParty.validate(); err != nil {
-		return err
 	}
 	// Validate functions config
 	if c.EdgeRuntime.Enabled {
@@ -817,7 +717,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
-	if err := c.Experimental.validateWebhooks(); err != nil {
+	if err := c.Experimental.validate(); err != nil {
 		return err
 	}
 	return nil
@@ -917,31 +817,192 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 	return nil
 }
 
-func (h *hookConfig) HandleHook(hookType string) error {
+func (e *email) validate(fsys fs.FS) (err error) {
+	for name, tmpl := range e.Template {
+		if len(tmpl.ContentPath) == 0 {
+			if tmpl.Content != nil {
+				return errors.Errorf("Invalid config for auth.email.%s.content: please use content_path instead", name)
+			}
+			continue
+		}
+		if content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
+		} else {
+			tmpl.Content = cast.Ptr(string(content))
+		}
+		e.Template[name] = tmpl
+	}
+	if e.Smtp != nil {
+		if len(e.Smtp.Host) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.host")
+		}
+		if e.Smtp.Port == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.port")
+		}
+		if len(e.Smtp.User) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.user")
+		}
+		if len(e.Smtp.Pass) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.pass")
+		}
+		if len(e.Smtp.AdminEmail) == 0 {
+			return errors.New("Missing required field in config: auth.email.smtp.admin_email")
+		}
+		if e.Smtp.Pass, err = maybeLoadEnv(e.Smtp.Pass); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *sms) validate() (err error) {
+	switch {
+	case s.Twilio.Enabled:
+		if len(s.Twilio.AccountSid) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio.account_sid")
+		}
+		if len(s.Twilio.MessageServiceSid) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
+		}
+		if len(s.Twilio.AuthToken) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
+		}
+		if s.Twilio.AuthToken, err = maybeLoadEnv(s.Twilio.AuthToken); err != nil {
+			return err
+		}
+	case s.TwilioVerify.Enabled:
+		if len(s.TwilioVerify.AccountSid) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio_verify.account_sid")
+		}
+		if len(s.TwilioVerify.MessageServiceSid) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
+		}
+		if len(s.TwilioVerify.AuthToken) == 0 {
+			return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
+		}
+		if s.TwilioVerify.AuthToken, err = maybeLoadEnv(s.TwilioVerify.AuthToken); err != nil {
+			return err
+		}
+	case s.Messagebird.Enabled:
+		if len(s.Messagebird.Originator) == 0 {
+			return errors.New("Missing required field in config: auth.sms.messagebird.originator")
+		}
+		if len(s.Messagebird.AccessKey) == 0 {
+			return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
+		}
+		if s.Messagebird.AccessKey, err = maybeLoadEnv(s.Messagebird.AccessKey); err != nil {
+			return err
+		}
+	case s.Textlocal.Enabled:
+		if len(s.Textlocal.Sender) == 0 {
+			return errors.New("Missing required field in config: auth.sms.textlocal.sender")
+		}
+		if len(s.Textlocal.ApiKey) == 0 {
+			return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
+		}
+		if s.Textlocal.ApiKey, err = maybeLoadEnv(s.Textlocal.ApiKey); err != nil {
+			return err
+		}
+	case s.Vonage.Enabled:
+		if len(s.Vonage.From) == 0 {
+			return errors.New("Missing required field in config: auth.sms.vonage.from")
+		}
+		if len(s.Vonage.ApiKey) == 0 {
+			return errors.New("Missing required field in config: auth.sms.vonage.api_key")
+		}
+		if len(s.Vonage.ApiSecret) == 0 {
+			return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
+		}
+		if s.Vonage.ApiKey, err = maybeLoadEnv(s.Vonage.ApiKey); err != nil {
+			return err
+		}
+		if s.Vonage.ApiSecret, err = maybeLoadEnv(s.Vonage.ApiSecret); err != nil {
+			return err
+		}
+	case s.EnableSignup:
+		s.EnableSignup = false
+		fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
+	}
+	return nil
+}
+
+func (e external) validate() (err error) {
+	for _, ext := range []string{"linkedin", "slack"} {
+		if e[ext].Enabled {
+			fmt.Fprintf(os.Stderr, `WARN: disabling deprecated "%[1]s" provider. Please use [auth.external.%[1]s_oidc] instead\n`, ext)
+		}
+		delete(e, ext)
+	}
+	for ext, provider := range e {
+		if !provider.Enabled {
+			continue
+		}
+		if provider.ClientId == "" {
+			return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
+		}
+		if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
+			return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
+		}
+		if provider.ClientId, err = maybeLoadEnv(provider.ClientId); err != nil {
+			return err
+		}
+		if provider.Secret, err = maybeLoadEnv(provider.Secret); err != nil {
+			return err
+		}
+		if provider.RedirectUri, err = maybeLoadEnv(provider.RedirectUri); err != nil {
+			return err
+		}
+		if provider.Url, err = maybeLoadEnv(provider.Url); err != nil {
+			return err
+		}
+		e[ext] = provider
+	}
+	return nil
+}
+
+func (h *hook) validate() error {
+	if err := h.MFAVerificationAttempt.validate("mfa_verification_attempt"); err != nil {
+		return err
+	}
+	if err := h.PasswordVerificationAttempt.validate("password_verification_attempt"); err != nil {
+		return err
+	}
+	if err := h.CustomAccessToken.validate("custom_access_token"); err != nil {
+		return err
+	}
+	if err := h.SendSMS.validate("send_sms"); err != nil {
+		return err
+	}
+	return h.SendEmail.validate("send_email")
+}
+
+func (h *hookConfig) validate(hookType string) (err error) {
 	// If not enabled do nothing
 	if !h.Enabled {
 		return nil
 	}
 	if h.URI == "" {
 		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
+	} else if parsed, err := url.Parse(h.URI); err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	} else if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
+		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
 	}
-	if err := validateHookURI(h.URI, hookType); err != nil {
-		return err
-	}
-	var err error
 	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
 		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
 	}
 	return nil
 }
 
-func validateHookURI(uri, hookName string) error {
-	parsed, err := url.Parse(uri)
-	if err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
+func (m *mfa) validate() error {
+	if m.TOTP.EnrollEnabled && !m.TOTP.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled")
 	}
-	if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookName)
+	if m.Phone.EnrollEnabled && !m.Phone.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.phone.enroll_enabled requires verify_enabled")
+	}
+	if m.WebAuthn.EnrollEnabled && !m.WebAuthn.VerifyEnabled {
+		return errors.Errorf("Invalid MFA config: auth.mfa.web_authn.enroll_enabled requires verify_enabled")
 	}
 	return nil
 }
@@ -1186,11 +1247,9 @@ func ToTomlBytes(config any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (e *experimental) validateWebhooks() error {
-	if e.Webhooks != nil {
-		if !e.Webhooks.Enabled {
-			return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
-		}
+func (e *experimental) validate() error {
+	if e.Webhooks != nil && !e.Webhooks.Enabled {
+		return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
 	}
 	return nil
 }

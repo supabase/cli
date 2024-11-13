@@ -44,20 +44,20 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	return body
 }
 
-func (s *storage) fromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) storage {
-	result := *s
-	result.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
-	result.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
-	return result
+func (s *storage) fromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) {
+	s.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
+	s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
 }
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
+	copy := *s
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(s)
+	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(s.fromRemoteStorageConfig(remoteConfig))
+	copy.fromRemoteStorageConfig(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}

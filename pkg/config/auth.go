@@ -1,7 +1,7 @@
 package config
 
 import (
-	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,25 +12,24 @@ import (
 
 type (
 	auth struct {
-		Enabled                bool     `toml:"enabled"`
-		Image                  string   `toml:"-"`
-		SiteUrl                string   `toml:"site_url"`
-		AdditionalRedirectUrls []string `toml:"additional_redirect_urls"`
+		Enabled bool   `toml:"enabled"`
+		Image   string `toml:"-"`
 
-		JwtExpiry                  uint `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool `toml:"enable_manual_linking"`
+		SiteUrl                    string   `toml:"site_url"`
+		AdditionalRedirectUrls     []string `toml:"additional_redirect_urls"`
+		JwtExpiry                  uint     `toml:"jwt_expiry"`
+		EnableRefreshTokenRotation bool     `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint     `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool     `toml:"enable_manual_linking"`
+		EnableSignup               bool     `toml:"enable_signup"`
+		EnableAnonymousSignIns     bool     `toml:"enable_anonymous_sign_ins"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
-
-		EnableSignup           bool     `toml:"enable_signup"`
-		EnableAnonymousSignIns bool     `toml:"enable_anonymous_sign_ins"`
-		Email                  email    `toml:"email"`
-		Sms                    sms      `toml:"sms"`
-		External               external `toml:"external"`
+		Email    email    `toml:"email"`
+		Sms      sms      `toml:"sms"`
+		External external `toml:"external"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -74,7 +73,7 @@ type (
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		SecurePasswordChange bool                     `toml:"secure_password_change"`
 		Template             map[string]emailTemplate `toml:"template"`
-		Smtp                 smtp                     `toml:"smtp"`
+		Smtp                 *smtp                    `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 		OtpLength            uint                     `toml:"otp_length"`
 		OtpExpiry            uint                     `toml:"otp_expiry"`
@@ -90,7 +89,9 @@ type (
 	}
 
 	emailTemplate struct {
-		Subject     string `toml:"subject"`
+		Subject *string `toml:"subject"`
+		Content *string `toml:"content"`
+		// Only content path is accepted in config.toml
 		ContentPath string `toml:"content_path"`
 	}
 
@@ -192,25 +193,247 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 	}
+	a.Hook.toAuthConfigBody(&body)
+	a.MFA.toAuthConfigBody(&body)
+	a.Sessions.toAuthConfigBody(&body)
+	a.Email.toAuthConfigBody(&body)
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
 	return body
 }
 
-func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) auth {
-	result := *a
-	result.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
-	result.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
-	result.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
-	result.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
-	result.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
-	result.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
-	result.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
-	result.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
-	result.Sms.fromAuthConfig(remoteConfig)
-	result.External = maps.Clone(result.External)
-	result.External.fromAuthConfig(remoteConfig)
-	return result
+func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
+	a.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
+	a.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
+	a.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
+	a.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
+	a.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
+	a.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
+	a.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	a.Hook.fromAuthConfig(remoteConfig)
+	a.MFA.fromAuthConfig(remoteConfig)
+	a.Sessions.fromAuthConfig(remoteConfig)
+	a.Email.fromAuthConfig(remoteConfig)
+	a.Sms.fromAuthConfig(remoteConfig)
+	a.External.fromAuthConfig(remoteConfig)
+}
+
+func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if body.HookCustomAccessTokenEnabled = &h.CustomAccessToken.Enabled; *body.HookCustomAccessTokenEnabled {
+		body.HookCustomAccessTokenUri = &h.CustomAccessToken.URI
+		body.HookCustomAccessTokenSecrets = &h.CustomAccessToken.Secrets
+	}
+	if body.HookSendEmailEnabled = &h.SendEmail.Enabled; *body.HookSendEmailEnabled {
+		body.HookSendEmailUri = &h.SendEmail.URI
+		body.HookSendEmailSecrets = &h.SendEmail.Secrets
+	}
+	if body.HookSendSmsEnabled = &h.SendSMS.Enabled; *body.HookSendSmsEnabled {
+		body.HookSendSmsUri = &h.SendSMS.URI
+		body.HookSendSmsSecrets = &h.SendSMS.Secrets
+	}
+	// Enterprise and team only features
+	if body.HookMfaVerificationAttemptEnabled = &h.MFAVerificationAttempt.Enabled; *body.HookMfaVerificationAttemptEnabled {
+		body.HookMfaVerificationAttemptUri = &h.MFAVerificationAttempt.URI
+		body.HookMfaVerificationAttemptSecrets = &h.MFAVerificationAttempt.Secrets
+	}
+	if body.HookPasswordVerificationAttemptEnabled = &h.PasswordVerificationAttempt.Enabled; *body.HookPasswordVerificationAttemptEnabled {
+		body.HookPasswordVerificationAttemptUri = &h.PasswordVerificationAttempt.URI
+		body.HookPasswordVerificationAttemptSecrets = &h.PasswordVerificationAttempt.Secrets
+	}
+}
+
+func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	// Ignore disabled hooks because their envs are not loaded
+	if h.CustomAccessToken.Enabled {
+		h.CustomAccessToken.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
+		h.CustomAccessToken.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+	}
+	h.CustomAccessToken.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
+	if h.SendEmail.Enabled {
+		h.SendEmail.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
+		h.SendEmail.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
+	}
+	h.SendEmail.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
+	if h.SendSMS.Enabled {
+		h.SendSMS.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
+		h.SendSMS.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
+	}
+	h.SendSMS.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
+	// Enterprise and team only features
+	if h.MFAVerificationAttempt.Enabled {
+		h.MFAVerificationAttempt.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
+		h.MFAVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+	}
+	h.MFAVerificationAttempt.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
+	if h.PasswordVerificationAttempt.Enabled {
+		h.PasswordVerificationAttempt.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
+		h.PasswordVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+	}
+	h.PasswordVerificationAttempt.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
+}
+
+func (m mfa) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.MfaMaxEnrolledFactors = cast.UintToIntPtr(&m.MaxEnrolledFactors)
+	body.MfaTotpEnrollEnabled = &m.TOTP.EnrollEnabled
+	body.MfaTotpVerifyEnabled = &m.TOTP.VerifyEnabled
+	body.MfaPhoneEnrollEnabled = &m.Phone.EnrollEnabled
+	body.MfaPhoneVerifyEnabled = &m.Phone.VerifyEnabled
+	body.MfaPhoneOtpLength = cast.UintToIntPtr(&m.Phone.OtpLength)
+	body.MfaPhoneTemplate = &m.Phone.Template
+	body.MfaPhoneMaxFrequency = cast.Ptr(int(m.Phone.MaxFrequency.Seconds()))
+	body.MfaWebAuthnEnrollEnabled = &m.WebAuthn.EnrollEnabled
+	body.MfaWebAuthnVerifyEnabled = &m.WebAuthn.VerifyEnabled
+}
+
+func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	m.MaxEnrolledFactors = cast.IntToUint(cast.Val(remoteConfig.MfaMaxEnrolledFactors, 0))
+	m.TOTP.EnrollEnabled = cast.Val(remoteConfig.MfaTotpEnrollEnabled, false)
+	m.TOTP.VerifyEnabled = cast.Val(remoteConfig.MfaTotpVerifyEnabled, false)
+	m.Phone.EnrollEnabled = cast.Val(remoteConfig.MfaPhoneEnrollEnabled, false)
+	m.Phone.VerifyEnabled = cast.Val(remoteConfig.MfaPhoneVerifyEnabled, false)
+	m.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
+	m.Phone.Template = cast.Val(remoteConfig.MfaPhoneTemplate, "")
+	m.Phone.MaxFrequency = time.Duration(cast.Val(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
+	m.WebAuthn.EnrollEnabled = cast.Val(remoteConfig.MfaWebAuthnEnrollEnabled, false)
+	m.WebAuthn.VerifyEnabled = cast.Val(remoteConfig.MfaWebAuthnVerifyEnabled, false)
+}
+
+func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.SessionsTimebox = cast.Ptr(int(s.Timebox.Seconds()))
+	body.SessionsInactivityTimeout = cast.Ptr(int(s.InactivityTimeout.Seconds()))
+}
+
+func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Second
+	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Second
+}
+
+func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalEmailEnabled = &e.EnableSignup
+	body.MailerSecureEmailChangeEnabled = &e.DoubleConfirmChanges
+	body.MailerAutoconfirm = cast.Ptr(!e.EnableConfirmations)
+	body.MailerOtpLength = cast.UintToIntPtr(&e.OtpLength)
+	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
+	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
+	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+	if e.Smtp != nil {
+		body.SmtpHost = &e.Smtp.Host
+		body.SmtpPort = cast.Ptr(strconv.Itoa(int(e.Smtp.Port)))
+		body.SmtpUser = &e.Smtp.User
+		body.SmtpPass = &e.Smtp.Pass
+		body.SmtpAdminEmail = &e.Smtp.AdminEmail
+		body.SmtpSenderName = &e.Smtp.SenderName
+	} else {
+		// Setting a single empty string disables SMTP
+		body.SmtpHost = cast.Ptr("")
+	}
+	if len(e.Template) == 0 {
+		return
+	}
+	var tmpl *emailTemplate
+	tmpl = cast.Ptr(e.Template["invite"])
+	body.MailerSubjectsInvite = tmpl.Subject
+	body.MailerTemplatesInviteContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["confirmation"])
+	body.MailerSubjectsConfirmation = tmpl.Subject
+	body.MailerTemplatesConfirmationContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["recovery"])
+	body.MailerSubjectsRecovery = tmpl.Subject
+	body.MailerTemplatesRecoveryContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["magic_link"])
+	body.MailerSubjectsMagicLink = tmpl.Subject
+	body.MailerTemplatesMagicLinkContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["email_change"])
+	body.MailerSubjectsEmailChange = tmpl.Subject
+	body.MailerTemplatesEmailChangeContent = tmpl.Content
+	tmpl = cast.Ptr(e.Template["reauthentication"])
+	body.MailerSubjectsReauthentication = tmpl.Subject
+	body.MailerTemplatesReauthenticationContent = tmpl.Content
+}
+
+func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	e.EnableSignup = cast.Val(remoteConfig.ExternalEmailEnabled, false)
+	e.DoubleConfirmChanges = cast.Val(remoteConfig.MailerSecureEmailChangeEnabled, false)
+	e.EnableConfirmations = !cast.Val(remoteConfig.MailerAutoconfirm, false)
+	e.OtpLength = cast.IntToUint(cast.Val(remoteConfig.MailerOtpLength, 0))
+	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
+	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
+	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
+	// Api resets all values when SMTP is disabled
+	if remoteConfig.SmtpHost != nil {
+		e.Smtp = &smtp{
+			Host:       *remoteConfig.SmtpHost,
+			User:       cast.Val(remoteConfig.SmtpUser, ""),
+			Pass:       hashPrefix + cast.Val(remoteConfig.SmtpPass, ""),
+			AdminEmail: cast.Val(remoteConfig.SmtpAdminEmail, ""),
+			SenderName: cast.Val(remoteConfig.SmtpSenderName, ""),
+		}
+		portStr := cast.Val(remoteConfig.SmtpPort, "")
+		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
+			e.Smtp.Port = uint16(port)
+		}
+	} else {
+		e.Smtp = nil
+	}
+	if len(e.Template) == 0 {
+		return
+	}
+	var tmpl emailTemplate
+	// When local config is not set, we assume platform defaults should not change
+	tmpl = e.Template["invite"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsInvite
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesInviteContent
+	}
+	e.Template["invite"] = tmpl
+
+	tmpl = e.Template["confirmation"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsConfirmation
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesConfirmationContent
+	}
+	e.Template["confirmation"] = tmpl
+
+	tmpl = e.Template["recovery"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsRecovery
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesRecoveryContent
+	}
+	e.Template["recovery"] = tmpl
+
+	tmpl = e.Template["magic_link"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsMagicLink
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesMagicLinkContent
+	}
+	e.Template["magic_link"] = tmpl
+
+	tmpl = e.Template["email_change"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsEmailChange
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesEmailChangeContent
+	}
+	e.Template["email_change"] = tmpl
+
+	tmpl = e.Template["reauthentication"]
+	if tmpl.Subject != nil {
+		tmpl.Subject = remoteConfig.MailerSubjectsReauthentication
+	}
+	if tmpl.Content != nil {
+		tmpl.Content = remoteConfig.MailerTemplatesReauthenticationContent
+	}
+	e.Template["reauthentication"] = tmpl
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -551,13 +774,15 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 }
 
 func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
-	hashed := a.hashSecrets(projectRef)
+	copy := a.Clone()
+	copy.hashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(hashed)
+	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(hashed.fromRemoteAuthConfig(remoteConfig))
+	copy.fromRemoteAuthConfig(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
@@ -566,51 +791,46 @@ func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigRe
 
 const hashPrefix = "hash:"
 
-func (a *auth) hashSecrets(key string) auth {
+func (a *auth) hashSecrets(key string) {
 	hash := func(v string) string {
 		return hashPrefix + sha256Hmac(key, v)
 	}
-	result := *a
-	if len(result.Email.Smtp.Pass) > 0 {
-		result.Email.Smtp.Pass = hash(result.Email.Smtp.Pass)
+	if a.Email.Smtp != nil && len(a.Email.Smtp.Pass) > 0 {
+		a.Email.Smtp.Pass = hash(a.Email.Smtp.Pass)
 	}
 	// Only hash secrets for locally enabled providers because other envs won't be loaded
 	switch {
-	case result.Sms.Twilio.Enabled:
-		result.Sms.Twilio.AuthToken = hash(result.Sms.Twilio.AuthToken)
-	case result.Sms.TwilioVerify.Enabled:
-		result.Sms.TwilioVerify.AuthToken = hash(result.Sms.TwilioVerify.AuthToken)
-	case result.Sms.Messagebird.Enabled:
-		result.Sms.Messagebird.AccessKey = hash(result.Sms.Messagebird.AccessKey)
-	case result.Sms.Textlocal.Enabled:
-		result.Sms.Textlocal.ApiKey = hash(result.Sms.Textlocal.ApiKey)
-	case result.Sms.Vonage.Enabled:
-		result.Sms.Vonage.ApiSecret = hash(result.Sms.Vonage.ApiSecret)
+	case a.Sms.Twilio.Enabled:
+		a.Sms.Twilio.AuthToken = hash(a.Sms.Twilio.AuthToken)
+	case a.Sms.TwilioVerify.Enabled:
+		a.Sms.TwilioVerify.AuthToken = hash(a.Sms.TwilioVerify.AuthToken)
+	case a.Sms.Messagebird.Enabled:
+		a.Sms.Messagebird.AccessKey = hash(a.Sms.Messagebird.AccessKey)
+	case a.Sms.Textlocal.Enabled:
+		a.Sms.Textlocal.ApiKey = hash(a.Sms.Textlocal.ApiKey)
+	case a.Sms.Vonage.Enabled:
+		a.Sms.Vonage.ApiSecret = hash(a.Sms.Vonage.ApiSecret)
 	}
-	if result.Hook.MFAVerificationAttempt.Enabled {
-		result.Hook.MFAVerificationAttempt.Secrets = hash(result.Hook.MFAVerificationAttempt.Secrets)
+	if a.Hook.MFAVerificationAttempt.Enabled {
+		a.Hook.MFAVerificationAttempt.Secrets = hash(a.Hook.MFAVerificationAttempt.Secrets)
 	}
-	if result.Hook.PasswordVerificationAttempt.Enabled {
-		result.Hook.PasswordVerificationAttempt.Secrets = hash(result.Hook.PasswordVerificationAttempt.Secrets)
+	if a.Hook.PasswordVerificationAttempt.Enabled {
+		a.Hook.PasswordVerificationAttempt.Secrets = hash(a.Hook.PasswordVerificationAttempt.Secrets)
 	}
-	if result.Hook.CustomAccessToken.Enabled {
-		result.Hook.CustomAccessToken.Secrets = hash(result.Hook.CustomAccessToken.Secrets)
+	if a.Hook.CustomAccessToken.Enabled {
+		a.Hook.CustomAccessToken.Secrets = hash(a.Hook.CustomAccessToken.Secrets)
 	}
-	if result.Hook.SendSMS.Enabled {
-		result.Hook.SendSMS.Secrets = hash(result.Hook.SendSMS.Secrets)
+	if a.Hook.SendSMS.Enabled {
+		a.Hook.SendSMS.Secrets = hash(a.Hook.SendSMS.Secrets)
 	}
-	if result.Hook.SendEmail.Enabled {
-		result.Hook.SendEmail.Secrets = hash(result.Hook.SendEmail.Secrets)
-	}
-	if size := len(a.External); size > 0 {
-		result.External = make(map[string]provider, size)
+	if a.Hook.SendEmail.Enabled {
+		a.Hook.SendEmail.Secrets = hash(a.Hook.SendEmail.Secrets)
 	}
 	for name, provider := range a.External {
 		if provider.Enabled {
 			provider.Secret = hash(provider.Secret)
 		}
-		result.External[name] = provider
+		a.External[name] = provider
 	}
 	// TODO: support SecurityCaptchaSecret in local config
-	return result
 }

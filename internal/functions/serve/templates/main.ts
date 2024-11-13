@@ -187,14 +187,7 @@ Deno.serve({
         maybeEntrypoint
       });
 
-      const controller = new AbortController();
-      const { signal } = controller;
-
-      // Note: Requests are aborted after 200s (same config as in production)
-      // TODO: make this configuarable
-      setTimeout(() => controller.abort(), 200 * 1000);
-
-      return await worker.fetch(req, { signal });
+      return await worker.fetch(req);
     } catch (e) {
       console.error(e);
 

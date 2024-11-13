@@ -43,6 +43,7 @@ type (
 		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role"`
 		SharedBuffers                 *string                 `toml:"shared_buffers"`
 		StatementTimeout              *string                 `toml:"statement_timeout"`
+		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp"`
 		WalKeepSize                   *string                 `toml:"wal_keep_size"`
 		WalSenderTimeout              *string                 `toml:"wal_sender_timeout"`
 		WorkMem                       *string                 `toml:"work_mem"`
@@ -104,37 +105,36 @@ func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body.MaxWalSize = a.MaxWalSize
 	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.SessionReplicationRole)
 	body.StatementTimeout = a.StatementTimeout
+	body.TrackCommitTimestamp = a.TrackCommitTimestamp
 	body.WalKeepSize = a.WalKeepSize
 	body.WalSenderTimeout = a.WalSenderTimeout
 	body.WorkMem = a.WorkMem
 	return body
 }
 
-func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) settings {
-	result := *a
-
-	result.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
-	result.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
-	result.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
-	result.MaxConnections = cast.IntToUintPtr(remoteConfig.MaxConnections)
-	result.MaxLocksPerTransaction = cast.IntToUintPtr(remoteConfig.MaxLocksPerTransaction)
-	result.MaxParallelMaintenanceWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelMaintenanceWorkers)
-	result.MaxParallelWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelWorkers)
-	result.MaxParallelWorkersPerGather = cast.IntToUintPtr(remoteConfig.MaxParallelWorkersPerGather)
-	result.MaxReplicationSlots = cast.IntToUintPtr(remoteConfig.MaxReplicationSlots)
-	result.MaxSlotWalKeepSize = remoteConfig.MaxSlotWalKeepSize
-	result.MaxStandbyArchiveDelay = remoteConfig.MaxStandbyArchiveDelay
-	result.MaxStandbyStreamingDelay = remoteConfig.MaxStandbyStreamingDelay
-	result.MaxWalSenders = cast.IntToUintPtr(remoteConfig.MaxWalSenders)
-	result.MaxWalSize = remoteConfig.MaxWalSize
-	result.MaxWorkerProcesses = cast.IntToUintPtr(remoteConfig.MaxWorkerProcesses)
-	result.SessionReplicationRole = (*SessionReplicationRole)(remoteConfig.SessionReplicationRole)
-	result.SharedBuffers = remoteConfig.SharedBuffers
-	result.StatementTimeout = remoteConfig.StatementTimeout
-	result.WalKeepSize = remoteConfig.WalKeepSize
-	result.WalSenderTimeout = remoteConfig.WalSenderTimeout
-	result.WorkMem = remoteConfig.WorkMem
-	return result
+func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) {
+	a.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
+	a.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
+	a.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
+	a.MaxConnections = cast.IntToUintPtr(remoteConfig.MaxConnections)
+	a.MaxLocksPerTransaction = cast.IntToUintPtr(remoteConfig.MaxLocksPerTransaction)
+	a.MaxParallelMaintenanceWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelMaintenanceWorkers)
+	a.MaxParallelWorkers = cast.IntToUintPtr(remoteConfig.MaxParallelWorkers)
+	a.MaxParallelWorkersPerGather = cast.IntToUintPtr(remoteConfig.MaxParallelWorkersPerGather)
+	a.MaxReplicationSlots = cast.IntToUintPtr(remoteConfig.MaxReplicationSlots)
+	a.MaxSlotWalKeepSize = remoteConfig.MaxSlotWalKeepSize
+	a.MaxStandbyArchiveDelay = remoteConfig.MaxStandbyArchiveDelay
+	a.MaxStandbyStreamingDelay = remoteConfig.MaxStandbyStreamingDelay
+	a.MaxWalSenders = cast.IntToUintPtr(remoteConfig.MaxWalSenders)
+	a.MaxWalSize = remoteConfig.MaxWalSize
+	a.MaxWorkerProcesses = cast.IntToUintPtr(remoteConfig.MaxWorkerProcesses)
+	a.SessionReplicationRole = (*SessionReplicationRole)(remoteConfig.SessionReplicationRole)
+	a.SharedBuffers = remoteConfig.SharedBuffers
+	a.StatementTimeout = remoteConfig.StatementTimeout
+	a.TrackCommitTimestamp = remoteConfig.TrackCommitTimestamp
+	a.WalKeepSize = remoteConfig.WalKeepSize
+	a.WalSenderTimeout = remoteConfig.WalSenderTimeout
+	a.WorkMem = remoteConfig.WorkMem
 }
 
 const pgConfHeader = "\n# supabase [db.settings] configuration\n"
@@ -149,12 +149,14 @@ func (a *settings) ToPostgresConfig() string {
 }
 
 func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]byte, error) {
+	copy := *a
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(a)
+	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	remoteCompare, err := ToTomlBytes(a.fromRemoteConfig(remoteConfig))
+	copy.fromRemoteConfig(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}

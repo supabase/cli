@@ -1,0 +1,21 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -9,7 +9,7 @@
+ 
+ [hook]
+ [hook.mfa_verification_attempt]
+-enabled = true
++enabled = false
+ uri = ""
+ secrets = ""
+ [hook.password_verification_attempt]
+@@ -17,7 +17,7 @@
+ uri = ""
+ secrets = ""
+ [hook.custom_access_token]
+-enabled = false
++enabled = true
+ uri = ""
+ secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
+ [hook.send_sms]

@@ -1,0 +1,14 @@
+diff remote[api] local[api]
+--- remote[api]
++++ local[api]
+@@ -1,7 +1,7 @@
+ enabled = true
+-schemas = ["public"]
+-extra_search_path = ["public"]
+-max_rows = 500
++schemas = ["public", "private"]
++extra_search_path = ["extensions", "public"]
++max_rows = 1000
+ port = 0
+ external_url = ""
+ 

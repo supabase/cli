@@ -1,0 +1,7 @@
+diff remote[db.settings] local[db.settings]
+--- remote[db.settings]
++++ local[db.settings]
+@@ -0,0 +1,3 @@
++effective_cache_size = "4GB"
++max_connections = 100
++shared_buffers = "1GB"

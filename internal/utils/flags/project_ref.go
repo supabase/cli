@@ -17,9 +17,6 @@ var ProjectRef string
 
 func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 	// Flag takes highest precedence
-	if len(ProjectRef) == 0 {
-		ProjectRef = viper.GetString("PROJECT_ID")
-	}
 	if len(ProjectRef) > 0 {
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
@@ -59,13 +56,17 @@ func PromptProjectRef(ctx context.Context, title string) error {
 }
 
 func LoadProjectRef(fsys afero.Fs) (string, error) {
-	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New(utils.ErrNotLinked)
-	} else if err != nil {
-		return "", errors.Errorf("failed to load project ref: %w", err)
+	// Env var takes precedence over ref file
+	ProjectRef = viper.GetString("PROJECT_ID")
+	if len(ProjectRef) == 0 {
+		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New(utils.ErrNotLinked)
+		} else if err != nil {
+			return "", errors.Errorf("failed to load project ref: %w", err)
+		}
+		ProjectRef = string(bytes.TrimSpace(projectRefBytes))
 	}
-	ProjectRef = string(bytes.TrimSpace(projectRefBytes))
 	if err := utils.AssertProjectRefIsValid(ProjectRef); err != nil {
 		return "", err
 	}

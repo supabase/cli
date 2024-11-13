@@ -42,7 +42,7 @@ func TestDbSettingsToUpdatePostgresConfigBody(t *testing.T) {
 	})
 }
 
-func TestDbSettingsDiffWithRemote(t *testing.T) {
+func TestDbSettingsDiff(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
 		db := &db{
 			Settings: settings{
@@ -61,12 +61,7 @@ func TestDbSettingsDiffWithRemote(t *testing.T) {
 		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "-effective_cache_size = \"8GB\"")
-		assert.Contains(t, string(diff), "+effective_cache_size = \"4GB\"")
-		assert.Contains(t, string(diff), "-max_connections = 200")
-		assert.Contains(t, string(diff), "+max_connections = 100")
-		assert.Contains(t, string(diff), "-shared_buffers = \"2GB\"")
-		assert.Contains(t, string(diff), "+shared_buffers = \"1GB\"")
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("handles no differences", func(t *testing.T) {
@@ -127,9 +122,7 @@ func TestDbSettingsDiffWithRemote(t *testing.T) {
 		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "+effective_cache_size = \"4GB\"")
-		assert.Contains(t, string(diff), "+max_connections = 100")
-		assert.Contains(t, string(diff), "+shared_buffers = \"1GB\"")
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("handles api disabled on local side", func(t *testing.T) {
@@ -148,9 +141,7 @@ func TestDbSettingsDiffWithRemote(t *testing.T) {
 		diff, err := db.Settings.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 
-		assert.Contains(t, string(diff), "-effective_cache_size = \"4GB\"")
-		assert.Contains(t, string(diff), "-max_connections = 100")
-		assert.Contains(t, string(diff), "-shared_buffers = \"1GB\"")
+		assertSnapshotEqual(t, diff)
 	})
 }
 
