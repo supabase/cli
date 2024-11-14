@@ -184,7 +184,10 @@ Deno.serve({
         cpuTimeSoftLimitMs,
         cpuTimeHardLimitMs,
         decoratorType,
-        maybeEntrypoint
+        maybeEntrypoint,
+        context: {
+          useReadSyncFileAPI: true,
+        },
       });
 
       return await worker.fetch(req);
