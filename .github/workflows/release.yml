@@ -40,17 +40,10 @@ jobs:
     name: Publish NPM
     needs:
       - settings
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "16.x"
-          registry-url: "https://registry.npmjs.org"
-      - run: npm dist-tag add "supabase@${RELEASE_TAG#v}" latest
-        env:
-          RELEASE_TAG: ${{ needs.settings.outputs.release_tag }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    uses: ./.github/workflows/tag-npm.yml
+    with:
+      release: ${{ needs.settings.outputs.release_tag }}
+    secrets: inherit
 
   compose:
     name: Bump self-hosted versions
