@@ -17,10 +17,6 @@ on:
   pull_request_review:
     types:
       - submitted
-    paths:
-      - ".github/workflows/mirror.yml"
-      - "internal/utils/misc.go"
-      - "tools/listdep/**"
   workflow_dispatch:
 
 jobs:
