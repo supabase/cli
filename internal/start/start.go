@@ -506,6 +506,8 @@ EOF
 			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
 			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
+			fmt.Sprintf("GOTRUE_PASSWORD_MIN_LENGTH=%v", utils.Config.Auth.MinimumPasswordLength),
+			fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", utils.Config.Auth.PasswordRequirements),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
