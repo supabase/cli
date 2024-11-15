@@ -194,6 +194,8 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		SecurityManualLinkingEnabled:      &a.EnableManualLinking,
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
+		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
+		PasswordRequiredCharacters:        (*v1API.UpdateAuthConfigBodyPasswordRequiredCharacters)(&a.PasswordRequirements),
 	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
