@@ -55,7 +55,7 @@ func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
 	return body
 }
 
-func (a *api) fromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) {
+func (a *api) FromRemoteApiConfig(remoteConfig v1API.PostgrestConfigWithJWTSecretResponse) {
 	if a.Enabled = len(remoteConfig.DbSchema) > 0; !a.Enabled {
 		return
 	}
@@ -84,7 +84,7 @@ func (a *api) DiffWithRemote(remoteConfig v1API.PostgrestConfigWithJWTSecretResp
 	if err != nil {
 		return nil, err
 	}
-	copy.fromRemoteApiConfig(remoteConfig)
+	copy.FromRemoteApiConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err

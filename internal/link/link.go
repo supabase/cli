@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/go-errors/errors"
@@ -26,10 +25,9 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original, err := cliConfig.ToTomlBytes(map[string]interface{}{
-		"api": utils.Config.Api,
-		"db":  utils.Config.Db,
-	})
+	copy := utils.Config.Clone()
+	copy.Auth.HashSecrets(projectRef)
+	original, err := cliConfig.ToTomlBytes(copy)
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
@@ -64,10 +62,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated, err := cliConfig.ToTomlBytes(map[string]interface{}{
-		"api": utils.Config.Api,
-		"db":  utils.Config.Db,
-	})
+	updated, err := cliConfig.ToTomlBytes(utils.Config.Clone())
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
@@ -82,16 +77,28 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
-		if err := linkDatabaseVersion(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
+		if err := linkDatabaseSettings(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		if err := linkPostgrest(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkGotrue(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkStorage(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -126,12 +133,11 @@ func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs
 func linkPostgrest(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
-		return errors.Errorf("failed to get postgrest config: %w", err)
+		return errors.Errorf("failed to read API config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected API config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	if resp.JSON200 == nil {
-		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
-	}
-	updateApiConfig(*resp.JSON200)
+	utils.Config.Api.FromRemoteApiConfig(*resp.JSON200)
 	return nil
 }
 
@@ -143,22 +149,15 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 	return utils.WriteFile(utils.RestVersionPath, []byte(version), fsys)
 }
 
-func updateApiConfig(config api.PostgrestConfigWithJWTSecretResponse) {
-	utils.Config.Api.MaxRows = cast.IntToUint(config.MaxRows)
-	utils.Config.Api.ExtraSearchPath = readCsv(config.DbExtraSearchPath)
-	utils.Config.Api.Schemas = readCsv(config.DbSchema)
-}
-
-func readCsv(line string) []string {
-	var result []string
-	tokens := strings.Split(line, ",")
-	for _, t := range tokens {
-		trimmed := strings.TrimSpace(t)
-		if len(trimmed) > 0 {
-			result = append(result, trimmed)
-		}
+func linkGotrue(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetAuthServiceConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read Auth config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected Auth config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return result
+	utils.Config.Auth.FromRemoteAuthConfig(*resp.JSON200)
+	return nil
 }
 
 func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
@@ -169,12 +168,34 @@ func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs)
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
+func linkStorage(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetStorageConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read Storage config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected Storage config status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	utils.Config.Storage.FromRemoteStorageConfig(*resp.JSON200)
+	return nil
+}
+
 func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
 	version, err := api.GetStorageVersion(ctx)
 	if err != nil {
 		return err
 	}
 	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
+}
+
+func linkDatabaseSettings(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetPostgresConfigWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read DB config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected DB config status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	utils.Config.Db.Settings.FromRemotePostgresConfig(*resp.JSON200)
+	return nil
 }
 
 func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -189,14 +210,6 @@ func linkDatabase(ctx context.Context, config pgconn.Config, options ...func(*pg
 		return err
 	}
 	return migration.CreateSeedTable(ctx, conn)
-}
-
-func linkDatabaseVersion(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	version, err := tenant.GetDatabaseVersion(ctx, projectRef)
-	if err != nil {
-		return err
-	}
-	return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {
