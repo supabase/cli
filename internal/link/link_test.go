@@ -65,6 +65,14 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.V1PostgrestConfigResponse{})
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/postgrest").
+			Reply(200).
+			JSON(api.V1PostgrestConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/postgres").
+			Reply(200).
+			JSON(api.V1PostgrestConfigResponse{})
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})

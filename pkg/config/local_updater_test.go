@@ -34,12 +34,13 @@ func TestUpdateLocalApiConfig(t *testing.T) {
 			Schemas: []string{"public"},
 			MaxRows: 1000,
 		}
-		err := updater.UpdateLocalApiConfig(context.Background(), "test-project", &config)
+		diff, err := updater.UpdateLocalApiConfig(context.Background(), "test-project", &config)
 
 		// Check result
 		assert.NoError(t, err)
+		assert.NotNil(t, diff)
+		assert.True(t, len(diff) > 0)
 		assert.True(t, gock.IsDone())
-		// Verify config was not modified since UpdateLocalApiConfig doesn't modify the input
 		assert.Equal(t, []string{"public", "private", "protected"}, config.Schemas)
 		assert.Equal(t, []string{"extensions"}, config.ExtraSearchPath)
 		assert.Equal(t, uint(500), config.MaxRows)
@@ -63,12 +64,12 @@ func TestUpdateLocalApiConfig(t *testing.T) {
 			Schemas: []string{"public"},
 			MaxRows: 1000,
 		}
-		err := updater.UpdateLocalApiConfig(context.Background(), "test-project", &config)
+		diff, err := updater.UpdateLocalApiConfig(context.Background(), "test-project", &config)
 
 		// Check result
 		assert.NoError(t, err)
+		assert.Nil(t, diff)
 		assert.True(t, gock.IsDone())
-		// Verify config was not modified
 		assert.Equal(t, []string{"public"}, config.Schemas)
 		assert.Equal(t, uint(1000), config.MaxRows)
 	})

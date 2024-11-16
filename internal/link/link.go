@@ -21,19 +21,10 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/diff"
 	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	original, err := cliConfig.ToTomlBytes(map[string]interface{}{
-		"api": utils.Config.Api,
-		"db":  utils.Config.Db,
-	})
-	if err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), err)
-	}
-
 	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
 		return err
 	}
@@ -64,17 +55,16 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
 	// 4. Suggest config update
-	updated, err := cliConfig.ToTomlBytes(map[string]interface{}{
-		"api": utils.Config.Api,
-		"db":  utils.Config.Db,
-	})
-	if err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), err)
-	}
+	client := utils.GetSupabase()
+	newConfig := utils.Config.Clone()
+	newConfig.ProjectId = projectRef
 
-	if lineDiff := diff.Diff(utils.ConfigPath, original, projectRef, updated); len(lineDiff) > 0 {
+	updater := cliConfig.NewConfigUpdater(*client)
+	if diffs, err := updater.UpdateLocalConfig(ctx, newConfig); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	} else if len(diffs) > 0 {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local config differs from linked project. Try updating", utils.Bold(utils.ConfigPath))
-		fmt.Println(string(lineDiff))
+		updater.PrintConfigDiff(diffs)
 	}
 	return nil
 }
