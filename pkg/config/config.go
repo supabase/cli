@@ -1253,19 +1253,3 @@ func (e *experimental) validate() error {
 	}
 	return nil
 }
-
-// SaveConfig writes the configuration back to config.toml
-func SaveConfig(conf config) error {
-	// Convert config to TOML format
-	data, err := ToTomlBytes(conf)
-	if err != nil {
-		return fmt.Errorf("failed to convert config to TOML: %w", err)
-	}
-
-	// Write to config.toml
-	if err := os.WriteFile("config.toml", data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
