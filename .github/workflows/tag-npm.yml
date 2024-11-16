@@ -1,0 +1,29 @@
+name: Tag NPM
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "v1.0.0"
+        required: true
+        type: string
+
+jobs:
+  tag:
+    name: Move latest tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "16.x"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm dist-tag add "supabase@${RELEASE_TAG#v}" latest
+        env:
+          RELEASE_TAG: ${{ inputs.release }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
