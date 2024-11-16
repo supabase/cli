@@ -202,7 +202,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	return body
 }
 
-func (a *auth) fromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
 	a.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
 	a.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
@@ -775,13 +775,13 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
 	copy := a.Clone()
-	copy.hashSecrets(projectRef)
+	copy.HashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
 	}
-	copy.fromRemoteAuthConfig(remoteConfig)
+	copy.FromRemoteAuthConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
@@ -791,7 +791,7 @@ func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigRe
 
 const hashPrefix = "hash:"
 
-func (a *auth) hashSecrets(key string) {
+func (a *auth) HashSecrets(key string) {
 	hash := func(v string) string {
 		return hashPrefix + sha256Hmac(key, v)
 	}

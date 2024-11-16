@@ -44,7 +44,7 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	return body
 }
 
-func (s *storage) fromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) {
+func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) {
 	s.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
 	s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
 }
@@ -56,7 +56,7 @@ func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]by
 	if err != nil {
 		return nil, err
 	}
-	copy.fromRemoteStorageConfig(remoteConfig)
+	copy.FromRemoteStorageConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
