@@ -32,7 +32,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 
-	if err := checkRemoteProjectStatus(ctx, projectRef); err != nil {
+	if err := checkRemoteProjectStatus(ctx, projectRef, fsys); err != nil {
 		return err
 	}
 
@@ -254,7 +254,7 @@ func updatePoolerConfig(config api.SupavisorConfigResponse) {
 
 var errProjectPaused = errors.New("project is paused")
 
-func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
+func checkRemoteProjectStatus(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to retrieve remote project status: %w", err)
@@ -279,5 +279,9 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string) error {
 		fmt.Fprintf(os.Stderr, "%s: Project status is %s instead of Active Healthy. Some operations might fail.\n", utils.Yellow("WARNING"), resp.JSON200.Status)
 	}
 
+	// Update postgres image version to match the remote project
+	if version := resp.JSON200.Database.Version; len(version) > 0 {
+		return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
+	}
 	return nil
 }
