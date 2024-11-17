@@ -131,6 +131,7 @@ type (
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental"`
+		DynamicEnv   dynamic_env    `toml:"dynamic_env" mapstructure:"dynamic_env"`
 	}
 
 	config struct {
@@ -428,6 +429,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := loadDefaultEnv(); err != nil {
 		return err
 	} else if err := c.loadFromEnv(); err != nil {
+		return err
+	}
+
+	if err := c.DynamicEnv.validate(); err != nil {
 		return err
 	}
 	// Generate JWT tokens

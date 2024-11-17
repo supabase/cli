@@ -361,6 +361,37 @@ func TestLoadEnv(t *testing.T) {
 	assert.Equal(t, "test-secret", config.Auth.JwtSecret)
 	assert.Equal(t, "test-root-key", config.Db.RootKey)
 }
+func TestDynamicEnvLoad(t *testing.T) {
+	t.Run("loads and validates dynamic env config", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+
+		// Run test
+		t.Setenv("TWILIO_AUTH_TOKEN", "token")
+		t.Setenv("AZURE_CLIENT_ID", "hello")
+		t.Setenv("AZURE_SECRET", "this is cool")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		t.Setenv("SENDGRID_API_KEY", "sendgrid")
+		t.Setenv("AUTH_CALLBACK_URL", "http://localhost:3000/auth/callback")
+		assert.NoError(t, config.Load("", fsys))
+
+		// Check the structured env vars were parsed correctly
+		assert.NotNil(t, config.DynamicEnv.Vault)
+		assert.Equal(t, 2, len(config.DynamicEnv.Vault.StructuredBuildEnvVars))
+
+		// Verify first env var
+		assert.Equal(t, "some-id", config.DynamicEnv.Vault.StructuredBuildEnvVars[0].RemoteName)
+		assert.Equal(t, "SOME_SECRET", config.DynamicEnv.Vault.StructuredBuildEnvVars[0].LocalName)
+
+		// Verify second env var with double colon
+		assert.Equal(t, "some:id-with-double-dot", config.DynamicEnv.Vault.StructuredBuildEnvVars[1].RemoteName)
+		assert.Equal(t, "SECRET_TWILLIO_SID", config.DynamicEnv.Vault.StructuredBuildEnvVars[1].LocalName)
+	})
+}
 
 func TestLoadFunctionImportMap(t *testing.T) {
 	t.Run("uses deno.json as import map when present", func(t *testing.T) {
