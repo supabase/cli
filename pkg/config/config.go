@@ -131,7 +131,7 @@ type (
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental"`
-		DynamicEnv   dynamic_env    `toml:"dynamic_env" mapstructure:"dynamic_env"`
+		Secrets      secrets        `toml:"secrets" mapstructure:"secrets"`
 	}
 
 	config struct {
@@ -401,6 +401,16 @@ func (c *config) loadFromEnv() error {
 	return nil
 }
 
+// Load the encrypted secrets build env variables as default values
+func (c *config) loadDefaultSecretsEnvs() error {
+	for envName, encryptedValue := range c.Secrets.BuildEnvs {
+		if err := os.Setenv(envName, encryptedValue); err != nil {
+			return fmt.Errorf("failed to set build env %s: %w", envName, err)
+		}
+	}
+	return nil
+}
+
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load default values
@@ -431,10 +441,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	} else if err := c.loadFromEnv(); err != nil {
 		return err
 	}
-
-	if err := c.DynamicEnv.validate(); err != nil {
+	// Load default secrets build env variables
+	if err := c.loadDefaultSecretsEnvs(); err != nil {
 		return err
 	}
+
 	// Generate JWT tokens
 	if len(c.Auth.AnonKey) == 0 {
 		anonToken := CustomClaims{Role: "anon"}.NewToken()

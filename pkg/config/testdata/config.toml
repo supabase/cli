@@ -235,6 +235,12 @@ s3_access_key = ""
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = ""
 
+[secrets.build_envs]
+AZURE_SECRET = "<encrypted-value>"
+
+[secrets.runtime_envs]
+SOME_RUNTIME_SECRET = "<encrypted-value>"
+
 [remotes.production.auth]
 site_url = "http://feature-auth-branch.com/"
 enable_signup = false
@@ -242,6 +248,7 @@ enable_signup = false
 [remotes.production.auth.external.azure]
 enabled = false
 client_id = "nope"
+
 
 [remotes.staging]
 project_id = "staging-project"
@@ -251,10 +258,3 @@ enabled = true
 
 [remotes.staging.storage.buckets.images]
 allowed_mime_types = ["image/png"]
-
-
-[dynamic_env.vault]
-build_vars = [
-    "some-id:SOME_SECRET",
-    "some:id-with-double-dot:SECRET_TWILLIO_SID",
-]
