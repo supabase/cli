@@ -404,8 +404,10 @@ func (c *config) loadFromEnv() error {
 // Load the encrypted secrets build env variables as default values
 func (c *config) loadDefaultSecretsEnvs() error {
 	for envName, encryptedValue := range c.Secrets.BuildEnvs {
-		if err := os.Setenv(envName, encryptedValue); err != nil {
-			return fmt.Errorf("failed to set build env %s: %w", envName, err)
+		if os.Getenv(envName) == "" {
+			if err := os.Setenv(envName, encryptedValue); err != nil {
+				return fmt.Errorf("failed to set build env %s: %w", envName, err)
+			}
 		}
 	}
 	return nil
@@ -435,14 +437,14 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			}
 		}
 	}
+	// Load default secrets build env variables
+	if err := c.loadDefaultSecretsEnvs(); err != nil {
+		return err
+	}
 	// Load secrets from .env file
 	if err := loadDefaultEnv(); err != nil {
 		return err
 	} else if err := c.loadFromEnv(); err != nil {
-		return err
-	}
-	// Load default secrets build env variables
-	if err := c.loadDefaultSecretsEnvs(); err != nil {
 		return err
 	}
 

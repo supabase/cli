@@ -38,6 +38,29 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
 		t.Setenv("AZURE_CLIENT_ID", "hello")
+		t.Setenv("AZURE_SECRET", "this is cool")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		t.Setenv("SENDGRID_API_KEY", "sendgrid")
+		t.Setenv("AUTH_CALLBACK_URL", "http://localhost:3000/auth/callback")
+		assert.NoError(t, config.Load("", fsys))
+		// Check error
+		assert.Equal(t, "hello", config.Auth.External["azure"].ClientId)
+		assert.Equal(t, "this is cool", config.Auth.External["azure"].Secret)
+		assert.Equal(t, []string{
+			"https://127.0.0.1:3000",
+			"http://localhost:3000/auth/callback",
+		}, config.Auth.AdditionalRedirectUrls)
+	})
+	t.Run("config file with secrets env", func(t *testing.T) {
+		config := NewConfig()
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		t.Setenv("TWILIO_AUTH_TOKEN", "token")
+		t.Setenv("AZURE_CLIENT_ID", "hello")
 		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
 		t.Setenv("SENDGRID_API_KEY", "sendgrid")
 		t.Setenv("AUTH_CALLBACK_URL", "http://localhost:3000/auth/callback")
