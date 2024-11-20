@@ -206,6 +206,9 @@ func TestRecreateDatabase(t *testing.T) {
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false;").
+			Reply("ALTER DATABASE").
+			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "_supabase")).
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
@@ -259,6 +262,10 @@ func TestRecreateDatabase(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
+			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false;").
+			Reply("ALTER DATABASE").
+			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "_supabase")).
 			Reply("DO").
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
