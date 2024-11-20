@@ -166,18 +166,16 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 	// Must be executed separately because running in transaction is unsupported
-	for _, dbName := range []string{"postgres", "_supabase"} {
-		disconn := fmt.Sprintf("ALTER DATABASE %s ALLOW_CONNECTIONS false;", dbName)
-		if _, err := conn.Exec(ctx, disconn); err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName {
-				return errors.Errorf("failed to disconnect clients from %s: %w", dbName, err)
-			}
+	disconn := "ALTER DATABASE postgres ALLOW_CONNECTIONS false; ALTER DATABASE _supabase ALLOW_CONNECTIONS false;"
+	if _, err := conn.Exec(ctx, disconn); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName {
+			return errors.Errorf("failed to disconnect clients: %w", err)
 		}
-		term := fmt.Sprintf(utils.TerminateDbSqlFmt, dbName)
-		if _, err := conn.Exec(ctx, term); err != nil {
-			return errors.Errorf("failed to terminate backend for %s: %w", dbName, err)
-		}
+	}
+	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres", "_supabase")
+	if _, err := conn.Exec(ctx, term); err != nil {
+		return errors.Errorf("failed to terminate backend for %s: %w", "postgres or _supabase", err)
 	}
 	return nil
 }
