@@ -46,6 +46,10 @@ func TestSwitchCommand(t *testing.T) {
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false;").
+			Reply("ALTER DATABASE").
+			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "_supabase")).
+			Reply("DO").
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE " + branch + " RENAME TO postgres;").
@@ -238,6 +242,10 @@ func TestSwitchDatabase(t *testing.T) {
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
 			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false;").
+			Reply("ALTER DATABASE").
+			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "_supabase")).
+			Reply("DO").
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "main" already exists`)
 		// Setup mock docker
@@ -263,6 +271,10 @@ func TestSwitchDatabase(t *testing.T) {
 		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
 			Reply("ALTER DATABASE").
 			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
+			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false;").
+			Reply("ALTER DATABASE").
+			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "_supabase")).
 			Reply("DO").
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
