@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) error {
+func Run(ctx context.Context, params api.V1CreateProjectBodyDto, fsys afero.Fs) error {
 	if err := promptMissingParams(ctx, &params); err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func printKeyValue(key, value string) string {
 	return key + ":" + spaces + value
 }
 
-func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) error {
+func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBodyDto) error {
 	var err error
 	if len(body.Name) == 0 {
 		if body.Name, err = promptProjectName(ctx); err != nil {
@@ -106,7 +106,7 @@ func promptOrgId(ctx context.Context) (string, error) {
 	return choice.Details, nil
 }
 
-func promptProjectRegion(ctx context.Context) (api.V1CreateProjectBodyRegion, error) {
+func promptProjectRegion(ctx context.Context) (api.V1CreateProjectBodyDtoRegion, error) {
 	title := "Which region do you want to host the project in?"
 	items := make([]utils.PromptItem, len(utils.RegionMap))
 	i := 0
@@ -118,5 +118,5 @@ func promptProjectRegion(ctx context.Context) (api.V1CreateProjectBodyRegion, er
 	if err != nil {
 		return "", err
 	}
-	return api.V1CreateProjectBodyRegion(choice.Summary), nil
+	return api.V1CreateProjectBodyDtoRegion(choice.Summary), nil
 }

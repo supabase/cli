@@ -111,16 +111,16 @@ const (
 
 // Defines values for DesiredInstanceSize.
 const (
-	Large     DesiredInstanceSize = "large"
-	Medium    DesiredInstanceSize = "medium"
-	Micro     DesiredInstanceSize = "micro"
-	N12xlarge DesiredInstanceSize = "12xlarge"
-	N16xlarge DesiredInstanceSize = "16xlarge"
-	N2xlarge  DesiredInstanceSize = "2xlarge"
-	N4xlarge  DesiredInstanceSize = "4xlarge"
-	N8xlarge  DesiredInstanceSize = "8xlarge"
-	Small     DesiredInstanceSize = "small"
-	Xlarge    DesiredInstanceSize = "xlarge"
+	DesiredInstanceSizeLarge     DesiredInstanceSize = "large"
+	DesiredInstanceSizeMedium    DesiredInstanceSize = "medium"
+	DesiredInstanceSizeMicro     DesiredInstanceSize = "micro"
+	DesiredInstanceSizeN12xlarge DesiredInstanceSize = "12xlarge"
+	DesiredInstanceSizeN16xlarge DesiredInstanceSize = "16xlarge"
+	DesiredInstanceSizeN2xlarge  DesiredInstanceSize = "2xlarge"
+	DesiredInstanceSizeN4xlarge  DesiredInstanceSize = "4xlarge"
+	DesiredInstanceSizeN8xlarge  DesiredInstanceSize = "8xlarge"
+	DesiredInstanceSizeSmall     DesiredInstanceSize = "small"
+	DesiredInstanceSizeXlarge    DesiredInstanceSize = "xlarge"
 )
 
 // Defines values for FunctionResponseStatus.
@@ -169,16 +169,16 @@ const (
 
 // Defines values for PostgresEngine.
 const (
-	N15 PostgresEngine = "15"
+	PostgresEngineN15 PostgresEngine = "15"
 )
 
 // Defines values for ReleaseChannel.
 const (
-	Alpha     ReleaseChannel = "alpha"
-	Beta      ReleaseChannel = "beta"
-	Ga        ReleaseChannel = "ga"
-	Internal  ReleaseChannel = "internal"
-	Withdrawn ReleaseChannel = "withdrawn"
+	ReleaseChannelAlpha     ReleaseChannel = "alpha"
+	ReleaseChannelBeta      ReleaseChannel = "beta"
+	ReleaseChannelGa        ReleaseChannel = "ga"
+	ReleaseChannelInternal  ReleaseChannel = "internal"
+	ReleaseChannelWithdrawn ReleaseChannel = "withdrawn"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -297,32 +297,60 @@ const (
 	V1BackupStatusREMOVED   V1BackupStatus = "REMOVED"
 )
 
-// Defines values for V1CreateProjectBodyPlan.
+// Defines values for V1CreateProjectBodyDtoDesiredInstanceSize.
 const (
-	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
-	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
+	V1CreateProjectBodyDtoDesiredInstanceSizeLarge     V1CreateProjectBodyDtoDesiredInstanceSize = "large"
+	V1CreateProjectBodyDtoDesiredInstanceSizeMedium    V1CreateProjectBodyDtoDesiredInstanceSize = "medium"
+	V1CreateProjectBodyDtoDesiredInstanceSizeMicro     V1CreateProjectBodyDtoDesiredInstanceSize = "micro"
+	V1CreateProjectBodyDtoDesiredInstanceSizeN12xlarge V1CreateProjectBodyDtoDesiredInstanceSize = "12xlarge"
+	V1CreateProjectBodyDtoDesiredInstanceSizeN16xlarge V1CreateProjectBodyDtoDesiredInstanceSize = "16xlarge"
+	V1CreateProjectBodyDtoDesiredInstanceSizeN2xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "2xlarge"
+	V1CreateProjectBodyDtoDesiredInstanceSizeN4xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "4xlarge"
+	V1CreateProjectBodyDtoDesiredInstanceSizeN8xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "8xlarge"
+	V1CreateProjectBodyDtoDesiredInstanceSizeSmall     V1CreateProjectBodyDtoDesiredInstanceSize = "small"
+	V1CreateProjectBodyDtoDesiredInstanceSizeXlarge    V1CreateProjectBodyDtoDesiredInstanceSize = "xlarge"
 )
 
-// Defines values for V1CreateProjectBodyRegion.
+// Defines values for V1CreateProjectBodyDtoPlan.
 const (
-	V1CreateProjectBodyRegionApEast1      V1CreateProjectBodyRegion = "ap-east-1"
-	V1CreateProjectBodyRegionApNortheast1 V1CreateProjectBodyRegion = "ap-northeast-1"
-	V1CreateProjectBodyRegionApNortheast2 V1CreateProjectBodyRegion = "ap-northeast-2"
-	V1CreateProjectBodyRegionApSouth1     V1CreateProjectBodyRegion = "ap-south-1"
-	V1CreateProjectBodyRegionApSoutheast1 V1CreateProjectBodyRegion = "ap-southeast-1"
-	V1CreateProjectBodyRegionApSoutheast2 V1CreateProjectBodyRegion = "ap-southeast-2"
-	V1CreateProjectBodyRegionCaCentral1   V1CreateProjectBodyRegion = "ca-central-1"
-	V1CreateProjectBodyRegionEuCentral1   V1CreateProjectBodyRegion = "eu-central-1"
-	V1CreateProjectBodyRegionEuCentral2   V1CreateProjectBodyRegion = "eu-central-2"
-	V1CreateProjectBodyRegionEuNorth1     V1CreateProjectBodyRegion = "eu-north-1"
-	V1CreateProjectBodyRegionEuWest1      V1CreateProjectBodyRegion = "eu-west-1"
-	V1CreateProjectBodyRegionEuWest2      V1CreateProjectBodyRegion = "eu-west-2"
-	V1CreateProjectBodyRegionEuWest3      V1CreateProjectBodyRegion = "eu-west-3"
-	V1CreateProjectBodyRegionSaEast1      V1CreateProjectBodyRegion = "sa-east-1"
-	V1CreateProjectBodyRegionUsEast1      V1CreateProjectBodyRegion = "us-east-1"
-	V1CreateProjectBodyRegionUsEast2      V1CreateProjectBodyRegion = "us-east-2"
-	V1CreateProjectBodyRegionUsWest1      V1CreateProjectBodyRegion = "us-west-1"
-	V1CreateProjectBodyRegionUsWest2      V1CreateProjectBodyRegion = "us-west-2"
+	V1CreateProjectBodyDtoPlanFree V1CreateProjectBodyDtoPlan = "free"
+	V1CreateProjectBodyDtoPlanPro  V1CreateProjectBodyDtoPlan = "pro"
+)
+
+// Defines values for V1CreateProjectBodyDtoPostgresEngine.
+const (
+	V1CreateProjectBodyDtoPostgresEngineN15 V1CreateProjectBodyDtoPostgresEngine = "15"
+)
+
+// Defines values for V1CreateProjectBodyDtoRegion.
+const (
+	V1CreateProjectBodyDtoRegionApEast1      V1CreateProjectBodyDtoRegion = "ap-east-1"
+	V1CreateProjectBodyDtoRegionApNortheast1 V1CreateProjectBodyDtoRegion = "ap-northeast-1"
+	V1CreateProjectBodyDtoRegionApNortheast2 V1CreateProjectBodyDtoRegion = "ap-northeast-2"
+	V1CreateProjectBodyDtoRegionApSouth1     V1CreateProjectBodyDtoRegion = "ap-south-1"
+	V1CreateProjectBodyDtoRegionApSoutheast1 V1CreateProjectBodyDtoRegion = "ap-southeast-1"
+	V1CreateProjectBodyDtoRegionApSoutheast2 V1CreateProjectBodyDtoRegion = "ap-southeast-2"
+	V1CreateProjectBodyDtoRegionCaCentral1   V1CreateProjectBodyDtoRegion = "ca-central-1"
+	V1CreateProjectBodyDtoRegionEuCentral1   V1CreateProjectBodyDtoRegion = "eu-central-1"
+	V1CreateProjectBodyDtoRegionEuCentral2   V1CreateProjectBodyDtoRegion = "eu-central-2"
+	V1CreateProjectBodyDtoRegionEuNorth1     V1CreateProjectBodyDtoRegion = "eu-north-1"
+	V1CreateProjectBodyDtoRegionEuWest1      V1CreateProjectBodyDtoRegion = "eu-west-1"
+	V1CreateProjectBodyDtoRegionEuWest2      V1CreateProjectBodyDtoRegion = "eu-west-2"
+	V1CreateProjectBodyDtoRegionEuWest3      V1CreateProjectBodyDtoRegion = "eu-west-3"
+	V1CreateProjectBodyDtoRegionSaEast1      V1CreateProjectBodyDtoRegion = "sa-east-1"
+	V1CreateProjectBodyDtoRegionUsEast1      V1CreateProjectBodyDtoRegion = "us-east-1"
+	V1CreateProjectBodyDtoRegionUsEast2      V1CreateProjectBodyDtoRegion = "us-east-2"
+	V1CreateProjectBodyDtoRegionUsWest1      V1CreateProjectBodyDtoRegion = "us-west-1"
+	V1CreateProjectBodyDtoRegionUsWest2      V1CreateProjectBodyDtoRegion = "us-west-2"
+)
+
+// Defines values for V1CreateProjectBodyDtoReleaseChannel.
+const (
+	V1CreateProjectBodyDtoReleaseChannelAlpha     V1CreateProjectBodyDtoReleaseChannel = "alpha"
+	V1CreateProjectBodyDtoReleaseChannelBeta      V1CreateProjectBodyDtoReleaseChannel = "beta"
+	V1CreateProjectBodyDtoReleaseChannelGa        V1CreateProjectBodyDtoReleaseChannel = "ga"
+	V1CreateProjectBodyDtoReleaseChannelInternal  V1CreateProjectBodyDtoReleaseChannel = "internal"
+	V1CreateProjectBodyDtoReleaseChannelWithdrawn V1CreateProjectBodyDtoReleaseChannel = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -356,6 +384,25 @@ const (
 	V1ProjectResponseStatusUPGRADING       V1ProjectResponseStatus = "UPGRADING"
 )
 
+// Defines values for V1ProjectWithDatabaseResponseStatus.
+const (
+	V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY   V1ProjectWithDatabaseResponseStatus = "ACTIVE_HEALTHY"
+	V1ProjectWithDatabaseResponseStatusACTIVEUNHEALTHY V1ProjectWithDatabaseResponseStatus = "ACTIVE_UNHEALTHY"
+	V1ProjectWithDatabaseResponseStatusCOMINGUP        V1ProjectWithDatabaseResponseStatus = "COMING_UP"
+	V1ProjectWithDatabaseResponseStatusGOINGDOWN       V1ProjectWithDatabaseResponseStatus = "GOING_DOWN"
+	V1ProjectWithDatabaseResponseStatusINACTIVE        V1ProjectWithDatabaseResponseStatus = "INACTIVE"
+	V1ProjectWithDatabaseResponseStatusINITFAILED      V1ProjectWithDatabaseResponseStatus = "INIT_FAILED"
+	V1ProjectWithDatabaseResponseStatusPAUSEFAILED     V1ProjectWithDatabaseResponseStatus = "PAUSE_FAILED"
+	V1ProjectWithDatabaseResponseStatusPAUSING         V1ProjectWithDatabaseResponseStatus = "PAUSING"
+	V1ProjectWithDatabaseResponseStatusREMOVED         V1ProjectWithDatabaseResponseStatus = "REMOVED"
+	V1ProjectWithDatabaseResponseStatusRESIZING        V1ProjectWithDatabaseResponseStatus = "RESIZING"
+	V1ProjectWithDatabaseResponseStatusRESTARTING      V1ProjectWithDatabaseResponseStatus = "RESTARTING"
+	V1ProjectWithDatabaseResponseStatusRESTOREFAILED   V1ProjectWithDatabaseResponseStatus = "RESTORE_FAILED"
+	V1ProjectWithDatabaseResponseStatusRESTORING       V1ProjectWithDatabaseResponseStatus = "RESTORING"
+	V1ProjectWithDatabaseResponseStatusUNKNOWN         V1ProjectWithDatabaseResponseStatus = "UNKNOWN"
+	V1ProjectWithDatabaseResponseStatusUPGRADING       V1ProjectWithDatabaseResponseStatus = "UPGRADING"
+)
+
 // Defines values for V1ServiceHealthResponseName.
 const (
 	V1ServiceHealthResponseNameAuth     V1ServiceHealthResponseName = "auth"
@@ -368,9 +415,9 @@ const (
 
 // Defines values for V1ServiceHealthResponseStatus.
 const (
-	V1ServiceHealthResponseStatusACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	V1ServiceHealthResponseStatusCOMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
-	V1ServiceHealthResponseStatusUNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
+	ACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	COMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
+	UNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -725,8 +772,8 @@ type CreateBranchBody struct {
 	ReleaseChannel *ReleaseChannel `json:"release_channel,omitempty"`
 }
 
-// CreateOrganizationBodyV1 defines model for CreateOrganizationBodyV1.
-type CreateOrganizationBodyV1 struct {
+// CreateOrganizationV1Dto defines model for CreateOrganizationV1Dto.
+type CreateOrganizationV1Dto struct {
 	Name string `json:"name"`
 }
 
@@ -824,17 +871,18 @@ type Domain struct {
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	CreatedAt      int64                  `json:"created_at"`
-	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
-	Id             string                 `json:"id"`
-	ImportMap      *bool                  `json:"import_map,omitempty"`
-	ImportMapPath  *string                `json:"import_map_path,omitempty"`
-	Name           string                 `json:"name"`
-	Slug           string                 `json:"slug"`
-	Status         FunctionResponseStatus `json:"status"`
-	UpdatedAt      int64                  `json:"updated_at"`
-	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
-	Version        int                    `json:"version"`
+	ComputeMultiplier *float32               `json:"compute_multiplier,omitempty"`
+	CreatedAt         int64                  `json:"created_at"`
+	EntrypointPath    *string                `json:"entrypoint_path,omitempty"`
+	Id                string                 `json:"id"`
+	ImportMap         *bool                  `json:"import_map,omitempty"`
+	ImportMapPath     *string                `json:"import_map_path,omitempty"`
+	Name              string                 `json:"name"`
+	Slug              string                 `json:"slug"`
+	Status            FunctionResponseStatus `json:"status"`
+	UpdatedAt         int64                  `json:"updated_at"`
+	VerifyJwt         *bool                  `json:"verify_jwt,omitempty"`
+	Version           int                    `json:"version"`
 }
 
 // FunctionResponseStatus defines model for FunctionResponse.Status.
@@ -842,17 +890,18 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	CreatedAt      int64                      `json:"created_at"`
-	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
-	Id             string                     `json:"id"`
-	ImportMap      *bool                      `json:"import_map,omitempty"`
-	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
-	Name           string                     `json:"name"`
-	Slug           string                     `json:"slug"`
-	Status         FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt      int64                      `json:"updated_at"`
-	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
-	Version        int                        `json:"version"`
+	ComputeMultiplier *float32                   `json:"compute_multiplier,omitempty"`
+	CreatedAt         int64                      `json:"created_at"`
+	EntrypointPath    *string                    `json:"entrypoint_path,omitempty"`
+	Id                string                     `json:"id"`
+	ImportMap         *bool                      `json:"import_map,omitempty"`
+	ImportMapPath     *string                    `json:"import_map_path,omitempty"`
+	Name              string                     `json:"name"`
+	Slug              string                     `json:"slug"`
+	Status            FunctionSlugResponseStatus `json:"status"`
+	UpdatedAt         int64                      `json:"updated_at"`
+	VerifyJwt         *bool                      `json:"verify_jwt,omitempty"`
+	Version           int                        `json:"version"`
 }
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
@@ -1539,17 +1588,18 @@ type V1BackupsResponse struct {
 
 // V1CreateFunctionBody defines model for V1CreateFunctionBody.
 type V1CreateFunctionBody struct {
-	Body      string `json:"body"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
+	Body              string   `json:"body"`
+	ComputeMultiplier *float32 `json:"compute_multiplier,omitempty"`
+	Name              string   `json:"name"`
+	Slug              string   `json:"slug"`
+	VerifyJwt         *bool    `json:"verify_jwt,omitempty"`
 }
 
-// V1CreateProjectBody defines model for V1CreateProjectBody.
-type V1CreateProjectBody struct {
+// V1CreateProjectBodyDto defines model for V1CreateProjectBodyDto.
+type V1CreateProjectBodyDto struct {
 	// DbPass Database password
-	DbPass              string               `json:"db_pass"`
-	DesiredInstanceSize *DesiredInstanceSize `json:"desired_instance_size,omitempty"`
+	DbPass              string                                     `json:"db_pass"`
+	DesiredInstanceSize *V1CreateProjectBodyDtoDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
 	// Deprecated:
@@ -1563,24 +1613,35 @@ type V1CreateProjectBody struct {
 
 	// Plan Subscription Plan is now set on organization level and is ignored in this request
 	// Deprecated:
-	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
+	Plan *V1CreateProjectBodyDtoPlan `json:"plan,omitempty"`
 
 	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	PostgresEngine *PostgresEngine `json:"postgres_engine,omitempty"`
+	PostgresEngine *V1CreateProjectBodyDtoPostgresEngine `json:"postgres_engine,omitempty"`
 
 	// Region Region you want your server to reside in
-	Region         V1CreateProjectBodyRegion `json:"region"`
-	ReleaseChannel *ReleaseChannel           `json:"release_channel,omitempty"`
+	Region V1CreateProjectBodyDtoRegion `json:"region"`
+
+	// ReleaseChannel Release channel. If not provided, GA will be used.
+	ReleaseChannel *V1CreateProjectBodyDtoReleaseChannel `json:"release_channel,omitempty"`
 
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
-type V1CreateProjectBodyPlan string
+// V1CreateProjectBodyDtoDesiredInstanceSize defines model for V1CreateProjectBodyDto.DesiredInstanceSize.
+type V1CreateProjectBodyDtoDesiredInstanceSize string
 
-// V1CreateProjectBodyRegion Region you want your server to reside in
-type V1CreateProjectBodyRegion string
+// V1CreateProjectBodyDtoPlan Subscription Plan is now set on organization level and is ignored in this request
+type V1CreateProjectBodyDtoPlan string
+
+// V1CreateProjectBodyDtoPostgresEngine Postgres engine version. If not provided, the latest version will be used.
+type V1CreateProjectBodyDtoPostgresEngine string
+
+// V1CreateProjectBodyDtoRegion Region you want your server to reside in
+type V1CreateProjectBodyDtoRegion string
+
+// V1CreateProjectBodyDtoReleaseChannel Release channel. If not provided, GA will be used.
+type V1CreateProjectBodyDtoReleaseChannel string
 
 // V1DatabaseResponse defines model for V1DatabaseResponse.
 type V1DatabaseResponse struct {
@@ -1656,8 +1717,7 @@ type V1ProjectRefResponse struct {
 // V1ProjectResponse defines model for V1ProjectResponse.
 type V1ProjectResponse struct {
 	// CreatedAt Creation timestamp
-	CreatedAt string              `json:"created_at"`
-	Database  *V1DatabaseResponse `json:"database,omitempty"`
+	CreatedAt string `json:"created_at"`
 
 	// Id Id of your project
 	Id string `json:"id"`
@@ -1675,6 +1735,29 @@ type V1ProjectResponse struct {
 
 // V1ProjectResponseStatus defines model for V1ProjectResponse.Status.
 type V1ProjectResponseStatus string
+
+// V1ProjectWithDatabaseResponse defines model for V1ProjectWithDatabaseResponse.
+type V1ProjectWithDatabaseResponse struct {
+	// CreatedAt Creation timestamp
+	CreatedAt string             `json:"created_at"`
+	Database  V1DatabaseResponse `json:"database"`
+
+	// Id Id of your project
+	Id string `json:"id"`
+
+	// Name Name of your project
+	Name string `json:"name"`
+
+	// OrganizationId Slug of your organization
+	OrganizationId string `json:"organization_id"`
+
+	// Region Region of your project
+	Region string                              `json:"region"`
+	Status V1ProjectWithDatabaseResponseStatus `json:"status"`
+}
+
+// V1ProjectWithDatabaseResponseStatus defines model for V1ProjectWithDatabaseResponse.Status.
+type V1ProjectWithDatabaseResponseStatus string
 
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
@@ -1718,9 +1801,10 @@ type V1StorageBucketResponse struct {
 
 // V1UpdateFunctionBody defines model for V1UpdateFunctionBody.
 type V1UpdateFunctionBody struct {
-	Body      *string `json:"body,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
+	Body              *string  `json:"body,omitempty"`
+	ComputeMultiplier *float32 `json:"compute_multiplier,omitempty"`
+	Name              *string  `json:"name,omitempty"`
+	VerifyJwt         *bool    `json:"verify_jwt,omitempty"`
 }
 
 // ValidationError defines model for ValidationError.
@@ -1766,24 +1850,51 @@ type V1AuthorizeUserParamsResponseType string
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
 
+// V1GetProjectApiKeysParams defines parameters for V1GetProjectApiKeys.
+type V1GetProjectApiKeysParams struct {
+	Reveal bool `form:"reveal" json:"reveal"`
+}
+
+// CreateApiKeyParams defines parameters for CreateApiKey.
+type CreateApiKeyParams struct {
+	Reveal bool `form:"reveal" json:"reveal"`
+}
+
+// DeleteApiKeyParams defines parameters for DeleteApiKey.
+type DeleteApiKeyParams struct {
+	Reveal bool `form:"reveal" json:"reveal"`
+}
+
+// GetApiKeyParams defines parameters for GetApiKey.
+type GetApiKeyParams struct {
+	Reveal bool `form:"reveal" json:"reveal"`
+}
+
+// UpdateApiKeyParams defines parameters for UpdateApiKey.
+type UpdateApiKeyParams struct {
+	Reveal bool `form:"reveal" json:"reveal"`
+}
+
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name           *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Slug              *string  `form:"slug,omitempty" json:"slug,omitempty"`
+	Name              *string  `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt         *bool    `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap         *bool    `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath    *string  `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath     *string  `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	Slug           *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name           *string `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt      *bool   `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Slug              *string  `form:"slug,omitempty" json:"slug,omitempty"`
+	Name              *string  `form:"name,omitempty" json:"name,omitempty"`
+	VerifyJwt         *bool    `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+	ImportMap         *bool    `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath    *string  `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath     *string  `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
@@ -1823,10 +1934,10 @@ type V1UpdateABranchConfigJSONRequestBody = UpdateBranchBody
 type V1ExchangeOauthTokenFormdataRequestBody = OAuthTokenBody
 
 // V1CreateAnOrganizationJSONRequestBody defines body for V1CreateAnOrganization for application/json ContentType.
-type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationBodyV1
+type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1Dto
 
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
-type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
+type V1CreateAProjectJSONRequestBody = V1CreateProjectBodyDto
 
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
 type CreateApiKeyJSONRequestBody = CreateApiKeyBody
