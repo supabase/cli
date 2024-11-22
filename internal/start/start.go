@@ -532,7 +532,8 @@ EOF
 			env = append(env,
 				"GOTRUE_SMTP_HOST="+utils.InbucketId,
 				"GOTRUE_SMTP_PORT=2500",
-				"GOTRUE_SMTP_ADMIN_EMAIL=admin@email.com",
+				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
+				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
 			)
 		}
 
