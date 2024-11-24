@@ -44,6 +44,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 				continue
 			}
 		}
+		computeMultiplier := function.ComputeMultiplier
 		var body bytes.Buffer
 		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, &body); err != nil {
 			return err
@@ -52,9 +53,10 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		upsert := func() error {
 			if _, ok := exists[slug]; ok {
 				if resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
-					VerifyJwt:      function.VerifyJWT,
-					ImportMapPath:  toFileURL(function.ImportMap),
-					EntrypointPath: toFileURL(function.Entrypoint),
+					VerifyJwt:         function.VerifyJWT,
+					ImportMapPath:     toFileURL(function.ImportMap),
+					EntrypointPath:    toFileURL(function.Entrypoint),
+					ComputeMultiplier: computeMultiplier,
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to update function: %w", err)
 				} else if resp.JSON200 == nil {
@@ -62,11 +64,12 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 				}
 			} else {
 				if resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
-					Slug:           &slug,
-					Name:           &slug,
-					VerifyJwt:      function.VerifyJWT,
-					ImportMapPath:  toFileURL(function.ImportMap),
-					EntrypointPath: toFileURL(function.Entrypoint),
+					Slug:              &slug,
+					Name:              &slug,
+					VerifyJwt:         function.VerifyJWT,
+					ImportMapPath:     toFileURL(function.ImportMap),
+					EntrypointPath:    toFileURL(function.Entrypoint),
+					ComputeMultiplier: computeMultiplier,
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
 					return errors.Errorf("failed to create function: %w", err)
 				} else if resp.JSON201 == nil {
