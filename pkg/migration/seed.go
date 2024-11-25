@@ -82,8 +82,10 @@ func importWithStream(ctx context.Context, csvStream io.Reader, db *sql.DB) erro
 }
 
 var peopleColumns = []string{
+	"id",
 	"name",
 	"color",
+	"created_at",
 }
 
 func newPeopleCopyFromSource(csvStream io.Reader) *peopleCopyFromSource {
@@ -120,6 +122,8 @@ func (pfs *peopleCopyFromSource) Values() ([]any, error) {
 	// the order of the columns in passed into the copy method
 	pfs.record[0] = pfs.currentCsvRow[0]
 	pfs.record[1] = pfs.currentCsvRow[1]
+	pfs.record[2] = pfs.currentCsvRow[2]
+	pfs.record[2] = pfs.currentCsvRow[2]
 	return pfs.record, nil
 }
 
@@ -156,11 +160,8 @@ func SeedData(ctx context.Context, pending []SeedFile, conn *pgx.Conn, fsys fs.F
 	defer f.Close()
 
 	// Create sql.DB from the existing pgx.Conn
-	db := stdlib.OpenDB(*conn.Config())
-	defer db.Close()
-
-	if err := importWithStream(ctx, f, db); err != nil {
-		return fmt.Errorf("failed to seed data: %w", err)
+	if _, err := conn.PgConn().CopyFrom(ctx, f, `copy "categories" ( "id", "name", "color", "created_at" ) from stdin WITH (FORMAT csv, HEADER true);`); err != nil {
+		return fmt.Errorf("failed to copy categories data: %w", err)
 	}
 	return nil
 }
