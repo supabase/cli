@@ -140,20 +140,23 @@ type ClientInterface interface {
 	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetProjectApiKeys request
-	V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1GetProjectApiKeys(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateApiKeyWithBody request with any body
-	CreateApiKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateApiKeyWithBody(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateApiKey(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteApiKey request
-	DeleteApiKey(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteApiKey(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetApiKey request
+	GetApiKey(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateApiKeyWithBody request with any body
-	UpdateApiKeyWithBody(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateApiKeyWithBody(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpdateApiKey(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	UpdateApiKey(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DisablePreviewBranching request
 	V1DisablePreviewBranching(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -617,8 +620,8 @@ func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetProjectApiKeysRequest(c.Server, ref)
+func (c *Client) V1GetProjectApiKeys(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectApiKeysRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -629,8 +632,8 @@ func (c *Client) V1GetProjectApiKeys(ctx context.Context, ref string, reqEditors
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateApiKeyRequestWithBody(c.Server, ref, contentType, body)
+func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApiKeyRequestWithBody(c.Server, ref, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -641,8 +644,8 @@ func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, contentTy
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateApiKey(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateApiKeyRequest(c.Server, ref, body)
+func (c *Client) CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateApiKeyRequest(c.Server, ref, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -653,8 +656,8 @@ func (c *Client) CreateApiKey(ctx context.Context, ref string, body CreateApiKey
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteApiKeyRequest(c.Server, ref, id)
+func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteApiKeyRequest(c.Server, ref, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -665,8 +668,8 @@ func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, reqEdi
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateApiKeyRequestWithBody(c.Server, ref, id, contentType, body)
+func (c *Client) GetApiKey(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetApiKeyRequest(c.Server, ref, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -677,8 +680,20 @@ func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateApiKey(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateApiKeyRequest(c.Server, ref, id, body)
+func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateApiKeyRequestWithBody(c.Server, ref, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateApiKey(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateApiKeyRequest(c.Server, ref, id, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2378,7 +2393,7 @@ func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
 }
 
 // NewV1GetProjectApiKeysRequest generates requests for V1GetProjectApiKeys
-func NewV1GetProjectApiKeysRequest(server string, ref string) (*http.Request, error) {
+func NewV1GetProjectApiKeysRequest(server string, ref string, params *V1GetProjectApiKeysParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2401,6 +2416,24 @@ func NewV1GetProjectApiKeysRequest(server string, ref string) (*http.Request, er
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -2412,18 +2445,18 @@ func NewV1GetProjectApiKeysRequest(server string, ref string) (*http.Request, er
 }
 
 // NewCreateApiKeyRequest calls the generic CreateApiKey builder with application/json body
-func NewCreateApiKeyRequest(server string, ref string, body CreateApiKeyJSONRequestBody) (*http.Request, error) {
+func NewCreateApiKeyRequest(server string, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateApiKeyRequestWithBody(server, ref, "application/json", bodyReader)
+	return NewCreateApiKeyRequestWithBody(server, ref, params, "application/json", bodyReader)
 }
 
 // NewCreateApiKeyRequestWithBody generates requests for CreateApiKey with any type of body
-func NewCreateApiKeyRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateApiKeyRequestWithBody(server string, ref string, params *CreateApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2446,6 +2479,24 @@ func NewCreateApiKeyRequestWithBody(server string, ref string, contentType strin
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), body)
@@ -2459,7 +2510,7 @@ func NewCreateApiKeyRequestWithBody(server string, ref string, contentType strin
 }
 
 // NewDeleteApiKeyRequest generates requests for DeleteApiKey
-func NewDeleteApiKeyRequest(server string, ref string, id string) (*http.Request, error) {
+func NewDeleteApiKeyRequest(server string, ref string, id string, params *DeleteApiKeyParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2489,6 +2540,24 @@ func NewDeleteApiKeyRequest(server string, ref string, id string) (*http.Request
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -2499,19 +2568,8 @@ func NewDeleteApiKeyRequest(server string, ref string, id string) (*http.Request
 	return req, nil
 }
 
-// NewUpdateApiKeyRequest calls the generic UpdateApiKey builder with application/json body
-func NewUpdateApiKeyRequest(server string, ref string, id string, body UpdateApiKeyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateApiKeyRequestWithBody(server, ref, id, "application/json", bodyReader)
-}
-
-// NewUpdateApiKeyRequestWithBody generates requests for UpdateApiKey with any type of body
-func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, contentType string, body io.Reader) (*http.Request, error) {
+// NewGetApiKeyRequest generates requests for GetApiKey
+func NewGetApiKeyRequest(server string, ref string, id string, params *GetApiKeyParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2541,6 +2599,94 @@ func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, conten
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateApiKeyRequest calls the generic UpdateApiKey builder with application/json body
+func NewUpdateApiKeyRequest(server string, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateApiKeyRequestWithBody(server, ref, id, params, "application/json", bodyReader)
+}
+
+// NewUpdateApiKeyRequestWithBody generates requests for UpdateApiKey with any type of body
+func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("PATCH", queryURL.String(), body)
@@ -3921,6 +4067,22 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		}
 
+		if params.ComputeMultiplier != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "compute_multiplier", runtime.ParamLocationQuery, *params.ComputeMultiplier); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -4146,6 +4308,22 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 		if params.ImportMapPath != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ComputeMultiplier != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "compute_multiplier", runtime.ParamLocationQuery, *params.ComputeMultiplier); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5542,20 +5720,23 @@ type ClientWithResponsesInterface interface {
 	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
 
 	// V1GetProjectApiKeysWithResponse request
-	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
+	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
 
 	// CreateApiKeyWithBodyWithResponse request with any body
-	CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+	CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
 
-	CreateApiKeyWithResponse(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+	CreateApiKeyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
 
 	// DeleteApiKeyWithResponse request
-	DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error)
+	DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error)
+
+	// GetApiKeyWithResponse request
+	GetApiKeyWithResponse(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*GetApiKeyResponse, error)
 
 	// UpdateApiKeyWithBodyWithResponse request with any body
-	UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+	UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
 
-	UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+	UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
 
 	// V1DisablePreviewBranchingWithResponse request
 	V1DisablePreviewBranchingWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DisablePreviewBranchingResponse, error)
@@ -6025,7 +6206,7 @@ func (r V1ListOrganizationMembersResponse) StatusCode() int {
 type V1ListAllProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]V1ProjectResponse
+	JSON200      *[]V1ProjectWithDatabaseResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -6091,7 +6272,7 @@ func (r V1DeleteAProjectResponse) StatusCode() int {
 type V1GetProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectResponse
+	JSON200      *V1ProjectWithDatabaseResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -6170,6 +6351,28 @@ func (r DeleteApiKeyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DeleteApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetApiKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7774,8 +7977,8 @@ func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref 
 }
 
 // V1GetProjectApiKeysWithResponse request returning *V1GetProjectApiKeysResponse
-func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error) {
-	rsp, err := c.V1GetProjectApiKeys(ctx, ref, reqEditors...)
+func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error) {
+	rsp, err := c.V1GetProjectApiKeys(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7783,16 +7986,16 @@ func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Contex
 }
 
 // CreateApiKeyWithBodyWithResponse request with arbitrary body returning *CreateApiKeyResponse
-func (c *ClientWithResponses) CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
-	rsp, err := c.CreateApiKeyWithBody(ctx, ref, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
+	rsp, err := c.CreateApiKeyWithBody(ctx, ref, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateApiKeyResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref string, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
-	rsp, err := c.CreateApiKey(ctx, ref, body, reqEditors...)
+func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
+	rsp, err := c.CreateApiKey(ctx, ref, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -7800,25 +8003,34 @@ func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref 
 }
 
 // DeleteApiKeyWithResponse request returning *DeleteApiKeyResponse
-func (c *ClientWithResponses) DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error) {
-	rsp, err := c.DeleteApiKey(ctx, ref, id, reqEditors...)
+func (c *ClientWithResponses) DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error) {
+	rsp, err := c.DeleteApiKey(ctx, ref, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseDeleteApiKeyResponse(rsp)
 }
 
+// GetApiKeyWithResponse request returning *GetApiKeyResponse
+func (c *ClientWithResponses) GetApiKeyWithResponse(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*GetApiKeyResponse, error) {
+	rsp, err := c.GetApiKey(ctx, ref, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetApiKeyResponse(rsp)
+}
+
 // UpdateApiKeyWithBodyWithResponse request with arbitrary body returning *UpdateApiKeyResponse
-func (c *ClientWithResponses) UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
-	rsp, err := c.UpdateApiKeyWithBody(ctx, ref, id, contentType, body, reqEditors...)
+func (c *ClientWithResponses) UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
+	rsp, err := c.UpdateApiKeyWithBody(ctx, ref, id, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseUpdateApiKeyResponse(rsp)
 }
 
-func (c *ClientWithResponses) UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
-	rsp, err := c.UpdateApiKey(ctx, ref, id, body, reqEditors...)
+func (c *ClientWithResponses) UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
+	rsp, err := c.UpdateApiKey(ctx, ref, id, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -8875,7 +9087,7 @@ func ParseV1ListAllProjectsResponse(rsp *http.Response) (*V1ListAllProjectsRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []V1ProjectResponse
+		var dest []V1ProjectWithDatabaseResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -8953,7 +9165,7 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectResponse
+		var dest V1ProjectWithDatabaseResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9025,6 +9237,32 @@ func ParseDeleteApiKeyResponse(rsp *http.Response) (*DeleteApiKeyResponse, error
 	}
 
 	response := &DeleteApiKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApiKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetApiKeyResponse parses an HTTP response from a GetApiKeyWithResponse call
+func ParseGetApiKeyResponse(rsp *http.Response) (*GetApiKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetApiKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

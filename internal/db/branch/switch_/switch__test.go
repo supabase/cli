@@ -2,7 +2,6 @@ package switch_
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -42,10 +42,14 @@ func TestSwitchCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
+		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
-			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
-			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
+			Reply("ALTER DATABASE").
+			Query(reset.TERMINATE_BACKENDS).
+			Reply("SELECT 1").
+			Query(reset.COUNT_REPLICATION_SLOTS).
+			Reply("SELECT 1", []interface{}{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE " + branch + " RENAME TO postgres;").
@@ -218,8 +222,10 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
-			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`)
+		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
+			ReplyError(pgerrcode.InvalidParameterValue, `cannot disallow connections for current database`).
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
+			Query(reset.TERMINATE_BACKENDS)
 		// Run test
 		err := switchDatabase(context.Background(), "main", "target", conn.Intercept)
 		// Check error
@@ -234,10 +240,14 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
+		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
-			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
-			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
+			Reply("ALTER DATABASE").
+			Query(reset.TERMINATE_BACKENDS).
+			Reply("SELECT 1").
+			Query(reset.COUNT_REPLICATION_SLOTS).
+			Reply("SELECT 1", []interface{}{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "main" already exists`)
 		// Setup mock docker
@@ -260,10 +270,14 @@ func TestSwitchDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false;").
+		conn.Query("ALTER DATABASE postgres ALLOW_CONNECTIONS false").
 			Reply("ALTER DATABASE").
-			Query(fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres")).
-			Reply("DO").
+			Query("ALTER DATABASE _supabase ALLOW_CONNECTIONS false").
+			Reply("ALTER DATABASE").
+			Query(reset.TERMINATE_BACKENDS).
+			Reply("SELECT 1").
+			Query(reset.COUNT_REPLICATION_SLOTS).
+			Reply("SELECT 1", []interface{}{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE target RENAME TO postgres;").

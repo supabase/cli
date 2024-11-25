@@ -12,11 +12,11 @@ const (
 	pgmetaImage      = "supabase/postgres-meta:v0.84.2"
 	studioImage      = "supabase/studio:20241106-f29003e"
 	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	edgeRuntimeImage = "supabase/edge-runtime:v1.62.2"
+	edgeRuntimeImage = "supabase/edge-runtime:v1.64.1"
 	vectorImage      = "timberio/vector:0.28.1-alpine"
 	supavisorImage   = "supabase/supavisor:1.1.56"
 	gotrueImage      = "supabase/gotrue:v2.164.0"
-	realtimeImage    = "supabase/realtime:v2.30.34"
+	realtimeImage    = "supabase/realtime:v2.33.51"
 	storageImage     = "supabase/storage-api:v1.11.13"
 	logflareImage    = "supabase/logflare:1.4.0"
 	// Append to JobImages when adding new dependencies below

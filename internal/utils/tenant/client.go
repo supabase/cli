@@ -39,7 +39,7 @@ func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 }
 
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
-	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef, &api.V1GetProjectApiKeysParams{})
 	if err != nil {
 		return ApiKey{}, errors.Errorf("failed to get api keys: %w", err)
 	}

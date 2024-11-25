@@ -58,9 +58,9 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{
-				Status:   api.V1ProjectResponseStatusACTIVEHEALTHY,
-				Database: &postgres,
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: postgres,
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
@@ -132,9 +132,9 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{
-				Status:   api.V1ProjectResponseStatusACTIVEHEALTHY,
-				Database: &api.V1DatabaseResponse{},
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{},
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
@@ -186,9 +186,9 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{
-				Status:   api.V1ProjectResponseStatusACTIVEHEALTHY,
-				Database: &api.V1DatabaseResponse{},
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{},
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
@@ -247,9 +247,9 @@ func TestStatusCheck(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectResponse{
-				Status:   api.V1ProjectResponseStatusACTIVEHEALTHY,
-				Database: &api.V1DatabaseResponse{Version: "15.6.1.139"},
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{Version: "15.6.1.139"},
 			})
 		// Run test
 		err := checkRemoteProjectStatus(context.Background(), project, fsys)
@@ -289,7 +289,7 @@ func TestStatusCheck(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusINACTIVE})
+			JSON(api.V1ProjectWithDatabaseResponse{Status: api.V1ProjectWithDatabaseResponseStatusINACTIVE})
 		// Run test
 		err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error

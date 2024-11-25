@@ -15,8 +15,8 @@ import (
 )
 
 type linkedProject struct {
-	api.V1ProjectResponse `yaml:",inline"`
-	Linked                bool `json:"linked"`
+	api.V1ProjectWithDatabaseResponse `yaml:",inline"`
+	Linked                            bool `json:"linked"`
 }
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -37,8 +37,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	var projects []linkedProject
 	for _, project := range *resp.JSON200 {
 		projects = append(projects, linkedProject{
-			V1ProjectResponse: project,
-			Linked:            project.Id == projectRef,
+			V1ProjectWithDatabaseResponse: project,
+			Linked:                        project.Id == projectRef,
 		})
 	}
 
