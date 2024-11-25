@@ -33,21 +33,21 @@ var (
 		Allowed: awsRegions(),
 	}
 	plan = utils.EnumFlag{
-		Allowed: []string{string(api.V1CreateProjectBodyPlanFree), string(api.V1CreateProjectBodyPlanPro)},
-		Value:   string(api.V1CreateProjectBodyPlanFree),
+		Allowed: []string{string(api.V1CreateProjectBodyDtoPlanFree), string(api.V1CreateProjectBodyDtoPlanPro)},
+		Value:   string(api.V1CreateProjectBodyDtoPlanFree),
 	}
 	size = utils.EnumFlag{
 		Allowed: []string{
-			string(api.Micro),
-			string(api.Small),
-			string(api.Medium),
-			string(api.Large),
-			string(api.Xlarge),
-			string(api.N2xlarge),
-			string(api.N4xlarge),
-			string(api.N8xlarge),
-			string(api.N12xlarge),
-			string(api.N16xlarge),
+			string(api.DesiredInstanceSizeMicro),
+			string(api.DesiredInstanceSizeSmall),
+			string(api.DesiredInstanceSizeMedium),
+			string(api.DesiredInstanceSizeLarge),
+			string(api.DesiredInstanceSizeXlarge),
+			string(api.DesiredInstanceSizeN2xlarge),
+			string(api.DesiredInstanceSizeN4xlarge),
+			string(api.DesiredInstanceSizeN8xlarge),
+			string(api.DesiredInstanceSizeN12xlarge),
+			string(api.DesiredInstanceSizeN16xlarge),
 		},
 	}
 
@@ -69,14 +69,14 @@ var (
 			if len(args) > 0 {
 				projectName = args[0]
 			}
-			body := api.V1CreateProjectBody{
+			body := api.V1CreateProjectBodyDto{
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
-				Region:         api.V1CreateProjectBodyRegion(region.Value),
+				Region:         api.V1CreateProjectBodyDtoRegion(region.Value),
 			}
 			if cmd.Flags().Changed("size") {
-				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
+				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDtoDesiredInstanceSize)(&size.Value)
 			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
