@@ -160,6 +160,14 @@ EOF`}
 	return initCurrentBranch(fsys)
 }
 
+func NewBackoffPolicy(ctx context.Context, timeout time.Duration) backoff.BackOff {
+	policy := backoff.WithMaxRetries(
+		backoff.NewConstantBackOff(time.Second),
+		uint64(timeout.Seconds()),
+	)
+	return backoff.WithContext(policy, ctx)
+}
+
 func WaitForHealthyService(ctx context.Context, timeout time.Duration, started ...string) error {
 	probe := func() error {
 		var errHealth []error
@@ -173,10 +181,7 @@ func WaitForHealthyService(ctx context.Context, timeout time.Duration, started .
 		started = unhealthy
 		return errors.Join(errHealth...)
 	}
-	policy := backoff.WithContext(backoff.WithMaxRetries(
-		backoff.NewConstantBackOff(time.Second),
-		uint64(timeout.Seconds()),
-	), ctx)
+	policy := NewBackoffPolicy(ctx, timeout)
 	err := backoff.Retry(probe, policy)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		// Print container logs for easier debugging

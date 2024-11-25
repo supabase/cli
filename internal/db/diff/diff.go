@@ -146,12 +146,12 @@ func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 
 func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
 	// Retry until connected, cancelled, or timeout
-	policy := backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second), uint64(timeout.Seconds()))
+	policy := start.NewBackoffPolicy(ctx, timeout)
 	config := pgconn.Config{Port: utils.Config.Db.ShadowPort}
 	connect := func() (*pgx.Conn, error) {
 		return utils.ConnectLocalPostgres(ctx, config, options...)
 	}
-	return backoff.RetryWithData(connect, backoff.WithContext(policy, ctx))
+	return backoff.RetryWithData(connect, policy)
 }
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

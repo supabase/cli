@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -164,20 +165,40 @@ func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) err
 	return sql.ExecBatch(ctx, conn)
 }
 
+const (
+	TERMINATE_BACKENDS      = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('postgres', '_supabase')"
+	COUNT_REPLICATION_SLOTS = "SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')"
+)
+
 func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
-	// Must be executed separately because running in transaction is unsupported
-	disconn := "ALTER DATABASE postgres ALLOW_CONNECTIONS false; ALTER DATABASE _supabase ALLOW_CONNECTIONS false;"
-	if _, err := conn.Exec(ctx, disconn); err != nil {
+	// Must be executed separately because looping in transaction is unsupported
+	// https://dba.stackexchange.com/a/11895
+	disconn := migration.MigrationFile{
+		Statements: []string{
+			"ALTER DATABASE postgres ALLOW_CONNECTIONS false",
+			"ALTER DATABASE _supabase ALLOW_CONNECTIONS false",
+			TERMINATE_BACKENDS,
+		},
+	}
+	if err := disconn.ExecBatch(ctx, conn); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName {
 			return errors.Errorf("failed to disconnect clients: %w", err)
 		}
 	}
-	term := fmt.Sprintf(utils.TerminateDbSqlFmt, "postgres", "_supabase")
-	if _, err := conn.Exec(ctx, term); err != nil {
-		return errors.Errorf("failed to terminate backend for %s: %w", "postgres or _supabase", err)
+	// Wait for WAL senders to drop their replication slots
+	policy := start.NewBackoffPolicy(ctx, 10*time.Second)
+	waitForDrop := func() error {
+		var count int
+		if err := conn.QueryRow(ctx, COUNT_REPLICATION_SLOTS).Scan(&count); err != nil {
+			err = errors.Errorf("failed to count replication slots: %w", err)
+			return &backoff.PermanentError{Err: err}
+		} else if count > 0 {
+			return errors.Errorf("replication slots still active: %d", count)
+		}
+		return nil
 	}
-	return nil
+	return backoff.Retry(waitForDrop, policy)
 }
 
 func RestartDatabase(ctx context.Context, w io.Writer) error {

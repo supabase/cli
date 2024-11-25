@@ -31,18 +31,7 @@ func ShortContainerImageName(imageName string) string {
 	return matches[1]
 }
 
-const (
-	// https://dba.stackexchange.com/a/11895
-	// Args: dbname
-	TerminateDbSqlFmt = `
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('%[1]s', '%[2]s');
--- Wait for WAL sender to drop replication slot.
-DO 'BEGIN WHILE (
-	SELECT COUNT(*) FROM pg_replication_slots WHERE database IN (''%[1]s'', ''%[2]s'')
-) > 0 LOOP END LOOP; END';`
-
-	SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot the error."
-)
+const SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot the error."
 
 var (
 	CmdSuggestion string
