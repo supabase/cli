@@ -321,7 +321,7 @@ func initSchema15(ctx context.Context, host string) error {
 }
 
 func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin"}, options...)
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,11 @@ package migration
 
 import (
 	"context"
+	"database/sql"
+	"encoding/csv"
+
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +15,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/stdlib"
 )
 
 func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
@@ -56,23 +61,106 @@ func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys 
 	}
 	return pending, nil
 }
+func importWithStream(ctx context.Context, csvStream io.Reader, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get Db connection fro sql.DB instance: %w", err)
+	}
+
+	if err = conn.Raw(func(driverConn any) error {
+		pgxConn := driverConn.(*stdlib.Conn).Conn()
+		_, err := pgxConn.CopyFrom(ctx, pgx.Identifier{"categories"}, peopleColumns, newPeopleCopyFromSource(csvStream))
+		if err != nil {
+			return fmt.Errorf("failed to import data into database: %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to resolve raw conection: %w", err)
+	}
+	return nil
+}
+
+var peopleColumns = []string{
+	"name",
+	"color",
+}
+
+func newPeopleCopyFromSource(csvStream io.Reader) *peopleCopyFromSource {
+	csvReader := csv.NewReader(csvStream)
+	csvReader.ReuseRecord = true // reuse slice to return the record line by line
+	csvReader.FieldsPerRecord = len(peopleColumns)
+
+	return &peopleCopyFromSource{
+		reader: csvReader,
+		isBOF:  true, // first line is header
+		record: make([]interface{}, len(peopleColumns)),
+	}
+}
+
+type peopleCopyFromSource struct {
+	reader        *csv.Reader
+	err           error
+	currentCsvRow []string
+	record        []interface{}
+	isEOF         bool
+	isBOF         bool
+}
+
+func (pfs *peopleCopyFromSource) Values() ([]any, error) {
+	if pfs.isEOF {
+		return nil, nil
+	}
+
+	if pfs.err != nil {
+		return nil, pfs.err
+	}
+
+	// the order of the elements of the record array, must match with
+	// the order of the columns in passed into the copy method
+	pfs.record[0] = pfs.currentCsvRow[0]
+	pfs.record[1] = pfs.currentCsvRow[1]
+	return pfs.record, nil
+}
+
+func (pfs *peopleCopyFromSource) Next() bool {
+	pfs.currentCsvRow, pfs.err = pfs.reader.Read()
+	if pfs.err != nil {
+
+		// when get to the end of the file return false and clean the error.
+		// If it's io.EOF we can't return an error
+		if errors.Is(pfs.err, io.EOF) {
+			pfs.isEOF = true
+			pfs.err = nil
+		}
+		return false
+	}
+
+	if pfs.isBOF {
+		pfs.isBOF = false
+		return pfs.Next()
+	}
+
+	return true
+}
+
+func (pfs *peopleCopyFromSource) Err() error {
+	return pfs.err
+}
 
 func SeedData(ctx context.Context, pending []SeedFile, conn *pgx.Conn, fsys fs.FS) error {
-	if len(pending) > 0 {
-		if err := CreateSeedTable(ctx, conn); err != nil {
-			return err
-		}
+	f, err := os.Open("/Users/avallete/Programming/Supa/cli/supabase/categories.csv")
+	if err != nil {
+		return err
 	}
-	for _, seed := range pending {
-		if seed.Dirty {
-			fmt.Fprintf(os.Stderr, "Updating seed hash to %s...\n", seed.Path)
-		} else {
-			fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", seed.Path)
-		}
-		// Batch seed commands, safe to use statement cache
-		if err := seed.ExecBatchWithCache(ctx, conn, fsys); err != nil {
-			return err
-		}
+	defer f.Close()
+
+	// Create sql.DB from the existing pgx.Conn
+	db := stdlib.OpenDB(*conn.Config())
+	defer db.Close()
+
+	if err := importWithStream(ctx, f, db); err != nil {
+		return fmt.Errorf("failed to seed data: %w", err)
 	}
 	return nil
 }

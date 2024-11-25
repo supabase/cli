@@ -233,6 +233,8 @@ func listServicesToRestart() []string {
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
+	config.User = "supabase_admin"
+	config.Password = "postgres"
 	conn, err := utils.ConnectByConfigStream(ctx, config, io.Discard, options...)
 	if err != nil {
 		return err
