@@ -98,6 +98,13 @@ additional_redirect_urls = ["https://127.0.0.1:3000", "env(AUTH_CALLBACK_URL)"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # If disabled, the refresh token will never expire.
+minimum_password_length = 6
+# Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
+password_requirements = ""
+# Passwords that do not have at least one of each will be rejected as weak.
+# - letters_digits
+# - lower_upper_letters_digits
+# - lower_upper_letters_digits_symbols
 enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.

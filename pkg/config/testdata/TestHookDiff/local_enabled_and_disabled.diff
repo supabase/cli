@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -9,7 +9,7 @@
+@@ -11,7 +11,7 @@
  
  [hook]
  [hook.mfa_verification_attempt]
@@ -10,7 +10,7 @@ diff remote[auth] local[auth]
  uri = ""
  secrets = ""
  [hook.password_verification_attempt]
-@@ -17,7 +17,7 @@
+@@ -19,7 +19,7 @@
  uri = ""
  secrets = ""
  [hook.custom_access_token]
