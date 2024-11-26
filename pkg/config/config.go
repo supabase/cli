@@ -159,11 +159,13 @@ type (
 	}
 
 	inbucket struct {
-		Enabled  bool   `toml:"enabled"`
-		Image    string `toml:"-"`
-		Port     uint16 `toml:"port"`
-		SmtpPort uint16 `toml:"smtp_port"`
-		Pop3Port uint16 `toml:"pop3_port"`
+		Enabled    bool   `toml:"enabled"`
+		Image      string `toml:"-"`
+		Port       uint16 `toml:"port"`
+		SmtpPort   uint16 `toml:"smtp_port"`
+		Pop3Port   uint16 `toml:"pop3_port"`
+		AdminEmail string `toml:"admin_email"`
+		SenderName string `toml:"sender_name"`
 	}
 
 	edgeRuntime struct {
@@ -301,6 +303,9 @@ func NewConfig(editors ...ConfigEditor) config {
 					"reauthentication": {},
 				},
 			},
+			Sms: sms{
+				TestOTP: map[string]string{},
+			},
 			External: map[string]provider{
 				"apple":         {},
 				"azure":         {},
@@ -327,7 +332,9 @@ func NewConfig(editors ...ConfigEditor) config {
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
-			Image: inbucketImage,
+			Image:      inbucketImage,
+			AdminEmail: "admin@email.com",
+			SenderName: "Admin",
 		},
 		Studio: studio{
 			Image:       studioImage,

@@ -2,7 +2,6 @@ diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
 @@ -90,7 +90,7 @@
- 
  [external]
  [external.apple]
 -enabled = false

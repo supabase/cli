@@ -51,19 +51,38 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
+		postgres := api.V1DatabaseResponse{
+			Host:    utils.GetSupabaseDbHost(project),
+			Version: "15.1.0.117",
+		}
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: postgres,
+			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/postgres").
+			Reply(200).
+			JSON(api.PostgresConfigResponse{})
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
 			Reply(200).
 			JSON(api.V1PostgrestConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/auth").
+			Reply(200).
+			JSON(api.AuthConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/storage").
+			Reply(200).
+			JSON(api.StorageConfigResponse{})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			Reply(200).
@@ -83,23 +102,6 @@ func TestLinkCommand(t *testing.T) {
 			Get("/storage/v1/version").
 			Reply(200).
 			BodyString("0.40.4")
-		postgres := api.V1DatabaseResponse{
-			Host:    utils.GetSupabaseDbHost(project),
-			Version: "15.1.0.117",
-		}
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects").
-			Reply(200).
-			JSON([]api.V1ProjectResponse{
-				{
-					Id:             project,
-					Database:       &postgres,
-					OrganizationId: "combined-fuchsia-lion",
-					Name:           "Test Project",
-					Region:         "us-west-1",
-					CreatedAt:      "2022-04-25T02:14:55.906498Z",
-				},
-			})
 		// Run test
 		err := Run(context.Background(), project, fsys, conn.Intercept)
 		// Check error
@@ -130,14 +132,26 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{},
+			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/postgres").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/auth").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/storage").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
@@ -151,9 +165,6 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/storage/v1/version").
-			ReplyError(errors.New("network error"))
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, fsys, func(cc *pgx.ConnConfig) {
@@ -175,14 +186,26 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusACTIVEHEALTHY})
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{},
+			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/database/postgres").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/postgrest").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/auth").
+			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/config/storage").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
@@ -215,7 +238,32 @@ func TestLinkCommand(t *testing.T) {
 func TestStatusCheck(t *testing.T) {
 	project := "test-project"
 
+	t.Run("updates postgres version when healthy", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		// Mock project status
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project).
+			Reply(http.StatusOK).
+			JSON(api.V1ProjectWithDatabaseResponse{
+				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+				Database: api.V1DatabaseResponse{Version: "15.6.1.139"},
+			})
+		// Run test
+		err := checkRemoteProjectStatus(context.Background(), project, fsys)
+		// Check error
+		assert.NoError(t, err)
+		version, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
+		assert.NoError(t, err)
+		assert.Equal(t, "15.6.1.139", string(version))
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("ignores project not found", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
@@ -223,24 +271,32 @@ func TestStatusCheck(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(http.StatusNotFound)
 		// Run test
-		err := checkRemoteProjectStatus(context.Background(), project)
+		err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
+		exists, err := afero.Exists(fsys, utils.PostgresVersionPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on project inactive", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectResponse{Status: api.V1ProjectResponseStatusINACTIVE})
+			JSON(api.V1ProjectWithDatabaseResponse{Status: api.V1ProjectWithDatabaseResponseStatusINACTIVE})
 		// Run test
-		err := checkRemoteProjectStatus(context.Background(), project)
+		err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errProjectPaused)
+		exists, err := afero.Exists(fsys, utils.PostgresVersionPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -309,7 +365,7 @@ func TestLinkPostgrest(t *testing.T) {
 		// Run test
 		err := linkPostgrest(context.Background(), project)
 		// Validate api
-		assert.ErrorIs(t, err, tenant.ErrAuthToken)
+		assert.ErrorContains(t, err, `unexpected API config status 500: {"message":"unavailable"}`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

@@ -112,7 +112,7 @@ func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	return body
 }
 
-func (a *settings) fromRemoteConfig(remoteConfig v1API.PostgresConfigResponse) {
+func (a *settings) FromRemotePostgresConfig(remoteConfig v1API.PostgresConfigResponse) {
 	a.EffectiveCacheSize = remoteConfig.EffectiveCacheSize
 	a.LogicalDecodingWorkMem = remoteConfig.LogicalDecodingWorkMem
 	a.MaintenanceWorkMem = remoteConfig.MaintenanceWorkMem
@@ -155,7 +155,7 @@ func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]
 	if err != nil {
 		return nil, err
 	}
-	copy.fromRemoteConfig(remoteConfig)
+	copy.FromRemotePostgresConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err

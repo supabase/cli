@@ -103,9 +103,6 @@ func mapToEnv(input map[string]string) string {
 
 func envToMap(input string) map[string]string {
 	env := strToArr(input)
-	if len(env) == 0 {
-		return nil
-	}
 	result := make(map[string]string, len(env))
 	for _, kv := range env {
 		if parts := strings.Split(kv, "="); len(parts) > 1 {
