@@ -303,6 +303,9 @@ func NewConfig(editors ...ConfigEditor) config {
 					"reauthentication": {},
 				},
 			},
+			Sms: sms{
+				TestOTP: map[string]string{},
+			},
 			External: map[string]provider{
 				"apple":         {},
 				"azure":         {},
