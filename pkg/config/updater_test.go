@@ -193,6 +193,7 @@ func TestUpdateAuthConfig(t *testing.T) {
 			Enabled:      true,
 			EnableSignup: true,
 			Email:        email{EnableConfirmations: true},
+			Sms:          sms{TestOTP: map[string]string{}},
 		})
 		// Check result
 		assert.NoError(t, err)
