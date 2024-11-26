@@ -18,6 +18,9 @@ func newWithDefaults() auth {
 		Email: email{
 			EnableConfirmations: true,
 		},
+		Sms: sms{
+			TestOTP: map[string]string{},
+		},
 	}
 }
 
@@ -563,9 +566,7 @@ func TestSmsDiff(t *testing.T) {
 		// This is not a valid config because platform requires a SMS provider.
 		// For consistency, we handle this in config.Load and emit a warning.
 		c := newWithDefaults()
-		c.Sms = sms{
-			EnableSignup: true,
-		}
+		c.Sms.EnableSignup = true
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled: cast.Ptr(false),
@@ -578,11 +579,7 @@ func TestSmsDiff(t *testing.T) {
 
 	t.Run("enable provider without sign up", func(t *testing.T) {
 		c := newWithDefaults()
-		c.Sms = sms{
-			Messagebird: messagebirdConfig{
-				Enabled: true,
-			},
-		}
+		c.Sms.Messagebird.Enabled = true
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:    cast.Ptr(false),
