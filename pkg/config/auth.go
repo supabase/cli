@@ -10,21 +10,30 @@ import (
 	"github.com/supabase/cli/pkg/diff"
 )
 
+type PasswordRequirements string
+
+const (
+	NoRequirements                 PasswordRequirements = ""
+	LettersDigits                  PasswordRequirements = "letters_digits"
+	LowerUpperLettersDigits        PasswordRequirements = "lower_upper_letters_digits"
+	LowerUpperLettersDigitsSymbols PasswordRequirements = "lower_upper_letters_digits_symbols"
+)
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string   `toml:"site_url"`
-		AdditionalRedirectUrls     []string `toml:"additional_redirect_urls"`
-		JwtExpiry                  uint     `toml:"jwt_expiry"`
-		MinimumPasswordLength      uint     `toml:"minimum_password_length"`
-		PasswordRequirements       string   `toml:"password_requirements"`
-		EnableRefreshTokenRotation bool     `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint     `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool     `toml:"enable_manual_linking"`
-		EnableSignup               bool     `toml:"enable_signup"`
-		EnableAnonymousSignIns     bool     `toml:"enable_anonymous_sign_ins"`
+		SiteUrl                    string               `toml:"site_url"`
+		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
+		JwtExpiry                  uint                 `toml:"jwt_expiry"`
+		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
+		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
+		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool                 `toml:"enable_manual_linking"`
+		EnableSignup               bool                 `toml:"enable_signup"`
+		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
