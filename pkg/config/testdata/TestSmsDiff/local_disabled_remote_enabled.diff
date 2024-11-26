@@ -19,8 +19,7 @@ diff remote[auth] local[auth]
  account_sid = ""
  message_service_sid = ""
  auth_token = ""
-@@ -87,9 +87,6 @@
- from = ""
+@@ -88,8 +88,6 @@
  api_key = ""
  api_secret = ""
  [sms.test_otp]

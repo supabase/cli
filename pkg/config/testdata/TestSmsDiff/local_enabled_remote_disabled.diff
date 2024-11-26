@@ -32,8 +32,7 @@ diff remote[auth] local[auth]
  [sms.textlocal]
  enabled = false
  sender = ""
-@@ -87,6 +87,8 @@
- from = ""
+@@ -88,6 +88,7 @@
  api_key = ""
  api_secret = ""
  [sms.test_otp]
