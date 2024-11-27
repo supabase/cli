@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -61,7 +63,7 @@ type FileOptions struct {
 	Overwrite    bool
 }
 
-func ParseFileOptions(f fs.File, opts ...func(*FileOptions)) (*FileOptions, error) {
+func ParseFileOptions(f fs.File, fp string, extension_detector bool, opts ...func(*FileOptions)) (*FileOptions, error) {
 	// Customise file options
 	fo := &FileOptions{}
 	for _, apply := range opts {
@@ -84,17 +86,23 @@ func ParseFileOptions(f fs.File, opts ...func(*FileOptions)) (*FileOptions, erro
 		} else if _, err = s.Seek(0, io.SeekStart); err != nil {
 			return nil, errors.Errorf("failed to seek file: %w", err)
 		}
+		// we attempt to narrow down the mimetype using file extension to match closer the upload behavior from studio
+		if extension_detector {
+			if extension_filetype := mime.TypeByExtension(filepath.Ext(fp)); extension_filetype != "" {
+				fo.ContentType = extension_filetype
+			}
+		}
 	}
 	return fo, nil
 }
 
-func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
+func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, extension_detector bool, opts ...func(*FileOptions)) error {
 	f, err := fsys.Open(localPath)
 	if err != nil {
 		return errors.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	fo, err := ParseFileOptions(f, opts...)
+	fo, err := ParseFileOptions(f, localPath, extension_detector, opts...)
 	if err != nil {
 		return err
 	}

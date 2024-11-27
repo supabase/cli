@@ -30,10 +30,11 @@ type (
 	BucketConfig map[string]bucket
 
 	bucket struct {
-		Public           *bool       `toml:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
+		Public            *bool       `toml:"public"`
+		FileSizeLimit     sizeInBytes `toml:"file_size_limit"`
+		AllowedMimeTypes  []string    `toml:"allowed_mime_types"`
+		ObjectsPath       string      `toml:"objects_path"`
+		ExtensionDetector bool        `toml:"extension_detector"`
 	}
 )
 

@@ -52,7 +52,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 		if recursive {
 			return UploadStorageObjectAll(ctx, api, dstParsed.Path, localPath, maxJobs, fsys, opts...)
 		}
-		return api.UploadObject(ctx, dstParsed.Path, src, fsys, opts...)
+		return api.UploadObject(ctx, dstParsed.Path, src, fsys, false, opts...)
 	} else if strings.EqualFold(srcParsed.Scheme, client.STORAGE_SCHEME) && strings.EqualFold(dstParsed.Scheme, client.STORAGE_SCHEME) {
 		return errors.New("Copying between buckets is not supported")
 	}
@@ -148,7 +148,7 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 		}
 		fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
 		job := func() error {
-			err := api.UploadObject(ctx, dstPath, filePath, fsys, opts...)
+			err := api.UploadObject(ctx, dstPath, filePath, fsys, false, opts...)
 			if err != nil && strings.Contains(err.Error(), `"error":"Bucket not found"`) {
 				// Retry after creating bucket
 				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
@@ -161,7 +161,7 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 					if _, err := api.CreateBucket(ctx, body); err != nil {
 						return err
 					}
-					err = api.UploadObject(ctx, dstPath, filePath, fsys, opts...)
+					err = api.UploadObject(ctx, dstPath, filePath, fsys, false, opts...)
 				}
 			}
 			return err
