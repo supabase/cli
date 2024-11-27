@@ -256,6 +256,7 @@ func initRealtimeJob(host string) utils.DockerJob {
 			"DNS_NODES=''",
 			"RLIMIT_NOFILE=",
 			"SEED_SELF_HOST=true",
+			"RUN_JANITOR=true",
 			fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 		},
 		Cmd: []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)

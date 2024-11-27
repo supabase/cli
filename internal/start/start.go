@@ -766,6 +766,7 @@ EOF
 					"DNS_NODES=''",
 					"RLIMIT_NOFILE=",
 					"SEED_SELF_HOST=true",
+					"RUN_JANITOR=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
@@ -1056,6 +1057,7 @@ EOF
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
 					"REGION=local",
+					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 				},
 				Cmd: []string{
