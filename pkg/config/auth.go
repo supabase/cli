@@ -51,13 +51,13 @@ type (
 		SiteUrl                    string               `toml:"site_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
-		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
-		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool                 `toml:"enable_manual_linking"`
 		EnableSignup               bool                 `toml:"enable_signup"`
 		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
+		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
+		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
