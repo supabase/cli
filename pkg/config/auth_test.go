@@ -34,6 +34,89 @@ func assertSnapshotEqual(t *testing.T, actual []byte) {
 	assert.Equal(t, string(expected), string(actual))
 }
 
+func TestAuthDiff(t *testing.T) {
+	t.Run("local and remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.SiteUrl = "http://127.0.0.1:3000"
+		c.AdditionalRedirectUrls = []string{"https://127.0.0.1:3000"}
+		c.JwtExpiry = 3600
+		c.EnableRefreshTokenRotation = true
+		c.RefreshTokenReuseInterval = 10
+		c.EnableManualLinking = true
+		c.EnableSignup = true
+		c.EnableAnonymousSignIns = true
+		c.MinimumPasswordLength = 6
+		c.PasswordRequirements = LettersDigits
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			SiteUrl:                           cast.Ptr("http://127.0.0.1:3000"),
+			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000"),
+			JwtExp:                            cast.Ptr(3600),
+			RefreshTokenRotationEnabled:       cast.Ptr(true),
+			SecurityRefreshTokenReuseInterval: cast.Ptr(10),
+			SecurityManualLinkingEnabled:      cast.Ptr(true),
+			DisableSignup:                     cast.Ptr(false),
+			ExternalAnonymousUsersEnabled:     cast.Ptr(true),
+			PasswordMinLength:                 cast.Ptr(6),
+			PasswordRequiredCharacters:        cast.Ptr(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local enabled and disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.SiteUrl = "http://127.0.0.1:3000"
+		c.AdditionalRedirectUrls = []string{"https://127.0.0.1:3000"}
+		c.JwtExpiry = 3600
+		c.EnableRefreshTokenRotation = false
+		c.RefreshTokenReuseInterval = 10
+		c.EnableManualLinking = false
+		c.EnableSignup = false
+		c.EnableAnonymousSignIns = false
+		c.MinimumPasswordLength = 6
+		c.PasswordRequirements = LowerUpperLettersDigitsSymbols
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			SiteUrl:                           cast.Ptr(""),
+			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000,https://ref.supabase.co"),
+			JwtExp:                            cast.Ptr(0),
+			RefreshTokenRotationEnabled:       cast.Ptr(true),
+			SecurityRefreshTokenReuseInterval: cast.Ptr(0),
+			SecurityManualLinkingEnabled:      cast.Ptr(true),
+			DisableSignup:                     cast.Ptr(false),
+			ExternalAnonymousUsersEnabled:     cast.Ptr(true),
+			PasswordMinLength:                 cast.Ptr(8),
+			PasswordRequiredCharacters:        cast.Ptr(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.EnableSignup = false
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			SiteUrl:                           cast.Ptr(""),
+			UriAllowList:                      cast.Ptr(""),
+			JwtExp:                            cast.Ptr(0),
+			RefreshTokenRotationEnabled:       cast.Ptr(false),
+			SecurityRefreshTokenReuseInterval: cast.Ptr(0),
+			SecurityManualLinkingEnabled:      cast.Ptr(false),
+			DisableSignup:                     cast.Ptr(true),
+			ExternalAnonymousUsersEnabled:     cast.Ptr(false),
+			PasswordMinLength:                 cast.Ptr(0),
+			PasswordRequiredCharacters:        cast.Ptr(""),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
