@@ -462,13 +462,6 @@ EOF
 			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
 		}
 
-		var password_requirements = map[config.PasswordRequirements]string{
-			"":                                   "",
-			"letters_digits":                     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-			"lower_upper_letters_digits":         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
-			"lower_upper_letters_digits_symbols": "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-		}
-
 		env := []string{
 			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
 
@@ -514,7 +507,7 @@ EOF
 			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
 
 			fmt.Sprintf("GOTRUE_PASSWORD_MIN_LENGTH=%v", utils.Config.Auth.MinimumPasswordLength),
-			fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", password_requirements[utils.Config.Auth.PasswordRequirements]),
+			fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", utils.Config.Auth.PasswordRequirements.ToChar()),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
 			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
 			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),

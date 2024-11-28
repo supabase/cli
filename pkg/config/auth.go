@@ -19,6 +19,30 @@ const (
 	LowerUpperLettersDigitsSymbols PasswordRequirements = "lower_upper_letters_digits_symbols"
 )
 
+func (r PasswordRequirements) ToChar() v1API.UpdateAuthConfigBodyPasswordRequiredCharacters {
+	switch r {
+	case LettersDigits:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+	case LowerUpperLettersDigits:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
+	case LowerUpperLettersDigitsSymbols:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
+	}
+	return v1API.Empty
+}
+
+func NewPasswordRequirement(c v1API.UpdateAuthConfigBodyPasswordRequiredCharacters) PasswordRequirements {
+	switch c {
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
+		return LettersDigits
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
+		return LowerUpperLettersDigits
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
+		return LowerUpperLettersDigitsSymbols
+	}
+	return NoRequirements
+}
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
@@ -204,7 +228,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
-		PasswordRequiredCharacters:        (*v1API.UpdateAuthConfigBodyPasswordRequiredCharacters)(&a.PasswordRequirements),
+		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
@@ -224,6 +248,9 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
 	a.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	a.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
+	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
+	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
 	a.Sessions.fromAuthConfig(remoteConfig)
