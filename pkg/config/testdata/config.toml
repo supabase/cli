@@ -106,6 +106,11 @@ refresh_token_reuse_interval = 10
 enable_signup = true
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = true
+# Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
+minimum_password_length = 6
+# Passwords that do not meet the following requirements will be rejected as weak. Supported values
+# are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
+password_requirements = ""
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.

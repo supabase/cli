@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -30,16 +30,16 @@
+@@ -32,16 +32,16 @@
  secrets = ""
  
  [mfa]

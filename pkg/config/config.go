@@ -673,6 +673,10 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
 			}
 		}
+		allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
+		if !sliceContains(allowed, c.Auth.PasswordRequirements) {
+			return errors.Errorf("Invalid config for auth.password_requirements. Must be one of: %v", allowed)
+		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}

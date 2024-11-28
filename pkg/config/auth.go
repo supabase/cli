@@ -10,19 +10,54 @@ import (
 	"github.com/supabase/cli/pkg/diff"
 )
 
+type PasswordRequirements string
+
+const (
+	NoRequirements                 PasswordRequirements = ""
+	LettersDigits                  PasswordRequirements = "letters_digits"
+	LowerUpperLettersDigits        PasswordRequirements = "lower_upper_letters_digits"
+	LowerUpperLettersDigitsSymbols PasswordRequirements = "lower_upper_letters_digits_symbols"
+)
+
+func (r PasswordRequirements) ToChar() v1API.UpdateAuthConfigBodyPasswordRequiredCharacters {
+	switch r {
+	case LettersDigits:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+	case LowerUpperLettersDigits:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
+	case LowerUpperLettersDigitsSymbols:
+		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
+	}
+	return v1API.Empty
+}
+
+func NewPasswordRequirement(c v1API.UpdateAuthConfigBodyPasswordRequiredCharacters) PasswordRequirements {
+	switch c {
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
+		return LettersDigits
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
+		return LowerUpperLettersDigits
+	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
+		return LowerUpperLettersDigitsSymbols
+	}
+	return NoRequirements
+}
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string   `toml:"site_url"`
-		AdditionalRedirectUrls     []string `toml:"additional_redirect_urls"`
-		JwtExpiry                  uint     `toml:"jwt_expiry"`
-		EnableRefreshTokenRotation bool     `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint     `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool     `toml:"enable_manual_linking"`
-		EnableSignup               bool     `toml:"enable_signup"`
-		EnableAnonymousSignIns     bool     `toml:"enable_anonymous_sign_ins"`
+		SiteUrl                    string               `toml:"site_url"`
+		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
+		JwtExpiry                  uint                 `toml:"jwt_expiry"`
+		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool                 `toml:"enable_manual_linking"`
+		EnableSignup               bool                 `toml:"enable_signup"`
+		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
+		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
+		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
@@ -192,6 +227,8 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		SecurityManualLinkingEnabled:      &a.EnableManualLinking,
 		DisableSignup:                     cast.Ptr(!a.EnableSignup),
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
+		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
+		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
@@ -211,6 +248,9 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
 	a.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
 	a.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
+	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
+	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
 	a.Sessions.fromAuthConfig(remoteConfig)
