@@ -14,8 +14,8 @@ type ConfigUpdater struct {
 	skipSecrets bool
 }
 
-func NewConfigUpdater(client v1API.ClientWithResponses, skipSecrets bool) ConfigUpdater {
-	return ConfigUpdater{client: client, skipSecrets: skipSecrets}
+func NewConfigUpdater(client v1API.ClientWithResponses) ConfigUpdater {
+	return ConfigUpdater{client: client, skipSecrets: false}
 }
 
 func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfig, filter ...func(string) bool) error {

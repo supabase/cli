@@ -18,7 +18,7 @@ func TestUpdateApi(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("updates remote config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -46,7 +46,7 @@ func TestUpdateApi(t *testing.T) {
 	})
 
 	t.Run("skips update if no diff", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -71,7 +71,7 @@ func TestUpdateDbConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("updates remote DB config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -96,7 +96,7 @@ func TestUpdateDbConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if no diff in DB config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -123,7 +123,7 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("enables webhooks", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -142,7 +142,7 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if webhooks not enabled", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Run test
 		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", experimental{
 			Webhooks: &webhooks{
@@ -154,13 +154,14 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 		assert.True(t, gock.IsDone())
 	})
 }
+
 func TestUpdateAuthConfig(t *testing.T) {
 	server := "http://localhost"
 	client, err := v1API.NewClientWithResponses(server)
 	require.NoError(t, err)
 
 	t.Run("updates remote Auth config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -180,7 +181,7 @@ func TestUpdateAuthConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if no diff in Auth config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -200,7 +201,7 @@ func TestUpdateAuthConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if disabled locally", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Run test
 		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{})
 		// Check result
@@ -214,7 +215,7 @@ func TestUpdateStorageConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("updates remote Storage config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -239,7 +240,7 @@ func TestUpdateStorageConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if no diff in Storage config", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		gock.New(server).
@@ -254,7 +255,7 @@ func TestUpdateStorageConfig(t *testing.T) {
 	})
 
 	t.Run("skips update if disabled locally", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Run test
 		err := updater.UpdateStorageConfig(context.Background(), "test-project", storage{})
 		// Check result
@@ -268,7 +269,7 @@ func TestUpdateRemoteConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("updates all configs", func(t *testing.T) {
-		updater := NewConfigUpdater(*client, false)
+		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
 		// API config
