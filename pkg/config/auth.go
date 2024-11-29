@@ -217,6 +217,60 @@ type (
 	}
 )
 
+func (a *auth) StripUpdateBodySecrets(body v1API.UpdateAuthConfigBody) v1API.UpdateAuthConfigBody {
+	body.SmtpPass = nil
+	// Only strip secrets for locally enabled providers because other envs won't be loaded
+	body.SmsTwilioAuthToken = nil
+	body.SmsTwilioVerifyAuthToken = nil
+	body.SmsMessagebirdAccessKey = nil
+	body.SmsTextlocalApiKey = nil
+	body.SmsVonageApiSecret = nil
+	body.HookMfaVerificationAttemptSecrets = nil
+	body.HookPasswordVerificationAttemptSecrets = nil
+	body.HookCustomAccessTokenSecrets = nil
+	body.HookSendSmsSecrets = nil
+	body.HookSendEmailSecrets = nil
+	body.ExternalAppleSecret = nil
+	body.ExternalAppleClientId = nil
+	body.ExternalAzureSecret = nil
+	body.ExternalAzureClientId = nil
+	body.ExternalBitbucketSecret = nil
+	body.ExternalBitbucketClientId = nil
+	body.ExternalDiscordSecret = nil
+	body.ExternalDiscordClientId = nil
+	body.ExternalFacebookSecret = nil
+	body.ExternalFacebookClientId = nil
+	body.ExternalFigmaSecret = nil
+	body.ExternalFigmaClientId = nil
+	body.ExternalGithubSecret = nil
+	body.ExternalGithubClientId = nil
+	body.ExternalGitlabSecret = nil
+	body.ExternalGitlabClientId = nil
+	body.ExternalGoogleSecret = nil
+	body.ExternalGoogleClientId = nil
+	body.ExternalKakaoSecret = nil
+	body.ExternalKakaoClientId = nil
+	body.ExternalKeycloakSecret = nil
+	body.ExternalKeycloakClientId = nil
+	body.ExternalLinkedinOidcSecret = nil
+	body.ExternalLinkedinOidcClientId = nil
+	body.ExternalNotionSecret = nil
+	body.ExternalNotionClientId = nil
+	body.ExternalSlackOidcSecret = nil
+	body.ExternalSlackOidcClientId = nil
+	body.ExternalSpotifySecret = nil
+	body.ExternalSpotifyClientId = nil
+	body.ExternalTwitchSecret = nil
+	body.ExternalTwitchClientId = nil
+	body.ExternalTwitterSecret = nil
+	body.ExternalTwitterClientId = nil
+	body.ExternalWorkosSecret = nil
+	body.ExternalWorkosClientId = nil
+	body.ExternalZoomSecret = nil
+	body.ExternalZoomClientId = nil
+	return body
+}
+
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
 		SiteUrl:                           &a.SiteUrl,

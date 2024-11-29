@@ -10,11 +10,12 @@ import (
 )
 
 type ConfigUpdater struct {
-	client v1API.ClientWithResponses
+	client      v1API.ClientWithResponses
+	skipSecrets bool
 }
 
-func NewConfigUpdater(client v1API.ClientWithResponses) ConfigUpdater {
-	return ConfigUpdater{client: client}
+func NewConfigUpdater(client v1API.ClientWithResponses, skipSecrets bool) ConfigUpdater {
+	return ConfigUpdater{client: client, skipSecrets: skipSecrets}
 }
 
 func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfig, filter ...func(string) bool) error {
@@ -123,7 +124,11 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 			return nil
 		}
 	}
-	if resp, err := u.client.V1UpdateAuthServiceConfigWithResponse(ctx, projectRef, c.ToUpdateAuthConfigBody()); err != nil {
+	var updateBody = c.ToUpdateAuthConfigBody()
+	if u.skipSecrets {
+		updateBody = c.StripUpdateBodySecrets(updateBody)
+	}
+	if resp, err := u.client.V1UpdateAuthServiceConfigWithResponse(ctx, projectRef, updateBody); err != nil {
 		return errors.Errorf("failed to update Auth config: %w", err)
 	} else if status := resp.StatusCode(); status < 200 || status >= 300 {
 		return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
