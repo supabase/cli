@@ -996,17 +996,22 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
 	} else if parsed, err := url.Parse(h.URI); err != nil {
 		return errors.Errorf("failed to parse template url: %w", err)
-	} else if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid auth hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
-	} else if (parsed.Scheme == "http" || parsed.Scheme == "https") && h.Secrets == nil {
-		return errors.Errorf("Invalid HTTP config: auth.hook.%v missing required secret value for the http hook endpoint.", hookType)
-	}
-	if h.Secrets != nil {
-		if envLoadedSecret, err := maybeLoadEnv(*h.Secrets); err != nil {
-			return errors.Errorf("missing field in config: auth.hook.%s.secrets", hookType)
-		} else {
-			h.Secrets = cast.Ptr(envLoadedSecret)
+	} else {
+		switch parsed.Scheme {
+		case "http", "https":
+			if len(h.Secrets) == 0 {
+				return errors.Errorf("Invalid HTTP config: auth.hook.%v missing required secret value for the http hook endpoint.", hookType)
+			}
+		case "pg-functions":
+			// pg-functions is a valid sheme
+		default:
+			return errors.Errorf("Invalid auth hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
 		}
+	}
+	if envLoadedSecret, err := maybeLoadEnv(h.Secrets); err != nil {
+		return errors.Errorf("missing field in config: auth.hook.%s.secrets", hookType)
+	} else {
+		h.Secrets = envLoadedSecret
 	}
 	return nil
 }

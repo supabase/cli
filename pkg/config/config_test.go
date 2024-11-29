@@ -11,7 +11,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 //go:embed testdata/config.toml
@@ -251,7 +250,7 @@ func TestValidateHookURI(t *testing.T) {
 			h := hookConfig{
 				Enabled: true,
 				URI:     tt.uri,
-				Secrets: cast.Ptr("test-secret"),
+				Secrets: "test-secret",
 			}
 			err := h.validate(tt.hookName)
 			if tt.shouldErr {
@@ -266,7 +265,7 @@ func TestValidateHookURI(t *testing.T) {
 		h := hookConfig{
 			Enabled: true,
 			URI:     "http://example.com",
-			Secrets: nil,
+			Secrets: "",
 		}
 		err := h.validate("testHook")
 		assert.Error(t, err)

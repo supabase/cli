@@ -24,21 +24,6 @@ func newWithDefaults() auth {
 	}
 }
 
-func defaultHttpHookConfig() hookConfig {
-	return hookConfig{
-		Enabled: true,
-		URI:     "http://example.com",
-		Secrets: cast.Ptr("test-secret"),
-	}
-}
-
-func defaultPostgresHookConfig() hookConfig {
-	return hookConfig{
-		Enabled: true,
-		URI:     "pg-functions://functionName",
-	}
-}
-
 func assertSnapshotEqual(t *testing.T, actual []byte) {
 	snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
 	expected, err := os.ReadFile(snapshot)
@@ -136,11 +121,30 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken:           defaultHttpHookConfig(),
-			SendSMS:                     defaultHttpHookConfig(),
-			SendEmail:                   defaultHttpHookConfig(),
-			MFAVerificationAttempt:      defaultHttpHookConfig(),
-			PasswordVerificationAttempt: defaultPostgresHookConfig(),
+			CustomAccessToken: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+			SendSMS: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+			SendEmail: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+			MFAVerificationAttempt: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+			PasswordVerificationAttempt: hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://functionName",
+			},
 		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
@@ -159,21 +163,6 @@ func TestHookDiff(t *testing.T) {
 			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
 			HookPasswordVerificationAttemptUri:     cast.Ptr("pg-functions://functionName"),
 			HookPasswordVerificationAttemptSecrets: nil,
-		})
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, string(diff))
-	})
-	t.Run("local and remote enabled pg-function custom hook", func(t *testing.T) {
-		c := newWithDefaults()
-		c.Hook = hook{
-			CustomAccessToken: defaultPostgresHookConfig(),
-		}
-		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled: cast.Ptr(true),
-			HookCustomAccessTokenUri:     cast.Ptr("pg-functions://functionName"),
-			HookCustomAccessTokenSecrets: nil,
 		})
 		// Check error
 		assert.NoError(t, err)
