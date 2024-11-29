@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 //go:embed testdata/config.toml
@@ -234,7 +235,7 @@ func TestValidateHookURI(t *testing.T) {
 			uri:       "ftp://example.com",
 			hookName:  "malformedHook",
 			shouldErr: true,
-			errorMsg:  "Invalid HTTP hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
+			errorMsg:  "Invalid auth hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
 		},
 		{
 			name:      "invalid URI with parsing error",
@@ -250,7 +251,7 @@ func TestValidateHookURI(t *testing.T) {
 			h := hookConfig{
 				Enabled: true,
 				URI:     tt.uri,
-				Secrets: "test-secret",
+				Secrets: cast.Ptr("test-secret"),
 			}
 			err := h.validate(tt.hookName)
 			if tt.shouldErr {
@@ -261,6 +262,16 @@ func TestValidateHookURI(t *testing.T) {
 			}
 		})
 	}
+	t.Run("Valid http hook with missing secret", func(t *testing.T) {
+		h := hookConfig{
+			Enabled: true,
+			URI:     "http://example.com",
+			Secrets: nil,
+		}
+		err := h.validate("testHook")
+		assert.Error(t, err)
+		assert.EqualError(t, err, "Invalid HTTP config: auth.hook.testHook missing required secret value for the http hook endpoint.")
+	})
 }
 
 func TestLoadSeedPaths(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"golang.org/x/mod/semver"
 )
@@ -609,7 +610,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+cast.Val(utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets, ""),
 			)
 		}
 		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
@@ -617,7 +618,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+cast.Val(utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets, ""),
 			)
 		}
 		if utils.Config.Auth.Hook.CustomAccessToken.Enabled {
@@ -625,7 +626,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+utils.Config.Auth.Hook.CustomAccessToken.Secrets,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+cast.Val(utils.Config.Auth.Hook.CustomAccessToken.Secrets, ""),
 			)
 		}
 		if utils.Config.Auth.Hook.SendSMS.Enabled {
@@ -633,7 +634,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
 				"GOTRUE_HOOK_SEND_SMS_URI="+utils.Config.Auth.Hook.SendSMS.URI,
-				"GOTRUE_HOOK_SEND_SMS_SECRETS="+utils.Config.Auth.Hook.SendSMS.Secrets,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+cast.Val(utils.Config.Auth.Hook.SendSMS.Secrets, ""),
 			)
 		}
 		if utils.Config.Auth.Hook.SendEmail.Enabled {
@@ -641,7 +642,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
 				"GOTRUE_HOOK_SEND_EMAIL_URI="+utils.Config.Auth.Hook.SendEmail.URI,
-				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+cast.Val(utils.Config.Auth.Hook.SendEmail.Secrets, ""),
 			)
 		}
 

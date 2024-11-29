@@ -997,10 +997,16 @@ func (h *hookConfig) validate(hookType string) (err error) {
 	} else if parsed, err := url.Parse(h.URI); err != nil {
 		return errors.Errorf("failed to parse template url: %w", err)
 	} else if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
+		return errors.Errorf("Invalid auth hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
+	} else if (parsed.Scheme == "http" || parsed.Scheme == "https") && h.Secrets == nil {
+		return errors.Errorf("Invalid HTTP config: auth.hook.%v missing required secret value for the http hook endpoint.", hookType)
 	}
-	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	if h.Secrets != nil {
+		if envLoadedSecret, err := maybeLoadEnv(*h.Secrets); err != nil {
+			return errors.Errorf("missing field in config: auth.hook.%s.secrets", hookType)
+		} else {
+			h.Secrets = cast.Ptr(envLoadedSecret)
+		}
 	}
 	return nil
 }
