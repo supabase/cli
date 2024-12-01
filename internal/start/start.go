@@ -127,7 +127,7 @@ var (
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
 	// Hardcoded configs which match nginxConfigEmbed
-	nginxEmailTemplateDir   = "/home/kong/templates/email"
+	nginxEmailTemplateDir   = "/etc/kong/templates/email"
 	nginxTemplateServerPort = 8088
 )
 
@@ -400,7 +400,7 @@ EOF
 				Image: utils.Config.Api.KongImage,
 				Env: []string{
 					"KONG_DATABASE=off",
-					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
+					"KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
 					"KONG_PLUGINS=request-transformer,cors",
 					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
@@ -411,14 +411,14 @@ EOF
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
 					"KONG_NGINX_WORKER_PROCESSES=1",
 					// Use modern TLS certificate
-					"KONG_SSL_CERT=/home/kong/localhost.crt",
-					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
+					"KONG_SSL_CERT=/etc/kong/localhost.crt",
+					"KONG_SSL_CERT_KEY=/etc/kong/localhost.key",
 				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && \
-cat <<'EOF' > /home/kong/custom_nginx.template && \
-cat <<'EOF' > /home/kong/localhost.crt && \
-cat <<'EOF' > /home/kong/localhost.key && \
-./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/kong/kong.yml && \
+cat <<'EOF' > /etc/kong/custom_nginx.template && \
+cat <<'EOF' > /etc/kong/localhost.crt && \
+cat <<'EOF' > /etc/kong/localhost.key && \
+./docker-entrypoint.sh kong docker-start --nginx-conf /etc/kong/custom_nginx.template
 ` + kongConfigBuf.String() + `
 EOF
 ` + nginxConfigEmbed + `
