@@ -265,7 +265,7 @@ func TestValidateHookURI(t *testing.T) {
 				URI:     "pg-functions://functionName",
 				Secrets: "test-secret",
 			},
-			errorMsg: "Invalid hook config: auth.hook.valid pg-functions URI with unsupported secrets.secrets is not supported for pg-functions URI",
+			errorMsg: "Invalid hook config: auth.hook.valid pg-functions URI with unsupported secrets.secrets is unsupported for pg-functions URI",
 		},
 	}
 

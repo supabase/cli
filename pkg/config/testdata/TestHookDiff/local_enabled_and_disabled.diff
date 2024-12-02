@@ -1,16 +1,17 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -11,7 +11,7 @@
+@@ -11,24 +11,24 @@
  
  [hook]
  [hook.mfa_verification_attempt]
 -enabled = true
 +enabled = false
- uri = ""
+ uri = "pg-functions://verifyMFA"
  secrets = ""
  [hook.password_verification_attempt]
-@@ -19,9 +19,9 @@
+-enabled = true
++enabled = false
  uri = ""
  secrets = ""
  [hook.custom_access_token]
@@ -18,8 +19,18 @@ diff remote[auth] local[auth]
 -uri = ""
 -secrets = "hash:b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
 +enabled = true
-+uri = ""
-+secrets = ""
++uri = "http://example.com"
++secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
  [hook.send_sms]
- enabled = false
- uri = ""
+-enabled = true
++enabled = false
+ uri = "https://example.com"
+ secrets = "test-secret"
+ [hook.send_email]
+-enabled = false
+-uri = ""
++enabled = true
++uri = "pg-functions://sendEmail"
+ secrets = ""
+ 
+ [mfa]
