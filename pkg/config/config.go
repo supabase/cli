@@ -993,14 +993,25 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		return nil
 	}
 	if h.URI == "" {
-		return errors.Errorf("missing required field in config: auth.hook.%s.uri", hookType)
-	} else if parsed, err := url.Parse(h.URI); err != nil {
-		return errors.Errorf("failed to parse template url: %w", err)
-	} else if !(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "pg-functions") {
-		return errors.Errorf("Invalid HTTP hook config: auth.hook.%v should be a Postgres function URI, or a HTTP or HTTPS URL", hookType)
+		return errors.Errorf("Missing required field in config: auth.hook.%s.uri", hookType)
 	}
-	if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
-		return errors.Errorf("missing required field in config: auth.hook.%s.secrets", hookType)
+	parsed, err := url.Parse(h.URI)
+	if err != nil {
+		return errors.Errorf("failed to parse template url: %w", err)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		if len(h.Secrets) == 0 {
+			return errors.Errorf("Missing required field in config: auth.hook.%s.secrets", hookType)
+		} else if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
+			return err
+		}
+	case "pg-functions":
+		if len(h.Secrets) > 0 {
+			return errors.Errorf("Invalid hook config: auth.hook.%s.secrets is unsupported for pg-functions URI", hookType)
+		}
+	default:
+		return errors.Errorf("Invalid hook config: auth.hook.%v should be a HTTP, HTTPS, or pg-functions URI", hookType)
 	}
 	return nil
 }
@@ -1070,19 +1081,16 @@ func (c *tpaCognito) issuerURL() string {
 	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", c.UserPoolRegion, c.UserPoolID)
 }
 
-func (c *tpaCognito) validate() error {
+func (c *tpaCognito) validate() (err error) {
 	if c.UserPoolID == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.")
-	}
-	var err error
-	if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
+	} else if c.UserPoolID, err = maybeLoadEnv(c.UserPoolID); err != nil {
 		return err
 	}
 
 	if c.UserPoolRegion == "" {
 		return errors.New("Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.")
-	}
-	if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
+	} else if c.UserPoolRegion, err = maybeLoadEnv(c.UserPoolRegion); err != nil {
 		return err
 	}
 
