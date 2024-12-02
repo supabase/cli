@@ -205,55 +205,74 @@ func TestSigningJWT(t *testing.T) {
 
 func TestValidateHookURI(t *testing.T) {
 	tests := []struct {
-		name      string
-		uri       string
-		hookName  string
-		shouldErr bool
-		errorMsg  string
+		hookConfig
+		name     string
+		errorMsg string
 	}{
 		{
-			name:      "valid http URL",
-			uri:       "http://example.com",
-			hookName:  "testHook",
-			shouldErr: false,
+			name: "valid http URL",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
 		},
 		{
-			name:      "valid https URL",
-			uri:       "https://example.com",
-			hookName:  "testHook",
-			shouldErr: false,
+			name: "valid https URL",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "https://example.com",
+				Secrets: "test-secret",
+			},
 		},
 		{
-			name:      "valid pg-functions URI",
-			uri:       "pg-functions://functionName",
-			hookName:  "pgHook",
-			shouldErr: false,
+			name: "valid pg-functions URI",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://functionName",
+			},
 		},
 		{
-			name:      "invalid URI with unsupported scheme",
-			uri:       "ftp://example.com",
-			hookName:  "malformedHook",
-			shouldErr: true,
-			errorMsg:  "Invalid HTTP hook config: auth.hook.malformedHook should be a Postgres function URI, or a HTTP or HTTPS URL",
+			name: "invalid URI with unsupported scheme",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "ftp://example.com",
+				Secrets: "test-secret",
+			},
+			errorMsg: "Invalid hook config: auth.hook.invalid URI with unsupported scheme should be a HTTP, HTTPS, or pg-functions URI",
 		},
 		{
-			name:      "invalid URI with parsing error",
-			uri:       "http://a b.com",
-			hookName:  "errorHook",
-			shouldErr: true,
-			errorMsg:  "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
+			name: "invalid URI with parsing error",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "http://a b.com",
+				Secrets: "test-secret",
+			},
+			errorMsg: "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
+		},
+		{
+			name: "valid http URL with missing secrets",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+			},
+			errorMsg: "Missing required field in config: auth.hook.valid http URL with missing secrets.secrets",
+		},
+		{
+			name: "valid pg-functions URI with unsupported secrets",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://functionName",
+				Secrets: "test-secret",
+			},
+			errorMsg: "Invalid hook config: auth.hook.valid pg-functions URI with unsupported secrets.secrets is unsupported for pg-functions URI",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := hookConfig{
-				Enabled: true,
-				URI:     tt.uri,
-				Secrets: "test-secret",
-			}
-			err := h.validate(tt.hookName)
-			if tt.shouldErr {
+			err := tt.hookConfig.validate(tt.name)
+			if len(tt.errorMsg) > 0 {
 				assert.Error(t, err, "Expected an error for %v", tt.name)
 				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
 			} else {
