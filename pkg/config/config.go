@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -802,18 +801,18 @@ func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
 		// Reuse already allocated array
 		c.SqlPaths = c.SqlPaths[:0]
 	}
+	seedPath := filepath.Join(basePath, "seed.sql")
 	set := make(map[string]struct{})
 	for _, pattern := range c.GlobPatterns {
-		// Glob expects / as path separator on windows
-		pattern = filepath.ToSlash(pattern)
 		if !filepath.IsAbs(pattern) {
-			pattern = path.Join(basePath, pattern)
+			pattern = filepath.Join(basePath, pattern)
 		}
-		matches, err := fs.Glob(fsys, pattern)
+		// Glob expects / as path separator on windows
+		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
 		if err != nil {
 			return errors.Errorf("failed to apply glob pattern: %w", err)
 		}
-		if len(matches) == 0 {
+		if len(matches) == 0 && pattern != seedPath {
 			fmt.Fprintln(os.Stderr, "WARN: no seed files matched pattern:", pattern)
 		}
 		sort.Strings(matches)
