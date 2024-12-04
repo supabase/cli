@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -29,7 +28,7 @@ var (
 	}
 
 	branchRegion = utils.EnumFlag{
-		Allowed: flyRegions(),
+		Allowed: awsRegions(),
 	}
 	persistent bool
 
@@ -96,9 +95,8 @@ var (
 			string(api.BranchResponseStatusFUNCTIONSFAILED),
 		},
 	}
-	branchName  string
-	gitBranch   string
-	resetOnPush bool
+	branchName string
+	gitBranch  string
 
 	branchUpdateCmd = &cobra.Command{
 		Use:   "update [branch-id]",
@@ -113,9 +111,6 @@ var (
 			}
 			if cmdFlags.Changed("git-branch") {
 				body.GitBranch = &gitBranch
-			}
-			if cmdFlags.Changed("reset-on-push") {
-				body.ResetOnPush = &resetOnPush
 			}
 			if cmdFlags.Changed("persistent") {
 				body.Persistent = &persistent
@@ -176,24 +171,12 @@ func init() {
 	updateFlags := branchUpdateCmd.Flags()
 	updateFlags.StringVar(&branchName, "name", "", "Rename the preview branch.")
 	updateFlags.StringVar(&gitBranch, "git-branch", "", "Change the associated git branch.")
-	updateFlags.BoolVar(&resetOnPush, "reset-on-push", false, "Reset the preview branch on git push.")
 	updateFlags.BoolVar(&persistent, "persistent", false, "Switch between ephemeral and persistent branch.")
 	updateFlags.Var(&branchStatus, "status", "Override the current branch status.")
 	branchesCmd.AddCommand(branchUpdateCmd)
 	branchesCmd.AddCommand(branchDeleteCmd)
 	branchesCmd.AddCommand(branchDisableCmd)
 	rootCmd.AddCommand(branchesCmd)
-}
-
-func flyRegions() []string {
-	result := make([]string, len(utils.FlyRegions))
-	i := 0
-	for k := range utils.FlyRegions {
-		result[i] = k
-		i++
-	}
-	sort.Strings(result)
-	return result
 }
 
 func promptBranchId(ctx context.Context, ref string) error {
