@@ -432,7 +432,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 	}
 	// Load secrets from .env file
-	if err := loadDefaultEnv(); err != nil {
+	if err := loadDefaultEnv(viper.GetString("ENV")); err != nil {
 		return err
 	} else if err := c.loadFromEnv(); err != nil {
 		return err
@@ -533,9 +533,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
 		return err
 	}
-	if err := c.baseConfig.Validate(fsys); err != nil {
-		return err
-	}
 	idToName := map[string]string{}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
 	for name, remote := range c.Overrides {
@@ -561,10 +558,20 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		} else {
 			idToName[base.ProjectId] = name
 		}
-		if err := base.Validate(fsys); err != nil {
+		c.Remotes[name] = base
+	}
+	// Validate config last to substitute env vars
+	if err := c.baseConfig.Validate(fsys); err != nil {
+		return err
+	}
+	for name, remote := range c.Remotes {
+		// Load secrets from .env file
+		if err := loadDefaultEnv(name); err != nil {
+			return err
+		}
+		if err := remote.Validate(fsys); err != nil {
 			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
 		}
-		c.Remotes[name] = base
 	}
 	return nil
 }
@@ -767,8 +774,7 @@ func sanitizeProjectId(src string) string {
 	return truncateText(sanitized, maxProjectIdLength)
 }
 
-func loadDefaultEnv() error {
-	env := viper.GetString("ENV")
+func loadDefaultEnv(env string) error {
 	if env == "" {
 		env = "development"
 	}
