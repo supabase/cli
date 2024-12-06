@@ -1,6 +1,8 @@
 package config
 
 import (
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -217,9 +219,17 @@ type (
 	}
 )
 
+func isLoopbackURL(siteURL string) bool {
+	if parsed, err := url.Parse(siteURL); err == nil {
+		if ip := net.ParseIP(parsed.Hostname()); ip != nil {
+			return ip.IsLoopback()
+		}
+	}
+	return false
+}
+
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
-		SiteUrl:                           &a.SiteUrl,
 		UriAllowList:                      cast.Ptr(strings.Join(a.AdditionalRedirectUrls, ",")),
 		JwtExp:                            cast.UintToIntPtr(&a.JwtExpiry),
 		RefreshTokenRotationEnabled:       &a.EnableRefreshTokenRotation,
@@ -229,6 +239,9 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
 		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
+	}
+	if !isLoopbackURL(a.SiteUrl) {
+		body.SiteUrl = &a.SiteUrl
 	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
@@ -240,7 +253,6 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 }
 
 func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
 	a.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
 	a.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
 	a.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
@@ -251,6 +263,9 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
 	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
+	if !isLoopbackURL(a.SiteUrl) {
+		a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
+	}
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
 	a.Sessions.fromAuthConfig(remoteConfig)
