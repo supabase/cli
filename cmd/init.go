@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	_init "github.com/supabase/cli/internal/init"
-	"github.com/supabase/cli/internal/utils"
+	_init "github.com/supabase/cli/v2/internal/init"
+	"github.com/supabase/cli/v2/internal/utils"
 )
 
 var (

@@ -12,8 +12,8 @@ import (
 	"regexp"
 
 	"github.com/google/go-github/v62/github"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/tools/shared"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/tools/shared"
 )
 
 const (

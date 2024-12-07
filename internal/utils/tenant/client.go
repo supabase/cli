@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/api"
+	"github.com/supabase/cli/v2/pkg/fetcher"
 )
 
 var (

@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/debug"
-	"github.com/supabase/cli/pkg/pgxv5"
+	"github.com/supabase/cli/v2/internal/debug"
+	"github.com/supabase/cli/v2/pkg/pgxv5"
 )
 
 func ToPostgresURL(config pgconn.Config) string {

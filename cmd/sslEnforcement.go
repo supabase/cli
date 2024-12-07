@@ -4,9 +4,9 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/ssl_enforcement/get"
-	"github.com/supabase/cli/internal/ssl_enforcement/update"
-	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/v2/internal/ssl_enforcement/get"
+	"github.com/supabase/cli/v2/internal/ssl_enforcement/update"
+	"github.com/supabase/cli/v2/internal/utils/flags"
 )
 
 var (

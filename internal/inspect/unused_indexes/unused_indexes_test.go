@@ -7,9 +7,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/v2/internal/db/reset"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{

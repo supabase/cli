@@ -21,11 +21,11 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/gen/keys"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/parser"
+	"github.com/supabase/cli/v2/internal/db/start"
+	"github.com/supabase/cli/v2/internal/gen/keys"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/migration"
+	"github.com/supabase/cli/v2/pkg/parser"
 )
 
 type DiffFunc func(context.Context, string, string, []string) (string, error)

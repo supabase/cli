@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/migration/list"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/v2/internal/migration/list"
+	"github.com/supabase/cli/v2/internal/utils"
 )
 
 func Run(ctx context.Context, branchId string) error {

@@ -14,11 +14,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/v2/internal/testing/apitest"
+	"github.com/supabase/cli/v2/internal/testing/fstest"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/cast"
+	"github.com/supabase/cli/v2/pkg/pgtest"
 )
 
 func TestInitBranch(t *testing.T) {
