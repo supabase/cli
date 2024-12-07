@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/bootstrap"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/v2/internal/bootstrap"
+	"github.com/supabase/cli/v2/internal/utils"
 )
 
 var (

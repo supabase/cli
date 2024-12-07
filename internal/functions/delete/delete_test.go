@@ -9,8 +9,8 @@ import (
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/v2/internal/testing/apitest"
+	"github.com/supabase/cli/v2/internal/utils"
 )
 
 func TestDeleteCommand(t *testing.T) {

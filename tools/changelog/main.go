@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/go-github/v62/github"
 	"github.com/slack-go/slack"
-	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/v2/internal/utils"
 )
 
 func main() {

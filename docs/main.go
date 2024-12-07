@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	cli "github.com/supabase/cli/cmd"
-	"github.com/supabase/cli/internal/utils"
+	cli "github.com/supabase/cli/v2/cmd"
+	"github.com/supabase/cli/v2/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 

@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/pgxv5"
+	"github.com/supabase/cli/v2/internal/migration/list"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/pgxv5"
 )
 
 //go:embed role_configs.sql

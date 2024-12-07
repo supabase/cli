@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v62/github"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/tools/shared"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/pkg/config"
+	"github.com/supabase/cli/v2/tools/shared"
 	"gopkg.in/yaml.v3"
 )
 

@@ -9,11 +9,11 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/function"
+	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/v2/internal/utils/flags"
+	"github.com/supabase/cli/v2/pkg/cast"
+	"github.com/supabase/cli/v2/pkg/config"
+	"github.com/supabase/cli/v2/pkg/function"
 )
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {

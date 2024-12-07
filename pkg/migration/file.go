@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/pkg/parser"
+	"github.com/supabase/cli/v2/pkg/parser"
 )
 
 type MigrationFile struct {

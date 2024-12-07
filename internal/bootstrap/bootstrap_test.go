@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/v2/internal/utils/flags"
+	"github.com/supabase/cli/v2/pkg/api"
 )
 
 func TestSuggestAppStart(t *testing.T) {

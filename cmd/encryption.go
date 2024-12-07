@@ -4,9 +4,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/encryption/get"
-	"github.com/supabase/cli/internal/encryption/update"
-	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/v2/internal/encryption/get"
+	"github.com/supabase/cli/v2/internal/encryption/update"
+	"github.com/supabase/cli/v2/internal/utils/flags"
 )
 
 var (

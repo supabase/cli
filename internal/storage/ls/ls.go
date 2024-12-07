@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/storage/client"
-	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/storage"
+	"github.com/supabase/cli/v2/internal/storage/client"
+	"github.com/supabase/cli/v2/internal/utils/flags"
+	"github.com/supabase/cli/v2/pkg/storage"
 )
 
 func Run(ctx context.Context, objectPath string, recursive bool, fsys afero.Fs) error {

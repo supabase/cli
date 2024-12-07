@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/v2/internal/testing/fstest"
 )
 
 func TestPromptYesNo(t *testing.T) {

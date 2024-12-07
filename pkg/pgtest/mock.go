@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
-	"github.com/supabase/cli/pkg/pgxv5"
+	"github.com/supabase/cli/v2/pkg/pgxv5"
 	"google.golang.org/grpc/test/bufconn"
 )
 

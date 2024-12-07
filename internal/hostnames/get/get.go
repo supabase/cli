@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/hostnames"
+	"github.com/supabase/cli/v2/internal/hostnames"
 )
 
 func Run(ctx context.Context, projectRef string, includeRawOutput bool, fsys afero.Fs) error {

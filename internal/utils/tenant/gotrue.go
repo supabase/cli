@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/v2/pkg/fetcher"
 )
 
 var errGotrueVersion = errors.New("GoTrue version not found.")

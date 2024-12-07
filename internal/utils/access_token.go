@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/v2/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
 )
 
