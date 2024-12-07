@@ -34,18 +34,10 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-func suggestUpdateCmd(serviceImages map[string]string) string {
-	cmd := fmt.Sprintln(utils.Yellow("WARNING:"), "You are running different service versions locally than your linked project:")
-	for k, v := range serviceImages {
-		cmd += fmt.Sprintf("%s => %s\n", k, v)
-	}
-	cmd += fmt.Sprintf("Run %s to update them.", utils.Aqua("supabase link"))
-	return cmd
-}
-
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
+		_, _ = flags.LoadProjectRef(fsys)
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
@@ -56,21 +48,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
-		if _, err := utils.LoadAccessTokenFS(fsys); err == nil {
-			if ref, err := flags.LoadProjectRef(fsys); err == nil {
-				local := services.GetServiceImages()
-				remote := services.GetRemoteImages(ctx, ref)
-				for _, image := range local {
-					parts := strings.Split(image, ":")
-					if version, ok := remote[image]; ok && version == parts[1] {
-						delete(remote, image)
-					}
-				}
-				if len(remote) > 0 {
-					fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
-				}
-			}
-		}
+		_ = services.CheckVersions(ctx, fsys)
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
