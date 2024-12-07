@@ -306,29 +306,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			Sms: sms{
 				TestOTP: map[string]string{},
 			},
-			External: map[string]provider{
-				"apple":         {},
-				"azure":         {},
-				"bitbucket":     {},
-				"discord":       {},
-				"facebook":      {},
-				"figma":         {},
-				"github":        {},
-				"gitlab":        {},
-				"google":        {},
-				"kakao":         {},
-				"keycloak":      {},
-				"linkedin":      {}, // TODO: remove this field in v2
-				"linkedin_oidc": {},
-				"notion":        {},
-				"twitch":        {},
-				"twitter":       {},
-				"slack":         {}, // TODO: remove this field in v2
-				"slack_oidc":    {},
-				"spotify":       {},
-				"workos":        {},
-				"zoom":          {},
-			},
+			External:  map[string]provider{},
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
