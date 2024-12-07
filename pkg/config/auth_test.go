@@ -365,6 +365,7 @@ func TestEmailDiff(t *testing.T) {
 				},
 			},
 			Smtp: &smtp{
+				Enabled:    cast.Ptr(true),
 				Host:       "smtp.sendgrid.net",
 				Port:       587,
 				User:       "apikey",
@@ -534,6 +535,15 @@ func TestEmailDiff(t *testing.T) {
 				"magic_link":       {},
 				"email_change":     {},
 				"reauthentication": {},
+			},
+			Smtp: &smtp{
+				Enabled:    cast.Ptr(false),
+				Host:       "smtp.sendgrid.net",
+				Port:       587,
+				User:       "apikey",
+				Pass:       "test-key",
+				AdminEmail: "admin@email.com",
+				SenderName: "Admin",
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    6,
