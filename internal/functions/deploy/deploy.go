@@ -10,6 +10,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/function"
@@ -59,7 +60,8 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 		}
 	}
 	// Add all function slugs declared in config file
-	for slug := range utils.Config.Functions {
+	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
+	for slug := range remote.Functions {
 		slugs = append(slugs, slug)
 	}
 	return slugs, nil
@@ -78,9 +80,10 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
 		importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
 	}
+	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
 	functionConfig := make(config.FunctionConfig, len(slugs))
 	for _, name := range slugs {
-		function := utils.Config.Functions[name]
+		function := remote.Functions[name]
 		// Precedence order: flag > config > fallback
 		functionDir := filepath.Join(utils.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {
