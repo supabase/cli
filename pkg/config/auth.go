@@ -48,7 +48,7 @@ type (
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string               `toml:"site_url"`
+		SiteUrl                    string               `toml:"site_url" mapstructure:"site_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
