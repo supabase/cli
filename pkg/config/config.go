@@ -843,7 +843,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil {
+	if e.Smtp != nil && e.Smtp.IsEnabled() {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}

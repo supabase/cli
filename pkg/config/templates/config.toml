@@ -137,6 +137,7 @@ otp_expiry = 3600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
+# enabled = true
 # host = "smtp.sendgrid.net"
 # port = 587
 # user = "apikey"

@@ -115,6 +115,7 @@ type (
 	}
 
 	smtp struct {
+		Enabled    *bool  `toml:"enabled"`
 		Host       string `toml:"host"`
 		Port       uint16 `toml:"port"`
 		User       string `toml:"user"`
@@ -380,16 +381,9 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
 	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
 	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
-		body.SmtpHost = &e.Smtp.Host
-		body.SmtpPort = cast.Ptr(strconv.Itoa(int(e.Smtp.Port)))
-		body.SmtpUser = &e.Smtp.User
-		body.SmtpPass = &e.Smtp.Pass
-		body.SmtpAdminEmail = &e.Smtp.AdminEmail
-		body.SmtpSenderName = &e.Smtp.SenderName
-	} else {
-		// Setting a single empty string disables SMTP
-		body.SmtpHost = cast.Ptr("")
+		e.Smtp.toAuthConfigBody(body)
 	}
 	if len(e.Template) == 0 {
 		return
@@ -423,27 +417,14 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
 	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
-	// Api resets all values when SMTP is disabled
-	if remoteConfig.SmtpHost != nil {
-		e.Smtp = &smtp{
-			Host:       *remoteConfig.SmtpHost,
-			User:       cast.Val(remoteConfig.SmtpUser, ""),
-			Pass:       hashPrefix + cast.Val(remoteConfig.SmtpPass, ""),
-			AdminEmail: cast.Val(remoteConfig.SmtpAdminEmail, ""),
-			SenderName: cast.Val(remoteConfig.SmtpSenderName, ""),
-		}
-		portStr := cast.Val(remoteConfig.SmtpPort, "")
-		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
-			e.Smtp.Port = uint16(port)
-		}
-	} else {
-		e.Smtp = nil
+	// When local config is not set, we assume platform defaults should not change
+	if e.Smtp != nil {
+		e.Smtp.fromAuthConfig(remoteConfig)
 	}
 	if len(e.Template) == 0 {
 		return
 	}
 	var tmpl emailTemplate
-	// When local config is not set, we assume platform defaults should not change
 	tmpl = e.Template["invite"]
 	if tmpl.Subject != nil {
 		tmpl.Subject = remoteConfig.MailerSubjectsInvite
@@ -497,6 +478,45 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		tmpl.Content = remoteConfig.MailerTemplatesReauthenticationContent
 	}
 	e.Template["reauthentication"] = tmpl
+}
+
+func (s smtp) IsEnabled() bool {
+	// If Enabled is not defined, or defined and set to true
+	return cast.Val(s.Enabled, true)
+}
+
+func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if !s.IsEnabled() {
+		// Setting a single empty string disables SMTP
+		body.SmtpHost = cast.Ptr("")
+		return
+	}
+	body.SmtpHost = &s.Host
+	body.SmtpPort = cast.Ptr(strconv.Itoa(int(s.Port)))
+	body.SmtpUser = &s.User
+	body.SmtpPass = &s.Pass
+	body.SmtpAdminEmail = &s.AdminEmail
+	body.SmtpSenderName = &s.SenderName
+}
+
+func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	showDiff := s.IsEnabled()
+	// Api resets all values when SMTP is disabled
+	if enabled := remoteConfig.SmtpHost != nil; s.Enabled != nil {
+		*s.Enabled = enabled
+	}
+	if !showDiff {
+		return
+	}
+	s.Host = cast.Val(remoteConfig.SmtpHost, "")
+	s.User = cast.Val(remoteConfig.SmtpUser, "")
+	s.Pass = hashPrefix + cast.Val(remoteConfig.SmtpPass, "")
+	s.AdminEmail = cast.Val(remoteConfig.SmtpAdminEmail, "")
+	s.SenderName = cast.Val(remoteConfig.SmtpSenderName, "")
+	portStr := cast.Val(remoteConfig.SmtpPort, "0")
+	if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
+		s.Port = uint16(port)
+	}
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
