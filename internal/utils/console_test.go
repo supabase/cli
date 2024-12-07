@@ -2,11 +2,9 @@ package utils
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/v2/internal/testing/fstest"
 )
 
@@ -34,15 +32,7 @@ func TestPromptYesNo(t *testing.T) {
 
 func TestPromptText(t *testing.T) {
 	t.Run("defaults on timeout", func(t *testing.T) {
-		// Setup stdin
-		r, _, err := os.Pipe()
-		require.NoError(t, err)
-		// Replace stdin
-		oldStdin := os.Stdin
-		defer func() {
-			os.Stdin = oldStdin
-		}()
-		os.Stdin = r
+		t.Cleanup(fstest.MockStdin(t, ""))
 		c := NewConsole()
 		// Run test
 		val, err := c.PromptText(context.Background(), "test")
