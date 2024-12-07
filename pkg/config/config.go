@@ -1234,6 +1234,21 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	return string(jwksEncoded), nil
 }
 
+func (c *baseConfig) GetServiceImages() []string {
+	return []string{
+		c.Db.Image,
+		c.Auth.Image,
+		c.Api.Image,
+		c.Realtime.Image,
+		c.Storage.Image,
+		c.EdgeRuntime.Image,
+		c.Studio.Image,
+		c.Studio.PgmetaImage,
+		c.Analytics.Image,
+		c.Db.Pooler.Image,
+	}
+}
+
 // Retrieve the final base config to use taking into account the remotes override
 func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
 	var result []string
