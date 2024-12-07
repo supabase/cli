@@ -3,11 +3,11 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/internal/vanity_subdomains/activate"
-	"github.com/supabase/cli/v2/internal/vanity_subdomains/check"
-	"github.com/supabase/cli/v2/internal/vanity_subdomains/delete"
-	"github.com/supabase/cli/v2/internal/vanity_subdomains/get"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/vanity_subdomains/activate"
+	"github.com/supabase/cli/internal/vanity_subdomains/check"
+	"github.com/supabase/cli/internal/vanity_subdomains/delete"
+	"github.com/supabase/cli/internal/vanity_subdomains/get"
 )
 
 var (

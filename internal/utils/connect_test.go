@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/v2/internal/testing/apitest"
-	"github.com/supabase/cli/v2/internal/utils/cloudflare"
-	"github.com/supabase/cli/v2/pkg/pgtest"
+	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils/cloudflare"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{

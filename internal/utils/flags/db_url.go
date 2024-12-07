@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/credentials"
-	"github.com/supabase/cli/v2/pkg/api"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/pkg/api"
 )
 
 type connection int

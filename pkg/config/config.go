@@ -30,8 +30,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/pkg/cast"
-	"github.com/supabase/cli/v2/pkg/fetcher"
+	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/fetcher"
 	"golang.org/x/mod/semver"
 )
 

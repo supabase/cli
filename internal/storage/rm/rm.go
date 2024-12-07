@@ -8,12 +8,12 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/storage/client"
-	"github.com/supabase/cli/v2/internal/storage/cp"
-	"github.com/supabase/cli/v2/internal/storage/ls"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/pkg/storage"
+	"github.com/supabase/cli/internal/storage/client"
+	"github.com/supabase/cli/internal/storage/cp"
+	"github.com/supabase/cli/internal/storage/ls"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var (

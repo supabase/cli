@@ -9,10 +9,10 @@ import (
 	"sync"
 
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/migration/list"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/internal/utils/tenant"
+	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/internal/utils/tenant"
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {

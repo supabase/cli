@@ -8,14 +8,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/internal/migration/fetch"
-	"github.com/supabase/cli/v2/internal/migration/list"
-	"github.com/supabase/cli/v2/internal/migration/new"
-	"github.com/supabase/cli/v2/internal/migration/repair"
-	"github.com/supabase/cli/v2/internal/migration/squash"
-	"github.com/supabase/cli/v2/internal/migration/up"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
+	"github.com/supabase/cli/internal/migration/fetch"
+	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/migration/squash"
+	"github.com/supabase/cli/internal/migration/up"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (

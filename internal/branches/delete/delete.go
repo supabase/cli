@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, branchId string) error {

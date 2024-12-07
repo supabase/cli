@@ -9,10 +9,10 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/credentials"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/pkg/api"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, params api.V1CreateProjectBodyDto, fsys afero.Fs) error {

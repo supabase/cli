@@ -6,7 +6,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
-	"github.com/supabase/cli/v2/pkg/pgxv5"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 const (

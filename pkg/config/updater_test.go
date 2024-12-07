@@ -8,8 +8,8 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1API "github.com/supabase/cli/v2/pkg/api"
-	"github.com/supabase/cli/v2/pkg/cast"
+	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestUpdateApi(t *testing.T) {

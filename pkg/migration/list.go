@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
-	"github.com/supabase/cli/v2/pkg/pgxv5"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 func ListRemoteMigrations(ctx context.Context, conn *pgx.Conn) ([]string, error) {

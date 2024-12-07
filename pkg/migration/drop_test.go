@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgerrcode"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/v2/pkg/pgtest"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var escapedSchemas = append(ManagedSchemas, "extensions", "public")

@@ -8,9 +8,9 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/v2/internal/testing/apitest"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/pkg/api"
+	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func TestUpdateRestrictionsCommand(t *testing.T) {

@@ -10,12 +10,12 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/db/diff"
-	"github.com/supabase/cli/v2/internal/db/dump"
-	"github.com/supabase/cli/v2/internal/migration/list"
-	"github.com/supabase/cli/v2/internal/migration/repair"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/pkg/migration"
+	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/migration/repair"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {

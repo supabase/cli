@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/migration/list"
-	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {

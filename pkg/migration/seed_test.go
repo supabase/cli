@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/v2/pkg/pgtest"
+	"github.com/supabase/cli/pkg/pgtest"
 )
 
 //go:embed testdata/seed.sql

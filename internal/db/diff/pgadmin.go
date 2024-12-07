@@ -8,10 +8,10 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/db/start"
-	"github.com/supabase/cli/v2/internal/migration/new"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/pkg/config"
+	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.

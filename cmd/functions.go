@@ -5,15 +5,15 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/v2/internal/functions/delete"
-	"github.com/supabase/cli/v2/internal/functions/deploy"
-	"github.com/supabase/cli/v2/internal/functions/download"
-	"github.com/supabase/cli/v2/internal/functions/list"
-	new_ "github.com/supabase/cli/v2/internal/functions/new"
-	"github.com/supabase/cli/v2/internal/functions/serve"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/pkg/cast"
+	"github.com/supabase/cli/internal/functions/delete"
+	"github.com/supabase/cli/internal/functions/deploy"
+	"github.com/supabase/cli/internal/functions/download"
+	"github.com/supabase/cli/internal/functions/list"
+	new_ "github.com/supabase/cli/internal/functions/new"
+	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 var (

@@ -1,9 +1,9 @@
 package config
 
 import (
-	v1API "github.com/supabase/cli/v2/pkg/api"
-	"github.com/supabase/cli/v2/pkg/cast"
-	"github.com/supabase/cli/v2/pkg/diff"
+	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/diff"
 )
 
 type (

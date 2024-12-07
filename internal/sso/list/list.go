@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/v2/internal/sso/internal/render"
-	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/internal/sso/internal/render"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, ref, format string) error {

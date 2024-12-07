@@ -3,12 +3,12 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/v2/internal/storage/client"
-	"github.com/supabase/cli/v2/internal/storage/cp"
-	"github.com/supabase/cli/v2/internal/storage/ls"
-	"github.com/supabase/cli/v2/internal/storage/mv"
-	"github.com/supabase/cli/v2/internal/storage/rm"
-	"github.com/supabase/cli/v2/pkg/storage"
+	"github.com/supabase/cli/internal/storage/client"
+	"github.com/supabase/cli/internal/storage/cp"
+	"github.com/supabase/cli/internal/storage/ls"
+	"github.com/supabase/cli/internal/storage/mv"
+	"github.com/supabase/cli/internal/storage/rm"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var (

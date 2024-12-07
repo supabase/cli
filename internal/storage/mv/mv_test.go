@@ -8,13 +8,13 @@ import (
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/v2/internal/testing/apitest"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
-	"github.com/supabase/cli/v2/pkg/api"
-	"github.com/supabase/cli/v2/pkg/cast"
-	"github.com/supabase/cli/v2/pkg/fetcher"
-	"github.com/supabase/cli/v2/pkg/storage"
+	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/pkg/storage"
 )
 
 var mockFile = storage.ObjectResponse{

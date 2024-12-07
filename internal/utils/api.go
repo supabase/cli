@@ -14,9 +14,9 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/internal/utils/cloudflare"
-	supabase "github.com/supabase/cli/v2/pkg/api"
-	"github.com/supabase/cli/v2/pkg/cast"
+	"github.com/supabase/cli/internal/utils/cloudflare"
+	supabase "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 const (

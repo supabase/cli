@@ -4,14 +4,14 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/cobra"
 
-	"github.com/supabase/cli/v2/internal/sso/create"
-	"github.com/supabase/cli/v2/internal/sso/get"
-	"github.com/supabase/cli/v2/internal/sso/info"
-	"github.com/supabase/cli/v2/internal/sso/list"
-	"github.com/supabase/cli/v2/internal/sso/remove"
-	"github.com/supabase/cli/v2/internal/sso/update"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/internal/utils/flags"
+	"github.com/supabase/cli/internal/sso/create"
+	"github.com/supabase/cli/internal/sso/get"
+	"github.com/supabase/cli/internal/sso/info"
+	"github.com/supabase/cli/internal/sso/list"
+	"github.com/supabase/cli/internal/sso/remove"
+	"github.com/supabase/cli/internal/sso/update"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (

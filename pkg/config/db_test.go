@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	v1API "github.com/supabase/cli/v2/pkg/api"
-	"github.com/supabase/cli/v2/pkg/cast"
+	v1API "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestDbSettingsToUpdatePostgresConfigBody(t *testing.T) {

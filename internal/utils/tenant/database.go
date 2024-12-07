@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/v2/internal/utils"
+	"github.com/supabase/cli/internal/utils"
 )
 
 var errDatabaseVersion = errors.New("Database version not found.")

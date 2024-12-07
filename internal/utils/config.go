@@ -12,7 +12,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/v2/pkg/config"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var (

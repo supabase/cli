@@ -19,10 +19,10 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/v2/internal/migration/apply"
-	"github.com/supabase/cli/v2/internal/status"
-	"github.com/supabase/cli/v2/internal/utils"
-	"github.com/supabase/cli/v2/pkg/migration"
+	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/status"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var (

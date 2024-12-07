@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/v2/internal/logout"
+	"github.com/supabase/cli/internal/logout"
 )
 
 var (
