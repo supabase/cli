@@ -14,11 +14,8 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	ref, err := flags.LoadProjectRef(fsys)
-	if err != nil {
-		return err
-	}
-	resp, err := utils.GetSupabase().V1ListAllSnippetsWithResponse(ctx, &api.V1ListAllSnippetsParams{ProjectRef: &ref})
+	opts := api.V1ListAllSnippetsParams{ProjectRef: &flags.ProjectRef}
+	resp, err := utils.GetSupabase().V1ListAllSnippetsWithResponse(ctx, &opts)
 	if err != nil {
 		return errors.Errorf("failed to list snippets: %w", err)
 	}
