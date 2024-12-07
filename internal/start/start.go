@@ -37,7 +37,6 @@ import (
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
-		_, _ = flags.LoadProjectRef(fsys)
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
@@ -48,7 +47,9 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
-		_ = services.CheckVersions(ctx, fsys)
+		if err := flags.LoadProjectRef(fsys); err == nil {
+			_ = services.CheckVersions(ctx, fsys)
+		}
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {

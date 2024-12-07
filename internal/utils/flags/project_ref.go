@@ -16,12 +16,7 @@ import (
 var ProjectRef string
 
 func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
-	// Flag takes highest precedence
-	if len(ProjectRef) > 0 {
-		return utils.AssertProjectRefIsValid(ProjectRef)
-	}
-	// Followed by linked ref file
-	if _, err := LoadProjectRef(fsys); !errors.Is(err, utils.ErrNotLinked) {
+	if err := LoadProjectRef(fsys); !errors.Is(err, utils.ErrNotLinked) {
 		return err
 	}
 	// Prompt as the last resort
@@ -55,20 +50,22 @@ func PromptProjectRef(ctx context.Context, title string) error {
 	return nil
 }
 
-func LoadProjectRef(fsys afero.Fs) (string, error) {
+func LoadProjectRef(fsys afero.Fs) error {
+	// Flag takes highest precedence
+	if len(ProjectRef) > 0 {
+		return utils.AssertProjectRefIsValid(ProjectRef)
+	}
 	// Env var takes precedence over ref file
-	ProjectRef = viper.GetString("PROJECT_ID")
-	if len(ProjectRef) == 0 {
-		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errors.New(utils.ErrNotLinked)
-		} else if err != nil {
-			return "", errors.Errorf("failed to load project ref: %w", err)
-		}
-		ProjectRef = string(bytes.TrimSpace(projectRefBytes))
+	if ProjectRef = viper.GetString("PROJECT_ID"); len(ProjectRef) > 0 {
+		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
-	if err := utils.AssertProjectRefIsValid(ProjectRef); err != nil {
-		return "", err
+	// Load from local file last
+	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New(utils.ErrNotLinked)
+	} else if err != nil {
+		return errors.Errorf("failed to load project ref: %w", err)
 	}
-	return ProjectRef, nil
+	ProjectRef = string(bytes.TrimSpace(projectRefBytes))
+	return utils.AssertProjectRefIsValid(ProjectRef)
 }
