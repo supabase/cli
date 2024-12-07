@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -26,7 +27,7 @@ func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 	return errors.New(utils.ErrNotLinked)
 }
 
-func PromptProjectRef(ctx context.Context, title string) error {
+func PromptProjectRef(ctx context.Context, title string, opts ...tea.ProgramOption) error {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return errors.Errorf("failed to retrieve projects: %w", err)
@@ -41,7 +42,7 @@ func PromptProjectRef(ctx context.Context, title string) error {
 			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
 		}
 	}
-	choice, err := utils.PromptChoice(ctx, title, items)
+	choice, err := utils.PromptChoice(ctx, title, items, opts...)
 	if err != nil {
 		return err
 	}

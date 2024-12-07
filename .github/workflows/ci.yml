@@ -21,12 +21,13 @@ jobs:
       # Required by: internal/utils/credentials/keyring_test.go
       - uses: t1m0thyj/unlock-keyring@v1
       - run: |
-          go run gotest.tools/gotestsum -- ./... -race -v -count=1 \
-          -coverpkg ./cmd/...,./internal/... -coverprofile=coverage.out
+          go run gotest.tools/gotestsum -- -race -v -count=1 -coverprofile=coverage.out \
+          `go list ./... | grep -Ev 'cmd|docs|examples|pkg/api|tools'`
 
-      - uses: shogo82148/actions-goveralls@v1
+      - uses: coverallsapp/github-action@v2
         with:
-          path-to-profile: coverage.out
+          file: coverage.out
+          format: golang
 
   lint:
     name: Lint
