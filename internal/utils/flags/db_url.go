@@ -50,10 +50,8 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Update connection config
 	switch connType {
 	case direct:
-		if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
+		if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 		if flag := flagSet.Lookup("db-url"); flag != nil {
 			config, err := pgconn.ParseConfig(flag.Value.String())
@@ -76,25 +74,23 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			return err
 		}
-		projectRef, err := LoadProjectRef(fsys)
-		if err != nil {
+		if err := LoadProjectRef(fsys); err != nil {
 			return err
 		}
-		DbConfig = NewDbConfigWithPassword(projectRef)
+		DbConfig = NewDbConfigWithPassword(ProjectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
 			return err
 		}
-		projectRef, err := LoadProjectRef(fsys)
-		if err != nil {
+		if err := LoadProjectRef(fsys); err != nil {
 			return err
 		}
 		DbConfig.Host = utils.GetSupabaseAPIHost()
 		DbConfig.Port = 443
 		DbConfig.User = "postgres"
 		DbConfig.Password = token
-		DbConfig.Database = projectRef
+		DbConfig.Database = ProjectRef
 	}
 	return nil
 }

@@ -103,7 +103,7 @@ func (m model) View() string {
 }
 
 // Prompt user to choose from a list of items, returns the chosen index.
-func PromptChoice(ctx context.Context, title string, items []PromptItem) (PromptItem, error) {
+func PromptChoice(ctx context.Context, title string, items []PromptItem, opts ...tea.ProgramOption) (PromptItem, error) {
 	// Create list items
 	var listItems []list.Item
 	for _, v := range items {
@@ -126,7 +126,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem) (Prompt
 	// Create our model
 	ctx, cancel := context.WithCancel(ctx)
 	initial := model{cancel: cancel, list: l}
-	prog := tea.NewProgram(initial)
+	prog := tea.NewProgram(initial, opts...)
 	state, err := prog.Run()
 	if err != nil {
 		return initial.choice, errors.Errorf("failed to prompt choice: %w", err)

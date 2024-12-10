@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -51,28 +51,43 @@
+@@ -51,35 +51,43 @@
  inactivity_timeout = "0s"
  
  [email]
@@ -40,10 +40,15 @@ diff remote[auth] local[auth]
 +content = ""
  content_path = ""
  [email.template.recovery]
--content_path = ""
 +content = "recovery-content"
-+content_path = ""
-+[email.smtp]
+ content_path = ""
+ [email.smtp]
+-host = ""
+-port = 0
+-user = ""
+-pass = "hash:"
+-admin_email = ""
+-sender_name = ""
 +host = "smtp.sendgrid.net"
 +port = 587
 +user = "apikey"

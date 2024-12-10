@@ -22,17 +22,3 @@ diff remote[auth] local[auth]
  [email.template]
  [email.template.confirmation]
  content_path = ""
-@@ -71,13 +71,6 @@
- content_path = ""
- [email.template.recovery]
- content_path = ""
--[email.smtp]
--host = "smtp.sendgrid.net"
--port = 587
--user = "apikey"
--pass = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"
--admin_email = "admin@email.com"
--sender_name = "Admin"
- 
- [sms]
- enable_signup = false

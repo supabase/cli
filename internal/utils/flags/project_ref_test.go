@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
@@ -69,6 +71,7 @@ func TestProjectPrompt(t *testing.T) {
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("validates prompt input", func(t *testing.T) {
+		input := tea.WithInput(strings.NewReader("\r"))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -80,9 +83,9 @@ func TestProjectPrompt(t *testing.T) {
 				OrganizationId: "test-org",
 			}})
 		// Run test
-		err := PromptProjectRef(context.Background(), "")
+		err := PromptProjectRef(context.Background(), "", input)
 		// Check error
-		assert.ErrorContains(t, err, "failed to prompt choice:")
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

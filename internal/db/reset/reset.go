@@ -23,9 +23,11 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -241,7 +243,26 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	if err := migration.DropUserSchemas(ctx, conn); err != nil {
 		return err
 	}
-	return apply.MigrateAndSeed(ctx, version, conn, fsys)
+	migrations, err := list.LoadPartialMigrations(version, fsys)
+	if err != nil {
+		return err
+	}
+	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
+		return err
+	}
+	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
+	if !remote.Db.Seed.Enabled {
+		fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
+		return nil
+	} else if !utils.Config.Db.Seed.Enabled {
+		// Skip because --no-seed flag is set
+		return nil
+	}
+	seeds, err := migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
+	if err != nil {
+		return err
+	}
+	return migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys))
 }
 
 func LikeEscapeSchema(schemas []string) (result []string) {

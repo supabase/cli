@@ -29,8 +29,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return errors.New("Unexpected error retrieving projects: " + string(resp.Body))
 	}
 
-	projectRef, err := flags.LoadProjectRef(fsys)
-	if err != nil && err != utils.ErrNotLinked {
+	if err := flags.LoadProjectRef(fsys); err != nil && err != utils.ErrNotLinked {
 		fmt.Fprintln(os.Stderr, err)
 	}
 
@@ -38,7 +37,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	for _, project := range *resp.JSON200 {
 		projects = append(projects, linkedProject{
 			V1ProjectWithDatabaseResponse: project,
-			Linked:                        project.Id == projectRef,
+			Linked:                        project.Id == flags.ProjectRef,
 		})
 	}
 

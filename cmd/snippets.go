@@ -5,6 +5,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/snippets/download"
 	"github.com/supabase/cli/internal/snippets/list"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -35,6 +36,7 @@ var (
 )
 
 func init() {
+	snippetsCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	snippetsCmd.AddCommand(snippetsListCmd)
 	snippetsCmd.AddCommand(snippetsDownloadCmd)
 	rootCmd.AddCommand(snippetsCmd)

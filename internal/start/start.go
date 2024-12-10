@@ -34,15 +34,6 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-func suggestUpdateCmd(serviceImages map[string]string) string {
-	cmd := fmt.Sprintln(utils.Yellow("WARNING:"), "You are running different service versions locally than your linked project:")
-	for k, v := range serviceImages {
-		cmd += fmt.Sprintf("%s => %s\n", k, v)
-	}
-	cmd += fmt.Sprintf("Run %s to update them.", utils.Aqua("supabase link"))
-	return cmd
-}
-
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
@@ -56,20 +47,8 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
-		if _, err := utils.LoadAccessTokenFS(fsys); err == nil {
-			if ref, err := flags.LoadProjectRef(fsys); err == nil {
-				local := services.GetServiceImages()
-				remote := services.GetRemoteImages(ctx, ref)
-				for _, image := range local {
-					parts := strings.Split(image, ":")
-					if version, ok := remote[image]; ok && version == parts[1] {
-						delete(remote, image)
-					}
-				}
-				if len(remote) > 0 {
-					fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
-				}
-			}
+		if err := flags.LoadProjectRef(fsys); err == nil {
+			_ = services.CheckVersions(ctx, fsys)
 		}
 	}
 
@@ -521,7 +500,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
-		if utils.Config.Auth.Email.Smtp != nil {
+		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.IsEnabled() {
 			env = append(env,
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),

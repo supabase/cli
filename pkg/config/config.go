@@ -306,29 +306,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			Sms: sms{
 				TestOTP: map[string]string{},
 			},
-			External: map[string]provider{
-				"apple":         {},
-				"azure":         {},
-				"bitbucket":     {},
-				"discord":       {},
-				"facebook":      {},
-				"figma":         {},
-				"github":        {},
-				"gitlab":        {},
-				"google":        {},
-				"kakao":         {},
-				"keycloak":      {},
-				"linkedin":      {}, // TODO: remove this field in v2
-				"linkedin_oidc": {},
-				"notion":        {},
-				"twitch":        {},
-				"twitter":       {},
-				"slack":         {}, // TODO: remove this field in v2
-				"slack_oidc":    {},
-				"spotify":       {},
-				"workos":        {},
-				"zoom":          {},
-			},
+			External:  map[string]provider{},
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
@@ -843,7 +821,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil {
+	if e.Smtp != nil && e.Smtp.IsEnabled() {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}
@@ -1232,6 +1210,21 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+func (c *baseConfig) GetServiceImages() []string {
+	return []string{
+		c.Db.Image,
+		c.Auth.Image,
+		c.Api.Image,
+		c.Realtime.Image,
+		c.Storage.Image,
+		c.EdgeRuntime.Image,
+		c.Studio.Image,
+		c.Studio.PgmetaImage,
+		c.Analytics.Image,
+		c.Db.Pooler.Image,
+	}
 }
 
 // Retrieve the final base config to use taking into account the remotes override
