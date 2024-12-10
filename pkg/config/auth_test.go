@@ -121,27 +121,27 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken: hookConfig{
+			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
 			},
-			SendSMS: hookConfig{
+			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
 			},
-			SendEmail: hookConfig{
+			SendEmail: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			MFAVerificationAttempt: hookConfig{
+			MFAVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			PasswordVerificationAttempt: hookConfig{
+			PasswordVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://verifyPassword",
 			},
@@ -171,22 +171,22 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local disabled remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken: hookConfig{
+			CustomAccessToken: &hookConfig{
 				Enabled: false,
 			},
-			SendSMS: hookConfig{
+			SendSMS: &hookConfig{
 				Enabled: false,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			SendEmail: hookConfig{
+			SendEmail: &hookConfig{
 				Enabled: false,
 			},
-			MFAVerificationAttempt: hookConfig{
+			MFAVerificationAttempt: &hookConfig{
 				Enabled: false,
 				URI:     "pg-functions://postgres/public/verifyMFA",
 			},
-			PasswordVerificationAttempt: hookConfig{
+			PasswordVerificationAttempt: &hookConfig{
 				Enabled: false,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
@@ -216,25 +216,25 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local enabled remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken: hookConfig{
+			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
 			},
-			SendSMS: hookConfig{
+			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			SendEmail: hookConfig{
+			SendEmail: &hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://postgres/public/sendEmail",
 			},
-			MFAVerificationAttempt: hookConfig{
+			MFAVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://postgres/public/verifyMFA",
 			},
-			PasswordVerificationAttempt: hookConfig{
+			PasswordVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://postgres/public/verifyPassword",
 			},
@@ -260,6 +260,13 @@ func TestHookDiff(t *testing.T) {
 
 	t.Run("local and remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
+		c.Hook = hook{
+			CustomAccessToken:           &hookConfig{Enabled: false},
+			SendSMS:                     &hookConfig{Enabled: false},
+			SendEmail:                   &hookConfig{Enabled: false},
+			MFAVerificationAttempt:      &hookConfig{Enabled: false},
+			PasswordVerificationAttempt: &hookConfig{Enabled: false},
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),

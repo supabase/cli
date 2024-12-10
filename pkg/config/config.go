@@ -950,19 +950,32 @@ func (e external) validate() (err error) {
 }
 
 func (h *hook) validate() error {
-	if err := h.MFAVerificationAttempt.validate("mfa_verification_attempt"); err != nil {
-		return err
+	if hook := h.MFAVerificationAttempt; hook != nil {
+		if err := hook.validate("mfa_verification_attempt"); err != nil {
+			return err
+		}
 	}
-	if err := h.PasswordVerificationAttempt.validate("password_verification_attempt"); err != nil {
-		return err
+	if hook := h.PasswordVerificationAttempt; hook != nil {
+		if err := hook.validate("password_verification_attempt"); err != nil {
+			return err
+		}
 	}
-	if err := h.CustomAccessToken.validate("custom_access_token"); err != nil {
-		return err
+	if hook := h.CustomAccessToken; hook != nil {
+		if err := hook.validate("custom_access_token"); err != nil {
+			return err
+		}
 	}
-	if err := h.SendSMS.validate("send_sms"); err != nil {
-		return err
+	if hook := h.SendSMS; hook != nil {
+		if err := hook.validate("send_sms"); err != nil {
+			return err
+		}
 	}
-	return h.SendEmail.validate("send_email")
+	if hook := h.SendEmail; hook != nil {
+		if err := h.SendEmail.validate("send_email"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var hookSecretPattern = regexp.MustCompile(`^v1,whsec_[A-Za-z0-9+/=]{32,88}$`)
