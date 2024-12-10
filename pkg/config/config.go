@@ -965,6 +965,8 @@ func (h *hook) validate() error {
 	return h.SendEmail.validate("send_email")
 }
 
+var hookSecretPattern = regexp.MustCompile(`^v1,whsec_[A-Za-z0-9+/=]{32,88}$`)
+
 func (h *hookConfig) validate(hookType string) (err error) {
 	// If not enabled do nothing
 	if !h.Enabled {
@@ -984,12 +986,17 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		} else if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
 			return err
 		}
+		for _, secret := range strings.Split(h.Secrets, "|") {
+			if !hookSecretPattern.MatchString(secret) {
+				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"`, hookType)
+			}
+		}
 	case "pg-functions":
 		if len(h.Secrets) > 0 {
 			return errors.Errorf("Invalid hook config: auth.hook.%s.secrets is unsupported for pg-functions URI", hookType)
 		}
 	default:
-		return errors.Errorf("Invalid hook config: auth.hook.%v should be a HTTP, HTTPS, or pg-functions URI", hookType)
+		return errors.Errorf("Invalid hook config: auth.hook.%s.uri should be a HTTP, HTTPS, or pg-functions URI", hookType)
 	}
 	return nil
 }
