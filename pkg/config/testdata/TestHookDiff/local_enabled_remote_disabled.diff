@@ -1,0 +1,33 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -11,21 +11,21 @@
+ 
+ [hook]
+ [hook.mfa_verification_attempt]
+-enabled = false
++enabled = true
+ uri = "pg-functions://postgres/public/verifyMFA"
+ secrets = "hash:"
+ [hook.custom_access_token]
+-enabled = false
+-uri = "pg-functions://postgres/public/customToken"
+-secrets = "hash:"
++enabled = true
++uri = "http://example.com"
++secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
+ [hook.send_sms]
+-enabled = false
++enabled = true
+ uri = "https://example.com"
+ secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
+ [hook.send_email]
+-enabled = false
+-uri = "https://example.com"
+-secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
++enabled = true
++uri = "pg-functions://postgres/public/sendEmail"
++secrets = "hash:"
+ 
+ [mfa]
+ max_enrolled_factors = 0

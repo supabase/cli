@@ -25,4 +25,4 @@ diff remote[auth] local[auth]
 +password_requirements = "lower_upper_letters_digits_symbols"
  
  [hook]
- [hook.mfa_verification_attempt]
+ 

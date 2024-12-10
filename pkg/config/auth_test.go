@@ -121,27 +121,27 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken: hookConfig{
+			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
 			},
-			SendSMS: hookConfig{
+			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
 				Secrets: "test-secret",
 			},
-			SendEmail: hookConfig{
+			SendEmail: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			MFAVerificationAttempt: hookConfig{
+			MFAVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			PasswordVerificationAttempt: hookConfig{
+			PasswordVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://verifyPassword",
 			},
@@ -151,12 +151,12 @@ func TestHookDiff(t *testing.T) {
 			HookCustomAccessTokenEnabled:           cast.Ptr(true),
 			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
 			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendEmailEnabled:                   cast.Ptr(true),
-			HookSendEmailUri:                       cast.Ptr("https://example.com"),
-			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookSendSmsEnabled:                     cast.Ptr(true),
 			HookSendSmsUri:                         cast.Ptr("http://example.com"),
 			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   cast.Ptr(true),
+			HookSendEmailUri:                       cast.Ptr("https://example.com"),
+			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
 			HookMfaVerificationAttemptUri:          cast.Ptr("https://example.com"),
 			HookMfaVerificationAttemptSecrets:      cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -168,41 +168,38 @@ func TestHookDiff(t *testing.T) {
 		assert.Empty(t, string(diff))
 	})
 
-	t.Run("local enabled and disabled", func(t *testing.T) {
+	t.Run("local disabled remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
-			CustomAccessToken: hookConfig{
-				Enabled: true,
-				URI:     "http://example.com",
-				Secrets: "test-secret",
+			CustomAccessToken: &hookConfig{
+				Enabled: false,
 			},
-			SendSMS: hookConfig{
+			SendSMS: &hookConfig{
 				Enabled: false,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
-			SendEmail: hookConfig{
-				Enabled: true,
-				URI:     "pg-functions://sendEmail",
-			},
-			MFAVerificationAttempt: hookConfig{
+			SendEmail: &hookConfig{
 				Enabled: false,
-				URI:     "pg-functions://verifyMFA",
 			},
-			PasswordVerificationAttempt: hookConfig{Enabled: false},
+			MFAVerificationAttempt: &hookConfig{
+				Enabled: false,
+				URI:     "pg-functions://postgres/public/verifyMFA",
+			},
+			PasswordVerificationAttempt: nil,
 		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookCustomAccessTokenUri:               cast.Ptr(""),
-			HookCustomAccessTokenSecrets:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
-			HookSendEmailEnabled:                   cast.Ptr(false),
-			HookSendEmailUri:                       cast.Ptr(""),
+			HookCustomAccessTokenEnabled:           cast.Ptr(true),
+			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
+			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookSendSmsEnabled:                     cast.Ptr(true),
-			HookSendSmsUri:                         cast.Ptr("http://example.com"),
+			HookSendSmsUri:                         cast.Ptr("https://example.com"),
 			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   cast.Ptr(true),
+			HookSendEmailUri:                       cast.Ptr("pg-functions://postgres/public/sendEmail"),
 			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
-			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://verifyMFA"),
+			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://postgres/public/verifyMFA"),
 			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
 			HookPasswordVerificationAttemptUri:     cast.Ptr("https://example.com"),
 			HookPasswordVerificationAttemptSecrets: cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -212,13 +209,62 @@ func TestHookDiff(t *testing.T) {
 		assertSnapshotEqual(t, diff)
 	})
 
-	t.Run("local and remote disabled", func(t *testing.T) {
+	t.Run("local enabled remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
+		c.Hook = hook{
+			CustomAccessToken: &hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+			SendSMS: &hookConfig{
+				Enabled: true,
+				URI:     "https://example.com",
+				Secrets: "test-secret",
+			},
+			SendEmail: &hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://postgres/public/sendEmail",
+			},
+			MFAVerificationAttempt: &hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://postgres/public/verifyMFA",
+			},
+			PasswordVerificationAttempt: nil,
+		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookSendEmailEnabled:                   cast.Ptr(false),
+			HookCustomAccessTokenUri:               cast.Ptr("pg-functions://postgres/public/customToken"),
 			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookSendSmsUri:                         cast.Ptr("https://example.com"),
+			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   cast.Ptr(false),
+			HookSendEmailUri:                       cast.Ptr("https://example.com"),
+			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
+			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://postgres/public/verifyMFA"),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Hook = hook{
+			CustomAccessToken:           &hookConfig{Enabled: false},
+			SendSMS:                     &hookConfig{Enabled: false},
+			SendEmail:                   &hookConfig{Enabled: false},
+			MFAVerificationAttempt:      &hookConfig{Enabled: false},
+			PasswordVerificationAttempt: &hookConfig{Enabled: false},
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:           cast.Ptr(false),
+			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookSendEmailEnabled:                   cast.Ptr(false),
 			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
 			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
 		})
@@ -719,7 +765,7 @@ func TestSmsDiff(t *testing.T) {
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:    cast.Ptr(false),
 			SmsProvider:             cast.Ptr("messagebird"),
-			SmsMessagebirdAccessKey: cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			SmsMessagebirdAccessKey: cast.Ptr(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -756,67 +802,67 @@ func TestExternalDiff(t *testing.T) {
 			ExternalAppleAdditionalClientIds:  cast.Ptr(""),
 			ExternalAppleClientId:             cast.Ptr(""),
 			ExternalAppleEnabled:              cast.Ptr(true),
-			ExternalAppleSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalAppleSecret:               cast.Ptr(""),
 			ExternalAzureClientId:             cast.Ptr(""),
 			ExternalAzureEnabled:              cast.Ptr(true),
-			ExternalAzureSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalAzureSecret:               cast.Ptr(""),
 			ExternalAzureUrl:                  cast.Ptr(""),
 			ExternalBitbucketClientId:         cast.Ptr(""),
 			ExternalBitbucketEnabled:          cast.Ptr(true),
-			ExternalBitbucketSecret:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalBitbucketSecret:           cast.Ptr(""),
 			ExternalDiscordClientId:           cast.Ptr(""),
 			ExternalDiscordEnabled:            cast.Ptr(true),
-			ExternalDiscordSecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalDiscordSecret:             cast.Ptr(""),
 			ExternalFacebookClientId:          cast.Ptr(""),
 			ExternalFacebookEnabled:           cast.Ptr(true),
-			ExternalFacebookSecret:            cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalFacebookSecret:            cast.Ptr(""),
 			ExternalFigmaClientId:             cast.Ptr(""),
 			ExternalFigmaEnabled:              cast.Ptr(true),
-			ExternalFigmaSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalFigmaSecret:               cast.Ptr(""),
 			ExternalGithubClientId:            cast.Ptr(""),
 			ExternalGithubEnabled:             cast.Ptr(true),
-			ExternalGithubSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGithubSecret:              cast.Ptr(""),
 			ExternalGitlabClientId:            cast.Ptr(""),
 			ExternalGitlabEnabled:             cast.Ptr(true),
-			ExternalGitlabSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGitlabSecret:              cast.Ptr(""),
 			ExternalGitlabUrl:                 cast.Ptr(""),
 			ExternalGoogleAdditionalClientIds: cast.Ptr(""),
 			ExternalGoogleClientId:            cast.Ptr(""),
 			ExternalGoogleEnabled:             cast.Ptr(true),
-			ExternalGoogleSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGoogleSecret:              cast.Ptr(""),
 			ExternalGoogleSkipNonceCheck:      cast.Ptr(false),
 			ExternalKakaoClientId:             cast.Ptr(""),
 			ExternalKakaoEnabled:              cast.Ptr(true),
-			ExternalKakaoSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalKakaoSecret:               cast.Ptr(""),
 			ExternalKeycloakClientId:          cast.Ptr(""),
 			ExternalKeycloakEnabled:           cast.Ptr(true),
-			ExternalKeycloakSecret:            cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalKeycloakSecret:            cast.Ptr(""),
 			ExternalKeycloakUrl:               cast.Ptr(""),
 			ExternalLinkedinOidcClientId:      cast.Ptr(""),
 			ExternalLinkedinOidcEnabled:       cast.Ptr(true),
-			ExternalLinkedinOidcSecret:        cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalLinkedinOidcSecret:        cast.Ptr(""),
 			ExternalNotionClientId:            cast.Ptr(""),
 			ExternalNotionEnabled:             cast.Ptr(true),
-			ExternalNotionSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalNotionSecret:              cast.Ptr(""),
 			ExternalSlackOidcClientId:         cast.Ptr(""),
 			ExternalSlackOidcEnabled:          cast.Ptr(true),
-			ExternalSlackOidcSecret:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalSlackOidcSecret:           cast.Ptr(""),
 			ExternalSpotifyClientId:           cast.Ptr(""),
 			ExternalSpotifyEnabled:            cast.Ptr(true),
-			ExternalSpotifySecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalSpotifySecret:             cast.Ptr(""),
 			ExternalTwitchClientId:            cast.Ptr(""),
 			ExternalTwitchEnabled:             cast.Ptr(true),
-			ExternalTwitchSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalTwitchSecret:              cast.Ptr(""),
 			ExternalTwitterClientId:           cast.Ptr(""),
 			ExternalTwitterEnabled:            cast.Ptr(true),
-			ExternalTwitterSecret:             cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalTwitterSecret:             cast.Ptr(""),
 			ExternalWorkosClientId:            cast.Ptr(""),
 			ExternalWorkosEnabled:             cast.Ptr(true),
-			ExternalWorkosSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalWorkosSecret:              cast.Ptr(""),
 			ExternalWorkosUrl:                 cast.Ptr(""),
 			ExternalZoomClientId:              cast.Ptr(""),
 			ExternalZoomEnabled:               cast.Ptr(true),
-			ExternalZoomSecret:                cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalZoomSecret:                cast.Ptr(""),
 			// Deprecated fields should be ignored
 			ExternalSlackClientId: cast.Ptr(""),
 			ExternalSlackEnabled:  cast.Ptr(true),
