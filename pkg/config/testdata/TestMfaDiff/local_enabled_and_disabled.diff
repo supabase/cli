@@ -1,8 +1,8 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -32,16 +32,16 @@
- secrets = ""
+@@ -12,16 +12,16 @@
+ [hook]
  
  [mfa]
 -max_enrolled_factors = 10

@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -11,23 +11,23 @@
+@@ -11,19 +11,19 @@
  
  [hook]
  [hook.mfa_verification_attempt]
@@ -9,11 +9,6 @@ diff remote[auth] local[auth]
 +enabled = false
  uri = "pg-functions://postgres/public/verifyMFA"
  secrets = ""
- [hook.password_verification_attempt]
--enabled = true
-+enabled = false
- uri = "http://example.com"
- secrets = "test-secret"
  [hook.custom_access_token]
 -enabled = true
 +enabled = false
