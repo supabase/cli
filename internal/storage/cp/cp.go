@@ -156,7 +156,9 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 					body := storage.CreateBucketRequest{Name: bucket}
 					if config, ok := remote.Storage.Buckets[bucket]; ok {
 						body.Public = config.Public
-						body.FileSizeLimit = int64(config.FileSizeLimit)
+						if config.FileSizeLimit != nil {
+							body.FileSizeLimit = int64(*config.FileSizeLimit)
+						}
 						body.AllowedMimeTypes = config.AllowedMimeTypes
 					}
 					if _, err := api.CreateBucket(ctx, body); err != nil {

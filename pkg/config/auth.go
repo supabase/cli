@@ -165,10 +165,10 @@ type (
 	}
 
 	mfa struct {
-		TOTP               factorTypeConfiguration      `toml:"totp"`
-		Phone              phoneFactorTypeConfiguration `toml:"phone"`
-		WebAuthn           factorTypeConfiguration      `toml:"web_authn"`
-		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
+		TOTP               *factorTypeConfiguration      `toml:"totp"`
+		Phone              *phoneFactorTypeConfiguration `toml:"phone"`
+		WebAuthn           *factorTypeConfiguration      `toml:"web_authn"`
+		MaxEnrolledFactors uint                          `toml:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
@@ -347,28 +347,40 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (m mfa) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MfaMaxEnrolledFactors = cast.UintToIntPtr(&m.MaxEnrolledFactors)
-	body.MfaTotpEnrollEnabled = &m.TOTP.EnrollEnabled
-	body.MfaTotpVerifyEnabled = &m.TOTP.VerifyEnabled
-	body.MfaPhoneEnrollEnabled = &m.Phone.EnrollEnabled
-	body.MfaPhoneVerifyEnabled = &m.Phone.VerifyEnabled
-	body.MfaPhoneOtpLength = cast.UintToIntPtr(&m.Phone.OtpLength)
-	body.MfaPhoneTemplate = &m.Phone.Template
-	body.MfaPhoneMaxFrequency = cast.Ptr(int(m.Phone.MaxFrequency.Seconds()))
-	body.MfaWebAuthnEnrollEnabled = &m.WebAuthn.EnrollEnabled
-	body.MfaWebAuthnVerifyEnabled = &m.WebAuthn.VerifyEnabled
+	if m.TOTP != nil && m.TOTP.EnrollEnabled || m.TOTP.VerifyEnabled {
+		body.MfaTotpEnrollEnabled = &m.TOTP.EnrollEnabled
+		body.MfaTotpVerifyEnabled = &m.TOTP.VerifyEnabled
+	}
+	if m.Phone != nil && m.Phone.EnrollEnabled || m.Phone.VerifyEnabled {
+		body.MfaPhoneEnrollEnabled = &m.Phone.EnrollEnabled
+		body.MfaPhoneVerifyEnabled = &m.Phone.VerifyEnabled
+		body.MfaPhoneOtpLength = cast.UintToIntPtr(&m.Phone.OtpLength)
+		body.MfaPhoneTemplate = &m.Phone.Template
+		body.MfaPhoneMaxFrequency = cast.Ptr(int(m.Phone.MaxFrequency.Seconds()))
+	}
+	if m.WebAuthn != nil && m.WebAuthn.EnrollEnabled || m.WebAuthn.VerifyEnabled {
+		body.MfaWebAuthnEnrollEnabled = &m.WebAuthn.EnrollEnabled
+		body.MfaWebAuthnVerifyEnabled = &m.WebAuthn.VerifyEnabled
+	}
 }
 
 func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	m.MaxEnrolledFactors = cast.IntToUint(cast.Val(remoteConfig.MfaMaxEnrolledFactors, 0))
-	m.TOTP.EnrollEnabled = cast.Val(remoteConfig.MfaTotpEnrollEnabled, false)
-	m.TOTP.VerifyEnabled = cast.Val(remoteConfig.MfaTotpVerifyEnabled, false)
-	m.Phone.EnrollEnabled = cast.Val(remoteConfig.MfaPhoneEnrollEnabled, false)
-	m.Phone.VerifyEnabled = cast.Val(remoteConfig.MfaPhoneVerifyEnabled, false)
-	m.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
-	m.Phone.Template = cast.Val(remoteConfig.MfaPhoneTemplate, "")
-	m.Phone.MaxFrequency = time.Duration(cast.Val(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
-	m.WebAuthn.EnrollEnabled = cast.Val(remoteConfig.MfaWebAuthnEnrollEnabled, false)
-	m.WebAuthn.VerifyEnabled = cast.Val(remoteConfig.MfaWebAuthnVerifyEnabled, false)
+	if m.TOTP != nil {
+		m.TOTP.EnrollEnabled = cast.Val(remoteConfig.MfaTotpEnrollEnabled, false)
+		m.TOTP.VerifyEnabled = cast.Val(remoteConfig.MfaTotpVerifyEnabled, false)
+	}
+	if m.Phone != nil {
+		m.Phone.EnrollEnabled = cast.Val(remoteConfig.MfaPhoneEnrollEnabled, false)
+		m.Phone.VerifyEnabled = cast.Val(remoteConfig.MfaPhoneVerifyEnabled, false)
+		m.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
+		m.Phone.Template = cast.Val(remoteConfig.MfaPhoneTemplate, "")
+		m.Phone.MaxFrequency = time.Duration(cast.Val(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
+	}
+	if m.WebAuthn != nil {
+		m.WebAuthn.EnrollEnabled = cast.Val(remoteConfig.MfaWebAuthnEnrollEnabled, false)
+		m.WebAuthn.VerifyEnabled = cast.Val(remoteConfig.MfaWebAuthnVerifyEnabled, false)
+	}
 }
 
 func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {

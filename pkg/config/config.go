@@ -224,6 +224,18 @@ func (a *auth) Clone() auth {
 		mailer := *a.Email.Smtp
 		copy.Email.Smtp = &mailer
 	}
+	if a.MFA.Phone != nil {
+		phone := *a.MFA.Phone
+		copy.MFA.Phone = &phone
+	}
+	if a.MFA.TOTP != nil {
+		totp := *a.MFA.TOTP
+		copy.MFA.TOTP = &totp
+	}
+	if a.MFA.WebAuthn != nil {
+		webauthn := *a.MFA.WebAuthn
+		copy.MFA.WebAuthn = &webauthn
+	}
 	if a.Hook.MFAVerificationAttempt != nil {
 		hook := *a.Hook.MFAVerificationAttempt
 		copy.Hook.MFAVerificationAttempt = &hook
@@ -306,7 +318,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
 				Region:          "local",
 			},
-			ImageTransformation: imageTransformation{
+			ImageTransformation: &imageTransformation{
 				Enabled: true,
 				Image:   imageProxyImage,
 			},
@@ -497,9 +509,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	}
 	// Update fallback configs
 	for name, bucket := range c.Storage.Buckets {
-		if bucket.FileSizeLimit == 0 {
-			bucket.FileSizeLimit = c.Storage.FileSizeLimit
-		}
 		if len(bucket.ObjectsPath) > 0 && !filepath.IsAbs(bucket.ObjectsPath) {
 			bucket.ObjectsPath = filepath.Join(builder.SupabaseDirPath, bucket.ObjectsPath)
 		}
@@ -1035,13 +1044,13 @@ func (h *hookConfig) validate(hookType string) (err error) {
 }
 
 func (m *mfa) validate() error {
-	if m.TOTP.EnrollEnabled && !m.TOTP.VerifyEnabled {
+	if m.TOTP != nil && m.TOTP.EnrollEnabled && !m.TOTP.VerifyEnabled {
 		return errors.Errorf("Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled")
 	}
-	if m.Phone.EnrollEnabled && !m.Phone.VerifyEnabled {
+	if m.Phone != nil && m.Phone.EnrollEnabled && !m.Phone.VerifyEnabled {
 		return errors.Errorf("Invalid MFA config: auth.mfa.phone.enroll_enabled requires verify_enabled")
 	}
-	if m.WebAuthn.EnrollEnabled && !m.WebAuthn.VerifyEnabled {
+	if m.WebAuthn != nil && m.WebAuthn.EnrollEnabled && !m.WebAuthn.VerifyEnabled {
 		return errors.Errorf("Invalid MFA config: auth.mfa.web_authn.enroll_enabled requires verify_enabled")
 	}
 	return nil

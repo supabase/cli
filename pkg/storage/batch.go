@@ -34,8 +34,10 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 			body := UpdateBucketRequest{
 				Id:               bucketId,
 				Public:           bucket.Public,
-				FileSizeLimit:    int64(bucket.FileSizeLimit),
 				AllowedMimeTypes: bucket.AllowedMimeTypes,
+			}
+			if bucket.FileSizeLimit != nil {
+				body.FileSizeLimit = int64(*bucket.FileSizeLimit)
 			}
 			if _, err := s.UpdateBucket(ctx, body); err != nil {
 				return err
@@ -45,8 +47,10 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 			body := CreateBucketRequest{
 				Name:             name,
 				Public:           bucket.Public,
-				FileSizeLimit:    int64(bucket.FileSizeLimit),
 				AllowedMimeTypes: bucket.AllowedMimeTypes,
+			}
+			if bucket.FileSizeLimit != nil {
+				body.FileSizeLimit = int64(*bucket.FileSizeLimit)
 			}
 			if _, err := s.CreateBucket(ctx, body); err != nil {
 				return err
