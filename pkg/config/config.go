@@ -224,6 +224,26 @@ func (a *auth) Clone() auth {
 		mailer := *a.Email.Smtp
 		copy.Email.Smtp = &mailer
 	}
+	if a.Hook.MFAVerificationAttempt != nil {
+		hook := *a.Hook.MFAVerificationAttempt
+		copy.Hook.MFAVerificationAttempt = &hook
+	}
+	if a.Hook.PasswordVerificationAttempt != nil {
+		hook := *a.Hook.PasswordVerificationAttempt
+		copy.Hook.PasswordVerificationAttempt = &hook
+	}
+	if a.Hook.CustomAccessToken != nil {
+		hook := *a.Hook.CustomAccessToken
+		copy.Hook.CustomAccessToken = &hook
+	}
+	if a.Hook.SendSMS != nil {
+		hook := *a.Hook.SendSMS
+		copy.Hook.SendSMS = &hook
+	}
+	if a.Hook.SendEmail != nil {
+		hook := *a.Hook.SendEmail
+		copy.Hook.SendEmail = &hook
+	}
 	copy.Email.Template = maps.Clone(a.Email.Template)
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
