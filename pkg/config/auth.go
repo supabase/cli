@@ -297,42 +297,32 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// Ignore disabled hooks because their envs are not loaded
 	if h.CustomAccessToken.Enabled {
 		h.CustomAccessToken.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
-		if remoteConfig.HookCustomAccessTokenSecrets != nil {
-			h.CustomAccessToken.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
-		}
+		h.CustomAccessToken.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
 	}
 	h.CustomAccessToken.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
 
 	if h.SendEmail.Enabled {
 		h.SendEmail.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
-		if remoteConfig.HookSendEmailSecrets != nil {
-			h.SendEmail.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
-		}
+		h.SendEmail.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
 	}
 	h.SendEmail.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
 
 	if h.SendSMS.Enabled {
 		h.SendSMS.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
-		if remoteConfig.HookSendSmsSecrets != nil {
-			h.SendSMS.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
-		}
+		h.SendSMS.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
 	}
 	h.SendSMS.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
 
 	// Enterprise and team only features
 	if h.MFAVerificationAttempt.Enabled {
 		h.MFAVerificationAttempt.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
-		if remoteConfig.HookMfaVerificationAttemptSecrets != nil {
-			h.MFAVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
-		}
+		h.MFAVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
 	}
 	h.MFAVerificationAttempt.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
 
 	if h.PasswordVerificationAttempt.Enabled {
 		h.PasswordVerificationAttempt.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
-		if remoteConfig.HookPasswordVerificationAttemptSecrets != nil {
-			h.PasswordVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
-		}
+		h.PasswordVerificationAttempt.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
 	}
 	h.PasswordVerificationAttempt.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
 }
@@ -931,9 +921,12 @@ const hashPrefix = "hash:"
 
 func (a *auth) HashSecrets(key string) {
 	hash := func(v string) string {
+		if len(v) == 0 {
+			return hashPrefix
+		}
 		return hashPrefix + sha256Hmac(key, v)
 	}
-	if a.Email.Smtp != nil && len(a.Email.Smtp.Pass) > 0 {
+	if a.Email.Smtp != nil && a.Email.Smtp.IsEnabled() {
 		a.Email.Smtp.Pass = hash(a.Email.Smtp.Pass)
 	}
 	// Only hash secrets for locally enabled providers because other envs won't be loaded
@@ -949,19 +942,19 @@ func (a *auth) HashSecrets(key string) {
 	case a.Sms.Vonage.Enabled:
 		a.Sms.Vonage.ApiSecret = hash(a.Sms.Vonage.ApiSecret)
 	}
-	if a.Hook.MFAVerificationAttempt.Enabled && len(a.Hook.MFAVerificationAttempt.Secrets) > 0 {
+	if a.Hook.MFAVerificationAttempt.Enabled {
 		a.Hook.MFAVerificationAttempt.Secrets = hash(a.Hook.MFAVerificationAttempt.Secrets)
 	}
-	if a.Hook.PasswordVerificationAttempt.Enabled && len(a.Hook.PasswordVerificationAttempt.Secrets) > 0 {
+	if a.Hook.PasswordVerificationAttempt.Enabled {
 		a.Hook.PasswordVerificationAttempt.Secrets = hash(a.Hook.PasswordVerificationAttempt.Secrets)
 	}
-	if a.Hook.CustomAccessToken.Enabled && len(a.Hook.CustomAccessToken.Secrets) > 0 {
+	if a.Hook.CustomAccessToken.Enabled {
 		a.Hook.CustomAccessToken.Secrets = hash(a.Hook.CustomAccessToken.Secrets)
 	}
-	if a.Hook.SendSMS.Enabled && len(a.Hook.SendSMS.Secrets) > 0 {
+	if a.Hook.SendSMS.Enabled {
 		a.Hook.SendSMS.Secrets = hash(a.Hook.SendSMS.Secrets)
 	}
-	if a.Hook.SendEmail.Enabled && len(a.Hook.SendEmail.Secrets) > 0 {
+	if a.Hook.SendEmail.Enabled {
 		a.Hook.SendEmail.Secrets = hash(a.Hook.SendEmail.Secrets)
 	}
 	for name, provider := range a.External {

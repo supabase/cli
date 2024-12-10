@@ -151,12 +151,12 @@ func TestHookDiff(t *testing.T) {
 			HookCustomAccessTokenEnabled:           cast.Ptr(true),
 			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
 			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendEmailEnabled:                   cast.Ptr(true),
-			HookSendEmailUri:                       cast.Ptr("https://example.com"),
-			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookSendSmsEnabled:                     cast.Ptr(true),
 			HookSendSmsUri:                         cast.Ptr("http://example.com"),
 			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   cast.Ptr(true),
+			HookSendEmailUri:                       cast.Ptr("https://example.com"),
+			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
 			HookMfaVerificationAttemptUri:          cast.Ptr("https://example.com"),
 			HookMfaVerificationAttemptSecrets:      cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -168,7 +168,52 @@ func TestHookDiff(t *testing.T) {
 		assert.Empty(t, string(diff))
 	})
 
-	t.Run("local enabled and disabled", func(t *testing.T) {
+	t.Run("local disabled remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Hook = hook{
+			CustomAccessToken: hookConfig{
+				Enabled: false,
+			},
+			SendSMS: hookConfig{
+				Enabled: false,
+				URI:     "https://example.com",
+				Secrets: "test-secret",
+			},
+			SendEmail: hookConfig{
+				Enabled: false,
+			},
+			MFAVerificationAttempt: hookConfig{
+				Enabled: false,
+				URI:     "pg-functions://postgres/public/verifyMFA",
+			},
+			PasswordVerificationAttempt: hookConfig{
+				Enabled: false,
+				URI:     "http://example.com",
+				Secrets: "test-secret",
+			},
+		}
+		// Run test
+		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+			HookCustomAccessTokenEnabled:           cast.Ptr(true),
+			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
+			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendSmsEnabled:                     cast.Ptr(true),
+			HookSendSmsUri:                         cast.Ptr(""),
+			HookSendSmsSecrets:                     cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			HookSendEmailEnabled:                   cast.Ptr(true),
+			HookSendEmailUri:                       cast.Ptr("pg-functions://postgres/public/sendEmail"),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
+			HookMfaVerificationAttemptUri:          cast.Ptr(""),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
+			HookPasswordVerificationAttemptUri:     cast.Ptr("https://example.com"),
+			HookPasswordVerificationAttemptSecrets: cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("local enabled remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
 			CustomAccessToken: hookConfig{
@@ -177,35 +222,36 @@ func TestHookDiff(t *testing.T) {
 				Secrets: "test-secret",
 			},
 			SendSMS: hookConfig{
-				Enabled: false,
+				Enabled: true,
 				URI:     "https://example.com",
 				Secrets: "test-secret",
 			},
 			SendEmail: hookConfig{
 				Enabled: true,
-				URI:     "pg-functions://sendEmail",
+				URI:     "pg-functions://postgres/public/sendEmail",
 			},
 			MFAVerificationAttempt: hookConfig{
-				Enabled: false,
-				URI:     "pg-functions://verifyMFA",
+				Enabled: true,
+				URI:     "pg-functions://postgres/public/verifyMFA",
 			},
-			PasswordVerificationAttempt: hookConfig{Enabled: false},
+			PasswordVerificationAttempt: hookConfig{
+				Enabled: true,
+				URI:     "pg-functions://postgres/public/verifyPassword",
+			},
 		}
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookCustomAccessTokenUri:               cast.Ptr(""),
-			HookCustomAccessTokenSecrets:           cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
-			HookSendEmailEnabled:                   cast.Ptr(false),
-			HookSendEmailUri:                       cast.Ptr(""),
-			HookSendSmsEnabled:                     cast.Ptr(true),
-			HookSendSmsUri:                         cast.Ptr("http://example.com"),
+			HookCustomAccessTokenUri:               cast.Ptr("pg-functions://postgres/public/customToken"),
+			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookSendSmsUri:                         cast.Ptr("https://example.com"),
 			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
-			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://verifyMFA"),
-			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
-			HookPasswordVerificationAttemptUri:     cast.Ptr("https://example.com"),
-			HookPasswordVerificationAttemptSecrets: cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   cast.Ptr(false),
+			HookSendEmailUri:                       cast.Ptr("https://example.com"),
+			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
+			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://postgres/public/verifyMFA"),
+			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -217,8 +263,8 @@ func TestHookDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookSendEmailEnabled:                   cast.Ptr(false),
 			HookSendSmsEnabled:                     cast.Ptr(false),
+			HookSendEmailEnabled:                   cast.Ptr(false),
 			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
 			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
 		})
