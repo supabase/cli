@@ -1,3 +1,5 @@
+# For detailed configuration reference documentation, visit:
+# https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
 project_id = "test"
@@ -7,7 +9,7 @@ enabled = true
 # Port to use for the API URL.
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
-# endpoints. public and storage are always included.
+# endpoints. `public` and `graphql_public` schemas are included by default.
 schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request. public is always included.
 extra_search_path = ["public", "extensions"]
@@ -16,6 +18,7 @@ extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [api.tls]
+# Enable HTTPS endpoints locally using a self-signed certificate.
 enabled = true
 
 [db]
@@ -43,8 +46,7 @@ max_client_conn = 100
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
 # Specifies an ordered list of seed files to load during db reset.
-# Supports glob patterns relative to supabase directory. For example:
-# sql_paths = ['./seeds/*.sql', '../project-src/seeds/*-load-testing.sql']
+# Supports glob patterns relative to supabase directory: './seeds/*.sql'
 sql_paths = ['./seed.sql']
 
 [realtime]
@@ -72,6 +74,8 @@ port = 54324
 # Uncomment to expose additional ports for testing user applications that send emails.
 # smtp_port = 54325
 # pop3_port = 54326
+# admin_email = "admin@email.com"
+# sender_name = "Admin"
 
 [storage]
 enabled = true
@@ -79,7 +83,7 @@ enabled = true
 file_size_limit = "50MiB"
 
 [storage.image_transformation]
-enabled = false
+enabled = true
 
 # Uncomment to configure local storage buckets
 [storage.buckets.images]
@@ -104,6 +108,8 @@ enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
 enable_signup = true
+# Allow/disallow anonymous sign-ins to your project.
+enable_anonymous_sign_ins = true
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = true
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
@@ -120,15 +126,18 @@ enable_signup = true
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
+# If enabled, users will need to reauthenticate or have logged in recently to change their password.
+secure_password_change = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
 otp_length = 6
-# Number of seconds before the email OTP expires.
-otp_expiry = 300
+# Number of seconds before the email OTP expires (defaults to 1 hour).
+otp_expiry = 3600
 
 # Use a production-ready SMTP server
 [auth.email.smtp]
+enabled = true
 host = "smtp.sendgrid.net"
 port = 587
 user = "apikey"
@@ -162,6 +171,7 @@ timebox = "24h"
 # Force log out if the user has been inactive longer than the specified duration.
 inactivity_timeout = "8h"
 
+# This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
 [auth.hook.custom_access_token]
 enabled = true
 uri = "pg-functions://postgres/auth/custom-access-token-hook"
@@ -170,7 +180,6 @@ uri = "pg-functions://postgres/auth/custom-access-token-hook"
 enabled = true
 uri = "http://host.docker.internal/functions/v1/send_sms"
 secrets = "env(AUTH_SEND_SMS_SECRETS)"
-
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
