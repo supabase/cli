@@ -82,6 +82,7 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
+# Image transformation API is available to Supabase Pro plan.
 [storage.image_transformation]
 enabled = true
 
@@ -189,6 +190,7 @@ message_service_sid = "message_service_sid"
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
 auth_token = "env(TWILIO_AUTH_TOKEN)"
 
+# Multi-factor-authentication is available to Supabase Pro plan.
 [auth.mfa]
 max_enrolled_factors = 10
 
@@ -197,7 +199,7 @@ max_enrolled_factors = 10
 enroll_enabled = true
 verify_enabled = true
 
-# Configure Multi-factor-authentication via Phone Messaging
+# Configure MFA via Phone Messaging
 [auth.mfa.phone]
 enroll_enabled = true
 verify_enabled = true
@@ -205,7 +207,7 @@ otp_length = 6
 template = "Your code is {{ `{{ .Code }}` }}"
 max_frequency = "5s"
 
-# Configure Multi-factor-authentication via Phone Messaging
+# Configure MFA via Phone Messaging
 [auth.mfa.web_authn]
 enroll_enabled = true
 verify_enabled = true
