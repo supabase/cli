@@ -495,6 +495,15 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
+	// Update content paths
+	for name, tmpl := range c.Auth.Email.Template {
+		// FIXME: only email template is relative to repo directory
+		cwd := filepath.Dir(builder.SupabaseDirPath)
+		if len(tmpl.ContentPath) > 0 && !filepath.IsAbs(tmpl.ContentPath) {
+			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
+		}
+		c.Auth.Email.Template[name] = tmpl
+	}
 	// Update fallback configs
 	for name, bucket := range c.Storage.Buckets {
 		if bucket.FileSizeLimit == 0 {
