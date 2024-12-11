@@ -10,15 +10,15 @@ type (
 	storage struct {
 		Enabled             bool                 `toml:"enabled"`
 		Image               string               `toml:"-"`
+		ImgProxyImage       string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
+		ImageTransformation *imageTransformation `toml:"image_transformation"`
 		S3Credentials       storageS3Credentials `toml:"-"`
-		ImageTransformation imageTransformation  `toml:"image_transformation"`
 		Buckets             BucketConfig         `toml:"buckets"`
 	}
 
 	imageTransformation struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
+		Enabled bool `toml:"enabled"`
 	}
 
 	storageS3Credentials struct {
@@ -38,15 +38,26 @@ type (
 )
 
 func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
-	body := v1API.UpdateStorageConfigBody{Features: &v1API.StorageFeatures{}}
-	body.FileSizeLimit = cast.Ptr(int64(s.FileSizeLimit))
-	body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
+	body := v1API.UpdateStorageConfigBody{
+		FileSizeLimit: cast.Ptr(int64(s.FileSizeLimit)),
+	}
+	// When local config is not set, we assume platform defaults should not change
+	if s.ImageTransformation != nil {
+		body.Features = &v1API.StorageFeatures{
+			ImageTransformation: v1API.StorageFeatureImageTransformation{
+				Enabled: s.ImageTransformation.Enabled,
+			},
+		}
+	}
 	return body
 }
 
 func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponse) {
 	s.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
-	s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
+	// When local config is not set, we assume platform defaults should not change
+	if s.ImageTransformation != nil {
+		s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
+	}
 }
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {

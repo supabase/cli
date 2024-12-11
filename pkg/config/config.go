@@ -300,14 +300,12 @@ func NewConfig(editors ...ConfigEditor) config {
 			SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 		},
 		Storage: storage{
-			Image: storageImage,
+			Image:         storageImage,
+			ImgProxyImage: imageProxyImage,
 			S3Credentials: storageS3Credentials{
 				AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
 				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
 				Region:          "local",
-			},
-			ImageTransformation: imageTransformation{
-				Image: imageProxyImage,
 			},
 		},
 		Auth: auth{

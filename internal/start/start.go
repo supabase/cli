@@ -169,6 +169,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 
 	var started []string
 	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
@@ -833,7 +835,7 @@ EOF
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
 					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
@@ -872,11 +874,11 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if isStorageEnabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
+	if isStorageEnabled && isImgProxyEnabled {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.Config.Storage.ImageTransformation.Image,
+				Image: utils.Config.Storage.ImgProxyImage,
 				Env: []string{
 					"IMGPROXY_BIND=:5001",
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
