@@ -82,8 +82,8 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
-# [storage.image_transformation]
-# enabled = true
+[storage.image_transformation]
+enabled = false
 
 # Uncomment to configure local storage buckets
 # [storage.buckets.images]
