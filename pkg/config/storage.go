@@ -62,6 +62,10 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
 	copy := *s
+	if s.ImageTransformation != nil {
+		img := *s.ImageTransformation
+		copy.ImageTransformation = &img
+	}
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
