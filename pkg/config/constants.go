@@ -3,7 +3,7 @@ package config
 const (
 	pg13Image = "supabase/postgres:13.3.0"
 	pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.6.1.139"
+	Pg15Image = "supabase/postgres:15.6.1.143"
 	// Append to ServiceImages when adding new dependencies below
 	// TODO: try https://github.com/axllent/mailpit
 	kongImage        = "library/kong:2.8.1"
@@ -12,7 +12,7 @@ const (
 	pgmetaImage      = "supabase/postgres-meta:v0.84.2"
 	studioImage      = "supabase/studio:20241202-71e5240"
 	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	edgeRuntimeImage = "supabase/edge-runtime:v1.65.3"
+	edgeRuntimeImage = "supabase/edge-runtime:v1.65.4"
 	vectorImage      = "timberio/vector:0.28.1-alpine"
 	supavisorImage   = "supabase/supavisor:1.1.56"
 	gotrueImage      = "supabase/gotrue:v2.164.0"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -16,12 +17,7 @@ import (
 var ProjectRef string
 
 func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
-	// Flag takes highest precedence
-	if len(ProjectRef) > 0 {
-		return utils.AssertProjectRefIsValid(ProjectRef)
-	}
-	// Followed by linked ref file
-	if _, err := LoadProjectRef(fsys); !errors.Is(err, utils.ErrNotLinked) {
+	if err := LoadProjectRef(fsys); !errors.Is(err, utils.ErrNotLinked) {
 		return err
 	}
 	// Prompt as the last resort
@@ -31,7 +27,7 @@ func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 	return errors.New(utils.ErrNotLinked)
 }
 
-func PromptProjectRef(ctx context.Context, title string) error {
+func PromptProjectRef(ctx context.Context, title string, opts ...tea.ProgramOption) error {
 	resp, err := utils.GetSupabase().V1ListAllProjectsWithResponse(ctx)
 	if err != nil {
 		return errors.Errorf("failed to retrieve projects: %w", err)
@@ -46,7 +42,7 @@ func PromptProjectRef(ctx context.Context, title string) error {
 			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
 		}
 	}
-	choice, err := utils.PromptChoice(ctx, title, items)
+	choice, err := utils.PromptChoice(ctx, title, items, opts...)
 	if err != nil {
 		return err
 	}
@@ -55,20 +51,22 @@ func PromptProjectRef(ctx context.Context, title string) error {
 	return nil
 }
 
-func LoadProjectRef(fsys afero.Fs) (string, error) {
+func LoadProjectRef(fsys afero.Fs) error {
+	// Flag takes highest precedence
+	if len(ProjectRef) > 0 {
+		return utils.AssertProjectRefIsValid(ProjectRef)
+	}
 	// Env var takes precedence over ref file
-	ProjectRef = viper.GetString("PROJECT_ID")
-	if len(ProjectRef) == 0 {
-		projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errors.New(utils.ErrNotLinked)
-		} else if err != nil {
-			return "", errors.Errorf("failed to load project ref: %w", err)
-		}
-		ProjectRef = string(bytes.TrimSpace(projectRefBytes))
+	if ProjectRef = viper.GetString("PROJECT_ID"); len(ProjectRef) > 0 {
+		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
-	if err := utils.AssertProjectRefIsValid(ProjectRef); err != nil {
-		return "", err
+	// Load from local file last
+	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New(utils.ErrNotLinked)
+	} else if err != nil {
+		return errors.Errorf("failed to load project ref: %w", err)
 	}
-	return ProjectRef, nil
+	ProjectRef = string(bytes.TrimSpace(projectRefBytes))
+	return utils.AssertProjectRefIsValid(ProjectRef)
 }

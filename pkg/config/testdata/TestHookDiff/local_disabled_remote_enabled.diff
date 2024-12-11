@@ -1,0 +1,27 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -11,19 +11,19 @@
+ 
+ [hook]
+ [hook.mfa_verification_attempt]
+-enabled = true
++enabled = false
+ uri = "pg-functions://postgres/public/verifyMFA"
+ secrets = ""
+ [hook.custom_access_token]
+-enabled = true
++enabled = false
+ uri = ""
+ secrets = ""
+ [hook.send_sms]
+-enabled = true
++enabled = false
+ uri = "https://example.com"
+ secrets = "test-secret"
+ [hook.send_email]
+-enabled = true
++enabled = false
+ uri = ""
+ secrets = ""
+ 

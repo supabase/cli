@@ -224,6 +224,26 @@ func (a *auth) Clone() auth {
 		mailer := *a.Email.Smtp
 		copy.Email.Smtp = &mailer
 	}
+	if a.Hook.MFAVerificationAttempt != nil {
+		hook := *a.Hook.MFAVerificationAttempt
+		copy.Hook.MFAVerificationAttempt = &hook
+	}
+	if a.Hook.PasswordVerificationAttempt != nil {
+		hook := *a.Hook.PasswordVerificationAttempt
+		copy.Hook.PasswordVerificationAttempt = &hook
+	}
+	if a.Hook.CustomAccessToken != nil {
+		hook := *a.Hook.CustomAccessToken
+		copy.Hook.CustomAccessToken = &hook
+	}
+	if a.Hook.SendSMS != nil {
+		hook := *a.Hook.SendSMS
+		copy.Hook.SendSMS = &hook
+	}
+	if a.Hook.SendEmail != nil {
+		hook := *a.Hook.SendEmail
+		copy.Hook.SendEmail = &hook
+	}
 	copy.Email.Template = maps.Clone(a.Email.Template)
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
@@ -280,15 +300,12 @@ func NewConfig(editors ...ConfigEditor) config {
 			SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 		},
 		Storage: storage{
-			Image: storageImage,
+			Image:         storageImage,
+			ImgProxyImage: imageProxyImage,
 			S3Credentials: storageS3Credentials{
 				AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
 				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
 				Region:          "local",
-			},
-			ImageTransformation: imageTransformation{
-				Enabled: true,
-				Image:   imageProxyImage,
 			},
 		},
 		Auth: auth{
@@ -306,29 +323,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			Sms: sms{
 				TestOTP: map[string]string{},
 			},
-			External: map[string]provider{
-				"apple":         {},
-				"azure":         {},
-				"bitbucket":     {},
-				"discord":       {},
-				"facebook":      {},
-				"figma":         {},
-				"github":        {},
-				"gitlab":        {},
-				"google":        {},
-				"kakao":         {},
-				"keycloak":      {},
-				"linkedin":      {}, // TODO: remove this field in v2
-				"linkedin_oidc": {},
-				"notion":        {},
-				"twitch":        {},
-				"twitter":       {},
-				"slack":         {}, // TODO: remove this field in v2
-				"slack_oidc":    {},
-				"spotify":       {},
-				"workos":        {},
-				"zoom":          {},
-			},
+			External:  map[string]provider{},
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
@@ -496,6 +491,15 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	}
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
+	}
+	// Update content paths
+	for name, tmpl := range c.Auth.Email.Template {
+		// FIXME: only email template is relative to repo directory
+		cwd := filepath.Dir(builder.SupabaseDirPath)
+		if len(tmpl.ContentPath) > 0 && !filepath.IsAbs(tmpl.ContentPath) {
+			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
+		}
+		c.Auth.Email.Template[name] = tmpl
 	}
 	// Update fallback configs
 	for name, bucket := range c.Storage.Buckets {
@@ -836,14 +840,14 @@ func (e *email) validate(fsys fs.FS) (err error) {
 			}
 			continue
 		}
-		if content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
 			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
 		} else {
 			tmpl.Content = cast.Ptr(string(content))
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil {
+	if e.Smtp != nil && e.Smtp.IsEnabled() {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}
@@ -972,20 +976,35 @@ func (e external) validate() (err error) {
 }
 
 func (h *hook) validate() error {
-	if err := h.MFAVerificationAttempt.validate("mfa_verification_attempt"); err != nil {
-		return err
+	if hook := h.MFAVerificationAttempt; hook != nil {
+		if err := hook.validate("mfa_verification_attempt"); err != nil {
+			return err
+		}
 	}
-	if err := h.PasswordVerificationAttempt.validate("password_verification_attempt"); err != nil {
-		return err
+	if hook := h.PasswordVerificationAttempt; hook != nil {
+		if err := hook.validate("password_verification_attempt"); err != nil {
+			return err
+		}
 	}
-	if err := h.CustomAccessToken.validate("custom_access_token"); err != nil {
-		return err
+	if hook := h.CustomAccessToken; hook != nil {
+		if err := hook.validate("custom_access_token"); err != nil {
+			return err
+		}
 	}
-	if err := h.SendSMS.validate("send_sms"); err != nil {
-		return err
+	if hook := h.SendSMS; hook != nil {
+		if err := hook.validate("send_sms"); err != nil {
+			return err
+		}
 	}
-	return h.SendEmail.validate("send_email")
+	if hook := h.SendEmail; hook != nil {
+		if err := h.SendEmail.validate("send_email"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
+var hookSecretPattern = regexp.MustCompile(`^v1,whsec_[A-Za-z0-9+/=]{32,88}$`)
 
 func (h *hookConfig) validate(hookType string) (err error) {
 	// If not enabled do nothing
@@ -1006,12 +1025,17 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		} else if h.Secrets, err = maybeLoadEnv(h.Secrets); err != nil {
 			return err
 		}
+		for _, secret := range strings.Split(h.Secrets, "|") {
+			if !hookSecretPattern.MatchString(secret) {
+				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"`, hookType)
+			}
+		}
 	case "pg-functions":
 		if len(h.Secrets) > 0 {
 			return errors.Errorf("Invalid hook config: auth.hook.%s.secrets is unsupported for pg-functions URI", hookType)
 		}
 	default:
-		return errors.Errorf("Invalid hook config: auth.hook.%v should be a HTTP, HTTPS, or pg-functions URI", hookType)
+		return errors.Errorf("Invalid hook config: auth.hook.%s.uri should be a HTTP, HTTPS, or pg-functions URI", hookType)
 	}
 	return nil
 }
@@ -1232,6 +1256,21 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+func (c *baseConfig) GetServiceImages() []string {
+	return []string{
+		c.Db.Image,
+		c.Auth.Image,
+		c.Api.Image,
+		c.Realtime.Image,
+		c.Storage.Image,
+		c.EdgeRuntime.Image,
+		c.Studio.Image,
+		c.Studio.PgmetaImage,
+		c.Analytics.Image,
+		c.Db.Pooler.Image,
+	}
 }
 
 // Retrieve the final base config to use taking into account the remotes override

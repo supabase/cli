@@ -34,15 +34,6 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-func suggestUpdateCmd(serviceImages map[string]string) string {
-	cmd := fmt.Sprintln(utils.Yellow("WARNING:"), "You are running different service versions locally than your linked project:")
-	for k, v := range serviceImages {
-		cmd += fmt.Sprintf("%s => %s\n", k, v)
-	}
-	cmd += fmt.Sprintf("Run %s to update them.", utils.Aqua("supabase link"))
-	return cmd
-}
-
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
@@ -56,20 +47,8 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}
-		if _, err := utils.LoadAccessTokenFS(fsys); err == nil {
-			if ref, err := flags.LoadProjectRef(fsys); err == nil {
-				local := services.GetServiceImages()
-				remote := services.GetRemoteImages(ctx, ref)
-				for _, image := range local {
-					parts := strings.Split(image, ":")
-					if version, ok := remote[image]; ok && version == parts[1] {
-						delete(remote, image)
-					}
-				}
-				if len(remote) > 0 {
-					fmt.Fprintln(os.Stderr, suggestUpdateCmd(remote))
-				}
-			}
+		if err := flags.LoadProjectRef(fsys); err == nil {
+			_ = services.CheckVersions(ctx, fsys)
 		}
 	}
 
@@ -190,6 +169,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 
 	var started []string
 	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	p.Send(utils.StatusMsg("Starting containers..."))
 
 	// Start Logflare
@@ -521,7 +502,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
-		if utils.Config.Auth.Email.Smtp != nil {
+		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.IsEnabled() {
 			env = append(env,
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
@@ -604,44 +585,44 @@ EOF
 			)
 		}
 
-		if utils.Config.Auth.Hook.MFAVerificationAttempt.Enabled {
+		if hook := utils.Config.Auth.Hook.MFAVerificationAttempt; hook != nil && hook.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.MFAVerificationAttempt.URI,
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.MFAVerificationAttempt.Secrets,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+hook.URI,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
 			)
 		}
-		if utils.Config.Auth.Hook.PasswordVerificationAttempt.Enabled {
+		if hook := utils.Config.Auth.Hook.PasswordVerificationAttempt; hook != nil && hook.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+utils.Config.Auth.Hook.PasswordVerificationAttempt.URI,
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+utils.Config.Auth.Hook.PasswordVerificationAttempt.Secrets,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+hook.URI,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
 			)
 		}
-		if utils.Config.Auth.Hook.CustomAccessToken.Enabled {
+		if hook := utils.Config.Auth.Hook.CustomAccessToken; hook != nil && hook.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+utils.Config.Auth.Hook.CustomAccessToken.URI,
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+utils.Config.Auth.Hook.CustomAccessToken.Secrets,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+hook.URI,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+hook.Secrets,
 			)
 		}
-		if utils.Config.Auth.Hook.SendSMS.Enabled {
+		if hook := utils.Config.Auth.Hook.SendSMS; hook != nil && hook.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
-				"GOTRUE_HOOK_SEND_SMS_URI="+utils.Config.Auth.Hook.SendSMS.URI,
-				"GOTRUE_HOOK_SEND_SMS_SECRETS="+utils.Config.Auth.Hook.SendSMS.Secrets,
+				"GOTRUE_HOOK_SEND_SMS_URI="+hook.URI,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+hook.Secrets,
 			)
 		}
-		if utils.Config.Auth.Hook.SendEmail.Enabled {
+		if hook := utils.Config.Auth.Hook.SendEmail; hook != nil && hook.Enabled {
 			env = append(
 				env,
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
-				"GOTRUE_HOOK_SEND_EMAIL_URI="+utils.Config.Auth.Hook.SendEmail.URI,
-				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+utils.Config.Auth.Hook.SendEmail.Secrets,
+				"GOTRUE_HOOK_SEND_EMAIL_URI="+hook.URI,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets,
 			)
 		}
 
@@ -854,7 +835,7 @@ EOF
 					// TODO: https://github.com/supabase/storage-api/issues/55
 					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
 					"GLOBAL_S3_BUCKET=stub",
-					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", utils.Config.Storage.ImageTransformation.Enabled),
+					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
 					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
@@ -893,11 +874,11 @@ EOF
 	}
 
 	// Start Storage ImgProxy.
-	if isStorageEnabled && utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImageTransformation.Image, excluded) {
+	if isStorageEnabled && isImgProxyEnabled {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.Config.Storage.ImageTransformation.Image,
+				Image: utils.Config.Storage.ImgProxyImage,
 				Env: []string{
 					"IMGPROXY_BIND=:5001",
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",

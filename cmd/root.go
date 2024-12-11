@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
@@ -250,7 +249,7 @@ func GetRootCmd() *cobra.Command {
 }
 
 func addSentryScope(scope *sentry.Scope) {
-	serviceImages := services.GetServiceImages()
+	serviceImages := utils.Config.GetServiceImages()
 	imageToVersion := make(map[string]interface{}, len(serviceImages))
 	for _, image := range serviceImages {
 		parts := strings.Split(image, ":")

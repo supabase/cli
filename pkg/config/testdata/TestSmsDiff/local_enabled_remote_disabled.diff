@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -60,12 +60,12 @@
+@@ -40,12 +40,12 @@
  otp_expiry = 0
  
  [sms]
@@ -19,7 +19,7 @@ diff remote[auth] local[auth]
  account_sid = ""
  message_service_sid = ""
  auth_token = ""
-@@ -75,9 +75,9 @@
+@@ -55,9 +55,9 @@
  message_service_sid = ""
  auth_token = ""
  [sms.messagebird]
@@ -32,7 +32,7 @@ diff remote[auth] local[auth]
  [sms.textlocal]
  enabled = false
  sender = ""
-@@ -88,6 +88,7 @@
+@@ -68,6 +68,7 @@
  api_key = ""
  api_secret = ""
  [sms.test_otp]
