@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -125,7 +126,11 @@ var (
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
-				fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
+				if absPath, err := filepath.Abs(file); err != nil {
+					fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
+				} else {
+					fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(absPath)+".")
+				}
 			}
 		},
 	}
