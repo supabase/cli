@@ -843,7 +843,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 			}
 			continue
 		}
-		if content, err := fs.ReadFile(fsys, filepath.Clean(tmpl.ContentPath)); err != nil {
+		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
 			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
 		} else {
 			tmpl.Content = cast.Ptr(string(content))
