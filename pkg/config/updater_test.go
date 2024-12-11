@@ -336,7 +336,7 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			Storage: storage{
 				Enabled:       true,
 				FileSizeLimit: 100,
-				ImageTransformation: imageTransformation{
+				ImageTransformation: &imageTransformation{
 					Enabled: true,
 				},
 			},
