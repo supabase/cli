@@ -307,8 +307,7 @@ func NewConfig(editors ...ConfigEditor) config {
 				Region:          "local",
 			},
 			ImageTransformation: imageTransformation{
-				Enabled: true,
-				Image:   imageProxyImage,
+				Image: imageProxyImage,
 			},
 		},
 		Auth: auth{
