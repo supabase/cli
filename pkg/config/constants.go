@@ -17,7 +17,7 @@ const (
 	supavisorImage   = "supabase/supavisor:1.1.56"
 	gotrueImage      = "supabase/gotrue:v2.164.0"
 	realtimeImage    = "supabase/realtime:v2.33.58"
-	storageImage     = "supabase/storage-api:v1.11.13"
+	storageImage     = "supabase/storage-api:v1.14.5"
 	logflareImage    = "supabase/logflare:1.4.0"
 	// Append to JobImages when adding new dependencies below
 	DifferImage  = "supabase/pgadmin-schema-diff:cli-0.0.5"
