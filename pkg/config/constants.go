@@ -3,7 +3,7 @@ package config
 const (
 	pg13Image = "supabase/postgres:13.3.0"
 	pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.8.1.017"
+	Pg15Image = "supabase/postgres:15.8.1.018"
 	// Append to ServiceImages when adding new dependencies below
 	// TODO: try https://github.com/axllent/mailpit
 	kongImage        = "library/kong:2.8.1"
