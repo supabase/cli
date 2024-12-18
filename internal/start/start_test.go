@@ -76,7 +76,7 @@ func TestStartCommand(t *testing.T) {
 			JSON(types.ContainerJSON{})
 
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{Running: true},
