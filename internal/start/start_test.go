@@ -57,13 +57,7 @@ func TestStartCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("show status if database is already running", func(t *testing.T) {
-		var running []types.Container
-		for _, name := range utils.GetDockerIds() {
-			running = append(running, types.Container{
-				Names: []string{name + "_test"},
-			})
-		}
+	t.Run("noop if database is already running", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
@@ -74,17 +68,6 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
-			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true},
-			}})
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
-			Reply(http.StatusOK).
-			JSON(running)
 		// Run test
 		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
