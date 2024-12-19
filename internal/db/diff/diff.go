@@ -147,7 +147,10 @@ func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
 	// Retry until connected, cancelled, or timeout
 	policy := start.NewBackoffPolicy(ctx, timeout)
-	config := pgconn.Config{Port: utils.Config.Db.ShadowPort}
+	config := pgconn.Config{
+		Host: utils.Config.Db.ShadowHost,
+		Port: utils.Config.Db.ShadowPort,
+	}
 	connect := func() (*pgx.Conn, error) {
 		return utils.ConnectLocalPostgres(ctx, config, options...)
 	}
@@ -201,7 +204,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	source := utils.ToPostgresURL(pgconn.Config{
-		Host:     utils.Config.Hostname,
+		Host:     utils.Config.Db.ShadowHost,
 		Port:     utils.Config.Db.ShadowPort,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
