@@ -136,6 +136,7 @@ var (
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
+	FallbackDenoJsonPath  = filepath.Join(FunctionsDir, "deno.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
