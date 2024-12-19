@@ -13,8 +13,8 @@ require (
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.61.0
 	github.com/deepmap/oapi-codegen/v2 v2.2.0
-	github.com/docker/cli v27.4.0+incompatible
-	github.com/docker/docker v27.4.0+incompatible
+	github.com/docker/cli v27.4.1+incompatible
+	github.com/docker/docker v27.4.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/getsentry/sentry-go v0.30.0
@@ -50,7 +50,7 @@ require (
 	golang.org/x/mod v0.22.0
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/term v0.27.0
-	google.golang.org/grpc v1.69.0
+	google.golang.org/grpc v1.69.2
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.12.0
 )
