@@ -72,9 +72,13 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	// vscode deno extension with a single import map for all functions.
 	fallbackExists := true
 	if _, err := fsys.Stat(utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
-		fallbackExists = false
+		if _, err := fsys.Stat(utils.FallbackDenoJsonPath); errors.Is(err, os.ErrNotExist) {
+			fallbackExists = false
+		} else if err != nil {
+			return nil, errors.Errorf("failed to check fallback deno.json: %w", err)
+		}
 	} else if err != nil {
-		return nil, errors.Errorf("failed to fallback import map: %w", err)
+		return nil, errors.Errorf("failed to check fallback import map: %w", err)
 	}
 	// Flag import map is specified relative to current directory instead of workdir
 	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
@@ -99,7 +103,11 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
 				function.ImportMap = denoJsoncPath
 			} else if fallbackExists {
-				function.ImportMap = utils.FallbackImportMapPath
+				if _, err := fsys.Stat(utils.FallbackImportMapPath); err == nil {
+					function.ImportMap = utils.FallbackImportMapPath
+				} else {
+					function.ImportMap = utils.FallbackDenoJsonPath
+				}
 			}
 		}
 		if noVerifyJWT != nil {

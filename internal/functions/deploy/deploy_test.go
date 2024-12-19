@@ -298,6 +298,17 @@ func TestImportMapPath(t *testing.T) {
 		assert.Equal(t, utils.FallbackImportMapPath, fc["test"].ImportMap)
 	})
 
+	t.Run("loads deno.json from default location", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.FallbackDenoJsonPath, []byte("{}"), 0644))
+		// Run test
+		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, utils.FallbackDenoJsonPath, fc["test"].ImportMap)
+	})
+
 	t.Run("per function config takes precedence", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })
 		slug := "hello"
