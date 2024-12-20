@@ -309,7 +309,7 @@ func TestImportMapPath(t *testing.T) {
 		}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "import_map.json"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
 		// Check error
@@ -329,7 +329,7 @@ func TestImportMapPath(t *testing.T) {
 		customImportMapPath := filepath.Join(utils.FunctionsDir, "custom_import_map.json")
 		require.NoError(t, afero.WriteFile(fsys, customImportMapPath, []byte("{}"), 0644))
 		// Create fallback import map to test precedence order
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "import_map.json"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, customImportMapPath, cast.Ptr(false), fsys)
 		// Check error
@@ -351,7 +351,7 @@ func TestImportMapPath(t *testing.T) {
 		path := "/tmp/import_map.json"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "import_map.json"), []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, path, nil, fsys)
 		// Check error

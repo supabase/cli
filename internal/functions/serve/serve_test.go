@@ -23,7 +23,7 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackEnvFilePath, []byte{}, 0644))
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "import_map.json"), []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
