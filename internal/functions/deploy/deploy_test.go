@@ -287,27 +287,19 @@ verify_jwt = false
 }
 
 func TestImportMapPath(t *testing.T) {
-	t.Run("loads import map from default location", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
-		// Run test
-		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc["test"].ImportMap)
-	})
-
-	t.Run("loads deno.json from default location", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackDenoJsonPath, []byte("{}"), 0644))
-		// Run test
-		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackDenoJsonPath, fc["test"].ImportMap)
-	})
+	for _, importFile := range utils.ImportFiles {
+		t.Run("loads "+importFile+" from default location", func(t *testing.T) {
+			// Setup in-memory fs
+			fsys := afero.NewMemMapFs()
+			importPath := filepath.Join(utils.FunctionsDir, importFile)
+			require.NoError(t, afero.WriteFile(fsys, importPath, []byte("{}"), 0644))
+			// Run test
+			fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
+			// Check error
+			assert.NoError(t, err)
+			assert.Equal(t, importPath, fc["test"].ImportMap)
+		})
+	}
 
 	t.Run("per function config takes precedence", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })

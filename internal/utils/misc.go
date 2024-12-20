@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -116,6 +117,7 @@ var (
 	}
 
 	SupabaseDirPath       = "supabase"
+	ImportFiles           = []string{"deno.jsonc", "deno.json", "import_map.json"}
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
 	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
 	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
@@ -135,8 +137,7 @@ var (
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
-	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
-	FallbackDenoJsonPath  = filepath.Join(FunctionsDir, "deno.json")
+	FallbackImportMapPath = filepath.Join(FunctionsDir, ImportFiles[2])
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
 	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
@@ -146,6 +147,16 @@ var (
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
+
+func GetImportsFilePath(basedir string, fsys afero.Fs) (string, error) {
+	for _, filename := range ImportFiles {
+		path := filepath.Join(basedir, filename)
+		if _, err := fsys.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", errors.Errorf("no import map found, searched for: %s", strings.Join(ImportFiles, ", "))
+}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
