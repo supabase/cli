@@ -25,7 +25,7 @@ func TestResolveImports(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
-		jsonPath := filepath.Join(cwd, FallbackImportMapPath)
+		jsonPath := filepath.Join(cwd, filepath.Join(FunctionsDir, "deno.json"))
 		require.NoError(t, afero.WriteFile(fsys, jsonPath, importMap, 0644))
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, "common"), 0755))
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, DbTestsDir), 0755))
@@ -51,9 +51,9 @@ func TestResolveImports(t *testing.T) {
 }`)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, importMap, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(FunctionsDir, "deno.json"), importMap, 0644))
 		// Run test
-		resolved, err := NewImportMap(FallbackImportMapPath, fsys)
+		resolved, err := NewImportMap(filepath.Join(FunctionsDir, "deno.json"), fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "https://deno.land", resolved.Scopes["my-scope"]["my-mod"])
