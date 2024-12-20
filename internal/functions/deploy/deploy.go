@@ -104,10 +104,15 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			}
 		}
 		if len(functionsWithFallback) > 0 {
-			fmt.Fprintf(os.Stderr, "Warning: The following functions are using the fallback import map at %s: %s\n",
+			msg := fmt.Sprintf(
+				utils.Yellow("WARNING: ")+
+					"The following functions are using the fallback import map at %s: %s\n"+
+					"This is not recommended outside of development. Please move import maps into each function folder.\n"+
+					"See: https://supabase.com/docs/guides/functions/import-maps\n",
 				fallbacksPath,
-				strings.Join(functionsWithFallback, ", "))
-			fmt.Fprintln(os.Stderr, "This is not recommended and will be deprecated. Please move import maps into each function folder.")
+				strings.Join(functionsWithFallback, ", "),
+			)
+			fmt.Fprint(os.Stderr, msg)
 		}
 	}
 
