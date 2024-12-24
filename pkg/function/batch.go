@@ -21,7 +21,7 @@ const (
 	maxRetries       = 3
 )
 
-func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
+func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, envFilePath string, filter ...func(string) bool) error {
 	var result []api.FunctionResponse
 	if resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project); err != nil {
 		return errors.Errorf("failed to list functions: %w", err)
@@ -45,7 +45,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 			}
 		}
 		var body bytes.Buffer
-		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, &body); err != nil {
+		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, envFilePath, &body); err != nil {
 			return err
 		}
 		// Update if function already exists

@@ -16,7 +16,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, envFilePath string, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
@@ -38,7 +38,7 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 		return err
 	}
 	api := function.NewEdgeRuntimeAPI(projectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
-	if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
+	if err := api.UpsertFunctions(ctx, functionConfig, envFilePath); err != nil {
 		return err
 	}
 	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(projectRef), strings.Join(slugs, ", "))

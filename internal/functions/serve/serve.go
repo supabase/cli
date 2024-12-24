@@ -17,8 +17,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/functions/deploy"
-	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/function"
 )
 
 type InspectMode string
@@ -105,7 +105,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
 	}
 	// 2. Parse user defined env
-	env, err := parseEnvFile(envFilePath, fsys)
+	env, err := function.ParseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
 	}
@@ -185,25 +185,6 @@ EOF
 		utils.EdgeRuntimeId,
 	)
 	return err
-}
-
-func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
-	env := []string{}
-	if len(envFilePath) == 0 {
-		return env, nil
-	}
-	envMap, err := set.ParseEnvFile(envFilePath, fsys)
-	if err != nil {
-		return env, err
-	}
-	for name, value := range envMap {
-		if strings.HasPrefix(name, "SUPABASE_") {
-			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
-			continue
-		}
-		env = append(env, name+"="+value)
-	}
-	return env, nil
 }
 
 func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {

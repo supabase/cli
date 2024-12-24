@@ -17,7 +17,7 @@ import (
 type MockBundler struct {
 }
 
-func (b *MockBundler) Bundle(ctx context.Context, entrypoint string, importMap string, output io.Writer) error {
+func (b *MockBundler) Bundle(ctx context.Context, entrypoint string, importMap string, envFilePath string, output io.Writer) error {
 	return nil
 }
 
@@ -38,7 +38,7 @@ func TestUpsertFunctions(t *testing.T) {
 			Get("/v1/projects/" + mockProject + "/functions").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := client.UpsertFunctions(context.Background(), nil)
+		err := client.UpsertFunctions(context.Background(), nil, "")
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 	})
@@ -50,7 +50,7 @@ func TestUpsertFunctions(t *testing.T) {
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := client.UpsertFunctions(context.Background(), nil)
+		err := client.UpsertFunctions(context.Background(), nil, "")
 		// Check error
 		assert.ErrorContains(t, err, "unexpected status 503:")
 	})
@@ -75,7 +75,7 @@ func TestUpsertFunctions(t *testing.T) {
 		// Run test
 		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
 			"test": {},
-		})
+		}, "")
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -100,7 +100,7 @@ func TestUpsertFunctions(t *testing.T) {
 		// Run test
 		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
 			"test": {},
-		})
+		}, "")
 		// Check error
 		assert.NoError(t, err)
 	})
