@@ -29,7 +29,8 @@ func deploy(ctx context.Context, fsys fs.FS) error {
 		Entrypoint: "supabase/functions/my-slug/index.ts",
 		ImportMap:  "supabase/functions/import_map.json",
 	}}
-	return functionClient.UpsertFunctions(ctx, fc, "")
+	envFilePath := ""
+	return functionClient.UpsertFunctions(ctx, fc, envFilePath)
 }
 
 func newAPIClient(token string) api.ClientWithResponses {
