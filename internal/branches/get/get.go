@@ -9,7 +9,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, branchId string) error {
+func Run(ctx context.Context, branchId string, output string) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
@@ -29,10 +29,20 @@ func Run(ctx context.Context, branchId string) error {
 		resp.JSON200.JwtSecret = &masked
 	}
 
-	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|
-|-|-|-|-|-|-|-|
-` + fmt.Sprintf(
-		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
+	if output == "env" {
+		table += "|POSTGRES_USER_ENV|"
+	}
+
+	table += "\n|-|-|-|-|-|-|-|"
+	if output == "env" {
+		table += "-|"
+	}
+
+	table += "\n"
+
+	row := fmt.Sprintf(
+		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|",
 		resp.JSON200.DbHost,
 		resp.JSON200.DbPort,
 		*resp.JSON200.DbUser,
@@ -41,5 +51,10 @@ func Run(ctx context.Context, branchId string) error {
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
 	)
+	if output == "env" {
+		row += fmt.Sprintf("`%s`|", "POSTGRES_ENV_URL goes here")
+	}
+	table += row + "\n"
+
 	return list.RenderTable(table)
 }
