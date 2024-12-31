@@ -5,11 +5,13 @@ import (
 	"fmt"
 
 	"github.com/go-errors/errors"
+	"github.com/spf13/afero"
+	"github.com/jackc/pgconn"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, branchId string, output string) error {
+func Run(ctx context.Context, branchId string, env bool, config pgconn.Config, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
@@ -30,12 +32,12 @@ func Run(ctx context.Context, branchId string, output string) error {
 	}
 
 	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
-	if output == "env" {
+	if env {
 		table += "|POSTGRES_USER_ENV|"
 	}
 
 	table += "\n|-|-|-|-|-|-|-|"
-	if output == "env" {
+	if env {
 		table += "-|"
 	}
 
@@ -51,8 +53,8 @@ func Run(ctx context.Context, branchId string, output string) error {
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
 	)
-	if output == "env" {
-		row += fmt.Sprintf("`%s`|", "POSTGRES_ENV_URL goes here")
+	if env {
+		row += fmt.Sprintf("`%s`|", "")
 	}
 	table += row + "\n"
 

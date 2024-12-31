@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/branches/create"
@@ -67,6 +68,7 @@ var (
 	}
 
 	branchId string
+	postgres_url bool
 
 	branchGetCmd = &cobra.Command{
 		Use:   "get [branch-id]",
@@ -75,14 +77,19 @@ var (
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			cmdFlags := cmd.Flags()
+			var output bool
 			if len(args) == 0 {
 				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
 					return err
 				}
 			} else {
 				branchId = args[0]
+				if cmdFlags.Changed("output-env") {
+					output = true
+				}
 			}
-			return get.Run(ctx, branchId)
+			return get.Run(ctx, branchId, output, pgconn.Config{}, afero.NewOsFs())
 		},
 	}
 
