@@ -492,6 +492,53 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
+	// Resolve remote config, then base config
+	idToName := map[string]string{}
+	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
+	for name, remote := range c.Overrides {
+		base := c.baseConfig.Clone()
+		// On remotes branches set seed as disabled by default
+		base.Db.Seed.Enabled = false
+		// Encode a toml file with only config overrides
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
+			return errors.Errorf("failed to encode map to TOML: %w", err)
+		}
+		// Decode overrides using base config as defaults
+		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
+			return errors.Errorf("failed to decode remote config: %w", err)
+		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+			fmt.Fprintf(os.Stderr, "WARN: unknown config fields: %+v\n", undecoded)
+		}
+		// Cross validate remote project id
+		if base.ProjectId == c.baseConfig.ProjectId {
+			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
+		} else if other, exists := idToName[base.ProjectId]; exists {
+			return errors.Errorf("duplicate project_id for [remotes.%s] and [remotes.%s]", other, name)
+		} else {
+			idToName[base.ProjectId] = name
+		}
+		if err := base.resolve(builder, fsys); err != nil {
+			return err
+		}
+		c.Remotes[name] = base
+	}
+	if err := c.baseConfig.resolve(builder, fsys); err != nil {
+		return err
+	}
+	// Validate base config, then remote config
+	if err := c.baseConfig.Validate(fsys); err != nil {
+		return err
+	}
+	for name, base := range c.Remotes {
+		if err := base.Validate(fsys); err != nil {
+			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	// Update content paths
 	for name, tmpl := range c.Auth.Email.Template {
 		// FIXME: only email template is relative to repo directory
@@ -534,43 +581,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Functions[slug] = function
 	}
-	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
-		return err
-	}
-	if err := c.baseConfig.Validate(fsys); err != nil {
-		return err
-	}
-	idToName := map[string]string{}
-	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
-	for name, remote := range c.Overrides {
-		base := c.baseConfig.Clone()
-		// On remotes branches set seed as disabled by default
-		base.Db.Seed.Enabled = false
-		// Encode a toml file with only config overrides
-		var buf bytes.Buffer
-		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
-			return errors.Errorf("failed to encode map to TOML: %w", err)
-		}
-		// Decode overrides using base config as defaults
-		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
-			return errors.Errorf("failed to decode remote config: %w", err)
-		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-			fmt.Fprintf(os.Stderr, "WARN: unknown config fields: %+v\n", undecoded)
-		}
-		// Cross validate remote project id
-		if base.ProjectId == c.baseConfig.ProjectId {
-			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
-		} else if other, exists := idToName[base.ProjectId]; exists {
-			return errors.Errorf("duplicate project_id for [remotes.%s] and [remotes.%s]", other, name)
-		} else {
-			idToName[base.ProjectId] = name
-		}
-		if err := base.Validate(fsys); err != nil {
-			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
-		}
-		c.Remotes[name] = base
-	}
-	return nil
+	return c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys)
 }
 
 func (c *baseConfig) Validate(fsys fs.FS) error {
