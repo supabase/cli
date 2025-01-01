@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/branches/create"
