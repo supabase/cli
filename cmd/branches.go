@@ -78,7 +78,6 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cmdFlags := cmd.Flags()
-			var output bool
 			if len(args) == 0 {
 				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
 					return err
@@ -86,10 +85,10 @@ var (
 			} else {
 				branchId = args[0]
 				if cmdFlags.Changed("output-env") {
-					output = true
+					postgres_url = true
 				}
 			}
-			return get.Run(ctx, branchId, output, pgconn.Config{}, afero.NewOsFs())
+			return get.Run(ctx, branchId, postgres_url, pgconn.Config{}, afero.NewOsFs())
 		},
 	}
 
