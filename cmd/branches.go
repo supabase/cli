@@ -83,9 +83,6 @@ var (
 				}
 			} else {
 				branchId = args[0]
-				if cmdFlags.Changed("output-env") {
-					output.Value = "env"
-				}
 			}
 			return get.Run(ctx, branchId, output.Value, pgconn.Config{}, afero.NewOsFs())
 		},
