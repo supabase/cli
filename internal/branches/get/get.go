@@ -31,12 +31,17 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 		resp.JSON200.JwtSecret = &masked
 	}
 
-	config := pgconn.Config{Host: utils.GetSupabaseDbHost(resp.JSON200.DbHost)}
+	config := pgconn.Config{
+		Host: utils.GetSupabaseDbHost(resp.JSON200.DbHost),
+		Port: uint16(resp.JSON200.DbPort),
+		User: *resp.JSON200.DbUser,
+		Password: *resp.JSON200.DbPass,
+	}
 
-	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|
-|-|-|-|-|-|-|-|
+	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|POSTGRES URL|
+|-|-|-|-|-|-|-|-|
 ` + fmt.Sprintf(
-		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 		resp.JSON200.DbHost,
 		resp.JSON200.DbPort,
 		*resp.JSON200.DbUser,
@@ -44,6 +49,7 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 		*resp.JSON200.JwtSecret,
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
+		"",
 	)
 
 	return list.RenderTable(table)
