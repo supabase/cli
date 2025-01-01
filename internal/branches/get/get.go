@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, branchId string, env bool, config pgconn.Config, fsys afero.Fs) error {
+func Run(ctx context.Context, branchId string, env string, config pgconn.Config, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
@@ -33,12 +33,12 @@ func Run(ctx context.Context, branchId string, env bool, config pgconn.Config, f
 	}
 
 	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
-	if env {
+	if env == "env" {
 		table += "|POSTGRES_USER_ENV|"
 	}
 
 	table += "\n|-|-|-|-|-|-|-|"
-	if env {
+	if env == "env" {
 		table += "-|"
 	}
 
@@ -54,7 +54,7 @@ func Run(ctx context.Context, branchId string, env bool, config pgconn.Config, f
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
 	)
-	if env {
+	if env == "env" {
 		row += fmt.Sprintf("`%s`|", bootstrap.GetPostgresURLNonPooling(config, fsys))
 	}
 	table += row + "\n"

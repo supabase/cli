@@ -68,7 +68,6 @@ var (
 	}
 
 	branchId string
-	postgres_url bool
 
 	branchGetCmd = &cobra.Command{
 		Use:   "get [branch-id]",
@@ -85,10 +84,10 @@ var (
 			} else {
 				branchId = args[0]
 				if cmdFlags.Changed("output-env") {
-					postgres_url = true
+					output.Value = "env"
 				}
 			}
-			return get.Run(ctx, branchId, postgres_url, pgconn.Config{}, afero.NewOsFs())
+			return get.Run(ctx, branchId, output.Value, pgconn.Config{}, afero.NewOsFs())
 		},
 	}
 
@@ -172,7 +171,7 @@ func init() {
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	getFlags := branchGetCmd.Flags()
-	getFlags.BoolVar(&postgres_url, "output-env", false, "Output the Postgres URL in the table.")
+	getFlags.VarP(&output, "output", "o", "Output format of branch details.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
