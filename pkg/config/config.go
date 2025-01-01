@@ -577,9 +577,7 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		}
 		c.Functions[slug] = function
 	}
-	if err := c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys); err != nil {
-		return err
-	}
+	return c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys)
 }
 
 func (c *baseConfig) Validate(fsys fs.FS) error {
