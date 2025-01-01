@@ -7,7 +7,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/bootstrap"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -34,20 +33,10 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 
 	config := pgconn.Config{Host: utils.GetSupabaseDbHost(resp.JSON200.DbHost)}
 
-	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
-	if env == utils.OutputEnv {
-		table += "|POSTGRES_USER_ENV|"
-	}
-
-	table += "\n|-|-|-|-|-|-|-|"
-	if env == utils.OutputEnv {
-		table += "-|"
-	}
-
-	table += "\n"
-
-	row := fmt.Sprintf(
-		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|",
+	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|
+|-|-|-|-|-|-|-|
+` + fmt.Sprintf(
+		"|`%s`|`%d`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 		resp.JSON200.DbHost,
 		resp.JSON200.DbPort,
 		*resp.JSON200.DbUser,
@@ -56,10 +45,6 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
 	)
-	if env == utils.OutputEnv {
-		row += fmt.Sprintf("`%s`|", bootstrap.GetPostgresURLNonPooling(config, fsys))
-	}
-	table += row + "\n"
 
 	return list.RenderTable(table)
 }
