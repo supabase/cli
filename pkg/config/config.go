@@ -534,7 +534,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	return nil
 }
 
-func (c *baseConfig) resolve(builder PathBuilder, fsys fs.FS) error {
+func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	// Update content paths
 	for name, tmpl := range c.Auth.Email.Template {
 		// FIXME: only email template is relative to repo directory
