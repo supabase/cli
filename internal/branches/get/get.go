@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, branchId string, env string, config pgconn.Config, fsys afero.Fs) error {
+func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
@@ -31,6 +31,8 @@ func Run(ctx context.Context, branchId string, env string, config pgconn.Config,
 	if resp.JSON200.JwtSecret == nil {
 		resp.JSON200.JwtSecret = &masked
 	}
+
+	config := pgconn.Config{Host: utils.GetSupabaseDbHost(resp.JSON200.DbHost)}
 
 	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
 	if env == utils.OutputEnv {
