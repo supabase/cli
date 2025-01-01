@@ -530,7 +530,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.baseConfig.Validate(fsys); err != nil {
 		return err
 	}
-	for _, base := range c.Remotes {
+	for name, base := range c.Remotes {
 		if err := base.Validate(fsys); err != nil {
 			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
 		}
