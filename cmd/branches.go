@@ -172,6 +172,8 @@ func init() {
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
+	getFlags := branchGetCmd.Flags()
+	getFlags.BoolVar(&postgres_url, "output-env", false, "Output the Postgres URL in the table.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
