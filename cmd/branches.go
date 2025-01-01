@@ -76,7 +76,6 @@ var (
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			cmdFlags := cmd.Flags()
 			if len(args) == 0 {
 				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
 					return err
