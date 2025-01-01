@@ -492,12 +492,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
-	if err := c.baseConfig.resolve(builder, fsys); err != nil {
-		return err
-	}
-	if err := c.baseConfig.Validate(fsys); err != nil {
-		return err
-	}
+	// Resolve and validate remote config
 	idToName := map[string]string{}
 	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
 	for name, remote := range c.Overrides {
@@ -531,7 +526,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Remotes[name] = base
 	}
-	return nil
+	if err := c.baseConfig.resolve(builder, fsys); err != nil {
+		return err
+	}
+	return c.baseConfig.Validate(fsys)
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
