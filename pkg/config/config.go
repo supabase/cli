@@ -518,7 +518,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		} else {
 			idToName[base.ProjectId] = name
 		}
-		if err := c.baseConfig.resolve(builder, fsys); err != nil {
+		if err := base.resolve(builder, fsys); err != nil {
 			return err
 		}
 		if err := base.Validate(fsys); err != nil {
