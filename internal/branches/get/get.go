@@ -33,12 +33,12 @@ func Run(ctx context.Context, branchId string, env string, config pgconn.Config,
 	}
 
 	table := "|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|"
-	if env == "env" {
+	if env == utils.OutputEnv {
 		table += "|POSTGRES_USER_ENV|"
 	}
 
 	table += "\n|-|-|-|-|-|-|-|"
-	if env == "env" {
+	if env == utils.OutputEnv {
 		table += "-|"
 	}
 
@@ -54,7 +54,7 @@ func Run(ctx context.Context, branchId string, env string, config pgconn.Config,
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
 	)
-	if env == "env" {
+	if env == utils.OutputEnv {
 		row += fmt.Sprintf("`%s`|", bootstrap.GetPostgresURLNonPooling(config, fsys))
 	}
 	table += row + "\n"
