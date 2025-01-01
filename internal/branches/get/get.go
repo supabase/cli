@@ -5,8 +5,9 @@ import (
 	"fmt"
 
 	"github.com/go-errors/errors"
-	"github.com/spf13/afero"
 	"github.com/jackc/pgconn"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/bootstrap"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -54,7 +55,7 @@ func Run(ctx context.Context, branchId string, env bool, config pgconn.Config, f
 		resp.JSON200.Status,
 	)
 	if env {
-		row += fmt.Sprintf("`%s`|", "")
+		row += fmt.Sprintf("`%s`|", bootstrap.GetPostgresURLNonPooling(config, fsys))
 	}
 	table += row + "\n"
 
