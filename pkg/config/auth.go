@@ -542,25 +542,35 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	switch {
 	case s.Twilio.Enabled:
 		body.SmsProvider = cast.Ptr("twilio")
-		body.SmsTwilioAuthToken = &s.Twilio.AuthToken
+		if len(s.Twilio.AuthToken) > 0 {
+			body.SmsTwilioAuthToken = &s.Twilio.AuthToken
+		}
 		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
 		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
 	case s.TwilioVerify.Enabled:
 		body.SmsProvider = cast.Ptr("twilio_verify")
-		body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken
+		if len(s.TwilioVerify.AuthToken) > 0 {
+			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken
+		}
 		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
 		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
 	case s.Messagebird.Enabled:
 		body.SmsProvider = cast.Ptr("messagebird")
-		body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey
+		if len(s.Messagebird.AccessKey) > 0 {
+			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey
+		}
 		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
 	case s.Textlocal.Enabled:
 		body.SmsProvider = cast.Ptr("textlocal")
-		body.SmsTextlocalApiKey = &s.Textlocal.ApiKey
+		if len(s.Textlocal.ApiKey) > 0 {
+			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey
+		}
 		body.SmsTextlocalSender = &s.Textlocal.Sender
 	case s.Vonage.Enabled:
 		body.SmsProvider = cast.Ptr("vonage")
-		body.SmsVonageApiSecret = &s.Vonage.ApiSecret
+		if len(s.Vonage.ApiSecret) > 0 {
+			body.SmsVonageApiSecret = &s.Vonage.ApiSecret
+		}
 		body.SmsVonageApiKey = &s.Vonage.ApiKey
 		body.SmsVonageFrom = &s.Vonage.From
 	}
