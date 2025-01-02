@@ -43,7 +43,7 @@ func TestDockerBundle(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogsExitCode(utils.Docker, containerId, 1))
 		// Run test
-		err = NewDockerBundler(fsys).Bundle(context.Background(), "", "", &body)
+		err = NewDockerBundler(fsys).Bundle(context.Background(), "", "", "", &body)
 		// Check error
 		assert.ErrorContains(t, err, "error running container: exit 1")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

@@ -25,7 +25,21 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, output io.Writer) error {
+func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, envFilePath string, output io.Writer) error {
+	// read env file
+	if envFilePath == "" {
+		if f, err := b.fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
+			envFilePath = utils.FallbackEnvFilePath
+		}
+	} else if !filepath.IsAbs(envFilePath) {
+		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
+	}
+	// 2. Parse user defined env
+	env, err := function.ParseEnvFile(envFilePath, b.fsys)
+	if err != nil {
+		return err
+	}
+
 	// Create temp directory to store generated eszip
 	slug := filepath.Base(filepath.Dir(entrypoint))
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
@@ -62,7 +76,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 		ctx,
 		container.Config{
 			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        []string{},
+			Env:        env,
 			Cmd:        cmd,
 			WorkingDir: utils.ToDockerPath(cwd),
 		},
