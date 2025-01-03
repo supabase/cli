@@ -14,7 +14,6 @@ import (
 
 func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
-	envs := map[string]string{}
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
 	}

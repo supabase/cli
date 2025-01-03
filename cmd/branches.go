@@ -166,7 +166,7 @@ func init() {
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	getFlags := branchGetCmd.Flags()
-	getFlags.VarP(&output, "output", "o", "Output format of branch details.")
+	getFlags.VarP(&utils.OutputFormat, "output", "o", "Output format of branch details.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
