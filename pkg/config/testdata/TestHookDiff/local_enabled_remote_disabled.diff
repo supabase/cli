@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -11,21 +11,21 @@
+@@ -11,20 +11,20 @@
  
  [hook]
  [hook.mfa_verification_attempt]
@@ -24,10 +24,8 @@ diff remote[auth] local[auth]
  [hook.send_email]
 -enabled = false
 -uri = "https://example.com"
--secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
 +enabled = true
 +uri = "pg-functions://postgres/public/sendEmail"
-+secrets = "hash:"
+ secrets = "hash:"
  
  [mfa]
- max_enrolled_factors = 0
