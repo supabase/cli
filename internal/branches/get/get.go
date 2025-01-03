@@ -38,6 +38,7 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 		Password: *resp.JSON200.DbPass,
 	}
 
+	postgresConnectionString := utils.ToPostgresURL(config)
 	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|POSTGRES URL|
 |-|-|-|-|-|-|-|-|
 ` + fmt.Sprintf(
@@ -49,7 +50,7 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 		*resp.JSON200.JwtSecret,
 		resp.JSON200.PostgresVersion,
 		resp.JSON200.Status,
-		"",
+		postgresConnectionString,
 	)
 
 	return list.RenderTable(table)
