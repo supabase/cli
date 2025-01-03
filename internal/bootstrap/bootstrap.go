@@ -272,37 +272,6 @@ func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs)
 	return utils.WriteFile(".env", []byte(out), fsys)
 }
 
-func GetPostgresURLNonPooling(config pgconn.Config, fsys afero.Fs) string {
-	// Initialize default envs
-	initial := map[string]string{
-		POSTGRES_URL: utils.ToPostgresURL(config),
-	}
-
-	// Populate from .env.example if exists
-	envs, err := parseExampleEnv(fsys)
-	if err != nil {
-		errors.Errorf("failed to parse .env.example: %w", err)
-		return ""
-	}
-	for k := range envs {
-		switch k {
-		case POSTGRES_URL_NON_POOLING:
-			initial[k] = utils.ToPostgresURL(config)
-		default:
-			// Skip other keys
-			continue
-		}
-	}
-
-	// Check if POSTGRES_URL_NON_POOLING is present
-	if value, exists := initial[POSTGRES_URL_NON_POOLING]; exists {
-		return value
-	}
-
-	errors.New("error fetching POSTGRES_URL_NON_POOLING")
-	return ""
-}
-
 func parseExampleEnv(fsys afero.Fs) (map[string]string, error) {
 	path := ".env.example"
 	f, err := fsys.Open(path)

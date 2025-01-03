@@ -3,6 +3,7 @@ package get
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -13,6 +14,7 @@ import (
 
 func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
+	envs := map[string]string{}
 	if err != nil {
 		return errors.Errorf("failed to retrieve preview branch: %w", err)
 	}
@@ -39,6 +41,13 @@ func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error 
 	}
 
 	postgresConnectionString := utils.ToPostgresURL(config)
+	if utils.OutputFormat.Value != utils.OutputPretty {
+		envs := map[string]string{
+			"POSTGRES_URL": postgresConnectionString,
+		}
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, envs)
+	}
+
 	table := `|HOST|PORT|USER|PASSWORD|JWT SECRET|POSTGRES VERSION|STATUS|POSTGRES URL|
 |-|-|-|-|-|-|-|-|
 ` + fmt.Sprintf(
