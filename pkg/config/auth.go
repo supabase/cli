@@ -310,21 +310,27 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		// Ignore disabled hooks because their envs are not loaded
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
-			hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+			if hook.Secrets != hashPrefix {
+				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
 	}
 	if hook := h.SendEmail; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
-			hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
+			if hook.Secrets != hashPrefix {
+				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
+			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
 	}
 	if hook := h.SendSMS; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
-			hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
+			if hook.Secrets != hashPrefix {
+				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
+			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
 	}
@@ -332,14 +338,18 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.MFAVerificationAttempt; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
-			hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+			if hook.Secrets != hashPrefix {
+				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
 	}
 	if hook := h.PasswordVerificationAttempt; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
-			hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+			if hook.Secrets != hashPrefix {
+				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
 	}
@@ -585,21 +595,31 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// We are only interested in the provider that's enabled locally
 	switch {
 	case s.Twilio.Enabled:
-		s.Twilio.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioAuthToken, "")
+		if s.Twilio.AuthToken != hashPrefix {
+			s.Twilio.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioAuthToken, "")
+		}
 		s.Twilio.AccountSid = cast.Val(remoteConfig.SmsTwilioAccountSid, "")
 		s.Twilio.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioMessageServiceSid, "")
 	case s.TwilioVerify.Enabled:
-		s.TwilioVerify.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
+		if s.TwilioVerify.AuthToken != hashPrefix {
+			s.TwilioVerify.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
+		}
 		s.TwilioVerify.AccountSid = cast.Val(remoteConfig.SmsTwilioVerifyAccountSid, "")
 		s.TwilioVerify.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioVerifyMessageServiceSid, "")
 	case s.Messagebird.Enabled:
-		s.Messagebird.AccessKey = hashPrefix + cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
+		if s.Messagebird.AccessKey != hashPrefix {
+			s.Messagebird.AccessKey = hashPrefix + cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
+		}
 		s.Messagebird.Originator = cast.Val(remoteConfig.SmsMessagebirdOriginator, "")
 	case s.Textlocal.Enabled:
-		s.Textlocal.ApiKey = hashPrefix + cast.Val(remoteConfig.SmsTextlocalApiKey, "")
+		if s.Textlocal.ApiKey != hashPrefix {
+			s.Textlocal.ApiKey = hashPrefix + cast.Val(remoteConfig.SmsTextlocalApiKey, "")
+		}
 		s.Textlocal.Sender = cast.Val(remoteConfig.SmsTextlocalSender, "")
 	case s.Vonage.Enabled:
-		s.Vonage.ApiSecret = hashPrefix + cast.Val(remoteConfig.SmsVonageApiSecret, "")
+		if s.Vonage.ApiSecret != hashPrefix {
+			s.Vonage.ApiSecret = hashPrefix + cast.Val(remoteConfig.SmsVonageApiSecret, "")
+		}
 		s.Vonage.ApiKey = cast.Val(remoteConfig.SmsVonageApiKey, "")
 		s.Vonage.From = cast.Val(remoteConfig.SmsVonageFrom, "")
 	case !s.EnableSignup:
