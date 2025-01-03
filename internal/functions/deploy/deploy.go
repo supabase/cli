@@ -68,14 +68,6 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 }
 
 func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
-	// Although some functions do not require import map, it's more convenient to setup
-	// vscode deno extension with a single import map for all functions.
-	fallbackExists := true
-	if _, err := fsys.Stat(utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
-		fallbackExists = false
-	} else if err != nil {
-		return nil, errors.Errorf("failed to fallback import map: %w", err)
-	}
 	// Flag import map is specified relative to current directory instead of workdir
 	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
 		importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
@@ -92,14 +84,10 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		if len(importMapPath) > 0 {
 			function.ImportMap = importMapPath
 		} else if len(function.ImportMap) == 0 {
-			denoJsonPath := filepath.Join(functionDir, "deno.json")
-			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
-			if _, err := fsys.Stat(denoJsonPath); err == nil {
-				function.ImportMap = denoJsonPath
-			} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
-				function.ImportMap = denoJsoncPath
-			} else if fallbackExists {
-				function.ImportMap = utils.FallbackImportMapPath
+			if dedicatedFunctionPath, err := utils.GetImportsFilePath(functionDir, fsys); err == nil {
+				function.ImportMap = dedicatedFunctionPath
+			} else if fallbackFunctionPath, err := utils.GetImportsFilePath(utils.FunctionsDir, fsys); err == nil {
+				function.ImportMap = fallbackFunctionPath
 			}
 		}
 		if noVerifyJWT != nil {
@@ -107,5 +95,26 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		}
 		functionConfig[name] = function
 	}
+	// Check validity of ImportMap paths
+	functionsWithFallback := []string{}
+	if fallbacksPath, err := utils.GetImportsFilePath(utils.FunctionsDir, fsys); err == nil {
+		for name, function := range functionConfig {
+			if function.ImportMap == fallbacksPath {
+				functionsWithFallback = append(functionsWithFallback, name)
+			}
+		}
+		if len(functionsWithFallback) > 0 {
+			msg := fmt.Sprintf(
+				utils.Yellow("WARNING: ")+
+					"The following functions are using the fallback import map at %s: %s\n"+
+					"This is not recommended outside of development. Please move import maps into each function folder.\n"+
+					"See: https://supabase.com/docs/guides/functions/import-maps\n",
+				fallbacksPath,
+				strings.Join(functionsWithFallback, ", "),
+			)
+			fmt.Fprint(os.Stderr, msg)
+		}
+	}
+
 	return functionConfig, nil
 }

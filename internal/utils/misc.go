@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -115,36 +116,46 @@ var (
 		"track_io_timing",
 	}
 
-	SupabaseDirPath       = "supabase"
-	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
-	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
-	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
-	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
-	PoolerUrlPath         = filepath.Join(TempDir, "pooler-url")
-	PostgresVersionPath   = filepath.Join(TempDir, "postgres-version")
-	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
-	RestVersionPath       = filepath.Join(TempDir, "rest-version")
-	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
-	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
-	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
-	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
-	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
-	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
-	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
-	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
-	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
-	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
-	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
-	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
-	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
-	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
+	SupabaseDirPath     = "supabase"
+	ImportFiles         = []string{"deno.jsonc", "deno.json", "import_map.json"}
+	ConfigPath          = filepath.Join(SupabaseDirPath, "config.toml")
+	GitIgnorePath       = filepath.Join(SupabaseDirPath, ".gitignore")
+	TempDir             = filepath.Join(SupabaseDirPath, ".temp")
+	ImportMapsDir       = filepath.Join(TempDir, "import_maps")
+	ProjectRefPath      = filepath.Join(TempDir, "project-ref")
+	PoolerUrlPath       = filepath.Join(TempDir, "pooler-url")
+	PostgresVersionPath = filepath.Join(TempDir, "postgres-version")
+	GotrueVersionPath   = filepath.Join(TempDir, "gotrue-version")
+	RestVersionPath     = filepath.Join(TempDir, "rest-version")
+	StorageVersionPath  = filepath.Join(TempDir, "storage-version")
+	StudioVersionPath   = filepath.Join(TempDir, "studio-version")
+	PgmetaVersionPath   = filepath.Join(TempDir, "pgmeta-version")
+	PoolerVersionPath   = filepath.Join(TempDir, "pooler-version")
+	RealtimeVersionPath = filepath.Join(TempDir, "realtime-version")
+	CliVersionPath      = filepath.Join(TempDir, "cli-latest")
+	CurrBranchPath      = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	SchemasDir          = filepath.Join(SupabaseDirPath, "schemas")
+	MigrationsDir       = filepath.Join(SupabaseDirPath, "migrations")
+	FunctionsDir        = filepath.Join(SupabaseDirPath, "functions")
+	FallbackEnvFilePath = filepath.Join(FunctionsDir, ".env")
+	DbTestsDir          = filepath.Join(SupabaseDirPath, "tests")
+	CustomRolesPath     = filepath.Join(SupabaseDirPath, "roles.sql")
 
 	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
 	ErrInvalidRef  = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
+
+func GetImportsFilePath(basedir string, fsys afero.Fs) (string, error) {
+	for _, filename := range ImportFiles {
+		path := filepath.Join(basedir, filename)
+		if _, err := fsys.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", errors.Errorf("no import map found, searched for: %s", strings.Join(ImportFiles, ", "))
+}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
