@@ -82,7 +82,7 @@ var (
 			} else {
 				branchId = args[0]
 			}
-			return get.Run(ctx, branchId, output.Value, afero.NewOsFs())
+			return get.Run(ctx, branchId, afero.NewOsFs())
 		},
 	}
 

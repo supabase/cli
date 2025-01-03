@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(ctx context.Context, branchId string, env string, fsys afero.Fs) error {
+func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	envs := map[string]string{}
 	if err != nil {
