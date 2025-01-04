@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
@@ -34,7 +35,7 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 
 	config := pgconn.Config{
 		Host: utils.GetSupabaseDbHost(resp.JSON200.DbHost),
-		Port: uint16(resp.JSON200.DbPort),
+		Port: uint16(cast.IntToUint(resp.JSON200.DbPort)),
 		User: *resp.JSON200.DbUser,
 		Password: *resp.JSON200.DbPass,
 	}
