@@ -10,6 +10,14 @@ func UintToInt(value uint) int {
 	return math.MaxInt
 }
 
+// UIntToUInt16 converts a uint to an uint16, handling potential overflow
+func UIntToUInt16(value uint) uint16 {
+	if value <= math.MaxUint16 {
+		return uint16(value)
+	}
+	return math.MaxUint16
+}
+
 // IntToUint converts an int to a uint, handling negative values
 func IntToUint(value int) uint {
 	if value < 0 {
