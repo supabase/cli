@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -378,9 +379,60 @@ func (c *config) Eject(w io.Writer) error {
 	return nil
 }
 
+// Loads custom config file to struct fields tagged with toml.
+func (c *config) loadFromFile(filename string, fsys fs.FS) error {
+	v := viper.New()
+	v.SetConfigType("toml")
+	// Load default values
+	var buf bytes.Buffer
+	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
+		return errors.Errorf("failed to initialise template config: %w", err)
+	} else if err := v.MergeConfig(&buf); err != nil {
+		return errors.Errorf("failed to merge template config: %w", err)
+	}
+	// Load custom config
+	if ext := filepath.Ext(filename); len(ext) > 0 {
+		v.SetConfigType(ext[1:])
+	}
+	f, err := fsys.Open(filename)
+	if err != nil {
+		return errors.Errorf("failed to read file config: %w", err)
+	}
+	defer f.Close()
+	if err := v.MergeConfig(f); err != nil {
+		return errors.Errorf("failed to merge file config: %w", err)
+	}
+	// Manually parse [functions.*] to empty struct for backwards compatibility
+	for key, value := range v.GetStringMap("functions") {
+		if m, ok := value.(map[string]any); ok && len(m) == 0 {
+			v.Set("functions."+key, function{})
+		}
+	}
+	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToIPHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+		mapstructure.TextUnmarshallerHookFunc(),
+		LoadEnvHook,
+		// TODO: include decrypt secret hook
+	)), func(dc *mapstructure.DecoderConfig) {
+		dc.TagName = "toml"
+		dc.Squash = true
+	}); err != nil {
+		return errors.Errorf("failed to parse config: %w", err)
+	}
+	return nil
+}
+
+// Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
 func (c *config) loadFromEnv() error {
-	// Allow overriding base config object with automatic env
-	// Ref: https://github.com/spf13/viper/issues/761
+	v := viper.New()
+	v.SetEnvPrefix("SUPABASE")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	// Viper does not parse env vars automatically. Instead of calling viper.BindEnv
+	// per key, we decode all keys from an existing struct, and merge them to viper.
+	// Ref: https://github.com/spf13/viper/issues/761#issuecomment-859306364
 	envKeysMap := map[string]interface{}{}
 	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:               &envKeysMap,
@@ -389,47 +441,32 @@ func (c *config) loadFromEnv() error {
 		return errors.Errorf("failed to create decoder: %w", err)
 	} else if err := dec.Decode(c.baseConfig); err != nil {
 		return errors.Errorf("failed to decode env: %w", err)
+	} else if err := v.MergeConfigMap(envKeysMap); err != nil {
+		return errors.Errorf("failed to merge env config: %w", err)
 	}
-	v := viper.New()
-	v.SetEnvPrefix("SUPABASE")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	if err := v.MergeConfigMap(envKeysMap); err != nil {
-		return errors.Errorf("failed to merge config: %w", err)
-	} else if err := v.Unmarshal(c); err != nil {
-		return errors.Errorf("failed to parse env to config: %w", err)
+	// Writes viper state back to config struct, with automatic env substitution
+	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToIPHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+		mapstructure.TextUnmarshallerHookFunc(),
+		// TODO: include decrypt secret hook
+	))); err != nil {
+		return errors.Errorf("failed to parse env override: %w", err)
 	}
 	return nil
 }
 
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
-	// Load default values
-	var buf bytes.Buffer
-	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
-		return errors.Errorf("failed to initialise config template: %w", err)
-	}
-	dec := toml.NewDecoder(&buf)
-	if _, err := dec.Decode(c); err != nil {
-		return errors.Errorf("failed to decode config template: %w", err)
-	}
-	if metadata, err := toml.DecodeFS(fsys, builder.ConfigPath, c); err != nil {
-		cwd, osErr := os.Getwd()
-		if osErr != nil {
-			cwd = "current directory"
-		}
-		return errors.Errorf("cannot read config in %s: %w", cwd, err)
-	} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		for _, key := range undecoded {
-			if key[0] != "remotes" {
-				fmt.Fprintf(os.Stderr, "Unknown config field: [%s]\n", key)
-			}
-		}
-	}
 	// Load secrets from .env file
 	if err := loadDefaultEnv(); err != nil {
 		return err
-	} else if err := c.loadFromEnv(); err != nil {
+	}
+	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
+		return err
+	}
+	if err := c.loadFromEnv(); err != nil {
 		return err
 	}
 	// Generate JWT tokens
@@ -761,6 +798,17 @@ func maybeLoadEnv(s string) (string, error) {
 	}
 
 	return "", errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, envName)
+}
+
+func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
+	if f != reflect.String || t != reflect.String {
+		return data, nil
+	}
+	value := data.(string)
+	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
+		value = os.Getenv(matches[1])
+	}
+	return value, nil
 }
 
 func truncateText(text string, maxLen int) string {
