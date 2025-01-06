@@ -71,6 +71,8 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	// Although some functions do not require import map, it's more convenient to setup
 	// vscode deno extension with a single import map for all functions.
 	fallbackExists := true
+	functionsUsingDeprecatedGlobalFallback := []string{}
+	functionsUsingDeprecatedImportMap := []string{}
 	if _, err := fsys.Stat(utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
 		fallbackExists = false
 	} else if err != nil {
@@ -94,18 +96,30 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		} else if len(function.ImportMap) == 0 {
 			denoJsonPath := filepath.Join(functionDir, "deno.json")
 			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
+			importMapPath := filepath.Join(functionDir, "import_map.json")
 			if _, err := fsys.Stat(denoJsonPath); err == nil {
 				function.ImportMap = denoJsonPath
 			} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
 				function.ImportMap = denoJsoncPath
+			} else if _, err := fsys.Stat(importMapPath); err == nil {
+				function.ImportMap = importMapPath
+				functionsUsingDeprecatedImportMap = append(functionsUsingDeprecatedImportMap, name)
 			} else if fallbackExists {
 				function.ImportMap = utils.FallbackImportMapPath
+				functionsUsingDeprecatedGlobalFallback = append(functionsUsingDeprecatedGlobalFallback, name)
 			}
 		}
 		if noVerifyJWT != nil {
 			function.VerifyJWT = cast.Ptr(!*noVerifyJWT)
 		}
 		functionConfig[name] = function
+	}
+	if len(functionsUsingDeprecatedImportMap) > 0 {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Functions using deprecated import_map.json (please migrate to deno.jsonc):", utils.Aqua(strings.Join(functionsUsingDeprecatedImportMap, ", ")))
+	}
+	if len(functionsUsingDeprecatedGlobalFallback) > 0 {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Functions using fallback import map:", utils.Aqua(strings.Join(functionsUsingDeprecatedGlobalFallback, ", ")))
+		fmt.Fprintln(os.Stderr, "Please use recommended per function dependency declaration ", utils.Aqua("https://supabase.com/docs/guides/functions/import-maps"))
 	}
 	return functionConfig, nil
 }
