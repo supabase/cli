@@ -412,20 +412,26 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			v.Set("functions."+key, function{})
 		}
 	}
-	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToIPHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-		mapstructure.TextUnmarshallerHookFunc(),
-		LoadEnvHook,
-		// TODO: include decrypt secret hook
-	)), func(dc *mapstructure.DecoderConfig) {
+	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "toml"
 		dc.Squash = true
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
 	return nil
+}
+
+func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
+	fs = append(fs,
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToIPHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+		mapstructure.TextUnmarshallerHookFunc(),
+		// TODO: assign the linked project id
+		DecryptSecretHookFunc(c.ProjectId),
+	)
+	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
 // Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
@@ -449,13 +455,7 @@ func (c *config) loadFromEnv() error {
 		return errors.Errorf("failed to merge env config: %w", err)
 	}
 	// Writes viper state back to config struct, with automatic env substitution
-	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToIPHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-		mapstructure.TextUnmarshallerHookFunc(),
-		// TODO: include decrypt secret hook
-	))); err != nil {
+	if err := v.UnmarshalExact(c, viper.DecodeHook(c.newDecodeHook())); err != nil {
 		return errors.Errorf("failed to parse env override: %w", err)
 	}
 	return nil
@@ -795,7 +795,7 @@ func assertEnvLoaded(s string) error {
 }
 
 func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String || t != reflect.String {
+	if f != reflect.String {
 		return data, nil
 	}
 	value := data.(string)
@@ -912,13 +912,13 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		if len(e.Smtp.User) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.user")
 		}
-		if len(e.Smtp.Pass) == 0 {
+		if len(e.Smtp.Pass.Value) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.pass")
 		}
 		if len(e.Smtp.AdminEmail) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.admin_email")
 		}
-		if err := assertEnvLoaded(e.Smtp.Pass); err != nil {
+		if err := assertEnvLoaded(e.Smtp.Pass.Value); err != nil {
 			return err
 		}
 	}

@@ -2,28 +2,24 @@ package config
 
 import (
 	"encoding/base64"
-	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	ecies "github.com/ecies/go/v2"
 	"github.com/go-errors/errors"
+	"github.com/mitchellh/mapstructure"
 )
 
-type Secret string
+type Secret struct {
+	Value  string
+	SHA256 string
+}
 
-func (s Secret) PlainText() *string {
-	key := os.Getenv("DOTENV_PRIVATE_KEY")
-	for _, k := range strings.Split(key, ",") {
-		value, err := decrypt(k, string(s))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		} else if len(value) > 0 {
-			return &value
-		}
-	}
-	// Empty strings are converted to nil
-	return nil
+const HASHED_PREFIX = "hash:"
+
+func (s Secret) MarshalText() (text []byte, err error) {
+	return []byte(HASHED_PREFIX + s.SHA256), nil
 }
 
 const ENCRYPTED_PREFIX = "encrypted:"
@@ -54,4 +50,31 @@ func decrypt(key, value string) (string, error) {
 		return value, errors.Errorf("failed to decrypt secret: %w", err)
 	}
 	return string(plaintext), nil
+}
+
+func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
+	return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
+		if f.Kind() != reflect.String {
+			return data, nil
+		}
+		var result Secret
+		if t != reflect.TypeOf(result) {
+			return data, nil
+		}
+		ciphertext := data.(string)
+		// Skip hashing unloaded env
+		if matches := envPattern.FindStringSubmatch(ciphertext); len(matches) > 1 {
+			return result, nil
+		}
+		var err error
+		privKey := os.Getenv("DOTENV_PRIVATE_KEY")
+		for _, k := range strings.Split(privKey, ",") {
+			result.Value, err = decrypt(k, ciphertext)
+			if err == nil && len(result.Value) > 0 {
+				result.SHA256 = sha256Hmac(hashKey, result.Value)
+				break
+			}
+		}
+		return result, err
+	}
 }

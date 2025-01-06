@@ -119,7 +119,7 @@ type (
 		Host       string `toml:"host"`
 		Port       uint16 `toml:"port"`
 		User       string `toml:"user"`
-		Pass       string `toml:"pass"`
+		Pass       Secret `toml:"pass"`
 		AdminEmail string `toml:"admin_email"`
 		SenderName string `toml:"sender_name"`
 	}
@@ -512,7 +512,9 @@ func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SmtpHost = &s.Host
 	body.SmtpPort = cast.Ptr(strconv.Itoa(int(s.Port)))
 	body.SmtpUser = &s.User
-	body.SmtpPass = &s.Pass
+	if len(s.Pass.Value) > 0 {
+		body.SmtpPass = &s.Pass.Value
+	}
 	body.SmtpAdminEmail = &s.AdminEmail
 	body.SmtpSenderName = &s.SenderName
 }
@@ -528,7 +530,9 @@ func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 	s.Host = cast.Val(remoteConfig.SmtpHost, "")
 	s.User = cast.Val(remoteConfig.SmtpUser, "")
-	s.Pass = hashPrefix + cast.Val(remoteConfig.SmtpPass, "")
+	if len(s.Pass.SHA256) > 0 {
+		s.Pass.SHA256 = cast.Val(remoteConfig.SmtpPass, "")
+	}
 	s.AdminEmail = cast.Val(remoteConfig.SmtpAdminEmail, "")
 	s.SenderName = cast.Val(remoteConfig.SmtpSenderName, "")
 	portStr := cast.Val(remoteConfig.SmtpPort, "0")
@@ -973,9 +977,6 @@ func (a *auth) HashSecrets(key string) {
 			return hashPrefix
 		}
 		return hashPrefix + sha256Hmac(key, v)
-	}
-	if a.Email.Smtp != nil && a.Email.Smtp.IsEnabled() {
-		a.Email.Smtp.Pass = hash(a.Email.Smtp.Pass)
 	}
 	// Only hash secrets for locally enabled providers because other envs won't be loaded
 	switch {
