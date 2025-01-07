@@ -89,7 +89,7 @@ func TestStartDatabase(t *testing.T) {
 		conn.Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -124,7 +124,7 @@ func TestStartDatabase(t *testing.T) {
 				},
 			}})
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard)
+		err := StartDatabase(context.Background(), "", fsys, io.Discard)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -149,7 +149,7 @@ func TestStartDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			Reply(http.StatusInternalServerError)
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard)
+		err := StartDatabase(context.Background(), "", fsys, io.Discard)
 		// Check error
 		assert.ErrorContains(t, err, "request returned Internal Server Error for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -161,7 +161,7 @@ func TestStartCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), "", fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
@@ -177,7 +177,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -195,7 +195,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(types.ContainerJSON{})
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -221,7 +221,7 @@ func TestStartCommand(t *testing.T) {
 		// Cleanup resources
 		apitest.MockDockerStop(utils.Docker)
 		// Run test
-		err := Run(context.Background(), fsys)
+		err := Run(context.Background(), "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -350,7 +350,7 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		defer conn.Close(t)
 
 		// Run test
-		err := StartDatabase(context.Background(), fsys, io.Discard, conn.Intercept)
+		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 
 		// Check error
 		assert.NoError(t, err)

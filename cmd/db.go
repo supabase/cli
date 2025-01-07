@@ -219,11 +219,13 @@ var (
 		},
 	}
 
+	fromBackup string
+
 	dbStartCmd = &cobra.Command{
 		Use:   "start",
 		Short: "Starts local Postgres database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return start.Run(cmd.Context(), afero.NewOsFs())
+			return start.Run(cmd.Context(), fromBackup, afero.NewOsFs())
 		},
 	}
 
@@ -329,6 +331,8 @@ func init() {
 	lintFlags.Var(&lintFailOn, "fail-on", "Error level to exit with non-zero status.")
 	dbCmd.AddCommand(dbLintCmd)
 	// Build start command
+	startFlags := dbStartCmd.Flags()
+	startFlags.StringVar(&fromBackup, "from-backup", "", "Path to a logical backup file.")
 	dbCmd.AddCommand(dbStartCmd)
 	// Build test command
 	dbCmd.AddCommand(dbTestCmd)
