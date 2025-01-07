@@ -162,7 +162,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	// Start Postgres.
 	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
-		if err := start.StartDatabase(ctx, fsys, w, options...); err != nil {
+		if err := start.StartDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}
 	}

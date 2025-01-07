@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,11 +30,15 @@ var (
 	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
+	//go:embed templates/webhook.sql
+	webhookSchema string
 	//go:embed templates/_supabase.sql
 	_supabaseSchema string
+	//go:embed templates/restore.sh
+	restoreScript string
 )
 
-func Run(ctx context.Context, fsys afero.Fs) error {
+func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
@@ -43,7 +48,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	} else if !errors.Is(err, utils.ErrNotRunning) {
 		return err
 	}
-	err := StartDatabase(ctx, fsys, os.Stderr)
+	err := StartDatabase(ctx, fromBackup, fsys, os.Stderr)
 	if err != nil {
 		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -86,6 +91,7 @@ cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
 cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
 docker-entrypoint.sh postgres -D /etc/postgresql
 ` + initialSchema + `
+` + webhookSchema + `
 ` + _supabaseSchema + `
 EOF
 ` + utils.Config.Db.RootKey + `
@@ -116,7 +122,7 @@ func NewHostConfig() container.HostConfig {
 	return hostConfig
 }
 
-func StartDatabase(ctx context.Context, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+func StartDatabase(ctx context.Context, fromBackup string, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
 	config := NewContainerConfig()
 	hostConfig := NewHostConfig()
 	networkingConfig := network.NetworkingConfig{
@@ -137,11 +143,35 @@ EOF
 EOF`}
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
+	if len(fromBackup) > 0 {
+		config.Entrypoint = []string{"sh", "-c", `
+cat <<'EOF' > /etc/postgresql.schema.sql && \
+cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \
+cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
+cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
+docker-entrypoint.sh postgres -D /etc/postgresql
+` + initialSchema + `
+` + _supabaseSchema + `
+EOF
+` + restoreScript + `
+EOF
+` + utils.Config.Db.RootKey + `
+EOF
+` + utils.Config.Db.Settings.ToPostgresConfig() + `
+EOF`}
+		if !filepath.IsAbs(fromBackup) {
+			fromBackup = filepath.Join(utils.CurrentDirAbs, fromBackup)
+		}
+		hostConfig.Binds = append(hostConfig.Binds, utils.ToDockerPath(fromBackup)+":/etc/backup.sql:ro")
+	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
 	utils.NoBackupVolume = client.IsErrNotFound(err)
 	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
+	} else if len(fromBackup) > 0 {
+		utils.CmdSuggestion = fmt.Sprintf("Run %s to remove existing docker volumes.", utils.Aqua("supabase stop --no-backup"))
+		return errors.Errorf("backup volume already exists")
 	} else {
 		fmt.Fprintln(w, "Starting database from backup...")
 	}
@@ -152,7 +182,11 @@ EOF`}
 		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
-	if utils.NoBackupVolume {
+	if len(fromBackup) > 0 {
+		if err := initSchema15(ctx, utils.DbId); err != nil {
+			return err
+		}
+	} else if utils.NoBackupVolume {
 		if err := SetupLocalDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}
