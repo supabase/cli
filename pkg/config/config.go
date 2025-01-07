@@ -387,8 +387,8 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	var buf bytes.Buffer
 	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
 		return errors.Errorf("failed to initialise template config: %w", err)
-	} else if err := v.MergeConfig(&buf); err != nil {
-		return errors.Errorf("failed to merge template config: %w", err)
+	} else if err := c.loadFromReader(v, &buf); err != nil {
+		return err
 	}
 	// Load custom config
 	if ext := filepath.Ext(filename); len(ext) > 0 {
@@ -399,8 +399,12 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		return errors.Errorf("failed to read file config: %w", err)
 	}
 	defer f.Close()
-	if err := v.MergeConfig(f); err != nil {
-		return errors.Errorf("failed to merge file config: %w", err)
+	return c.loadFromReader(v, f)
+}
+
+func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
+	if err := v.MergeConfig(r); err != nil {
+		return errors.Errorf("failed to merge config: %w", err)
 	}
 	// Manually parse [functions.*] to empty struct for backwards compatibility
 	for key, value := range v.GetStringMap("functions") {
