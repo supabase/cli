@@ -16,7 +16,7 @@ diff remote[auth] local[auth]
  [external.azure]
 -enabled = false
 -client_id = ""
--secret = "hash:"
+-secret = ""
 +enabled = true
 +client_id = "test-client-1"
 +secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
@@ -30,5 +30,5 @@ diff remote[auth] local[auth]
 -enabled = true
 +enabled = false
  client_id = "test-client-2"
- secret = "env(test_secret)"
+ secret = ""
  url = ""

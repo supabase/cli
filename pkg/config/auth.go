@@ -211,7 +211,7 @@ type (
 	provider struct {
 		Enabled        bool   `toml:"enabled"`
 		ClientId       string `toml:"client_id"`
-		Secret         string `toml:"secret"`
+		Secret         Secret `toml:"secret"`
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
@@ -647,120 +647,158 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["apple"]; ok {
 		if body.ExternalAppleEnabled = &p.Enabled; *body.ExternalAppleEnabled {
 			body.ExternalAppleClientId = &p.ClientId
-			body.ExternalAppleSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalAppleSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["azure"]; ok {
 		if body.ExternalAzureEnabled = &p.Enabled; *body.ExternalAzureEnabled {
 			body.ExternalAzureClientId = &p.ClientId
-			body.ExternalAzureSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalAzureSecret = &p.Secret.Value
+			}
 			body.ExternalAzureUrl = &p.Url
 		}
 	}
 	if p, ok := e["bitbucket"]; ok {
 		if body.ExternalBitbucketEnabled = &p.Enabled; *body.ExternalBitbucketEnabled {
 			body.ExternalBitbucketClientId = &p.ClientId
-			body.ExternalBitbucketSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalBitbucketSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["discord"]; ok {
 		if body.ExternalDiscordEnabled = &p.Enabled; *body.ExternalDiscordEnabled {
 			body.ExternalDiscordClientId = &p.ClientId
-			body.ExternalDiscordSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalDiscordSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["facebook"]; ok {
 		if body.ExternalFacebookEnabled = &p.Enabled; *body.ExternalFacebookEnabled {
 			body.ExternalFacebookClientId = &p.ClientId
-			body.ExternalFacebookSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalFacebookSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["figma"]; ok {
 		if body.ExternalFigmaEnabled = &p.Enabled; *body.ExternalFigmaEnabled {
 			body.ExternalFigmaClientId = &p.ClientId
-			body.ExternalFigmaSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalFigmaSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["github"]; ok {
 		if body.ExternalGithubEnabled = &p.Enabled; *body.ExternalGithubEnabled {
 			body.ExternalGithubClientId = &p.ClientId
-			body.ExternalGithubSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalGithubSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["gitlab"]; ok {
 		if body.ExternalGitlabEnabled = &p.Enabled; *body.ExternalGitlabEnabled {
 			body.ExternalGitlabClientId = &p.ClientId
-			body.ExternalGitlabSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalGitlabSecret = &p.Secret.Value
+			}
 			body.ExternalGitlabUrl = &p.Url
 		}
 	}
 	if p, ok := e["google"]; ok {
 		if body.ExternalGoogleEnabled = &p.Enabled; *body.ExternalGoogleEnabled {
 			body.ExternalGoogleClientId = &p.ClientId
-			body.ExternalGoogleSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalGoogleSecret = &p.Secret.Value
+			}
 			body.ExternalGoogleSkipNonceCheck = &p.SkipNonceCheck
 		}
 	}
 	if p, ok := e["kakao"]; ok {
 		if body.ExternalKakaoEnabled = &p.Enabled; *body.ExternalKakaoEnabled {
 			body.ExternalKakaoClientId = &p.ClientId
-			body.ExternalKakaoSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalKakaoSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["keycloak"]; ok {
 		if body.ExternalKeycloakEnabled = &p.Enabled; *body.ExternalKeycloakEnabled {
 			body.ExternalKeycloakClientId = &p.ClientId
-			body.ExternalKeycloakSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalKeycloakSecret = &p.Secret.Value
+			}
 			body.ExternalKeycloakUrl = &p.Url
 		}
 	}
 	if p, ok := e["linkedin_oidc"]; ok {
 		if body.ExternalLinkedinOidcEnabled = &p.Enabled; *body.ExternalLinkedinOidcEnabled {
 			body.ExternalLinkedinOidcClientId = &p.ClientId
-			body.ExternalLinkedinOidcSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalLinkedinOidcSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["notion"]; ok {
 		if body.ExternalNotionEnabled = &p.Enabled; *body.ExternalNotionEnabled {
 			body.ExternalNotionClientId = &p.ClientId
-			body.ExternalNotionSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalNotionSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["slack_oidc"]; ok {
 		if body.ExternalSlackOidcEnabled = &p.Enabled; *body.ExternalSlackOidcEnabled {
 			body.ExternalSlackOidcClientId = &p.ClientId
-			body.ExternalSlackOidcSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalSlackOidcSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["spotify"]; ok {
 		if body.ExternalSpotifyEnabled = &p.Enabled; *body.ExternalSpotifyEnabled {
 			body.ExternalSpotifyClientId = &p.ClientId
-			body.ExternalSpotifySecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalSpotifySecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["twitch"]; ok {
 		if body.ExternalTwitchEnabled = &p.Enabled; *body.ExternalTwitchEnabled {
 			body.ExternalTwitchClientId = &p.ClientId
-			body.ExternalTwitchSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalTwitchSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["twitter"]; ok {
 		if body.ExternalTwitterEnabled = &p.Enabled; *body.ExternalTwitterEnabled {
 			body.ExternalTwitterClientId = &p.ClientId
-			body.ExternalTwitterSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalTwitterSecret = &p.Secret.Value
+			}
 		}
 	}
 	if p, ok := e["workos"]; ok {
 		if body.ExternalWorkosEnabled = &p.Enabled; *body.ExternalWorkosEnabled {
 			body.ExternalWorkosClientId = &p.ClientId
-			body.ExternalWorkosSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalWorkosSecret = &p.Secret.Value
+			}
 			body.ExternalWorkosUrl = &p.Url
 		}
 	}
 	if p, ok := e["zoom"]; ok {
 		if body.ExternalZoomEnabled = &p.Enabled; *body.ExternalZoomEnabled {
 			body.ExternalZoomClientId = &p.ClientId
-			body.ExternalZoomSecret = &p.Secret
+			if len(p.Secret.Value) > 0 {
+				body.ExternalZoomSecret = &p.Secret.Value
+			}
 		}
 	}
 }
@@ -776,7 +814,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if ids := cast.Val(remoteConfig.ExternalAppleAdditionalClientIds, ""); len(ids) > 0 {
 				p.ClientId += "," + ids
 			}
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalAppleSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalAppleSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalAppleEnabled, false)
 		e["apple"] = p
@@ -785,7 +825,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["azure"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalAzureClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalAzureSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalAzureSecret, "")
+			}
 			p.Url = cast.Val(remoteConfig.ExternalAzureUrl, "")
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalAzureEnabled, false)
@@ -795,7 +837,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["bitbucket"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalBitbucketClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalBitbucketSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalBitbucketSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalBitbucketEnabled, false)
 		e["bitbucket"] = p
@@ -804,7 +848,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["discord"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalDiscordClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalDiscordSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalDiscordSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalDiscordEnabled, false)
 		e["discord"] = p
@@ -813,7 +859,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["facebook"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalFacebookClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalFacebookSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalFacebookSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalFacebookEnabled, false)
 		e["facebook"] = p
@@ -822,7 +870,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["figma"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalFigmaClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalFigmaSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalFigmaSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalFigmaEnabled, false)
 		e["figma"] = p
@@ -831,7 +881,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["github"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalGithubClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGithubSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGithubSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalGithubEnabled, false)
 		e["github"] = p
@@ -840,7 +892,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["gitlab"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalGitlabClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGitlabSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGitlabSecret, "")
+			}
 			p.Url = cast.Val(remoteConfig.ExternalGitlabUrl, "")
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalGitlabEnabled, false)
@@ -853,7 +907,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if ids := cast.Val(remoteConfig.ExternalGoogleAdditionalClientIds, ""); len(ids) > 0 {
 				p.ClientId += "," + ids
 			}
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalGoogleSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGoogleSecret, "")
+			}
 			p.SkipNonceCheck = cast.Val(remoteConfig.ExternalGoogleSkipNonceCheck, false)
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalGoogleEnabled, false)
@@ -863,7 +919,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["kakao"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalKakaoClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalKakaoSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalKakaoSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalKakaoEnabled, false)
 		e["kakao"] = p
@@ -872,7 +930,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["keycloak"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalKeycloakClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalKeycloakSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalKeycloakSecret, "")
+			}
 			p.Url = cast.Val(remoteConfig.ExternalKeycloakUrl, "")
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalKeycloakEnabled, false)
@@ -882,7 +942,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["linkedin_oidc"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalLinkedinOidcClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalLinkedinOidcSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalLinkedinOidcSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalLinkedinOidcEnabled, false)
 		e["linkedin_oidc"] = p
@@ -891,7 +953,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["notion"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalNotionClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalNotionSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalNotionSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalNotionEnabled, false)
 		e["notion"] = p
@@ -900,7 +964,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["slack_oidc"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalSlackOidcClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalSlackOidcSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalSlackOidcSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalSlackOidcEnabled, false)
 		e["slack_oidc"] = p
@@ -909,7 +975,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["spotify"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalSpotifyClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalSpotifySecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalSpotifySecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalSpotifyEnabled, false)
 		e["spotify"] = p
@@ -918,7 +986,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["twitch"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalTwitchClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalTwitchSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalTwitchSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalTwitchEnabled, false)
 		e["twitch"] = p
@@ -927,7 +997,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["twitter"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalTwitterClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalTwitterSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalTwitterSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalTwitterEnabled, false)
 		e["twitter"] = p
@@ -936,7 +1008,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["workos"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalWorkosClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalWorkosSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalWorkosSecret, "")
+			}
 			p.Url = cast.Val(remoteConfig.ExternalWorkosUrl, "")
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalWorkosEnabled, false)
@@ -946,7 +1020,9 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if p, ok := e["zoom"]; ok {
 		if p.Enabled {
 			p.ClientId = cast.Val(remoteConfig.ExternalZoomClientId, "")
-			p.Secret = hashPrefix + cast.Val(remoteConfig.ExternalZoomSecret, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalZoomSecret, "")
+			}
 		}
 		p.Enabled = cast.Val(remoteConfig.ExternalZoomEnabled, false)
 		e["zoom"] = p
@@ -955,7 +1031,6 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
 	copy := a.Clone()
-	copy.HashSecrets(projectRef)
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
 	if err != nil {
@@ -967,22 +1042,4 @@ func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigRe
 		return nil, err
 	}
 	return diff.Diff("remote[auth]", remoteCompare, "local[auth]", currentValue), nil
-}
-
-const hashPrefix = "hash:"
-
-func (a *auth) HashSecrets(key string) {
-	hash := func(v string) string {
-		if len(v) == 0 {
-			return hashPrefix
-		}
-		return hashPrefix + sha256Hmac(key, v)
-	}
-	for name, provider := range a.External {
-		if provider.Enabled {
-			provider.Secret = hash(provider.Secret)
-		}
-		a.External[name] = provider
-	}
-	// TODO: support SecurityCaptchaSecret in local config
 }

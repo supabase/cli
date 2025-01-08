@@ -1010,13 +1010,13 @@ func (e external) validate() (err error) {
 		if provider.ClientId == "" {
 			return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 		}
-		if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
+		if !sliceContains([]string{"apple", "google"}, ext) && len(provider.Secret.Value) == 0 {
 			return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 		}
 		if err := assertEnvLoaded(provider.ClientId); err != nil {
 			return err
 		}
-		if err := assertEnvLoaded(provider.Secret); err != nil {
+		if err := assertEnvLoaded(provider.Secret.Value); err != nil {
 			return err
 		}
 		if err := assertEnvLoaded(provider.RedirectUri); err != nil {

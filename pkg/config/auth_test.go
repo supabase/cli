@@ -912,12 +912,18 @@ func TestExternalDiff(t *testing.T) {
 			"apple": {
 				Enabled:  true,
 				ClientId: "test-client-1,test-client-2",
-				Secret:   "test-secret",
+				Secret: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			"azure": {
 				Enabled:  true,
 				ClientId: "test-client-1",
-				Secret:   "test-secret",
+				Secret: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			"bitbucket": {},
 			"discord":   {},
@@ -928,7 +934,7 @@ func TestExternalDiff(t *testing.T) {
 			"google": {
 				Enabled:        false,
 				ClientId:       "test-client-2",
-				Secret:         "env(test_secret)",
+				Secret:         Secret{Value: "env(test_secret)"},
 				SkipNonceCheck: false,
 			},
 			// "kakao":         {},

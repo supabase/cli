@@ -45,7 +45,7 @@ func TestConfigParsing(t *testing.T) {
 		assert.NoError(t, config.Load("", fsys))
 		// Check error
 		assert.Equal(t, "hello", config.Auth.External["azure"].ClientId)
-		assert.Equal(t, "this is cool", config.Auth.External["azure"].Secret)
+		assert.Equal(t, "this is cool", config.Auth.External["azure"].Secret.Value)
 		assert.Equal(t, []string{
 			"https://127.0.0.1:3000",
 			"http://localhost:3000/auth/callback",
