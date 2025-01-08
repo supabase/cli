@@ -75,9 +75,5 @@ func createTemplateFile(fsys afero.Fs, path string, tmpl *template.Template, dat
 		return err
 	}
 	defer f.Close()
-
-	if data != nil {
-		return tmpl.Option("missingkey=error").Execute(f, data)
-	}
-	return tmpl.Execute(f, nil)
+	return tmpl.Option("missingkey=error").Execute(f, data)
 }
