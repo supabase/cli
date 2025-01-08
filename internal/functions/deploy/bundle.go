@@ -57,12 +57,16 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
+	env := []string{}
+	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
+		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
+	}
 	// Run bundle
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        []string{},
+			Env:        env,
 			Cmd:        cmd,
 			WorkingDir: utils.ToDockerPath(cwd),
 		},
