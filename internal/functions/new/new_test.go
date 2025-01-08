@@ -24,6 +24,16 @@ func TestNewCommand(t *testing.T) {
 		assert.Contains(t, string(content),
 			"curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/test-func'",
 		)
+
+		// Verify deno.jsonc exists
+		denoPath := filepath.Join(utils.FunctionsDir, "test-func", "deno.jsonc")
+		_, err = afero.ReadFile(fsys, denoPath)
+		assert.NoError(t, err, "deno.jsonc should be created")
+
+		// Verify .npmrc exists
+		npmrcPath := filepath.Join(utils.FunctionsDir, "test-func", ".npmrc")
+		_, err = afero.ReadFile(fsys, npmrcPath)
+		assert.NoError(t, err, ".npmrc should be created")
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {

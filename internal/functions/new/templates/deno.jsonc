@@ -1,0 +1,6 @@
+{
+  "imports": {
+    // Add your dependencies here
+    // See: https://supabase.com/docs/guides/functions/import-maps#using-denojson-recommended
+  }
+}
