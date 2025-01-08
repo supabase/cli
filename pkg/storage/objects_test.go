@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"mime"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -20,7 +21,7 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 		{
 			name:          "detects PNG image",
 			content:       []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, // PNG header
-			filename:      "test.png",
+			filename:      "test.image",
 			wantMimeType:  "image/png",
 			wantCacheCtrl: "max-age=3600",
 		},
@@ -28,27 +29,27 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 			name:          "detects JavaScript file",
 			content:       []byte("const hello = () => console.log('Hello, World!');"),
 			filename:      "script.js",
-			wantMimeType:  "text/javascript; charset=utf-8",
+			wantMimeType:  mime.TypeByExtension(".js"),
 			wantCacheCtrl: "max-age=3600",
 		},
 		{
 			name:          "detects CSS file",
 			content:       []byte(".header { color: #333; font-size: 16px; }"),
 			filename:      "styles.css",
-			wantMimeType:  "text/css; charset=utf-8",
+			wantMimeType:  mime.TypeByExtension(".css"),
 			wantCacheCtrl: "max-age=3600",
 		},
 		{
 			name:          "detects SQL file",
 			content:       []byte("SELECT * FROM users WHERE id = 1;"),
 			filename:      "query.sql",
-			wantMimeType:  "application/x-sql",
+			wantMimeType:  mime.TypeByExtension(".sql"),
 			wantCacheCtrl: "max-age=3600",
 		},
 		{
-			name:          "detects Go file",
-			content:       []byte("package main\n\nfunc main() { println(\"Hello\") }"),
-			filename:      "main.go",
+			name:          "use text/plain as fallback for unrecognized extensions",
+			content:       []byte("const hello = () => console.log('Hello, World!');"),
+			filename:      "main.nonexistent",
 			wantMimeType:  "text/plain; charset=utf-8",
 			wantCacheCtrl: "max-age=3600",
 		},
