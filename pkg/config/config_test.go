@@ -214,7 +214,7 @@ func TestValidateHookURI(t *testing.T) {
 			hookConfig: hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==",
+				Secrets: Secret{Value: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw=="},
 			},
 		},
 		{
@@ -222,7 +222,7 @@ func TestValidateHookURI(t *testing.T) {
 			hookConfig: hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==",
+				Secrets: Secret{Value: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw=="},
 			},
 		},
 		{
@@ -237,7 +237,7 @@ func TestValidateHookURI(t *testing.T) {
 			hookConfig: hookConfig{
 				Enabled: true,
 				URI:     "ftp://example.com",
-				Secrets: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==",
+				Secrets: Secret{Value: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw=="},
 			},
 			errorMsg: "Invalid hook config: auth.hook.invalid URI with unsupported scheme.uri should be a HTTP, HTTPS, or pg-functions URI",
 		},
@@ -246,7 +246,7 @@ func TestValidateHookURI(t *testing.T) {
 			hookConfig: hookConfig{
 				Enabled: true,
 				URI:     "http://a b.com",
-				Secrets: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==",
+				Secrets: Secret{Value: "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw=="},
 			},
 			errorMsg: "failed to parse template url: parse \"http://a b.com\": invalid character \" \" in host name",
 		},
@@ -263,7 +263,7 @@ func TestValidateHookURI(t *testing.T) {
 			hookConfig: hookConfig{
 				Enabled: true,
 				URI:     "pg-functions://functionName",
-				Secrets: "test-secret",
+				Secrets: Secret{Value: "test-secret"},
 			},
 			errorMsg: "Invalid hook config: auth.hook.valid pg-functions URI with unsupported secrets.secrets is unsupported for pg-functions URI",
 		},

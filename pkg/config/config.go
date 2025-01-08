@@ -1075,18 +1075,18 @@ func (h *hookConfig) validate(hookType string) (err error) {
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
-		if len(h.Secrets) == 0 {
+		if len(h.Secrets.Value) == 0 {
 			return errors.Errorf("Missing required field in config: auth.hook.%s.secrets", hookType)
-		} else if err := assertEnvLoaded(h.Secrets); err != nil {
+		} else if err := assertEnvLoaded(h.Secrets.Value); err != nil {
 			return err
 		}
-		for _, secret := range strings.Split(h.Secrets, "|") {
+		for _, secret := range strings.Split(h.Secrets.Value, "|") {
 			if !hookSecretPattern.MatchString(secret) {
 				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"`, hookType)
 			}
 		}
 	case "pg-functions":
-		if len(h.Secrets) > 0 {
+		if len(h.Secrets.Value) > 0 {
 			return errors.Errorf("Invalid hook config: auth.hook.%s.secrets is unsupported for pg-functions URI", hookType)
 		}
 	default:

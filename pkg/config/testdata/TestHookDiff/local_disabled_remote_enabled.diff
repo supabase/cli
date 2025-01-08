@@ -18,7 +18,7 @@ diff remote[auth] local[auth]
 -enabled = true
 +enabled = false
  uri = "https://example.com"
- secrets = "test-secret"
+ secrets = ""
  [hook.send_email]
 -enabled = true
 +enabled = false

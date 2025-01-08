@@ -590,7 +590,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+hook.URI,
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.PasswordVerificationAttempt; hook != nil && hook.Enabled {
@@ -598,7 +598,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+hook.URI,
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.CustomAccessToken; hook != nil && hook.Enabled {
@@ -606,7 +606,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+hook.URI,
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.SendSMS; hook != nil && hook.Enabled {
@@ -614,7 +614,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
 				"GOTRUE_HOOK_SEND_SMS_URI="+hook.URI,
-				"GOTRUE_HOOK_SEND_SMS_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.SendEmail; hook != nil && hook.Enabled {
@@ -622,7 +622,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
 				"GOTRUE_HOOK_SEND_EMAIL_URI="+hook.URI,
-				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets.Value,
 			)
 		}
 

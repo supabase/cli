@@ -124,22 +124,34 @@ func TestHookDiff(t *testing.T) {
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendEmail: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			MFAVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			PasswordVerificationAttempt: &hookConfig{
 				Enabled: true,
@@ -177,7 +189,7 @@ func TestHookDiff(t *testing.T) {
 			SendSMS: &hookConfig{
 				Enabled: false,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{Value: "test-secret"},
 			},
 			SendEmail: &hookConfig{
 				Enabled: false,
@@ -215,12 +227,18 @@ func TestHookDiff(t *testing.T) {
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendEmail: &hookConfig{
 				Enabled: true,

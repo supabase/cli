@@ -174,7 +174,7 @@ type (
 	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
 		URI     string `toml:"uri"`
-		Secrets string `toml:"secrets"`
+		Secrets Secret `toml:"secrets"`
 	}
 
 	sessions struct {
@@ -265,24 +265,24 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.CustomAccessToken; hook != nil {
 		if body.HookCustomAccessTokenEnabled = &hook.Enabled; hook.Enabled {
 			body.HookCustomAccessTokenUri = &hook.URI
-			if len(hook.Secrets) > 0 {
-				body.HookCustomAccessTokenSecrets = &hook.Secrets
+			if len(hook.Secrets.Value) > 0 {
+				body.HookCustomAccessTokenSecrets = &hook.Secrets.Value
 			}
 		}
 	}
 	if hook := h.SendEmail; hook != nil {
 		if body.HookSendEmailEnabled = &hook.Enabled; hook.Enabled {
 			body.HookSendEmailUri = &hook.URI
-			if len(hook.Secrets) > 0 {
-				body.HookSendEmailSecrets = &hook.Secrets
+			if len(hook.Secrets.Value) > 0 {
+				body.HookSendEmailSecrets = &hook.Secrets.Value
 			}
 		}
 	}
 	if hook := h.SendSMS; hook != nil {
 		if body.HookSendSmsEnabled = &hook.Enabled; hook.Enabled {
 			body.HookSendSmsUri = &hook.URI
-			if len(hook.Secrets) > 0 {
-				body.HookSendSmsSecrets = &hook.Secrets
+			if len(hook.Secrets.Value) > 0 {
+				body.HookSendSmsSecrets = &hook.Secrets.Value
 			}
 		}
 	}
@@ -290,16 +290,16 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.MFAVerificationAttempt; hook != nil {
 		if body.HookMfaVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
 			body.HookMfaVerificationAttemptUri = &hook.URI
-			if len(hook.Secrets) > 0 {
-				body.HookMfaVerificationAttemptSecrets = &hook.Secrets
+			if len(hook.Secrets.Value) > 0 {
+				body.HookMfaVerificationAttemptSecrets = &hook.Secrets.Value
 			}
 		}
 	}
 	if hook := h.PasswordVerificationAttempt; hook != nil {
 		if body.HookPasswordVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
 			body.HookPasswordVerificationAttemptUri = &hook.URI
-			if len(hook.Secrets) > 0 {
-				body.HookPasswordVerificationAttemptSecrets = &hook.Secrets
+			if len(hook.Secrets.Value) > 0 {
+				body.HookPasswordVerificationAttemptSecrets = &hook.Secrets.Value
 			}
 		}
 	}
@@ -310,8 +310,8 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		// Ignore disabled hooks because their envs are not loaded
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
-			if hook.Secrets != hashPrefix {
-				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
 			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
@@ -319,8 +319,8 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.SendEmail; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
-			if hook.Secrets != hashPrefix {
-				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendEmailSecrets, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookSendEmailSecrets, "")
 			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
@@ -328,8 +328,8 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.SendSMS; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
-			if hook.Secrets != hashPrefix {
-				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookSendSmsSecrets, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookSendSmsSecrets, "")
 			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
@@ -338,8 +338,8 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.MFAVerificationAttempt; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
-			if hook.Secrets != hashPrefix {
-				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
 			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
@@ -347,8 +347,8 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.PasswordVerificationAttempt; hook != nil {
 		if hook.Enabled {
 			hook.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
-			if hook.Secrets != hashPrefix {
-				hook.Secrets = hashPrefix + cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
 			}
 		}
 		hook.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
@@ -977,21 +977,6 @@ func (a *auth) HashSecrets(key string) {
 			return hashPrefix
 		}
 		return hashPrefix + sha256Hmac(key, v)
-	}
-	if a.Hook.MFAVerificationAttempt != nil && a.Hook.MFAVerificationAttempt.Enabled {
-		a.Hook.MFAVerificationAttempt.Secrets = hash(a.Hook.MFAVerificationAttempt.Secrets)
-	}
-	if a.Hook.PasswordVerificationAttempt != nil && a.Hook.PasswordVerificationAttempt.Enabled {
-		a.Hook.PasswordVerificationAttempt.Secrets = hash(a.Hook.PasswordVerificationAttempt.Secrets)
-	}
-	if a.Hook.CustomAccessToken != nil && a.Hook.CustomAccessToken.Enabled {
-		a.Hook.CustomAccessToken.Secrets = hash(a.Hook.CustomAccessToken.Secrets)
-	}
-	if a.Hook.SendSMS != nil && a.Hook.SendSMS.Enabled {
-		a.Hook.SendSMS.Secrets = hash(a.Hook.SendSMS.Secrets)
-	}
-	if a.Hook.SendEmail != nil && a.Hook.SendEmail.Enabled {
-		a.Hook.SendEmail.Secrets = hash(a.Hook.SendEmail.Secrets)
 	}
 	for name, provider := range a.External {
 		if provider.Enabled {
