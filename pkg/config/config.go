@@ -934,10 +934,10 @@ func (s *sms) validate() (err error) {
 		if len(s.Twilio.MessageServiceSid) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
 		}
-		if len(s.Twilio.AuthToken) == 0 {
+		if len(s.Twilio.AuthToken.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 		}
-		if err := assertEnvLoaded(s.Twilio.AuthToken); err != nil {
+		if err := assertEnvLoaded(s.Twilio.AuthToken.Value); err != nil {
 			return err
 		}
 	case s.TwilioVerify.Enabled:
@@ -947,30 +947,30 @@ func (s *sms) validate() (err error) {
 		if len(s.TwilioVerify.MessageServiceSid) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
 		}
-		if len(s.TwilioVerify.AuthToken) == 0 {
+		if len(s.TwilioVerify.AuthToken.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
 		}
-		if err := assertEnvLoaded(s.TwilioVerify.AuthToken); err != nil {
+		if err := assertEnvLoaded(s.TwilioVerify.AuthToken.Value); err != nil {
 			return err
 		}
 	case s.Messagebird.Enabled:
 		if len(s.Messagebird.Originator) == 0 {
 			return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 		}
-		if len(s.Messagebird.AccessKey) == 0 {
+		if len(s.Messagebird.AccessKey.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
 		}
-		if err := assertEnvLoaded(s.Messagebird.AccessKey); err != nil {
+		if err := assertEnvLoaded(s.Messagebird.AccessKey.Value); err != nil {
 			return err
 		}
 	case s.Textlocal.Enabled:
 		if len(s.Textlocal.Sender) == 0 {
 			return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 		}
-		if len(s.Textlocal.ApiKey) == 0 {
+		if len(s.Textlocal.ApiKey.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
 		}
-		if err := assertEnvLoaded(s.Textlocal.ApiKey); err != nil {
+		if err := assertEnvLoaded(s.Textlocal.ApiKey.Value); err != nil {
 			return err
 		}
 	case s.Vonage.Enabled:
@@ -980,13 +980,13 @@ func (s *sms) validate() (err error) {
 		if len(s.Vonage.ApiKey) == 0 {
 			return errors.New("Missing required field in config: auth.sms.vonage.api_key")
 		}
-		if len(s.Vonage.ApiSecret) == 0 {
+		if len(s.Vonage.ApiSecret.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
 		}
 		if err := assertEnvLoaded(s.Vonage.ApiKey); err != nil {
 			return err
 		}
-		if err := assertEnvLoaded(s.Vonage.ApiSecret); err != nil {
+		if err := assertEnvLoaded(s.Vonage.ApiSecret.Value); err != nil {
 			return err
 		}
 	case s.EnableSignup:

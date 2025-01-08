@@ -633,7 +633,10 @@ func TestSmsDiff(t *testing.T) {
 				Enabled:           true,
 				AccountSid:        "test-account",
 				MessageServiceSid: "test-service",
-				AuthToken:         "test-token",
+				AuthToken: Secret{
+					Value:  "test-token",
+					SHA256: "c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88",
+				},
 			},
 		}
 		// Run test
@@ -702,7 +705,10 @@ func TestSmsDiff(t *testing.T) {
 			Messagebird: messagebirdConfig{
 				Enabled:    true,
 				Originator: "test-originator",
-				AccessKey:  "test-access-key",
+				AccessKey: Secret{
+					Value:  "test-access-key",
+					SHA256: "ab60d03fc809fb02dae838582f3ddc13d1d6cb32ffba77c4b969dd3caa496f13",
+				},
 			},
 		}
 		// Run test

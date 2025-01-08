@@ -19,6 +19,9 @@ type Secret struct {
 const HASHED_PREFIX = "hash:"
 
 func (s Secret) MarshalText() (text []byte, err error) {
+	if len(s.SHA256) == 0 {
+		return []byte{}, nil
+	}
 	return []byte(HASHED_PREFIX + s.SHA256), nil
 }
 

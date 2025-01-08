@@ -186,26 +186,26 @@ type (
 		Enabled           bool   `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`
 		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         string `toml:"auth_token" mapstructure:"auth_token"`
+		AuthToken         Secret `toml:"auth_token" mapstructure:"auth_token"`
 	}
 
 	messagebirdConfig struct {
 		Enabled    bool   `toml:"enabled"`
 		Originator string `toml:"originator"`
-		AccessKey  string `toml:"access_key" mapstructure:"access_key"`
+		AccessKey  Secret `toml:"access_key" mapstructure:"access_key"`
 	}
 
 	textlocalConfig struct {
 		Enabled bool   `toml:"enabled"`
 		Sender  string `toml:"sender"`
-		ApiKey  string `toml:"api_key" mapstructure:"api_key"`
+		ApiKey  Secret `toml:"api_key" mapstructure:"api_key"`
 	}
 
 	vonageConfig struct {
 		Enabled   bool   `toml:"enabled"`
 		From      string `toml:"from"`
 		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret string `toml:"api_secret" mapstructure:"api_secret"`
+		ApiSecret Secret `toml:"api_secret" mapstructure:"api_secret"`
 	}
 
 	provider struct {
@@ -556,34 +556,34 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	switch {
 	case s.Twilio.Enabled:
 		body.SmsProvider = cast.Ptr("twilio")
-		if len(s.Twilio.AuthToken) > 0 {
-			body.SmsTwilioAuthToken = &s.Twilio.AuthToken
+		if len(s.Twilio.AuthToken.Value) > 0 {
+			body.SmsTwilioAuthToken = &s.Twilio.AuthToken.Value
 		}
 		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
 		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
 	case s.TwilioVerify.Enabled:
 		body.SmsProvider = cast.Ptr("twilio_verify")
-		if len(s.TwilioVerify.AuthToken) > 0 {
-			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken
+		if len(s.TwilioVerify.AuthToken.Value) > 0 {
+			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken.Value
 		}
 		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
 		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
 	case s.Messagebird.Enabled:
 		body.SmsProvider = cast.Ptr("messagebird")
-		if len(s.Messagebird.AccessKey) > 0 {
-			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey
+		if len(s.Messagebird.AccessKey.Value) > 0 {
+			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey.Value
 		}
 		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
 	case s.Textlocal.Enabled:
 		body.SmsProvider = cast.Ptr("textlocal")
-		if len(s.Textlocal.ApiKey) > 0 {
-			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey
+		if len(s.Textlocal.ApiKey.Value) > 0 {
+			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey.Value
 		}
 		body.SmsTextlocalSender = &s.Textlocal.Sender
 	case s.Vonage.Enabled:
 		body.SmsProvider = cast.Ptr("vonage")
-		if len(s.Vonage.ApiSecret) > 0 {
-			body.SmsVonageApiSecret = &s.Vonage.ApiSecret
+		if len(s.Vonage.ApiSecret.Value) > 0 {
+			body.SmsVonageApiSecret = &s.Vonage.ApiSecret.Value
 		}
 		body.SmsVonageApiKey = &s.Vonage.ApiKey
 		body.SmsVonageFrom = &s.Vonage.From
@@ -599,30 +599,30 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// We are only interested in the provider that's enabled locally
 	switch {
 	case s.Twilio.Enabled:
-		if s.Twilio.AuthToken != hashPrefix {
-			s.Twilio.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioAuthToken, "")
+		if len(s.Twilio.AuthToken.SHA256) > 0 {
+			s.Twilio.AuthToken.SHA256 = cast.Val(remoteConfig.SmsTwilioAuthToken, "")
 		}
 		s.Twilio.AccountSid = cast.Val(remoteConfig.SmsTwilioAccountSid, "")
 		s.Twilio.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioMessageServiceSid, "")
 	case s.TwilioVerify.Enabled:
-		if s.TwilioVerify.AuthToken != hashPrefix {
-			s.TwilioVerify.AuthToken = hashPrefix + cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
+		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
+			s.TwilioVerify.AuthToken.SHA256 = cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
 		}
 		s.TwilioVerify.AccountSid = cast.Val(remoteConfig.SmsTwilioVerifyAccountSid, "")
 		s.TwilioVerify.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioVerifyMessageServiceSid, "")
 	case s.Messagebird.Enabled:
-		if s.Messagebird.AccessKey != hashPrefix {
-			s.Messagebird.AccessKey = hashPrefix + cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
+		if len(s.Messagebird.AccessKey.SHA256) > 0 {
+			s.Messagebird.AccessKey.SHA256 = cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
 		}
 		s.Messagebird.Originator = cast.Val(remoteConfig.SmsMessagebirdOriginator, "")
 	case s.Textlocal.Enabled:
-		if s.Textlocal.ApiKey != hashPrefix {
-			s.Textlocal.ApiKey = hashPrefix + cast.Val(remoteConfig.SmsTextlocalApiKey, "")
+		if len(s.Textlocal.ApiKey.SHA256) > 0 {
+			s.Textlocal.ApiKey.SHA256 = cast.Val(remoteConfig.SmsTextlocalApiKey, "")
 		}
 		s.Textlocal.Sender = cast.Val(remoteConfig.SmsTextlocalSender, "")
 	case s.Vonage.Enabled:
-		if s.Vonage.ApiSecret != hashPrefix {
-			s.Vonage.ApiSecret = hashPrefix + cast.Val(remoteConfig.SmsVonageApiSecret, "")
+		if len(s.Vonage.ApiSecret.SHA256) > 0 {
+			s.Vonage.ApiSecret.SHA256 = cast.Val(remoteConfig.SmsVonageApiSecret, "")
 		}
 		s.Vonage.ApiKey = cast.Val(remoteConfig.SmsVonageApiKey, "")
 		s.Vonage.From = cast.Val(remoteConfig.SmsVonageFrom, "")
@@ -977,19 +977,6 @@ func (a *auth) HashSecrets(key string) {
 			return hashPrefix
 		}
 		return hashPrefix + sha256Hmac(key, v)
-	}
-	// Only hash secrets for locally enabled providers because other envs won't be loaded
-	switch {
-	case a.Sms.Twilio.Enabled:
-		a.Sms.Twilio.AuthToken = hash(a.Sms.Twilio.AuthToken)
-	case a.Sms.TwilioVerify.Enabled:
-		a.Sms.TwilioVerify.AuthToken = hash(a.Sms.TwilioVerify.AuthToken)
-	case a.Sms.Messagebird.Enabled:
-		a.Sms.Messagebird.AccessKey = hash(a.Sms.Messagebird.AccessKey)
-	case a.Sms.Textlocal.Enabled:
-		a.Sms.Textlocal.ApiKey = hash(a.Sms.Textlocal.ApiKey)
-	case a.Sms.Vonage.Enabled:
-		a.Sms.Vonage.ApiSecret = hash(a.Sms.Vonage.ApiSecret)
 	}
 	if a.Hook.MFAVerificationAttempt != nil && a.Hook.MFAVerificationAttempt.Enabled {
 		a.Hook.MFAVerificationAttempt.Secrets = hash(a.Hook.MFAVerificationAttempt.Secrets)
