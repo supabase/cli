@@ -96,7 +96,7 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 					return errors.Errorf("failed to open file: %w", err)
 				}
 				defer f.Close()
-				fo, err := ParseFileOptions(f)
+				fo, err := ParseFileOptions(f, filePath)
 				if err != nil {
 					return err
 				}
