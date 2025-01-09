@@ -91,17 +91,9 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 			}
 			fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
 			job := func() error {
-				f, err := fsys.Open(filePath)
-				if err != nil {
-					return errors.Errorf("failed to open file: %w", err)
-				}
-				defer f.Close()
-				fo, err := ParseFileOptions(f)
-				if err != nil {
-					return err
-				}
-				fo.Overwrite = true
-				return s.UploadObjectStream(ctx, dstPath, f, *fo)
+				return s.UploadObject(ctx, dstPath, filePath, fsys, func(fo *FileOptions) {
+					fo.Overwrite = true
+				})
 			}
 			return jq.Put(job)
 		}
