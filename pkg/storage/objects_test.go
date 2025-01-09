@@ -1,13 +1,21 @@
 package storage
 
 import (
+	"context"
 	"mime"
+	"net/http"
 	"testing"
+	fs "testing/fstest"
 
-	"github.com/spf13/afero"
+	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/pkg/fetcher"
 )
+
+var mockApi = StorageAPI{Fetcher: fetcher.NewFetcher(
+	"http://127.0.0.1",
+)}
 
 func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 	tests := []struct {
@@ -56,7 +64,7 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 		{
 			name:          "respects custom content type",
 			content:       []byte("const hello = () => console.log('Hello, World!');"),
-			filename:      "script.js",
+			filename:      "custom.js",
 			wantMimeType:  "application/custom",
 			wantCacheCtrl: "max-age=3600",
 			opts:          []func(*FileOptions){func(fo *FileOptions) { fo.ContentType = "application/custom" }},
@@ -66,20 +74,19 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a temporary file with test content
-			fs := afero.NewMemMapFs()
-			require.NoError(t, afero.WriteFile(fs, tt.filename, tt.content, 0644))
-
-			f, err := fs.Open(tt.filename)
-			require.NoError(t, err)
-			defer f.Close()
-
+			fsys := fs.MapFS{tt.filename: &fs.MapFile{Data: tt.content}}
+			// Setup mock api
+			defer gock.OffAll()
+			gock.New("http://127.0.0.1").
+				Post("/storage/v1/object/"+tt.filename).
+				MatchHeader("Content-Type", tt.wantMimeType).
+				MatchHeader("Cache-Control", tt.wantCacheCtrl).
+				Reply(http.StatusOK)
 			// Parse options
-			fo, err := ParseFileOptions(f, tt.filename, tt.opts...)
-			require.NoError(t, err)
-
+			err := mockApi.UploadObject(context.Background(), tt.filename, tt.filename, fsys, tt.opts...)
 			// Assert results
-			assert.Equal(t, tt.wantMimeType, fo.ContentType)
-			assert.Equal(t, tt.wantCacheCtrl, fo.CacheControl)
+			assert.NoError(t, err)
+			assert.Empty(t, apitest.ListUnmatchedRequests())
 		})
 	}
 }
