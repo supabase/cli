@@ -45,7 +45,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 			}
 		}
 		var body bytes.Buffer
-		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, &body); err != nil {
+		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, function.StaticFiles, &body); err != nil {
 			return err
 		}
 		// Update if function already exists

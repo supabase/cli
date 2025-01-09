@@ -25,7 +25,7 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, output io.Writer) error {
+func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error {
 	// Create temp directory to store generated eszip
 	slug := filepath.Base(filepath.Dir(entrypoint))
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
@@ -54,9 +54,13 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 	if len(importMap) > 0 {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
+	for _, staticFile := range staticFiles {
+		cmd = append(cmd, "--static", utils.ToDockerPath(staticFile))
+	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
+
 	env := []string{}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
 		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)

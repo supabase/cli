@@ -230,6 +230,13 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
 		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
 		functionsConfig[slug] = fc
+		if len(fc.StaticFiles) != 0 {
+			s := []string{}
+			for _, val := range fc.StaticFiles {
+				s = append(s, utils.ToDockerPath(val))
+			}
+			fc.StaticFiles = s
+		}
 	}
 	functionsConfigBytes, err := json.Marshal(functionsConfig)
 	if err != nil {

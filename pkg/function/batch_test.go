@@ -17,7 +17,7 @@ import (
 type MockBundler struct {
 }
 
-func (b *MockBundler) Bundle(ctx context.Context, entrypoint string, importMap string, output io.Writer) error {
+func (b *MockBundler) Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error {
 	return nil
 }
 
