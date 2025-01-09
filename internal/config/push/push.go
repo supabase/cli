@@ -11,15 +11,12 @@ import (
 )
 
 func Run(ctx context.Context, ref string, fsys afero.Fs) error {
+	utils.Config.ProjectId = ref
 	if err := utils.LoadConfigFS(fsys); err != nil {
 		return err
 	}
 	client := config.NewConfigUpdater(*utils.GetSupabase())
-	remote, err := utils.Config.GetRemoteByProjectRef(ref)
-	if err != nil {
-		// Use base config when no remote is declared
-		remote.ProjectId = ref
-	}
+	remote, _ := utils.Config.GetRemoteByProjectRef(ref)
 	fmt.Fprintln(os.Stderr, "Pushing config to project:", remote.ProjectId)
 	console := utils.NewConsole()
 	keep := func(name string) bool {

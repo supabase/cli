@@ -31,6 +31,7 @@ var (
 				return err
 			}
 			fsys := afero.NewOsFs()
+			utils.Config.ProjectId = flags.ProjectRef
 			if err := utils.LoadConfigFS(fsys); err != nil {
 				return err
 			}

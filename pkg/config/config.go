@@ -428,7 +428,6 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 		mapstructure.StringToIPHookFunc(),
 		mapstructure.StringToSliceHookFunc(","),
 		mapstructure.TextUnmarshallerHookFunc(),
-		// TODO: assign the linked project id
 		DecryptSecretHookFunc(c.ProjectId),
 	)
 	return mapstructure.ComposeDecodeHookFunc(fs...)

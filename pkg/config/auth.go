@@ -1029,7 +1029,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (a *auth) DiffWithRemote(projectRef string, remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
 	copy := a.Clone()
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
