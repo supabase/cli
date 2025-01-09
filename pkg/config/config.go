@@ -799,8 +799,8 @@ func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{},
 	}
 	value := data.(string)
 	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if v, exists := os.LookupEnv(matches[1]); exists {
-			value = v
+		if env, exists := os.LookupEnv(matches[1]); exists {
+			value = env
 		}
 	}
 	return value, nil
