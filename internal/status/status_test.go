@@ -59,7 +59,7 @@ func TestStatusCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "toml: line 0: unexpected EOF; expected key separator '='")
+		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
 
 	t.Run("throws error on missing docker", func(t *testing.T) {

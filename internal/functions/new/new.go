@@ -15,8 +15,13 @@ import (
 
 var (
 	//go:embed templates/index.ts
-	indexEmbed    string
-	indexTemplate = template.Must(template.New("indexl").Parse(indexEmbed))
+	indexEmbed string
+	//go:embed templates/deno.jsonc
+	denoEmbed string
+	//go:embed templates/.npmrc
+	npmrcEmbed string
+
+	indexTemplate = template.Must(template.New("index").Parse(indexEmbed))
 )
 
 type indexConfig struct {
@@ -38,25 +43,37 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 			return err
 		}
-		path := filepath.Join(funcDir, "index.ts")
-		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-		if err != nil {
-			return errors.Errorf("failed to create function entrypoint: %w", err)
-		}
-		defer f.Close()
-		// Templatize index.ts by config.toml if available
+
+		// Load config if available
 		if err := utils.LoadConfigFS(fsys); err != nil {
 			utils.CmdSuggestion = ""
 		}
-		config := indexConfig{
+
+		if err := createTemplateFile(fsys, filepath.Join(funcDir, "index.ts"), indexTemplate, indexConfig{
 			URL:   utils.GetApiUrl("/functions/v1/" + slug),
 			Token: utils.Config.Auth.AnonKey,
+		}); err != nil {
+			return errors.Errorf("failed to create function entrypoint: %w", err)
 		}
-		if err := indexTemplate.Option("missingkey=error").Execute(f, config); err != nil {
-			return errors.Errorf("failed to initialise function entrypoint: %w", err)
+
+		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "deno.jsonc"), []byte(denoEmbed), 0644); err != nil {
+			return errors.Errorf("failed to create deno.jsonc config: %w", err)
+		}
+
+		if err := afero.WriteFile(fsys, filepath.Join(funcDir, ".npmrc"), []byte(npmrcEmbed), 0644); err != nil {
+			return errors.Errorf("failed to create .npmrc config: %w", err)
 		}
 	}
 
 	fmt.Println("Created new Function at " + utils.Bold(funcDir))
 	return nil
+}
+
+func createTemplateFile(fsys afero.Fs, path string, tmpl *template.Template, data interface{}) error {
+	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return tmpl.Option("missingkey=error").Execute(f, data)
 }
