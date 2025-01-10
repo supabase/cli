@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -88,7 +90,7 @@ func ParseFileOptions(f fs.File, opts ...func(*FileOptions)) (*FileOptions, erro
 	return fo, nil
 }
 
-func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys afero.Fs, opts ...func(*FileOptions)) error {
+func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath string, fsys fs.FS, opts ...func(*FileOptions)) error {
 	f, err := fsys.Open(localPath)
 	if err != nil {
 		return errors.Errorf("failed to open file: %w", err)
@@ -97,6 +99,13 @@ func (s *StorageAPI) UploadObject(ctx context.Context, remotePath, localPath str
 	fo, err := ParseFileOptions(f, opts...)
 	if err != nil {
 		return err
+	}
+	// For text/plain content types, we try to determine a more specific type
+	// based on the file extension, as the initial detection might be too generic
+	if strings.Contains(fo.ContentType, "text/plain") {
+		if extensionType := mime.TypeByExtension(filepath.Ext(localPath)); extensionType != "" {
+			fo.ContentType = extensionType
+		}
 	}
 	return s.UploadObjectStream(ctx, remotePath, f, *fo)
 }
