@@ -265,7 +265,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.CustomAccessToken; hook != nil {
 		if body.HookCustomAccessTokenEnabled = &hook.Enabled; hook.Enabled {
 			body.HookCustomAccessTokenUri = &hook.URI
-			if len(hook.Secrets.Value) > 0 {
+			if len(hook.Secrets.SHA256) > 0 {
 				body.HookCustomAccessTokenSecrets = &hook.Secrets.Value
 			}
 		}
@@ -273,7 +273,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.SendEmail; hook != nil {
 		if body.HookSendEmailEnabled = &hook.Enabled; hook.Enabled {
 			body.HookSendEmailUri = &hook.URI
-			if len(hook.Secrets.Value) > 0 {
+			if len(hook.Secrets.SHA256) > 0 {
 				body.HookSendEmailSecrets = &hook.Secrets.Value
 			}
 		}
@@ -281,7 +281,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.SendSMS; hook != nil {
 		if body.HookSendSmsEnabled = &hook.Enabled; hook.Enabled {
 			body.HookSendSmsUri = &hook.URI
-			if len(hook.Secrets.Value) > 0 {
+			if len(hook.Secrets.SHA256) > 0 {
 				body.HookSendSmsSecrets = &hook.Secrets.Value
 			}
 		}
@@ -290,7 +290,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.MFAVerificationAttempt; hook != nil {
 		if body.HookMfaVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
 			body.HookMfaVerificationAttemptUri = &hook.URI
-			if len(hook.Secrets.Value) > 0 {
+			if len(hook.Secrets.SHA256) > 0 {
 				body.HookMfaVerificationAttemptSecrets = &hook.Secrets.Value
 			}
 		}
@@ -298,7 +298,7 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if hook := h.PasswordVerificationAttempt; hook != nil {
 		if body.HookPasswordVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
 			body.HookPasswordVerificationAttemptUri = &hook.URI
-			if len(hook.Secrets.Value) > 0 {
+			if len(hook.Secrets.SHA256) > 0 {
 				body.HookPasswordVerificationAttemptSecrets = &hook.Secrets.Value
 			}
 		}
@@ -512,7 +512,7 @@ func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SmtpHost = &s.Host
 	body.SmtpPort = cast.Ptr(strconv.Itoa(int(s.Port)))
 	body.SmtpUser = &s.User
-	if len(s.Pass.Value) > 0 {
+	if len(s.Pass.SHA256) > 0 {
 		body.SmtpPass = &s.Pass.Value
 	}
 	body.SmtpAdminEmail = &s.AdminEmail
@@ -556,33 +556,33 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	switch {
 	case s.Twilio.Enabled:
 		body.SmsProvider = cast.Ptr("twilio")
-		if len(s.Twilio.AuthToken.Value) > 0 {
+		if len(s.Twilio.AuthToken.SHA256) > 0 {
 			body.SmsTwilioAuthToken = &s.Twilio.AuthToken.Value
 		}
 		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
 		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
 	case s.TwilioVerify.Enabled:
 		body.SmsProvider = cast.Ptr("twilio_verify")
-		if len(s.TwilioVerify.AuthToken.Value) > 0 {
+		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
 			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken.Value
 		}
 		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
 		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
 	case s.Messagebird.Enabled:
 		body.SmsProvider = cast.Ptr("messagebird")
-		if len(s.Messagebird.AccessKey.Value) > 0 {
+		if len(s.Messagebird.AccessKey.SHA256) > 0 {
 			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey.Value
 		}
 		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
 	case s.Textlocal.Enabled:
 		body.SmsProvider = cast.Ptr("textlocal")
-		if len(s.Textlocal.ApiKey.Value) > 0 {
+		if len(s.Textlocal.ApiKey.SHA256) > 0 {
 			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey.Value
 		}
 		body.SmsTextlocalSender = &s.Textlocal.Sender
 	case s.Vonage.Enabled:
 		body.SmsProvider = cast.Ptr("vonage")
-		if len(s.Vonage.ApiSecret.Value) > 0 {
+		if len(s.Vonage.ApiSecret.SHA256) > 0 {
 			body.SmsVonageApiSecret = &s.Vonage.ApiSecret.Value
 		}
 		body.SmsVonageApiKey = &s.Vonage.ApiKey
@@ -647,7 +647,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["apple"]; ok {
 		if body.ExternalAppleEnabled = &p.Enabled; *body.ExternalAppleEnabled {
 			body.ExternalAppleClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalAppleSecret = &p.Secret.Value
 			}
 		}
@@ -655,7 +655,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["azure"]; ok {
 		if body.ExternalAzureEnabled = &p.Enabled; *body.ExternalAzureEnabled {
 			body.ExternalAzureClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalAzureSecret = &p.Secret.Value
 			}
 			body.ExternalAzureUrl = &p.Url
@@ -664,7 +664,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["bitbucket"]; ok {
 		if body.ExternalBitbucketEnabled = &p.Enabled; *body.ExternalBitbucketEnabled {
 			body.ExternalBitbucketClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalBitbucketSecret = &p.Secret.Value
 			}
 		}
@@ -672,7 +672,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["discord"]; ok {
 		if body.ExternalDiscordEnabled = &p.Enabled; *body.ExternalDiscordEnabled {
 			body.ExternalDiscordClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalDiscordSecret = &p.Secret.Value
 			}
 		}
@@ -680,7 +680,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["facebook"]; ok {
 		if body.ExternalFacebookEnabled = &p.Enabled; *body.ExternalFacebookEnabled {
 			body.ExternalFacebookClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalFacebookSecret = &p.Secret.Value
 			}
 		}
@@ -688,7 +688,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["figma"]; ok {
 		if body.ExternalFigmaEnabled = &p.Enabled; *body.ExternalFigmaEnabled {
 			body.ExternalFigmaClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalFigmaSecret = &p.Secret.Value
 			}
 		}
@@ -696,7 +696,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["github"]; ok {
 		if body.ExternalGithubEnabled = &p.Enabled; *body.ExternalGithubEnabled {
 			body.ExternalGithubClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalGithubSecret = &p.Secret.Value
 			}
 		}
@@ -704,7 +704,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["gitlab"]; ok {
 		if body.ExternalGitlabEnabled = &p.Enabled; *body.ExternalGitlabEnabled {
 			body.ExternalGitlabClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalGitlabSecret = &p.Secret.Value
 			}
 			body.ExternalGitlabUrl = &p.Url
@@ -713,7 +713,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["google"]; ok {
 		if body.ExternalGoogleEnabled = &p.Enabled; *body.ExternalGoogleEnabled {
 			body.ExternalGoogleClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalGoogleSecret = &p.Secret.Value
 			}
 			body.ExternalGoogleSkipNonceCheck = &p.SkipNonceCheck
@@ -722,7 +722,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["kakao"]; ok {
 		if body.ExternalKakaoEnabled = &p.Enabled; *body.ExternalKakaoEnabled {
 			body.ExternalKakaoClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalKakaoSecret = &p.Secret.Value
 			}
 		}
@@ -730,7 +730,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["keycloak"]; ok {
 		if body.ExternalKeycloakEnabled = &p.Enabled; *body.ExternalKeycloakEnabled {
 			body.ExternalKeycloakClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalKeycloakSecret = &p.Secret.Value
 			}
 			body.ExternalKeycloakUrl = &p.Url
@@ -739,7 +739,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["linkedin_oidc"]; ok {
 		if body.ExternalLinkedinOidcEnabled = &p.Enabled; *body.ExternalLinkedinOidcEnabled {
 			body.ExternalLinkedinOidcClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalLinkedinOidcSecret = &p.Secret.Value
 			}
 		}
@@ -747,7 +747,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["notion"]; ok {
 		if body.ExternalNotionEnabled = &p.Enabled; *body.ExternalNotionEnabled {
 			body.ExternalNotionClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalNotionSecret = &p.Secret.Value
 			}
 		}
@@ -755,7 +755,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["slack_oidc"]; ok {
 		if body.ExternalSlackOidcEnabled = &p.Enabled; *body.ExternalSlackOidcEnabled {
 			body.ExternalSlackOidcClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalSlackOidcSecret = &p.Secret.Value
 			}
 		}
@@ -763,7 +763,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["spotify"]; ok {
 		if body.ExternalSpotifyEnabled = &p.Enabled; *body.ExternalSpotifyEnabled {
 			body.ExternalSpotifyClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalSpotifySecret = &p.Secret.Value
 			}
 		}
@@ -771,7 +771,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["twitch"]; ok {
 		if body.ExternalTwitchEnabled = &p.Enabled; *body.ExternalTwitchEnabled {
 			body.ExternalTwitchClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalTwitchSecret = &p.Secret.Value
 			}
 		}
@@ -779,7 +779,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["twitter"]; ok {
 		if body.ExternalTwitterEnabled = &p.Enabled; *body.ExternalTwitterEnabled {
 			body.ExternalTwitterClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalTwitterSecret = &p.Secret.Value
 			}
 		}
@@ -787,7 +787,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["workos"]; ok {
 		if body.ExternalWorkosEnabled = &p.Enabled; *body.ExternalWorkosEnabled {
 			body.ExternalWorkosClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalWorkosSecret = &p.Secret.Value
 			}
 			body.ExternalWorkosUrl = &p.Url
@@ -796,7 +796,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if p, ok := e["zoom"]; ok {
 		if body.ExternalZoomEnabled = &p.Enabled; *body.ExternalZoomEnabled {
 			body.ExternalZoomClientId = &p.ClientId
-			if len(p.Secret.Value) > 0 {
+			if len(p.Secret.SHA256) > 0 {
 				body.ExternalZoomSecret = &p.Secret.Value
 			}
 		}
