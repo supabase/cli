@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -32,7 +33,7 @@ type DiffFunc func(context.Context, string, string, []string) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	if utils.IsLocalDatabase(config) {

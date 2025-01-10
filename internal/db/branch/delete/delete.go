@@ -12,10 +12,11 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func Run(branch string, fsys afero.Fs) error {
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {

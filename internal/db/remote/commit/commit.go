@@ -15,12 +15,13 @@ import (
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 

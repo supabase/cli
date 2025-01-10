@@ -27,7 +27,6 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -250,15 +249,11 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
-	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
-	if !remote.Db.Seed.Enabled {
-		fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", remote.ProjectId)
-		return nil
-	} else if !utils.Config.Db.Seed.Enabled {
+	if !utils.Config.Db.Seed.Enabled {
 		// Skip because --no-seed flag is set
 		return nil
 	}
-	seeds, err := migration.GetPendingSeeds(ctx, remote.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
+	seeds, err := migration.GetPendingSeeds(ctx, utils.Config.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
 	}

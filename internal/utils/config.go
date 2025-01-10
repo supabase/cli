@@ -2,7 +2,6 @@ package utils
 
 import (
 	_ "embed"
-	"fmt"
 	"io/fs"
 	"net"
 	"net/url"
@@ -100,17 +99,6 @@ func GetDockerIds() []string {
 }
 
 var Config = config.NewConfig(config.WithHostname(GetHostname()))
-
-func LoadConfigFS(fsys afero.Fs) error {
-	if err := Config.Load("", NewRootFS(fsys)); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			CmdSuggestion = fmt.Sprintf("Have you set up the project with %s?", Aqua("supabase init"))
-		}
-		return err
-	}
-	UpdateDockerIds()
-	return nil
-}
 
 // Adapts fs.FS to support absolute paths
 type rootFS struct {

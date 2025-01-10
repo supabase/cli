@@ -251,6 +251,9 @@ s3_access_key = ""
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = ""
 
+[remotes.production]
+project_id = "vpefcjyosynxeiebfscx"
+
 [remotes.production.auth]
 site_url = "http://feature-auth-branch.com/"
 enable_signup = false
@@ -260,7 +263,7 @@ enabled = false
 client_id = "nope"
 
 [remotes.staging]
-project_id = "staging-project"
+project_id = "bvikqvbczudanvggcord"
 
 [remotes.staging.db.seed]
 enabled = true

@@ -26,9 +26,8 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 		}
 		return shouldOverwrite
 	}
-	remote, _ := utils.Config.GetRemoteByProjectRef(projectRef)
-	if err := api.UpsertBuckets(ctx, remote.Storage.Buckets, filter); err != nil {
+	if err := api.UpsertBuckets(ctx, utils.Config.Storage.Buckets, filter); err != nil {
 		return err
 	}
-	return api.UpsertObjects(ctx, remote.Storage.Buckets, utils.NewRootFS(fsys))
+	return api.UpsertObjects(ctx, utils.Config.Storage.Buckets, utils.NewRootFS(fsys))
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -45,7 +46,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		}
 
 		// Load config if available
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := flags.LoadConfig(fsys); err != nil {
 			utils.CmdSuggestion = ""
 		}
 

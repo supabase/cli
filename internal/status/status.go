@@ -19,6 +19,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -67,7 +68,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 
 func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
 	// Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {

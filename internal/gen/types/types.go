@@ -31,8 +31,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
-		remote, _ := utils.Config.GetRemoteByProjectRef(projectId)
-		schemas = utils.RemoveDuplicates(append([]string{"public"}, remote.Api.Schemas...))
+		schemas = utils.RemoveDuplicates(append([]string{"public"}, utils.Config.Api.Schemas...))
 	}
 	included := strings.Join(schemas, ",")
 

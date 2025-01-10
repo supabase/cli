@@ -37,7 +37,7 @@ import (
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
 	// Sanity checks.
 	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := flags.LoadConfig(fsys); err != nil {
 			return err
 		}
 		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
