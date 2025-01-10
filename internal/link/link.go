@@ -26,7 +26,6 @@ import (
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	copy := utils.Config.Clone()
-	copy.Auth.HashSecrets(projectRef)
 	original, err := cliConfig.ToTomlBytes(copy)
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)

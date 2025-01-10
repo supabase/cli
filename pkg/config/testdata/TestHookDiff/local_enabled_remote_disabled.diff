@@ -8,11 +8,11 @@ diff remote[auth] local[auth]
 -enabled = false
 +enabled = true
  uri = "pg-functions://postgres/public/verifyMFA"
- secrets = "hash:"
+ secrets = ""
  [hook.custom_access_token]
 -enabled = false
 -uri = "pg-functions://postgres/public/customToken"
--secrets = "hash:"
+-secrets = ""
 +enabled = true
 +uri = "http://example.com"
 +secrets = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
@@ -26,6 +26,6 @@ diff remote[auth] local[auth]
 -uri = "https://example.com"
 +enabled = true
 +uri = "pg-functions://postgres/public/sendEmail"
- secrets = "hash:"
+ secrets = ""
  
  [mfa]

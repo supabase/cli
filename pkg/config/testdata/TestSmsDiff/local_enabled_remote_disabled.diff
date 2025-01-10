@@ -25,7 +25,7 @@ diff remote[auth] local[auth]
  [sms.messagebird]
 -enabled = false
 -originator = ""
--access_key = "hash:"
+-access_key = ""
 +enabled = true
 +originator = "test-originator"
 +access_key = "hash:ab60d03fc809fb02dae838582f3ddc13d1d6cb32ffba77c4b969dd3caa496f13"

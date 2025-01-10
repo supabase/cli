@@ -507,7 +507,7 @@ EOF
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
 				fmt.Sprintf("GOTRUE_SMTP_USER=%s", utils.Config.Auth.Email.Smtp.User),
-				fmt.Sprintf("GOTRUE_SMTP_PASS=%s", utils.Config.Auth.Email.Smtp.Pass),
+				fmt.Sprintf("GOTRUE_SMTP_PASS=%s", utils.Config.Auth.Email.Smtp.Pass.Value),
 				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Auth.Email.Smtp.AdminEmail),
 				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
 			)
@@ -550,7 +550,7 @@ EOF
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio",
 				"GOTRUE_SMS_TWILIO_ACCOUNT_SID="+utils.Config.Auth.Sms.Twilio.AccountSid,
-				"GOTRUE_SMS_TWILIO_AUTH_TOKEN="+utils.Config.Auth.Sms.Twilio.AuthToken,
+				"GOTRUE_SMS_TWILIO_AUTH_TOKEN="+utils.Config.Auth.Sms.Twilio.AuthToken.Value,
 				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.Twilio.MessageServiceSid,
 			)
 		case utils.Config.Auth.Sms.TwilioVerify.Enabled:
@@ -558,21 +558,21 @@ EOF
 				env,
 				"GOTRUE_SMS_PROVIDER=twilio_verify",
 				"GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID="+utils.Config.Auth.Sms.TwilioVerify.AccountSid,
-				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN="+utils.Config.Auth.Sms.TwilioVerify.AuthToken,
+				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN="+utils.Config.Auth.Sms.TwilioVerify.AuthToken.Value,
 				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID="+utils.Config.Auth.Sms.TwilioVerify.MessageServiceSid,
 			)
 		case utils.Config.Auth.Sms.Messagebird.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=messagebird",
-				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY="+utils.Config.Auth.Sms.Messagebird.AccessKey,
+				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY="+utils.Config.Auth.Sms.Messagebird.AccessKey.Value,
 				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR="+utils.Config.Auth.Sms.Messagebird.Originator,
 			)
 		case utils.Config.Auth.Sms.Textlocal.Enabled:
 			env = append(
 				env,
 				"GOTRUE_SMS_PROVIDER=textlocal",
-				"GOTRUE_SMS_TEXTLOCAL_API_KEY="+utils.Config.Auth.Sms.Textlocal.ApiKey,
+				"GOTRUE_SMS_TEXTLOCAL_API_KEY="+utils.Config.Auth.Sms.Textlocal.ApiKey.Value,
 				"GOTRUE_SMS_TEXTLOCAL_SENDER="+utils.Config.Auth.Sms.Textlocal.Sender,
 			)
 		case utils.Config.Auth.Sms.Vonage.Enabled:
@@ -580,7 +580,7 @@ EOF
 				env,
 				"GOTRUE_SMS_PROVIDER=vonage",
 				"GOTRUE_SMS_VONAGE_API_KEY="+utils.Config.Auth.Sms.Vonage.ApiKey,
-				"GOTRUE_SMS_VONAGE_API_SECRET="+utils.Config.Auth.Sms.Vonage.ApiSecret,
+				"GOTRUE_SMS_VONAGE_API_SECRET="+utils.Config.Auth.Sms.Vonage.ApiSecret.Value,
 				"GOTRUE_SMS_VONAGE_FROM="+utils.Config.Auth.Sms.Vonage.From,
 			)
 		}
@@ -590,7 +590,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI="+hook.URI,
-				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.PasswordVerificationAttempt; hook != nil && hook.Enabled {
@@ -598,7 +598,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true",
 				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI="+hook.URI,
-				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.CustomAccessToken; hook != nil && hook.Enabled {
@@ -606,7 +606,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true",
 				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="+hook.URI,
-				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.SendSMS; hook != nil && hook.Enabled {
@@ -614,7 +614,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_SMS_ENABLED=true",
 				"GOTRUE_HOOK_SEND_SMS_URI="+hook.URI,
-				"GOTRUE_HOOK_SEND_SMS_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_SEND_SMS_SECRETS="+hook.Secrets.Value,
 			)
 		}
 		if hook := utils.Config.Auth.Hook.SendEmail; hook != nil && hook.Enabled {
@@ -622,7 +622,7 @@ EOF
 				env,
 				"GOTRUE_HOOK_SEND_EMAIL_ENABLED=true",
 				"GOTRUE_HOOK_SEND_EMAIL_URI="+hook.URI,
-				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets,
+				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets.Value,
 			)
 		}
 
@@ -640,7 +640,7 @@ EOF
 				env,
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
 			)
 

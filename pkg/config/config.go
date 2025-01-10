@@ -412,20 +412,25 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			v.Set("functions."+key, function{})
 		}
 	}
-	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToIPHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-		mapstructure.TextUnmarshallerHookFunc(),
-		LoadEnvHook,
-		// TODO: include decrypt secret hook
-	)), func(dc *mapstructure.DecoderConfig) {
+	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "toml"
 		dc.Squash = true
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
 	return nil
+}
+
+func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
+	fs = append(fs,
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToIPHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+		mapstructure.TextUnmarshallerHookFunc(),
+		DecryptSecretHookFunc(c.ProjectId),
+	)
+	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
 // Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
@@ -449,13 +454,7 @@ func (c *config) loadFromEnv() error {
 		return errors.Errorf("failed to merge env config: %w", err)
 	}
 	// Writes viper state back to config struct, with automatic env substitution
-	if err := v.UnmarshalExact(c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		mapstructure.StringToIPHookFunc(),
-		mapstructure.StringToSliceHookFunc(","),
-		mapstructure.TextUnmarshallerHookFunc(),
-		// TODO: include decrypt secret hook
-	))); err != nil {
+	if err := v.UnmarshalExact(c, viper.DecodeHook(c.newDecodeHook())); err != nil {
 		return errors.Errorf("failed to parse env override: %w", err)
 	}
 	return nil
@@ -795,13 +794,13 @@ func assertEnvLoaded(s string) error {
 }
 
 func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String || t != reflect.String {
+	if f != reflect.String {
 		return data, nil
 	}
 	value := data.(string)
 	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if v, exists := os.LookupEnv(matches[1]); exists {
-			value = v
+		if env, exists := os.LookupEnv(matches[1]); exists {
+			value = env
 		}
 	}
 	return value, nil
@@ -912,13 +911,13 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		if len(e.Smtp.User) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.user")
 		}
-		if len(e.Smtp.Pass) == 0 {
+		if len(e.Smtp.Pass.Value) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.pass")
 		}
 		if len(e.Smtp.AdminEmail) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.admin_email")
 		}
-		if err := assertEnvLoaded(e.Smtp.Pass); err != nil {
+		if err := assertEnvLoaded(e.Smtp.Pass.Value); err != nil {
 			return err
 		}
 	}
@@ -934,10 +933,10 @@ func (s *sms) validate() (err error) {
 		if len(s.Twilio.MessageServiceSid) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio.message_service_sid")
 		}
-		if len(s.Twilio.AuthToken) == 0 {
+		if len(s.Twilio.AuthToken.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio.auth_token")
 		}
-		if err := assertEnvLoaded(s.Twilio.AuthToken); err != nil {
+		if err := assertEnvLoaded(s.Twilio.AuthToken.Value); err != nil {
 			return err
 		}
 	case s.TwilioVerify.Enabled:
@@ -947,30 +946,30 @@ func (s *sms) validate() (err error) {
 		if len(s.TwilioVerify.MessageServiceSid) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio_verify.message_service_sid")
 		}
-		if len(s.TwilioVerify.AuthToken) == 0 {
+		if len(s.TwilioVerify.AuthToken.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.twilio_verify.auth_token")
 		}
-		if err := assertEnvLoaded(s.TwilioVerify.AuthToken); err != nil {
+		if err := assertEnvLoaded(s.TwilioVerify.AuthToken.Value); err != nil {
 			return err
 		}
 	case s.Messagebird.Enabled:
 		if len(s.Messagebird.Originator) == 0 {
 			return errors.New("Missing required field in config: auth.sms.messagebird.originator")
 		}
-		if len(s.Messagebird.AccessKey) == 0 {
+		if len(s.Messagebird.AccessKey.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.messagebird.access_key")
 		}
-		if err := assertEnvLoaded(s.Messagebird.AccessKey); err != nil {
+		if err := assertEnvLoaded(s.Messagebird.AccessKey.Value); err != nil {
 			return err
 		}
 	case s.Textlocal.Enabled:
 		if len(s.Textlocal.Sender) == 0 {
 			return errors.New("Missing required field in config: auth.sms.textlocal.sender")
 		}
-		if len(s.Textlocal.ApiKey) == 0 {
+		if len(s.Textlocal.ApiKey.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.textlocal.api_key")
 		}
-		if err := assertEnvLoaded(s.Textlocal.ApiKey); err != nil {
+		if err := assertEnvLoaded(s.Textlocal.ApiKey.Value); err != nil {
 			return err
 		}
 	case s.Vonage.Enabled:
@@ -980,13 +979,13 @@ func (s *sms) validate() (err error) {
 		if len(s.Vonage.ApiKey) == 0 {
 			return errors.New("Missing required field in config: auth.sms.vonage.api_key")
 		}
-		if len(s.Vonage.ApiSecret) == 0 {
+		if len(s.Vonage.ApiSecret.Value) == 0 {
 			return errors.New("Missing required field in config: auth.sms.vonage.api_secret")
 		}
 		if err := assertEnvLoaded(s.Vonage.ApiKey); err != nil {
 			return err
 		}
-		if err := assertEnvLoaded(s.Vonage.ApiSecret); err != nil {
+		if err := assertEnvLoaded(s.Vonage.ApiSecret.Value); err != nil {
 			return err
 		}
 	case s.EnableSignup:
@@ -1010,13 +1009,13 @@ func (e external) validate() (err error) {
 		if provider.ClientId == "" {
 			return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 		}
-		if !sliceContains([]string{"apple", "google"}, ext) && provider.Secret == "" {
+		if !sliceContains([]string{"apple", "google"}, ext) && len(provider.Secret.Value) == 0 {
 			return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 		}
 		if err := assertEnvLoaded(provider.ClientId); err != nil {
 			return err
 		}
-		if err := assertEnvLoaded(provider.Secret); err != nil {
+		if err := assertEnvLoaded(provider.Secret.Value); err != nil {
 			return err
 		}
 		if err := assertEnvLoaded(provider.RedirectUri); err != nil {
@@ -1075,18 +1074,18 @@ func (h *hookConfig) validate(hookType string) (err error) {
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
-		if len(h.Secrets) == 0 {
+		if len(h.Secrets.Value) == 0 {
 			return errors.Errorf("Missing required field in config: auth.hook.%s.secrets", hookType)
-		} else if err := assertEnvLoaded(h.Secrets); err != nil {
+		} else if err := assertEnvLoaded(h.Secrets.Value); err != nil {
 			return err
 		}
-		for _, secret := range strings.Split(h.Secrets, "|") {
+		for _, secret := range strings.Split(h.Secrets.Value, "|") {
 			if !hookSecretPattern.MatchString(secret) {
 				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"`, hookType)
 			}
 		}
 	case "pg-functions":
-		if len(h.Secrets) > 0 {
+		if len(h.Secrets.Value) > 0 {
 			return errors.Errorf("Invalid hook config: auth.hook.%s.secrets is unsupported for pg-functions URI", hookType)
 		}
 	default:

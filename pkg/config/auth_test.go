@@ -48,7 +48,7 @@ func TestAuthDiff(t *testing.T) {
 		c.MinimumPasswordLength = 6
 		c.PasswordRequirements = LettersDigits
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SiteUrl:                           cast.Ptr("http://127.0.0.1:3000"),
 			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000"),
 			JwtExp:                            cast.Ptr(3600),
@@ -78,7 +78,7 @@ func TestAuthDiff(t *testing.T) {
 		c.MinimumPasswordLength = 6
 		c.PasswordRequirements = LowerUpperLettersDigitsSymbols
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SiteUrl:                           cast.Ptr(""),
 			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000,https://ref.supabase.co"),
 			JwtExp:                            cast.Ptr(0),
@@ -99,7 +99,7 @@ func TestAuthDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.EnableSignup = false
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SiteUrl:                           cast.Ptr(""),
 			UriAllowList:                      cast.Ptr(""),
 			JwtExp:                            cast.Ptr(0),
@@ -124,22 +124,34 @@ func TestHookDiff(t *testing.T) {
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendEmail: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			MFAVerificationAttempt: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			PasswordVerificationAttempt: &hookConfig{
 				Enabled: true,
@@ -147,7 +159,7 @@ func TestHookDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(true),
 			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
 			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -177,7 +189,7 @@ func TestHookDiff(t *testing.T) {
 			SendSMS: &hookConfig{
 				Enabled: false,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{Value: "test-secret"},
 			},
 			SendEmail: &hookConfig{
 				Enabled: false,
@@ -189,7 +201,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: nil,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(true),
 			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
 			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -215,12 +227,18 @@ func TestHookDiff(t *testing.T) {
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendSMS: &hookConfig{
 				Enabled: true,
 				URI:     "https://example.com",
-				Secrets: "test-secret",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			SendEmail: &hookConfig{
 				Enabled: true,
@@ -233,7 +251,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: nil,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
 			HookCustomAccessTokenUri:               cast.Ptr("pg-functions://postgres/public/customToken"),
 			HookSendSmsEnabled:                     cast.Ptr(false),
@@ -261,7 +279,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: &hookConfig{Enabled: false},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			HookCustomAccessTokenEnabled:           cast.Ptr(false),
 			HookSendSmsEnabled:                     cast.Ptr(false),
 			HookSendEmailEnabled:                   cast.Ptr(false),
@@ -298,7 +316,7 @@ func TestMfaDiff(t *testing.T) {
 			MaxEnrolledFactors: 10,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
 			MfaTotpEnrollEnabled:     cast.Ptr(true),
 			MfaTotpVerifyEnabled:     cast.Ptr(true),
@@ -330,7 +348,7 @@ func TestMfaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
 			MfaTotpEnrollEnabled:     cast.Ptr(false),
 			MfaTotpVerifyEnabled:     cast.Ptr(false),
@@ -358,7 +376,7 @@ func TestMfaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			MfaMaxEnrolledFactors:    cast.Ptr(10),
 			MfaTotpEnrollEnabled:     cast.Ptr(false),
 			MfaTotpVerifyEnabled:     cast.Ptr(false),
@@ -411,11 +429,14 @@ func TestEmailDiff(t *testing.T) {
 				},
 			},
 			Smtp: &smtp{
-				Enabled:    cast.Ptr(true),
-				Host:       "smtp.sendgrid.net",
-				Port:       587,
-				User:       "apikey",
-				Pass:       "test-key",
+				Enabled: cast.Ptr(true),
+				Host:    "smtp.sendgrid.net",
+				Port:    587,
+				User:    "apikey",
+				Pass: Secret{
+					Value:  "test-key",
+					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
+				},
 				AdminEmail: "admin@email.com",
 				SenderName: "Admin",
 			},
@@ -424,7 +445,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    3600,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalEmailEnabled:           cast.Ptr(true),
 			MailerSecureEmailChangeEnabled: cast.Ptr(true),
 			MailerAutoconfirm:              cast.Ptr(false),
@@ -489,10 +510,13 @@ func TestEmailDiff(t *testing.T) {
 				},
 			},
 			Smtp: &smtp{
-				Host:       "smtp.sendgrid.net",
-				Port:       587,
-				User:       "apikey",
-				Pass:       "test-key",
+				Host: "smtp.sendgrid.net",
+				Port: 587,
+				User: "apikey",
+				Pass: Secret{
+					Value:  "test-key",
+					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
+				},
 				AdminEmail: "admin@email.com",
 				SenderName: "Admin",
 			},
@@ -501,7 +525,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    86400,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalEmailEnabled:           cast.Ptr(false),
 			MailerSecureEmailChangeEnabled: cast.Ptr(false),
 			MailerAutoconfirm:              cast.Ptr(true),
@@ -537,7 +561,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    86400,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalEmailEnabled:           cast.Ptr(true),
 			MailerSecureEmailChangeEnabled: cast.Ptr(true),
 			MailerAutoconfirm:              cast.Ptr(false),
@@ -583,11 +607,14 @@ func TestEmailDiff(t *testing.T) {
 				"reauthentication": {},
 			},
 			Smtp: &smtp{
-				Enabled:    cast.Ptr(false),
-				Host:       "smtp.sendgrid.net",
-				Port:       587,
-				User:       "apikey",
-				Pass:       "test-key",
+				Enabled: cast.Ptr(false),
+				Host:    "smtp.sendgrid.net",
+				Port:    587,
+				User:    "apikey",
+				Pass: Secret{
+					Value:  "test-key",
+					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
+				},
 				AdminEmail: "admin@email.com",
 				SenderName: "Admin",
 			},
@@ -596,7 +623,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    3600,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalEmailEnabled:           cast.Ptr(false),
 			MailerSecureEmailChangeEnabled: cast.Ptr(false),
 			MailerAutoconfirm:              cast.Ptr(true),
@@ -624,11 +651,14 @@ func TestSmsDiff(t *testing.T) {
 				Enabled:           true,
 				AccountSid:        "test-account",
 				MessageServiceSid: "test-service",
-				AuthToken:         "test-token",
+				AuthToken: Secret{
+					Value:  "test-token",
+					SHA256: "c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88",
+				},
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(true),
 			SmsAutoconfirm:             cast.Ptr(true),
 			SmsMaxFrequency:            cast.Ptr(60),
@@ -662,7 +692,7 @@ func TestSmsDiff(t *testing.T) {
 	t.Run("local disabled remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(true),
 			SmsAutoconfirm:             cast.Ptr(true),
 			SmsMaxFrequency:            cast.Ptr(60),
@@ -693,11 +723,14 @@ func TestSmsDiff(t *testing.T) {
 			Messagebird: messagebirdConfig{
 				Enabled:    true,
 				Originator: "test-originator",
-				AccessKey:  "test-access-key",
+				AccessKey: Secret{
+					Value:  "test-access-key",
+					SHA256: "ab60d03fc809fb02dae838582f3ddc13d1d6cb32ffba77c4b969dd3caa496f13",
+				},
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:       cast.Ptr(false),
 			SmsAutoconfirm:             cast.Ptr(false),
 			SmsMaxFrequency:            cast.Ptr(0),
@@ -725,7 +758,7 @@ func TestSmsDiff(t *testing.T) {
 			MaxFrequency:        time.Minute,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:     cast.Ptr(false),
 			SmsAutoconfirm:           cast.Ptr(true),
 			SmsMaxFrequency:          cast.Ptr(60),
@@ -749,7 +782,7 @@ func TestSmsDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.Sms.EnableSignup = true
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled: cast.Ptr(false),
 			SmsProvider:          cast.Ptr("twilio"),
 		})
@@ -762,7 +795,7 @@ func TestSmsDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.Sms.Messagebird.Enabled = true
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:    cast.Ptr(false),
 			SmsProvider:             cast.Ptr("messagebird"),
 			SmsMessagebirdAccessKey: cast.Ptr(""),
@@ -798,7 +831,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {Enabled: true},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalAppleAdditionalClientIds:  cast.Ptr(""),
 			ExternalAppleClientId:             cast.Ptr(""),
 			ExternalAppleEnabled:              cast.Ptr(true),
@@ -879,12 +912,18 @@ func TestExternalDiff(t *testing.T) {
 			"apple": {
 				Enabled:  true,
 				ClientId: "test-client-1,test-client-2",
-				Secret:   "test-secret",
+				Secret: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			"azure": {
 				Enabled:  true,
 				ClientId: "test-client-1",
-				Secret:   "test-secret",
+				Secret: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
 			},
 			"bitbucket": {},
 			"discord":   {},
@@ -895,7 +934,7 @@ func TestExternalDiff(t *testing.T) {
 			"google": {
 				Enabled:        false,
 				ClientId:       "test-client-2",
-				Secret:         "env(test_secret)",
+				Secret:         Secret{Value: "env(test_secret)"},
 				SkipNonceCheck: false,
 			},
 			// "kakao":         {},
@@ -910,7 +949,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalAppleAdditionalClientIds:  cast.Ptr("test-client-2"),
 			ExternalAppleClientId:             cast.Ptr("test-client-1"),
 			ExternalAppleEnabled:              cast.Ptr(false),
@@ -953,7 +992,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote("", v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalAppleEnabled:         cast.Ptr(false),
 			ExternalAzureEnabled:         cast.Ptr(false),
 			ExternalBitbucketEnabled:     cast.Ptr(false),

@@ -46,7 +46,7 @@ diff remote[auth] local[auth]
 -host = ""
 -port = 0
 -user = ""
--pass = "hash:"
+-pass = ""
 -admin_email = ""
 -sender_name = ""
 +host = "smtp.sendgrid.net"

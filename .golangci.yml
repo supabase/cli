@@ -20,4 +20,4 @@ linters-settings:
   stylecheck:
     checks: ["all", "-ST1003"]
   dupl:
-    threshold: 200
+    threshold: 250
