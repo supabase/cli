@@ -64,17 +64,16 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 		if t != reflect.TypeOf(result) {
 			return data, nil
 		}
-		ciphertext := data.(string)
-		// Skip hashing unloaded env
-		if matches := envPattern.FindStringSubmatch(ciphertext); len(matches) > 1 {
-			return result, nil
-		}
 		var err error
 		privKey := os.Getenv("DOTENV_PRIVATE_KEY")
 		for _, k := range strings.Split(privKey, ",") {
-			result.Value, err = decrypt(k, ciphertext)
-			if err == nil && len(result.Value) > 0 {
-				result.SHA256 = sha256Hmac(hashKey, result.Value)
+			// Use the first private key that successfully decrypts the secret
+			if result.Value, err = decrypt(k, data.(string)); err == nil {
+				// Unloaded env() references may be returned verbatim.
+				// Don't hash those values as they are meaningless.
+				if !envPattern.MatchString(result.Value) {
+					result.SHA256 = sha256Hmac(hashKey, result.Value)
+				}
 				break
 			}
 		}
