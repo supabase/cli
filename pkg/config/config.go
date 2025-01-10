@@ -136,8 +136,7 @@ type (
 
 	config struct {
 		baseConfig `mapstructure:",squash"`
-		Overrides  map[string]interface{} `toml:"remotes"`
-		Remotes    map[string]baseConfig  `toml:"-"`
+		Remotes    map[string]baseConfig `toml:"remotes"`
 	}
 
 	realtime struct {
@@ -360,6 +359,7 @@ var (
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
 	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
+	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
 func (c *config) Eject(w io.Writer) error {
@@ -405,6 +405,19 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	if err := v.MergeConfig(r); err != nil {
 		return errors.Errorf("failed to merge config: %w", err)
+	}
+	// Find [remotes.*] block to override base config
+	for name, remote := range v.GetStringMap("remotes") {
+		if m, ok := remote.(map[string]any); ok && m["project_id"] == c.ProjectId {
+			fmt.Fprintln(os.Stderr, "Loading remote override:", name)
+			// On remotes branches set seed as disabled by default
+			v.Set("db.seed.enabled", false)
+			// TODO: warn duplicate project_id in remotes
+			delete(m, "project_id")
+			if err := v.MergeConfigMap(m); err != nil {
+				return err
+			}
+		}
 	}
 	// Manually parse [functions.*] to empty struct for backwards compatibility
 	for key, value := range v.GetStringMap("functions") {
@@ -532,50 +545,11 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
-	// Resolve remote config, then base config
-	idToName := map[string]string{}
-	c.Remotes = make(map[string]baseConfig, len(c.Overrides))
-	for name, remote := range c.Overrides {
-		base := c.baseConfig.Clone()
-		// On remotes branches set seed as disabled by default
-		base.Db.Seed.Enabled = false
-		// Encode a toml file with only config overrides
-		var buf bytes.Buffer
-		if err := toml.NewEncoder(&buf).Encode(remote); err != nil {
-			return errors.Errorf("failed to encode map to TOML: %w", err)
-		}
-		// Decode overrides using base config as defaults
-		if metadata, err := toml.NewDecoder(&buf).Decode(&base); err != nil {
-			return errors.Errorf("failed to decode remote config: %w", err)
-		} else if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-			fmt.Fprintf(os.Stderr, "WARN: unknown config fields: %+v\n", undecoded)
-		}
-		// Cross validate remote project id
-		if base.ProjectId == c.baseConfig.ProjectId {
-			fmt.Fprintf(os.Stderr, "WARN: project_id is missing for [remotes.%s]\n", name)
-		} else if other, exists := idToName[base.ProjectId]; exists {
-			return errors.Errorf("duplicate project_id for [remotes.%s] and [remotes.%s]", other, name)
-		} else {
-			idToName[base.ProjectId] = name
-		}
-		if err := base.resolve(builder, fsys); err != nil {
-			return err
-		}
-		c.Remotes[name] = base
-	}
+	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.baseConfig.resolve(builder, fsys); err != nil {
 		return err
 	}
-	// Validate base config, then remote config
-	if err := c.baseConfig.Validate(fsys); err != nil {
-		return err
-	}
-	for name, base := range c.Remotes {
-		if err := base.Validate(fsys); err != nil {
-			return errors.Errorf("invalid config for [remotes.%s]: %w", name, err)
-		}
-	}
-	return nil
+	return c.Validate(fsys)
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
@@ -624,12 +598,18 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	return c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys)
 }
 
-func (c *baseConfig) Validate(fsys fs.FS) error {
+func (c *config) Validate(fsys fs.FS) error {
 	if c.ProjectId == "" {
 		return errors.New("Missing required field in config: project_id")
 	} else if sanitized := sanitizeProjectId(c.ProjectId); sanitized != c.ProjectId {
 		fmt.Fprintln(os.Stderr, "WARN: project_id field in config is invalid. Auto-fixing to", sanitized)
 		c.ProjectId = sanitized
+	}
+	// Since remote config is merged to base, we only need to validate the project_id field.
+	for name, remote := range c.Remotes {
+		if !refPattern.MatchString(remote.ProjectId) {
+			return errors.Errorf("Invalid config for remotes.%s.project_id. Must be like: abcdefghijklmnopqrst", name)
+		}
 	}
 	// Validate api config
 	if c.Api.Enabled {
@@ -641,7 +621,7 @@ func (c *baseConfig) Validate(fsys fs.FS) error {
 	if c.Db.Settings.SessionReplicationRole != nil {
 		allowedRoles := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
 		if !sliceContains(allowedRoles, *c.Db.Settings.SessionReplicationRole) {
-			return errors.Errorf("Invalid config for db.session_replication_role: %s. Must be one of: %v", *c.Db.Settings.SessionReplicationRole, allowedRoles)
+			return errors.Errorf("Invalid config for db.session_replication_role. Must be one of: %v", allowedRoles)
 		}
 	}
 	if c.Db.Port == 0 {
@@ -1329,24 +1309,10 @@ func (c *baseConfig) GetServiceImages() []string {
 
 // Retrieve the final base config to use taking into account the remotes override
 func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
-	var result []string
-	// Iterate over all the config.Remotes
-	for name, remoteConfig := range c.Remotes {
-		// Check if there is one matching project_id
-		if remoteConfig.ProjectId == projectRef {
-			// Check for duplicate project IDs across remotes
-			result = append(result, name)
-		}
-	}
-	// If no matching remote config is found, return the base config
-	if len(result) == 0 {
-		return c.baseConfig, errors.Errorf("no remote found for project_id: %s", projectRef)
-	}
-	remote := c.Remotes[result[0]]
-	if len(result) > 1 {
-		return remote, errors.Errorf("multiple remotes %v have the same project_id: %s", result, projectRef)
-	}
-	return remote, nil
+	// Config must be loaded after setting config.ProjectID = "ref"
+	base := c.baseConfig.Clone()
+	base.ProjectId = projectRef
+	return base, nil
 }
 
 func ToTomlBytes(config any) ([]byte, error) {

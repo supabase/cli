@@ -88,7 +88,7 @@ func TestConfigParsing(t *testing.T) {
 		staging, ok := config.Remotes["staging"]
 		assert.True(t, ok)
 		// Check the values for production override
-		assert.Equal(t, config.ProjectId, production.ProjectId)
+		assert.Equal(t, "vpefcjyosynxeiebfscx", production.ProjectId)
 		assert.Equal(t, "http://feature-auth-branch.com/", production.Auth.SiteUrl)
 		assert.Equal(t, false, production.Auth.EnableSignup)
 		assert.Equal(t, false, production.Auth.External["azure"].Enabled)
@@ -96,7 +96,7 @@ func TestConfigParsing(t *testing.T) {
 		// Check seed should be disabled by default for remote configs
 		assert.Equal(t, false, production.Db.Seed.Enabled)
 		// Check the values for the staging override
-		assert.Equal(t, "staging-project", staging.ProjectId)
+		assert.Equal(t, "bvikqvbczudanvggcord", staging.ProjectId)
 		assert.Equal(t, []string{"image/png"}, staging.Storage.Buckets["images"].AllowedMimeTypes)
 		assert.Equal(t, true, staging.Db.Seed.Enabled)
 	})
@@ -386,7 +386,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
-			project_id = "test"
+			project_id = "bvikqvbczudanvggcord"
 			[functions.hello]
 			`)},
 			"supabase/functions/hello/deno.json": &fs.MapFile{},
@@ -402,7 +402,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
-			project_id = "test"
+			project_id = "bvikqvbczudanvggcord"
 			[functions.hello]
 			`)},
 			"supabase/functions/hello/deno.jsonc": &fs.MapFile{},
@@ -418,7 +418,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
-			project_id = "test"
+			project_id = "bvikqvbczudanvggcord"
 			[functions]
 			hello.import_map = "custom_import_map.json"
 			`)},
