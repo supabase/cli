@@ -433,6 +433,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "toml"
 		dc.Squash = true
+		dc.ZeroFields = true
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
