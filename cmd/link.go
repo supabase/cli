@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/term"
 )
@@ -31,8 +30,7 @@ var (
 				return err
 			}
 			fsys := afero.NewOsFs()
-			utils.Config.ProjectId = flags.ProjectRef
-			if err := utils.LoadConfigFS(fsys); err != nil {
+			if err := flags.LoadConfig(fsys); err != nil {
 				return err
 			}
 			return link.Run(ctx, flags.ProjectRef, fsys)

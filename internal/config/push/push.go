@@ -7,12 +7,12 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 )
 
 func Run(ctx context.Context, ref string, fsys afero.Fs) error {
-	utils.Config.ProjectId = ref
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	client := config.NewConfigUpdater(*utils.GetSupabase())

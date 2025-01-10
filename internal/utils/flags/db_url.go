@@ -61,7 +61,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 			DbConfig = *config
 		}
 	case local:
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
 		// Ignore other PG settings
@@ -71,10 +71,10 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		DbConfig.Password = utils.Config.Db.Password
 		DbConfig.Database = "postgres"
 	case linked:
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := LoadProjectRef(fsys); err != nil {
 			return err
 		}
-		if err := LoadProjectRef(fsys); err != nil {
+		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
 		DbConfig = NewDbConfigWithPassword(ProjectRef)

@@ -115,7 +115,6 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 			return err
 		}
 	}
-	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
 	// Overwrites existing object when using --recursive flag
 	opts = append(opts, func(fo *storage.FileOptions) {
 		fo.Overwrite = true
@@ -154,7 +153,7 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 				// Retry after creating bucket
 				if bucket, prefix := client.SplitBucketPrefix(dstPath); len(prefix) > 0 {
 					body := storage.CreateBucketRequest{Name: bucket}
-					if config, ok := remote.Storage.Buckets[bucket]; ok {
+					if config, ok := utils.Config.Storage.Buckets[bucket]; ok {
 						body.Public = config.Public
 						body.FileSizeLimit = int64(config.FileSizeLimit)
 						body.AllowedMimeTypes = config.AllowedMimeTypes

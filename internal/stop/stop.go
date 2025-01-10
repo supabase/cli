@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afero.Fs) error {
@@ -17,7 +18,7 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 		// Sanity checks.
 		if len(projectId) > 0 {
 			utils.Config.ProjectId = projectId
-		} else if err := utils.LoadConfigFS(fsys); err != nil {
+		} else if err := flags.LoadConfig(fsys); err != nil {
 			return err
 		}
 		searchProjectIdFilter = utils.Config.ProjectId

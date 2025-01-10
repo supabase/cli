@@ -95,7 +95,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 4. Link project
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)

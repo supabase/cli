@@ -19,6 +19,7 @@ import (
 	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 type InspectMode string
@@ -70,7 +71,7 @@ var (
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {

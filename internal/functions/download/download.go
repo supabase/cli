@@ -16,6 +16,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -112,7 +113,7 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
 	// 1. Sanity check
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	// 2. Download eszip to temp file

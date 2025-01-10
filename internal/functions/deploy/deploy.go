@@ -18,7 +18,7 @@ import (
 
 func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// Load function config and project id
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	} else if len(slugs) > 0 {
 		for _, s := range slugs {
@@ -60,8 +60,7 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 		}
 	}
 	// Add all function slugs declared in config file
-	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
-	for slug := range remote.Functions {
+	for slug := range utils.Config.Functions {
 		slugs = append(slugs, slug)
 	}
 	return slugs, nil
@@ -82,10 +81,9 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
 		importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
 	}
-	remote, _ := utils.Config.GetRemoteByProjectRef(flags.ProjectRef)
 	functionConfig := make(config.FunctionConfig, len(slugs))
 	for _, name := range slugs {
-		function := remote.Functions[name]
+		function := utils.Config.Functions[name]
 		// Precedence order: flag > config > fallback
 		functionDir := filepath.Join(utils.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {

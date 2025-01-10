@@ -12,12 +12,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Sanity checks
 	{
-		if err := utils.LoadConfigFS(fsys); err != nil {
+		if err := flags.LoadConfig(fsys); err != nil {
 			return err
 		}
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {

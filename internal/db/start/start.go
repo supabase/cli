@@ -23,6 +23,7 @@ import (
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -39,7 +40,7 @@ var (
 )
 
 func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
-	if err := utils.LoadConfigFS(fsys); err != nil {
+	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	if err := utils.AssertSupabaseDbIsRunning(); err == nil {
