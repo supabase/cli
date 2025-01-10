@@ -31,6 +31,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	var seeds []migration.SeedFile
 	if includeSeed {
+		// TODO: flag should override config but we don't resolve glob paths when seed is disabled.
 		if !utils.Config.Db.Seed.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipping seed because it is disabled in config.toml for project:", flags.ProjectRef)
 		} else if seeds, err = migration.GetPendingSeeds(ctx, utils.Config.Db.Seed.SqlPaths, conn, afero.NewIOFS(fsys)); err != nil {

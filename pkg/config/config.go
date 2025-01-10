@@ -407,16 +407,21 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		return errors.Errorf("failed to merge config: %w", err)
 	}
 	// Find [remotes.*] block to override base config
+	baseId := v.GetString("project_id")
+	idToName := map[string]string{baseId: "base"}
 	for name, remote := range v.GetStringMap("remotes") {
-		if m, ok := remote.(map[string]any); ok && m["project_id"] == c.ProjectId {
-			fmt.Fprintln(os.Stderr, "Loading remote override:", name)
-			// On remotes branches set seed as disabled by default
-			v.Set("db.seed.enabled", false)
-			// TODO: warn duplicate project_id in remotes
-			delete(m, "project_id")
-			if err := v.MergeConfigMap(m); err != nil {
+		projectId := v.GetString(fmt.Sprintf("remotes.%s.project_id", name))
+		// Track remote project_id to check for duplication
+		if other, exists := idToName[projectId]; exists {
+			return errors.Errorf("duplicate project_id for [remotes.%s] and %s", name, other)
+		}
+		idToName[projectId] = fmt.Sprintf("[remotes.%s]", name)
+		if projectId == c.ProjectId {
+			fmt.Fprintln(os.Stderr, "Loading config override:", idToName[projectId])
+			if err := v.MergeConfigMap(remote.(map[string]any)); err != nil {
 				return err
 			}
+			v.Set("project_id", baseId)
 		}
 	}
 	// Manually parse [functions.*] to empty struct for backwards compatibility
@@ -1308,11 +1313,16 @@ func (c *baseConfig) GetServiceImages() []string {
 }
 
 // Retrieve the final base config to use taking into account the remotes override
+// Pre: config must be loaded after setting config.ProjectID = "ref"
 func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
-	// Config must be loaded after setting config.ProjectID = "ref"
 	base := c.baseConfig.Clone()
-	base.ProjectId = projectRef
-	return base, nil
+	for _, remote := range c.Remotes {
+		if remote.ProjectId == projectRef {
+			base.ProjectId = projectRef
+			return base, nil
+		}
+	}
+	return base, errors.Errorf("no remote found for project_id: %s", projectRef)
 }
 
 func ToTomlBytes(config any) ([]byte, error) {

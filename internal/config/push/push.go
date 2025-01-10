@@ -16,7 +16,11 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 		return err
 	}
 	client := config.NewConfigUpdater(*utils.GetSupabase())
-	remote, _ := utils.Config.GetRemoteByProjectRef(ref)
+	remote, err := utils.Config.GetRemoteByProjectRef(ref)
+	if err != nil {
+		// Use base config when no remote is declared
+		remote.ProjectId = ref
+	}
 	fmt.Fprintln(os.Stderr, "Pushing config to project:", remote.ProjectId)
 	console := utils.NewConsole()
 	keep := func(name string) bool {
