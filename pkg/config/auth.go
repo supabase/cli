@@ -442,60 +442,60 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if len(e.Template) == 0 {
 		return
 	}
-	var tmpl emailTemplate
-	tmpl = e.Template["invite"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsInvite
+	if t, ok := e.Template["invite"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsInvite
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesInviteContent
+		}
+		e.Template["invite"] = t
 	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesInviteContent
+	if t, ok := e.Template["confirmation"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsConfirmation
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesConfirmationContent
+		}
+		e.Template["confirmation"] = t
 	}
-	e.Template["invite"] = tmpl
-
-	tmpl = e.Template["confirmation"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsConfirmation
+	if t, ok := e.Template["recovery"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsRecovery
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesRecoveryContent
+		}
+		e.Template["recovery"] = t
 	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesConfirmationContent
+	if t, ok := e.Template["magic_link"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsMagicLink
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesMagicLinkContent
+		}
+		e.Template["magic_link"] = t
 	}
-	e.Template["confirmation"] = tmpl
-
-	tmpl = e.Template["recovery"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsRecovery
+	if t, ok := e.Template["email_change"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsEmailChange
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesEmailChangeContent
+		}
+		e.Template["email_change"] = t
 	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesRecoveryContent
+	if t, ok := e.Template["reauthentication"]; ok {
+		if t.Subject != nil {
+			t.Subject = remoteConfig.MailerSubjectsReauthentication
+		}
+		if t.Content != nil {
+			t.Content = remoteConfig.MailerTemplatesReauthenticationContent
+		}
+		e.Template["reauthentication"] = t
 	}
-	e.Template["recovery"] = tmpl
-
-	tmpl = e.Template["magic_link"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsMagicLink
-	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesMagicLinkContent
-	}
-	e.Template["magic_link"] = tmpl
-
-	tmpl = e.Template["email_change"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsEmailChange
-	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesEmailChangeContent
-	}
-	e.Template["email_change"] = tmpl
-
-	tmpl = e.Template["reauthentication"]
-	if tmpl.Subject != nil {
-		tmpl.Subject = remoteConfig.MailerSubjectsReauthentication
-	}
-	if tmpl.Content != nil {
-		tmpl.Content = remoteConfig.MailerTemplatesReauthenticationContent
-	}
-	e.Template["reauthentication"] = tmpl
 }
 
 func (s smtp) IsEnabled() bool {
