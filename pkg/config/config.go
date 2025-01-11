@@ -311,14 +311,7 @@ func NewConfig(editors ...ConfigEditor) config {
 		Auth: auth{
 			Image: gotrueImage,
 			Email: email{
-				Template: map[string]emailTemplate{
-					"invite":           {},
-					"confirmation":     {},
-					"recovery":         {},
-					"magic_link":       {},
-					"email_change":     {},
-					"reauthentication": {},
-				},
+				Template: map[string]emailTemplate{},
 			},
 			Sms: sms{
 				TestOTP: map[string]string{},
