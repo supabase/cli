@@ -113,11 +113,22 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		functionConfig[name] = function
 	}
 	if len(functionsUsingDeprecatedImportMap) > 0 {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Functions using deprecated import_map.json (please migrate to deno.jsonc):", utils.Aqua(strings.Join(functionsUsingDeprecatedImportMap, ", ")))
+		fmt.Fprintln(os.Stderr,
+			utils.Yellow("WARNING:"),
+			"Functions using deprecated import_map.json (please migrate to deno.json):",
+			utils.Aqua(strings.Join(functionsUsingDeprecatedImportMap, ", ")),
+		)
 	}
 	if len(functionsUsingDeprecatedGlobalFallback) > 0 {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Functions using fallback import map:", utils.Aqua(strings.Join(functionsUsingDeprecatedGlobalFallback, ", ")))
-		fmt.Fprintln(os.Stderr, "Please use recommended per function dependency declaration ", utils.Aqua("https://supabase.com/docs/guides/functions/import-maps"))
+		fmt.Fprintln(os.Stderr,
+			utils.Yellow("WARNING:"),
+			"Functions using fallback import map:",
+			utils.Aqua(strings.Join(functionsUsingDeprecatedGlobalFallback, ", ")),
+		)
+		fmt.Fprintln(os.Stderr,
+			"Please use recommended per function dependency declaration ",
+			utils.Aqua("https://supabase.com/docs/guides/functions/import-maps"),
+		)
 	}
 	return functionConfig, nil
 }
