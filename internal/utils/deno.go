@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/tidwall/jsonc"
 )
 
 var (
@@ -215,14 +216,13 @@ type ImportMap struct {
 }
 
 func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
-	contents, err := fsys.Open(absJsonPath)
+	data, err := afero.ReadFile(fsys, absJsonPath)
 	if err != nil {
 		return nil, errors.Errorf("failed to load import map: %w", err)
 	}
-	defer contents.Close()
+	data = jsonc.ToJSONInPlace(data)
 	result := ImportMap{}
-	decoder := json.NewDecoder(contents)
-	if err := decoder.Decode(&result); err != nil {
+	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, errors.Errorf("failed to parse import map: %w", err)
 	}
 	// Resolve all paths relative to current file
