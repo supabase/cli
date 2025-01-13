@@ -12,6 +12,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/tidwall/jsonc"
 )
 
 var (
@@ -100,16 +101,14 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 type VSCodeSettings map[string]interface{}
 
 func loadUserSettings(path string, fsys afero.Fs) (VSCodeSettings, error) {
-	// Open our jsonFile
-	jsonFile, err := fsys.Open(path)
+	data, err := afero.ReadFile(fsys, path)
 	if err != nil {
 		return nil, errors.Errorf("failed to load settings file: %w", err)
 	}
-	defer jsonFile.Close()
+	data = jsonc.ToJSONInPlace(data)
 	// Parse and unmarshal JSON file.
 	var userSettings VSCodeSettings
-	dec := json.NewDecoder(jsonFile)
-	if err := dec.Decode(&userSettings); err != nil {
+	if err := json.Unmarshal(data, &userSettings); err != nil {
 		return nil, errors.Errorf("failed to parse settings: %w", err)
 	}
 	return userSettings, nil
