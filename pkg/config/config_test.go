@@ -410,7 +410,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		}
 		// Run test
 		assert.NoError(t, config.Load("", fsys))
-		// Check that deno.json was set as import map
+		// Check that deno.jsonc was set as import map
 		assert.Equal(t, "supabase/functions/hello/deno.jsonc", config.Functions["hello"].ImportMap)
 	})
 

@@ -17,7 +17,7 @@ import (
 var (
 	//go:embed templates/index.ts
 	indexEmbed string
-	//go:embed templates/deno.jsonc
+	//go:embed templates/deno.json
 	denoEmbed string
 	//go:embed templates/.npmrc
 	npmrcEmbed string
@@ -57,8 +57,8 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 			return errors.Errorf("failed to create function entrypoint: %w", err)
 		}
 
-		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "deno.jsonc"), []byte(denoEmbed), 0644); err != nil {
-			return errors.Errorf("failed to create deno.jsonc config: %w", err)
+		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "deno.json"), []byte(denoEmbed), 0644); err != nil {
+			return errors.Errorf("failed to create deno.json config: %w", err)
 		}
 
 		if err := afero.WriteFile(fsys, filepath.Join(funcDir, ".npmrc"), []byte(npmrcEmbed), 0644); err != nil {
