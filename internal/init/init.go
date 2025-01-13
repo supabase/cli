@@ -1,6 +1,7 @@
 package init
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -108,7 +109,8 @@ func loadUserSettings(path string, fsys afero.Fs) (VSCodeSettings, error) {
 	data = jsonc.ToJSONInPlace(data)
 	// Parse and unmarshal JSON file.
 	var userSettings VSCodeSettings
-	if err := json.Unmarshal(data, &userSettings); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&userSettings); err != nil {
 		return nil, errors.Errorf("failed to parse settings: %w", err)
 	}
 	return userSettings, nil

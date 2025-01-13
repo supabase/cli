@@ -222,7 +222,8 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
 	}
 	data = jsonc.ToJSONInPlace(data)
 	result := ImportMap{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&result); err != nil {
 		return nil, errors.Errorf("failed to parse import map: %w", err)
 	}
 	// Resolve all paths relative to current file
