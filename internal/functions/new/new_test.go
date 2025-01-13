@@ -25,10 +25,10 @@ func TestNewCommand(t *testing.T) {
 			"curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/test-func'",
 		)
 
-		// Verify deno.jsonc exists
-		denoPath := filepath.Join(utils.FunctionsDir, "test-func", "deno.jsonc")
+		// Verify deno.json exists
+		denoPath := filepath.Join(utils.FunctionsDir, "test-func", "deno.json")
 		_, err = afero.ReadFile(fsys, denoPath)
-		assert.NoError(t, err, "deno.jsonc should be created")
+		assert.NoError(t, err, "deno.json should be created")
 
 		// Verify .npmrc exists
 		npmrcPath := filepath.Join(utils.FunctionsDir, "test-func", ".npmrc")
