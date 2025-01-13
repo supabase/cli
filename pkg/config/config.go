@@ -1060,7 +1060,7 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		}
 		for _, secret := range strings.Split(h.Secrets.Value, "|") {
 			if !hookSecretPattern.MatchString(secret) {
-				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"`, hookType)
+				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`, hookType)
 			}
 		}
 	case "pg-functions":
