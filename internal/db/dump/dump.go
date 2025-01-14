@@ -82,6 +82,7 @@ func dumpData(ctx context.Context, config pgconn.Config, schema, excludeTable []
 		"graphql",
 		"graphql_public",
 		// "net",
+		// "pgmq",
 		// "pgsodium",
 		// "pgsodium_masks",
 		"pgtle",
