@@ -806,6 +806,7 @@ func sanitizeProjectId(src string) string {
 
 func loadDefaultEnv() error {
 	env := viper.GetString("ENV")
+
 	if env == "" {
 		env = "development"
 	}
@@ -813,7 +814,7 @@ func loadDefaultEnv() error {
 	if env != "test" {
 		filenames = append(filenames, ".env.local")
 	}
-	filenames = append(filenames, ".env."+env, ".env")
+	filenames = append(filenames, ".env."+env, ".env", "supabase/.env."+env, "supabase/.env", ".env.keys", "supabase/.env.keys")
 	for _, path := range filenames {
 		if err := loadEnvIfExists(path); err != nil {
 			return err
