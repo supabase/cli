@@ -77,19 +77,18 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 
 		// Try each private key
 		var err error
-		result = Secret{}
-		for _, privKey := range privateKeys {
-			// Use each private key that successfully decrypts the secret
-			for _, k := range strings.Split(privKey, ",") {
-				if result.Value, err = decrypt(k, data.(string)); err == nil {
-					if !envPattern.MatchString(result.Value) {
-						result.SHA256 = sha256Hmac(hashKey, result.Value)
-					}
-					return result, nil
+		privKey := strings.Join(privateKeys, ",")
+		for _, k := range strings.Split(privKey, ",") {
+			// Use the first private key that successfully decrypts the secret
+			if result.Value, err = decrypt(k, data.(string)); err == nil {
+				// Unloaded env() references may be returned verbatim.
+				// Don't hash those values as they are meaningless.
+				if !envPattern.MatchString(result.Value) {
+					result.SHA256 = sha256Hmac(hashKey, result.Value)
 				}
+				break
 			}
 		}
-
 		// If we get here, none of the keys worked
 		return result, err
 	}
