@@ -52,7 +52,7 @@ require (
 	golang.org/x/mod v0.22.0
 	golang.org/x/oauth2 v0.25.0
 	golang.org/x/term v0.28.0
-	google.golang.org/grpc v1.69.2
+	google.golang.org/grpc v1.69.4
 	gopkg.in/yaml.v3 v3.0.1
 	gotest.tools/gotestsum v1.12.0
 )
