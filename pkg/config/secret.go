@@ -64,19 +64,33 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 		if t != reflect.TypeOf(result) {
 			return data, nil
 		}
-		var err error
-		privKey := os.Getenv("DOTENV_PRIVATE_KEY")
-		for _, k := range strings.Split(privKey, ",") {
-			// Use the first private key that successfully decrypts the secret
-			if result.Value, err = decrypt(k, data.(string)); err == nil {
-				// Unloaded env() references may be returned verbatim.
-				// Don't hash those values as they are meaningless.
-				if !envPattern.MatchString(result.Value) {
-					result.SHA256 = sha256Hmac(hashKey, result.Value)
+		// Get all env vars and filter for DOTENV_PRIVATE_KEY
+		var privateKeys []string
+		for _, env := range os.Environ() {
+			key := strings.Split(env, "=")[0]
+			if strings.HasPrefix(key, "DOTENV_PRIVATE_KEY") {
+				if value := os.Getenv(key); value != "" {
+					privateKeys = append(privateKeys, value)
 				}
-				break
 			}
 		}
+
+		// Try each private key
+		var err error
+		result = Secret{}
+		for _, privKey := range privateKeys {
+			// Use each private key that successfully decrypts the secret
+			for _, k := range strings.Split(privKey, ",") {
+				if result.Value, err = decrypt(k, data.(string)); err == nil {
+					if !envPattern.MatchString(result.Value) {
+						result.SHA256 = sha256Hmac(hashKey, result.Value)
+					}
+					return result, nil
+				}
+			}
+		}
+
+		// If we get here, none of the keys worked
 		return result, err
 	}
 }
