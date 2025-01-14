@@ -24,6 +24,7 @@ var (
 		`\_realtime`,
 		`\_supavisor`,
 		"pgbouncer",
+		"pgmq",
 		"pgsodium",
 		"pgtle",
 		`supabase\_migrations`,
