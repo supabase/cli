@@ -594,7 +594,7 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 		for i, val := range function.StaticFiles {
-			function.StaticFiles[i] = append(s, filepath.Join(builder.SupabaseDirPath, val))
+			function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
 		}
 		c.Functions[slug] = function
 	}
