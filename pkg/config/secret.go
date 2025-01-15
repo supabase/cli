@@ -68,7 +68,7 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 		var privateKeys []string
 		for _, env := range os.Environ() {
 			key := strings.Split(env, "=")[0]
-			if strings.HasPrefix(key, "DOTENV_PRIVATE_KEY") {
+			if key == "DOTENV_PRIVATE_KEY" || strings.HasPrefix(key, "DOTENV_PRIVATE_KEY_") {
 				if value := os.Getenv(key); value != "" {
 					privateKeys = append(privateKeys, value)
 				}

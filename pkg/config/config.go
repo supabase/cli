@@ -814,7 +814,7 @@ func loadDefaultEnv() error {
 	if env != "test" {
 		filenames = append(filenames, ".env.local")
 	}
-	filenames = append(filenames, ".env."+env, ".env", "supabase/.env."+env, "supabase/.env")
+	filenames = append(filenames, ".env."+env, ".env", filepath.Join("supabase", ".env."+env), filepath.Join("supabase", ".env"))
 	for _, path := range filenames {
 		if err := loadEnvIfExists(path); err != nil {
 			return err
