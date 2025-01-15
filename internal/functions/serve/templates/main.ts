@@ -178,6 +178,8 @@ Deno.serve({
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
 
+    const staticPatterns = functionsConfig[functionName].staticFiles;
+
     try {
       const worker = await EdgeRuntime.userWorkers.create({
         servicePath,
@@ -195,6 +197,7 @@ Deno.serve({
         context: {
           useReadSyncFileAPI: true,
         },
+        staticPatterns,
       });
 
       return await worker.fetch(req);

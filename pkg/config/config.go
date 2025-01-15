@@ -178,10 +178,11 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled    *bool  `toml:"enabled" json:"-"`
-		VerifyJWT  *bool  `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap  string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint string `toml:"entrypoint" json:"entrypointPath,omitempty"`
+		Enabled     *bool    `toml:"enabled" json:"-"`
+		VerifyJWT   *bool    `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap   string   `toml:"import_map" json:"importMapPath,omitempty"`
+		Entrypoint  string   `toml:"entrypoint" json:"entrypointPath,omitempty"`
+		StaticFiles []string `toml:"static_files" json:"staticFiles,omitempty"`
 	}
 
 	analytics struct {
@@ -591,6 +592,9 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			// Functions may not use import map so we don't set a default value
 		} else if !filepath.IsAbs(function.ImportMap) {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
+		}
+		for i, val := range function.StaticFiles {
+			function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
 		}
 		c.Functions[slug] = function
 	}
