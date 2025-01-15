@@ -475,7 +475,7 @@ func (c *config) loadFromEnv() error {
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
-	if err := loadDefaultEnv(); err != nil {
+	if err := loadNestedEnv(builder.SupabaseDirPath); err != nil {
 		return err
 	}
 	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
@@ -804,9 +804,30 @@ func sanitizeProjectId(src string) string {
 	return truncateText(sanitized, maxProjectIdLength)
 }
 
-func loadDefaultEnv() error {
+func loadNestedEnv(basePath string) error {
+	repoDir, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get repo directory: %w", err)
+	}
+	if !filepath.IsAbs(basePath) {
+		basePath = filepath.Join(repoDir, basePath)
+	}
 	env := viper.GetString("ENV")
+	for cwd := basePath; cwd != repoDir; cwd = filepath.Dir(cwd) {
+		if err := os.Chdir(cwd); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.Errorf("failed to change directory: %w", err)
+		}
+		if err := loadDefaultEnv(env); err != nil {
+			return err
+		}
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		return errors.Errorf("failed to restore directory: %w", err)
+	}
+	return nil
+}
 
+func loadDefaultEnv(env string) error {
 	if env == "" {
 		env = "development"
 	}
@@ -814,7 +835,7 @@ func loadDefaultEnv() error {
 	if env != "test" {
 		filenames = append(filenames, ".env.local")
 	}
-	filenames = append(filenames, ".env."+env, ".env", filepath.Join("supabase", ".env."+env), filepath.Join("supabase", ".env"))
+	filenames = append(filenames, ".env."+env, ".env")
 	for _, path := range filenames {
 		if err := loadEnvIfExists(path); err != nil {
 			return err
