@@ -36,7 +36,7 @@ func TestBundleFunction(t *testing.T) {
 		// Setup mock bundler
 		bundler := nativeBundler{fsys: fsys}
 		// Run test
-		err := bundler.Bundle(context.Background(), "hello/index.ts", "", []string{}, &body)
+		err := bundler.Bundle(context.Background(), "hello/index.ts", "", nil, &body)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, compressedEszipMagicID+";", body.String())

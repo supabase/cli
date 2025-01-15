@@ -593,12 +593,8 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		} else if !filepath.IsAbs(function.ImportMap) {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
-		if len(function.StaticFiles) != 0 {
-			s := []string{}
-			for _, val := range function.StaticFiles {
-				s = append(s, filepath.Join(builder.SupabaseDirPath, val))
-			}
-			function.StaticFiles = s
+		for i, val := range function.StaticFiles {
+			function.StaticFiles[i] = append(s, filepath.Join(builder.SupabaseDirPath, val))
 		}
 		c.Functions[slug] = function
 	}
