@@ -817,7 +817,7 @@ func loadNestedEnv(basePath string) error {
 		basePath = filepath.Join(repoDir, basePath)
 	}
 	env := viper.GetString("ENV")
-	for cwd := basePath; cwd != repoDir; cwd = filepath.Dir(cwd) {
+	for cwd := basePath; cwd != filepath.Dir(repoDir); cwd = filepath.Dir(cwd) {
 		if err := os.Chdir(cwd); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Errorf("failed to change directory: %w", err)
 		}
