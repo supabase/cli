@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -45,6 +46,10 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (replace \"init\" with a different file name to apply this migration)\n", filename)
 			continue
 		}
+		if strings.HasPrefix(filename, "r_") {
+			// silently skip repeatable migrations
+			continue
+		}
 		matches := migrateFilePattern.FindStringSubmatch(filename)
 		if len(matches) == 0 {
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
@@ -58,6 +63,24 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 		}
 	}
 	return clean, nil
+}
+
+func ListRepeatableMigrations(migrationsDir string, fsys fs.FS) ([]string, error) {
+	localMigrations, err := fs.ReadDir(fsys, migrationsDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.Errorf("failed to read directory: %w", err)
+	}
+	var repeatable []string
+
+	for _, migration := range localMigrations {
+		filename := migration.Name()
+		if strings.HasPrefix(filename, "r_") && strings.HasSuffix(filename, ".sql") {
+			path := filepath.Join(migrationsDir, filename)
+			repeatable = append(repeatable, path)
+		}
+	}
+
+	return repeatable, nil
 }
 
 var initSchemaPattern = regexp.MustCompile(`([0-9]{14})_init\.sql`)
