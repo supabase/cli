@@ -2,15 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
-	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/internal/login"
 )
 
 var studioCmd = &cobra.Command{
@@ -22,7 +22,6 @@ var studioCmd = &cobra.Command{
 		if err := flags.LoadConfig(fsys); err != nil {
 			return err
 		}
-		
 		var url string
 		if utils.Config.Studio.Enabled {
 			url = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
