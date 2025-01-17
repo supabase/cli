@@ -1074,7 +1074,7 @@ type PostgresConfigResponse struct {
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
-	TrackActivityQuerySize        *int                                          `json:"track_activity_query_size,omitempty"`
+	TrackActivityQuerySize        *string                                       `json:"track_activity_query_size,omitempty"`
 	TrackCommitTimestamp          *bool                                         `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                       `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                       `json:"wal_sender_timeout,omitempty"`
@@ -1604,7 +1604,7 @@ type UpdatePostgresConfigBody struct {
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
-	TrackActivityQuerySize        *int                                            `json:"track_activity_query_size,omitempty"`
+	TrackActivityQuerySize        *string                                         `json:"track_activity_query_size,omitempty"`
 	TrackCommitTimestamp          *bool                                           `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                         `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                         `json:"wal_sender_timeout,omitempty"`

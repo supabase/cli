@@ -4127,9 +4127,7 @@ components:
         maintenance_work_mem:
           type: string
         track_activity_query_size:
-          type: integer
-          minimum: 100
-          maximum: 1048576
+          type: string
         max_connections:
           type: integer
           minimum: 1
@@ -4194,9 +4192,7 @@ components:
         maintenance_work_mem:
           type: string
         track_activity_query_size:
-          type: integer
-          minimum: 100
-          maximum: 1048576
+          type: string
         max_connections:
           type: integer
           minimum: 1

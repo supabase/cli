@@ -43,7 +43,7 @@ type (
 		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role"`
 		SharedBuffers                 *string                 `toml:"shared_buffers"`
 		StatementTimeout              *string                 `toml:"statement_timeout"`
-		TrackActivityQuerySize        *uint                   `toml:"track_activity_query_size"`
+		TrackActivityQuerySize        *string                 `toml:"track_activity_query_size"`
 		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp"`
 		WalKeepSize                   *string                 `toml:"wal_keep_size"`
 		WalSenderTimeout              *string                 `toml:"wal_sender_timeout"`
@@ -106,6 +106,7 @@ func (a *settings) ToUpdatePostgresConfigBody() v1API.UpdatePostgresConfigBody {
 	body.MaxWalSize = a.MaxWalSize
 	body.SessionReplicationRole = (*v1API.UpdatePostgresConfigBodySessionReplicationRole)(a.SessionReplicationRole)
 	body.StatementTimeout = a.StatementTimeout
+	body.TrackActivityQuerySize = a.TrackActivityQuerySize
 	body.TrackCommitTimestamp = a.TrackCommitTimestamp
 	body.WalKeepSize = a.WalKeepSize
 	body.WalSenderTimeout = a.WalSenderTimeout
@@ -132,6 +133,7 @@ func (a *settings) FromRemotePostgresConfig(remoteConfig v1API.PostgresConfigRes
 	a.SessionReplicationRole = (*SessionReplicationRole)(remoteConfig.SessionReplicationRole)
 	a.SharedBuffers = remoteConfig.SharedBuffers
 	a.StatementTimeout = remoteConfig.StatementTimeout
+	a.TrackActivityQuerySize = remoteConfig.TrackActivityQuerySize
 	a.TrackCommitTimestamp = remoteConfig.TrackCommitTimestamp
 	a.WalKeepSize = remoteConfig.WalKeepSize
 	a.WalSenderTimeout = remoteConfig.WalSenderTimeout
