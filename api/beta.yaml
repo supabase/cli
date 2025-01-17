@@ -13,13 +13,13 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchDetailResponse"
-        "500":
+                $ref: '#/components/schemas/BranchDetailResponse'
+        '500':
           description: Failed to retrieve database branch
       tags:
         - Environments
@@ -41,15 +41,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateBranchBody"
+              $ref: '#/components/schemas/UpdateBranchBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchResponse"
-        "500":
+                $ref: '#/components/schemas/BranchResponse'
+        '500':
           description: Failed to update database branch
       tags:
         - Environments
@@ -67,13 +67,13 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchDeleteResponse"
-        "500":
+                $ref: '#/components/schemas/BranchDeleteResponse'
+        '500':
           description: Failed to delete database branch
       tags:
         - Environments
@@ -92,13 +92,13 @@ paths:
           schema:
             type: string
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchUpdateResponse"
-        "500":
+                $ref: '#/components/schemas/BranchUpdateResponse'
+        '500':
           description: Failed to push database branch
       tags:
         - Environments
@@ -117,13 +117,13 @@ paths:
           schema:
             type: string
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchUpdateResponse"
-        "500":
+                $ref: '#/components/schemas/BranchUpdateResponse'
+        '500':
           description: Failed to reset database branch
       tags:
         - Environments
@@ -136,14 +136,14 @@ paths:
       description: Returns a list of all projects you've previously created.
       parameters: []
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/V1ProjectWithDatabaseResponse"
+                  $ref: '#/components/schemas/V1ProjectWithDatabaseResponse'
       tags:
         - Projects
       security:
@@ -157,14 +157,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/V1CreateProjectBodyDto"
+              $ref: '#/components/schemas/V1CreateProjectBodyDto'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1ProjectResponse"
+                $ref: '#/components/schemas/V1ProjectResponse'
       tags:
         - Projects
       security:
@@ -176,15 +176,15 @@ paths:
       description: Returns a list of organizations that you currently belong to.
       parameters: []
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/OrganizationResponseV1"
-        "500":
+                  $ref: '#/components/schemas/OrganizationResponseV1'
+        '500':
           description: Unexpected error listing organizations
       tags:
         - Organizations
@@ -199,15 +199,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateOrganizationV1Dto"
+              $ref: '#/components/schemas/CreateOrganizationV1Dto'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OrganizationResponseV1"
-        "500":
+                $ref: '#/components/schemas/OrganizationResponseV1'
+        '500':
           description: Unexpected error creating an organization
       tags:
         - Organizations
@@ -216,7 +216,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: v1-authorize-user
-      summary: "[Beta] Authorize user through oauth"
+      summary: '[Beta] Authorize user through oauth'
       parameters:
         - name: client_id
           required: true
@@ -267,8 +267,8 @@ paths:
               - S256
             type: string
       responses:
-        "303":
-          description: ""
+        '303':
+          description: ''
       tags:
         - OAuth
       security:
@@ -277,21 +277,21 @@ paths:
   /v1/oauth/token:
     post:
       operationId: v1-exchange-oauth-token
-      summary: "[Beta] Exchange auth code for user's access and refresh token"
+      summary: '[Beta] Exchange auth code for user''s access and refresh token'
       parameters: []
       requestBody:
         required: true
         content:
           application/x-www-form-urlencoded:
             schema:
-              $ref: "#/components/schemas/OAuthTokenBody"
+              $ref: '#/components/schemas/OAuthTokenBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OAuthTokenResponse"
+                $ref: '#/components/schemas/OAuthTokenResponse'
       tags:
         - OAuth
       security:
@@ -300,17 +300,17 @@ paths:
   /v1/oauth/revoke:
     post:
       operationId: v1-revoke-token
-      summary: "[Beta] Revoke oauth app authorization and it's corresponding tokens"
+      summary: '[Beta] Revoke oauth app authorization and it''s corresponding tokens'
       parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/OAuthRevokeTokenBodyDto"
+              $ref: '#/components/schemas/OAuthRevokeTokenBodyDto'
       responses:
-        "204":
-          description: ""
+        '204':
+          description: ''
       tags:
         - OAuth
       security:
@@ -355,13 +355,13 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SnippetList"
-        "500":
+                $ref: '#/components/schemas/SnippetList'
+        '500':
           description: Failed to list user's SQL snippets
       tags:
         - Database
@@ -379,13 +379,13 @@ paths:
             format: uuid
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SnippetResponse"
-        "500":
+                $ref: '#/components/schemas/SnippetResponse'
+        '500':
           description: Failed to retrieve SQL snippet
       tags:
         - Database
@@ -410,21 +410,21 @@ paths:
           schema:
             type: boolean
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ApiKeyResponse"
+                  $ref: '#/components/schemas/ApiKeyResponse'
       tags:
         - Secrets
       security:
         - bearer: []
     post:
       operationId: createApiKey
-      summary: "[Alpha] Creates a new API key for the project"
+      summary: '[Alpha] Creates a new API key for the project'
       parameters:
         - name: ref
           required: true
@@ -444,14 +444,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateApiKeyBody"
+              $ref: '#/components/schemas/CreateApiKeyBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiKeyResponse"
+                $ref: '#/components/schemas/ApiKeyResponse'
       tags:
         - Secrets
       security:
@@ -459,7 +459,7 @@ paths:
   /v1/projects/{ref}/api-keys/{id}:
     patch:
       operationId: updateApiKey
-      summary: "[Alpha] Updates an API key for the project"
+      summary: '[Alpha] Updates an API key for the project'
       parameters:
         - name: ref
           required: true
@@ -484,21 +484,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateApiKeyBody"
+              $ref: '#/components/schemas/UpdateApiKeyBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiKeyResponse"
+                $ref: '#/components/schemas/ApiKeyResponse'
       tags:
         - Secrets
       security:
         - bearer: []
     get:
       operationId: getApiKey
-      summary: "[Alpha] Get API key"
+      summary: '[Alpha] Get API key'
       parameters:
         - name: ref
           required: true
@@ -519,19 +519,19 @@ paths:
           schema:
             type: boolean
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiKeyResponse"
+                $ref: '#/components/schemas/ApiKeyResponse'
       tags:
         - Secrets
       security:
         - bearer: []
     delete:
       operationId: deleteApiKey
-      summary: "[Alpha] Deletes an API key for the project"
+      summary: '[Alpha] Deletes an API key for the project'
       parameters:
         - name: ref
           required: true
@@ -552,14 +552,14 @@ paths:
           schema:
             type: boolean
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiKeyResponse"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/ApiKeyResponse'
+        '403':
+          description: ''
       tags:
         - Secrets
       security:
@@ -579,15 +579,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/BranchResponse"
-        "500":
+                  $ref: '#/components/schemas/BranchResponse'
+        '500':
           description: Failed to retrieve database branches
       tags:
         - Environments
@@ -611,15 +611,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateBranchBody"
+              $ref: '#/components/schemas/CreateBranchBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BranchResponse"
-        "500":
+                $ref: '#/components/schemas/BranchResponse'
+        '500':
           description: Failed to create database branch
       tags:
         - Environments
@@ -639,9 +639,9 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '500':
           description: Failed to disable preview branching
       tags:
         - Environments
@@ -650,7 +650,7 @@ paths:
   /v1/projects/{ref}/custom-hostname:
     get:
       operationId: v1-get-hostname-config
-      summary: "[Beta] Gets project's custom hostname config"
+      summary: '[Beta] Gets project''s custom hostname config'
       parameters:
         - name: ref
           required: true
@@ -661,15 +661,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateCustomHostnameResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's custom hostname config
       tags:
         - Domains
@@ -677,7 +677,7 @@ paths:
         - bearer: []
     delete:
       operationId: v1-Delete hostname config
-      summary: "[Beta] Deletes a project's custom hostname configuration"
+      summary: '[Beta] Deletes a project''s custom hostname configuration'
       parameters:
         - name: ref
           required: true
@@ -688,11 +688,11 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to delete project custom hostname configuration
       tags:
         - Domains
@@ -701,7 +701,7 @@ paths:
   /v1/projects/{ref}/custom-hostname/initialize:
     post:
       operationId: v1-update-hostname-config
-      summary: "[Beta] Updates project's custom hostname configuration"
+      summary: '[Beta] Updates project''s custom hostname configuration'
       parameters:
         - name: ref
           required: true
@@ -716,17 +716,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateCustomHostnameBody"
+              $ref: '#/components/schemas/UpdateCustomHostnameBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateCustomHostnameResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project custom hostname configuration
       tags:
         - Domains
@@ -748,15 +748,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateCustomHostnameResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to verify project custom hostname configuration
       tags:
         - Domains
@@ -765,7 +765,7 @@ paths:
   /v1/projects/{ref}/custom-hostname/activate:
     post:
       operationId: v1-activate-custom-hostname
-      summary: "[Beta] Activates a custom hostname for a project."
+      summary: '[Beta] Activates a custom hostname for a project.'
       parameters:
         - name: ref
           required: true
@@ -776,15 +776,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateCustomHostnameResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/UpdateCustomHostnameResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to activate project custom hostname configuration
       tags:
         - Domains
@@ -793,7 +793,7 @@ paths:
   /v1/projects/{ref}/network-bans/retrieve:
     post:
       operationId: v1-list-all-network-bans
-      summary: "[Beta] Gets project's network bans"
+      summary: '[Beta] Gets project''s network bans'
       parameters:
         - name: ref
           required: true
@@ -804,15 +804,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NetworkBanResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/NetworkBanResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's network bans
       tags:
         - Projects
@@ -821,7 +821,7 @@ paths:
   /v1/projects/{ref}/network-bans:
     delete:
       operationId: v1-delete-network-bans
-      summary: "[Beta] Remove network bans."
+      summary: '[Beta] Remove network bans.'
       parameters:
         - name: ref
           required: true
@@ -836,13 +836,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RemoveNetworkBanRequest"
+              $ref: '#/components/schemas/RemoveNetworkBanRequest'
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to remove network bans.
       tags:
         - Projects
@@ -851,7 +851,7 @@ paths:
   /v1/projects/{ref}/network-restrictions:
     get:
       operationId: v1-get-network-restrictions
-      summary: "[Beta] Gets project's network restrictions"
+      summary: '[Beta] Gets project''s network restrictions'
       parameters:
         - name: ref
           required: true
@@ -862,15 +862,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NetworkRestrictionsResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's network restrictions
       tags:
         - Projects
@@ -879,7 +879,7 @@ paths:
   /v1/projects/{ref}/network-restrictions/apply:
     post:
       operationId: v1-update-network-restrictions
-      summary: "[Beta] Updates project's network restrictions"
+      summary: '[Beta] Updates project''s network restrictions'
       parameters:
         - name: ref
           required: true
@@ -894,17 +894,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/NetworkRestrictionsRequest"
+              $ref: '#/components/schemas/NetworkRestrictionsRequest'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NetworkRestrictionsResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/NetworkRestrictionsResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project network restrictions
       tags:
         - Projects
@@ -913,7 +913,7 @@ paths:
   /v1/projects/{ref}/pgsodium:
     get:
       operationId: v1-get-pgsodium-config
-      summary: "[Beta] Gets project's pgsodium config"
+      summary: '[Beta] Gets project''s pgsodium config'
       parameters:
         - name: ref
           required: true
@@ -924,15 +924,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PgsodiumConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/PgsodiumConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's pgsodium config
       tags:
         - Secrets
@@ -957,17 +957,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdatePgsodiumConfigBody"
+              $ref: '#/components/schemas/UpdatePgsodiumConfigBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PgsodiumConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/PgsodiumConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's pgsodium config
       tags:
         - Secrets
@@ -987,15 +987,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PostgrestConfigWithJWTSecretResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/PostgrestConfigWithJWTSecretResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's postgrest config
       tags:
         - Rest
@@ -1018,17 +1018,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdatePostgrestConfigBody"
+              $ref: '#/components/schemas/UpdatePostgrestConfigBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1PostgrestConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/V1PostgrestConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's postgrest config
       tags:
         - Rest
@@ -1048,13 +1048,13 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1ProjectWithDatabaseResponse"
-        "500":
+                $ref: '#/components/schemas/V1ProjectWithDatabaseResponse'
+        '500':
           description: Failed to retrieve project
       tags:
         - Projects
@@ -1073,14 +1073,14 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1ProjectRefResponse"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/V1ProjectRefResponse'
+        '403':
+          description: ''
       tags:
         - Projects
       security:
@@ -1100,17 +1100,17 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/SecretResponse"
-        "403":
-          description: ""
-        "500":
+                  $ref: '#/components/schemas/SecretResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's secrets
       tags:
         - Secrets
@@ -1136,13 +1136,13 @@ paths:
             schema:
               type: array
               items:
-                $ref: "#/components/schemas/CreateSecretBody"
+                $ref: '#/components/schemas/CreateSecretBody'
       responses:
-        "201":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to create project's secrets
       tags:
         - Secrets
@@ -1170,15 +1170,15 @@ paths:
               items:
                 type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: object
-        "403":
-          description: ""
-        "500":
+        '403':
+          description: ''
+        '500':
           description: Failed to delete secrets with given names
       tags:
         - Secrets
@@ -1187,7 +1187,7 @@ paths:
   /v1/projects/{ref}/ssl-enforcement:
     get:
       operationId: v1-get-ssl-enforcement-config
-      summary: "[Beta] Get project's SSL enforcement configuration."
+      summary: '[Beta] Get project''s SSL enforcement configuration.'
       parameters:
         - name: ref
           required: true
@@ -1198,15 +1198,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SslEnforcementResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/SslEnforcementResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's SSL enforcement config
       tags:
         - Database
@@ -1214,7 +1214,7 @@ paths:
         - bearer: []
     put:
       operationId: v1-update-ssl-enforcement-config
-      summary: "[Beta] Update project's SSL enforcement configuration."
+      summary: '[Beta] Update project''s SSL enforcement configuration.'
       parameters:
         - name: ref
           required: true
@@ -1229,17 +1229,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SslEnforcementRequest"
+              $ref: '#/components/schemas/SslEnforcementRequest'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SslEnforcementResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/SslEnforcementResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's SSL enforcement configuration.
       tags:
         - Database
@@ -1266,15 +1266,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TypescriptResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/TypescriptResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to generate TypeScript types
       tags:
         - Database
@@ -1283,7 +1283,7 @@ paths:
   /v1/projects/{ref}/vanity-subdomain:
     get:
       operationId: v1-get-vanity-subdomain-config
-      summary: "[Beta] Gets current vanity subdomain config"
+      summary: '[Beta] Gets current vanity subdomain config'
       parameters:
         - name: ref
           required: true
@@ -1294,15 +1294,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VanitySubdomainConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/VanitySubdomainConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to get project vanity subdomain configuration
       tags:
         - Domains
@@ -1310,7 +1310,7 @@ paths:
         - bearer: []
     delete:
       operationId: v1-deactivate-vanity-subdomain-config
-      summary: "[Beta] Deletes a project's vanity subdomain configuration"
+      summary: '[Beta] Deletes a project''s vanity subdomain configuration'
       parameters:
         - name: ref
           required: true
@@ -1321,11 +1321,11 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to delete project vanity subdomain configuration
       tags:
         - Domains
@@ -1334,7 +1334,7 @@ paths:
   /v1/projects/{ref}/vanity-subdomain/check-availability:
     post:
       operationId: v1-check-vanity-subdomain-availability
-      summary: "[Beta] Checks vanity subdomain availability"
+      summary: '[Beta] Checks vanity subdomain availability'
       parameters:
         - name: ref
           required: true
@@ -1349,17 +1349,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VanitySubdomainBody"
+              $ref: '#/components/schemas/VanitySubdomainBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SubdomainAvailabilityResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/SubdomainAvailabilityResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to check project vanity subdomain configuration
       tags:
         - Domains
@@ -1368,7 +1368,7 @@ paths:
   /v1/projects/{ref}/vanity-subdomain/activate:
     post:
       operationId: v1-activate-vanity-subdomain-config
-      summary: "[Beta] Activates a vanity subdomain for a project."
+      summary: '[Beta] Activates a vanity subdomain for a project.'
       parameters:
         - name: ref
           required: true
@@ -1383,17 +1383,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VanitySubdomainBody"
+              $ref: '#/components/schemas/VanitySubdomainBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ActivateVanitySubdomainResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/ActivateVanitySubdomainResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to activate project vanity subdomain configuration
       tags:
         - Domains
@@ -1402,7 +1402,7 @@ paths:
   /v1/projects/{ref}/upgrade:
     post:
       operationId: v1-upgrade-postgres-version
-      summary: "[Beta] Upgrades the project's Postgres version"
+      summary: '[Beta] Upgrades the project''s Postgres version'
       parameters:
         - name: ref
           required: true
@@ -1417,17 +1417,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpgradeDatabaseBody"
+              $ref: '#/components/schemas/UpgradeDatabaseBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectUpgradeInitiateResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/ProjectUpgradeInitiateResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to initiate project upgrade
       tags:
         - Projects
@@ -1436,7 +1436,7 @@ paths:
   /v1/projects/{ref}/upgrade/eligibility:
     get:
       operationId: v1-get-postgres-upgrade-eligibility
-      summary: "[Beta] Returns the project's eligibility for upgrades"
+      summary: '[Beta] Returns the project''s eligibility for upgrades'
       parameters:
         - name: ref
           required: true
@@ -1447,15 +1447,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectUpgradeEligibilityResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/ProjectUpgradeEligibilityResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to determine project upgrade eligibility
       tags:
         - Projects
@@ -1464,7 +1464,7 @@ paths:
   /v1/projects/{ref}/upgrade/status:
     get:
       operationId: v1-get-postgres-upgrade-status
-      summary: "[Beta] Gets the latest status of the project's upgrade"
+      summary: '[Beta] Gets the latest status of the project''s upgrade'
       parameters:
         - name: ref
           required: true
@@ -1480,15 +1480,15 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DatabaseUpgradeStatusResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/DatabaseUpgradeStatusResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project upgrade status
       tags:
         - Projects
@@ -1508,13 +1508,13 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReadOnlyStatusResponse"
-        "500":
+                $ref: '#/components/schemas/ReadOnlyStatusResponse'
+        '500':
           description: Failed to get project readonly mode status
       tags:
         - Database
@@ -1534,9 +1534,9 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "201":
-          description: ""
-        "500":
+        '201':
+          description: ''
+        '500':
           description: Failed to disable project's readonly mode
       tags:
         - Database
@@ -1545,7 +1545,7 @@ paths:
   /v1/projects/{ref}/read-replicas/setup:
     post:
       operationId: v1-setup-a-read-replica
-      summary: "[Beta] Set up a read replica"
+      summary: '[Beta] Set up a read replica'
       parameters:
         - name: ref
           required: true
@@ -1560,13 +1560,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SetUpReadReplicaBody"
+              $ref: '#/components/schemas/SetUpReadReplicaBody'
       responses:
-        "201":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to set up read replica
       tags:
         - Database
@@ -1575,7 +1575,7 @@ paths:
   /v1/projects/{ref}/read-replicas/remove:
     post:
       operationId: v1-remove-a-read-replica
-      summary: "[Beta] Remove a read replica"
+      summary: '[Beta] Remove a read replica'
       parameters:
         - name: ref
           required: true
@@ -1590,13 +1590,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RemoveReadReplicaBody"
+              $ref: '#/components/schemas/RemoveReadReplicaBody'
       responses:
-        "201":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to remove read replica
       tags:
         - Database
@@ -1637,17 +1637,17 @@ paths:
                 - rest
                 - storage
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/V1ServiceHealthResponse"
-        "403":
-          description: ""
-        "500":
+                  $ref: '#/components/schemas/V1ServiceHealthResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's service health status
       tags:
         - Projects
@@ -1667,15 +1667,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StorageConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/StorageConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's storage config
       tags:
         - Storage
@@ -1698,13 +1698,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateStorageConfigBody"
+              $ref: '#/components/schemas/UpdateStorageConfigBody'
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's storage config
       tags:
         - Storage
@@ -1724,13 +1724,13 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PostgresConfigResponse"
-        "500":
+                $ref: '#/components/schemas/PostgresConfigResponse'
+        '500':
           description: Failed to retrieve project's Postgres config
       tags:
         - Database
@@ -1753,17 +1753,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdatePostgresConfigBody"
+              $ref: '#/components/schemas/UpdatePostgresConfigBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PostgresConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/PostgresConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's Postgres config
       tags:
         - Database
@@ -1783,13 +1783,13 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1PgbouncerConfigResponse"
-        "500":
+                $ref: '#/components/schemas/V1PgbouncerConfigResponse'
+        '500':
           description: Failed to retrieve project's pgbouncer config
       tags:
         - Database
@@ -1807,15 +1807,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/SupavisorConfigResponse"
-        "500":
+                  $ref: '#/components/schemas/SupavisorConfigResponse'
+        '500':
           description: Failed to retrieve project's supavisor config
       tags:
         - Database
@@ -1838,17 +1838,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateSupavisorConfigBody"
+              $ref: '#/components/schemas/UpdateSupavisorConfigBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateSupavisorConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/UpdateSupavisorConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's supavisor config
       tags:
         - Database
@@ -1868,15 +1868,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/AuthConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's auth config
       tags:
         - Auth
@@ -1899,17 +1899,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateAuthConfigBody"
+              $ref: '#/components/schemas/UpdateAuthConfigBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthConfigResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/AuthConfigResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update project's auth config
       tags:
         - Auth
@@ -1933,23 +1933,23 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateThirdPartyAuthBody"
+              $ref: '#/components/schemas/CreateThirdPartyAuthBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ThirdPartyAuth"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
       tags:
         - Auth
       security:
         - bearer: []
     get:
       operationId: listTPAForProject
-      summary: "[Alpha] Lists all third-party auth integrations"
+      summary: '[Alpha] Lists all third-party auth integrations'
       parameters:
         - name: ref
           required: true
@@ -1960,16 +1960,16 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ThirdPartyAuth"
-        "403":
-          description: ""
+                  $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
       tags:
         - Auth
       security:
@@ -1977,7 +1977,7 @@ paths:
   /v1/projects/{ref}/config/auth/third-party-auth/{tpa_id}:
     delete:
       operationId: deleteTPAForProject
-      summary: "[Alpha] Removes a third-party auth integration"
+      summary: '[Alpha] Removes a third-party auth integration'
       parameters:
         - name: ref
           required: true
@@ -1993,21 +1993,21 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ThirdPartyAuth"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
       tags:
         - Auth
       security:
         - bearer: []
     get:
       operationId: getTPAForProject
-      summary: "[Alpha] Get a third-party integration"
+      summary: '[Alpha] Get a third-party integration'
       parameters:
         - name: ref
           required: true
@@ -2023,14 +2023,14 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ThirdPartyAuth"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/ThirdPartyAuth'
+        '403':
+          description: ''
       tags:
         - Auth
       security:
@@ -2049,10 +2049,10 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
+        '200':
+          description: ''
+        '403':
+          description: ''
       tags:
         - Projects
       security:
@@ -2068,15 +2068,15 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 $ref: >-
                   #/components/schemas/GetProjectAvailableRestoreVersionsResponse
-        "403":
-          description: ""
+        '403':
+          description: ''
       tags:
         - Projects
       security:
@@ -2095,12 +2095,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RestoreProjectBodyDto"
+              $ref: '#/components/schemas/RestoreProjectBodyDto'
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
+        '200':
+          description: ''
+        '403':
+          description: ''
       tags:
         - Projects
       security:
@@ -2116,10 +2116,10 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
+        '200':
+          description: ''
+        '403':
+          description: ''
       tags:
         - Projects
       security:
@@ -2150,14 +2150,14 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1AnalyticsResponse"
-        "403":
-          description: ""
+                $ref: '#/components/schemas/V1AnalyticsResponse'
+        '403':
+          description: ''
       tags:
         - Analytics
       security:
@@ -2165,7 +2165,7 @@ paths:
   /v1/projects/{ref}/database/query:
     post:
       operationId: v1-run-a-query
-      summary: "[Beta] Run sql query"
+      summary: '[Beta] Run sql query'
       parameters:
         - name: ref
           required: true
@@ -2180,17 +2180,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/V1RunQueryBody"
+              $ref: '#/components/schemas/V1RunQueryBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
                 type: object
-        "403":
-          description: ""
-        "500":
+        '403':
+          description: ''
+        '500':
           description: Failed to run sql query
       tags:
         - Database
@@ -2199,7 +2199,7 @@ paths:
   /v1/projects/{ref}/database/webhooks/enable:
     post:
       operationId: v1-enable-database-webhook
-      summary: "[Beta] Enables Database Webhooks on the project"
+      summary: '[Beta] Enables Database Webhooks on the project'
       parameters:
         - name: ref
           required: true
@@ -2210,11 +2210,11 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "201":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '201':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to enable Database Webhooks on the project
       tags:
         - Database
@@ -2235,17 +2235,17 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/FunctionResponse"
-        "403":
-          description: ""
-        "500":
+                  $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve project's functions
       tags:
         - Edge Functions
@@ -2307,20 +2307,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/V1CreateFunctionBody"
+              $ref: '#/components/schemas/V1CreateFunctionBody'
           application/vnd.denoland.eszip:
             schema:
-              $ref: "#/components/schemas/V1CreateFunctionBody"
+              $ref: '#/components/schemas/V1CreateFunctionBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FunctionResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to create project's function
       tags:
         - Edge Functions
@@ -2348,15 +2348,15 @@ paths:
             pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FunctionSlugResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/FunctionSlugResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve function with given slug
       tags:
         - Edge Functions
@@ -2425,20 +2425,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/V1UpdateFunctionBody"
+              $ref: '#/components/schemas/V1UpdateFunctionBody'
           application/vnd.denoland.eszip:
             schema:
-              $ref: "#/components/schemas/V1UpdateFunctionBody"
+              $ref: '#/components/schemas/V1UpdateFunctionBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FunctionResponse"
-        "403":
-          description: ""
-        "500":
+                $ref: '#/components/schemas/FunctionResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to update function with given slug
       tags:
         - Edge Functions
@@ -2465,11 +2465,11 @@ paths:
             pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to delete function with given slug
       tags:
         - Edge Functions
@@ -2497,11 +2497,11 @@ paths:
             pattern: /^[A-Za-z0-9_-]+$/
             type: string
       responses:
-        "200":
-          description: ""
-        "403":
-          description: ""
-        "500":
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
           description: Failed to retrieve function body with given slug
       tags:
         - Edge Functions
@@ -2521,17 +2521,17 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/V1StorageBucketResponse"
-        "403":
-          description: ""
-        "500":
+                  $ref: '#/components/schemas/V1StorageBucketResponse'
+        '403':
+          description: ''
+        '500':
           description: Failed to get list of buckets
       tags:
         - Storage
@@ -2555,17 +2555,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateProviderBody"
+              $ref: '#/components/schemas/CreateProviderBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CreateProviderResponse"
-        "403":
-          description: ""
-        "404":
+                $ref: '#/components/schemas/CreateProviderResponse'
+        '403':
+          description: ''
+        '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
         - Auth
@@ -2584,15 +2584,15 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListProvidersResponse"
-        "403":
-          description: ""
-        "404":
+                $ref: '#/components/schemas/ListProvidersResponse'
+        '403':
+          description: ''
+        '404':
           description: SAML 2.0 support is not enabled for this project
       tags:
         - Auth
@@ -2617,15 +2617,15 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GetProviderResponse"
-        "403":
-          description: ""
-        "404":
+                $ref: '#/components/schemas/GetProviderResponse'
+        '403':
+          description: ''
+        '404':
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
@@ -2655,17 +2655,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateProviderBody"
+              $ref: '#/components/schemas/UpdateProviderBody'
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateProviderResponse"
-        "403":
-          description: ""
-        "404":
+                $ref: '#/components/schemas/UpdateProviderResponse'
+        '403':
+          description: ''
+        '404':
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
@@ -2691,15 +2691,15 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeleteProviderResponse"
-        "403":
-          description: ""
-        "404":
+                $ref: '#/components/schemas/DeleteProviderResponse'
+        '403':
+          description: ''
+        '404':
           description: >-
             Either SAML 2.0 was not enabled for this project, or the provider
             does not exist
@@ -2721,13 +2721,13 @@ paths:
             maxLength: 20
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1BackupsResponse"
-        "500":
+                $ref: '#/components/schemas/V1BackupsResponse'
+        '500':
           description: Failed to get backups
       tags:
         - Database
@@ -2751,10 +2751,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/V1RestorePitrBody"
+              $ref: '#/components/schemas/V1RestorePitrBody'
       responses:
-        "201":
-          description: ""
+        '201':
+          description: ''
       tags:
         - Database
       security:
@@ -2770,14 +2770,14 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/V1OrganizationMemberResponse"
+                  $ref: '#/components/schemas/V1OrganizationMemberResponse'
       tags:
         - Organizations
       security:
@@ -2793,12 +2793,12 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          description: ""
+        '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/V1OrganizationSlugResponse"
+                $ref: '#/components/schemas/V1OrganizationSlugResponse'
       tags:
         - Organizations
       security:
@@ -3016,7 +3016,7 @@ components:
         created_at:
           type: string
           description: Creation timestamp
-          example: "2023-03-29T16:32:59Z"
+          example: '2023-03-29T16:32:59Z'
         status:
           type: string
           enum:
@@ -3036,7 +3036,7 @@ components:
             - PAUSE_FAILED
             - RESIZING
         database:
-          $ref: "#/components/schemas/V1DatabaseResponse"
+          $ref: '#/components/schemas/V1DatabaseResponse'
       required:
         - id
         - organization_id
@@ -3124,7 +3124,7 @@ components:
         postgres_engine:
           type: string
           enum:
-            - "15"
+            - '15'
             - 17-oriole
           description: >-
             Postgres engine version. If not provided, the latest version will be
@@ -3154,7 +3154,7 @@ components:
         created_at:
           type: string
           description: Creation timestamp
-          example: "2023-03-29T16:32:59Z"
+          example: '2023-03-29T16:32:59Z'
         status:
           type: string
           enum:
@@ -3304,11 +3304,11 @@ components:
           type: string
           nullable: true
         project:
-          $ref: "#/components/schemas/SnippetProject"
+          $ref: '#/components/schemas/SnippetProject'
         owner:
-          $ref: "#/components/schemas/SnippetUser"
+          $ref: '#/components/schemas/SnippetUser'
         updated_by:
-          $ref: "#/components/schemas/SnippetUser"
+          $ref: '#/components/schemas/SnippetUser'
       required:
         - id
         - inserted_at
@@ -3326,7 +3326,7 @@ components:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/SnippetMeta"
+            $ref: '#/components/schemas/SnippetMeta'
         cursor:
           type: string
       required:
@@ -3370,13 +3370,13 @@ components:
           type: string
           nullable: true
         project:
-          $ref: "#/components/schemas/SnippetProject"
+          $ref: '#/components/schemas/SnippetProject'
         owner:
-          $ref: "#/components/schemas/SnippetUser"
+          $ref: '#/components/schemas/SnippetUser'
         updated_by:
-          $ref: "#/components/schemas/SnippetUser"
+          $ref: '#/components/schemas/SnippetUser'
         content:
-          $ref: "#/components/schemas/SnippetContent"
+          $ref: '#/components/schemas/SnippetContent'
       required:
         - id
         - inserted_at
@@ -3425,7 +3425,7 @@ components:
         secret_jwt_template:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ApiKeySecretJWTTemplate"
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
         inserted_at:
           type: string
           nullable: true
@@ -3449,7 +3449,7 @@ components:
         secret_jwt_template:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ApiKeySecretJWTTemplate"
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
       required:
         - type
     UpdateApiKeyBody:
@@ -3461,7 +3461,7 @@ components:
         secret_jwt_template:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ApiKeySecretJWTTemplate"
+            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
     DesiredInstanceSize:
       type: string
       enum:
@@ -3490,17 +3490,17 @@ components:
         Postgres engine version. If not provided, the latest version will be
         used.
       enum:
-        - "15"
+        - '15'
         - 17-oriole
     CreateBranchBody:
       type: object
       properties:
         desired_instance_size:
-          $ref: "#/components/schemas/DesiredInstanceSize"
+          $ref: '#/components/schemas/DesiredInstanceSize'
         release_channel:
-          $ref: "#/components/schemas/ReleaseChannel"
+          $ref: '#/components/schemas/ReleaseChannel'
         postgres_engine:
-          $ref: "#/components/schemas/PostgresEngine"
+          $ref: '#/components/schemas/PostgresEngine'
         branch_name:
           type: string
         git_branch:
@@ -3536,11 +3536,11 @@ components:
         validation_records:
           type: array
           items:
-            $ref: "#/components/schemas/ValidationRecord"
+            $ref: '#/components/schemas/ValidationRecord'
         validation_errors:
           type: array
           items:
-            $ref: "#/components/schemas/ValidationError"
+            $ref: '#/components/schemas/ValidationError'
       required:
         - status
         - validation_records
@@ -3565,9 +3565,9 @@ components:
         hostname:
           type: string
         ssl:
-          $ref: "#/components/schemas/SslValidation"
+          $ref: '#/components/schemas/SslValidation'
         ownership_verification:
-          $ref: "#/components/schemas/OwnershipVerification"
+          $ref: '#/components/schemas/OwnershipVerification'
         custom_origin_server:
           type: string
         verification_errors:
@@ -3597,7 +3597,7 @@ components:
           items:
             type: object
         result:
-          $ref: "#/components/schemas/CustomHostnameDetails"
+          $ref: '#/components/schemas/CustomHostnameDetails'
       required:
         - success
         - errors
@@ -3617,7 +3617,7 @@ components:
         custom_hostname:
           type: string
         data:
-          $ref: "#/components/schemas/CfResponse"
+          $ref: '#/components/schemas/CfResponse'
       required:
         - status
         - custom_hostname
@@ -3667,9 +3667,9 @@ components:
             - allowed
           type: string
         config:
-          $ref: "#/components/schemas/NetworkRestrictionsRequest"
+          $ref: '#/components/schemas/NetworkRestrictionsRequest'
         old_config:
-          $ref: "#/components/schemas/NetworkRestrictionsRequest"
+          $ref: '#/components/schemas/NetworkRestrictionsRequest'
         status:
           enum:
             - stored
@@ -3800,7 +3800,7 @@ components:
       type: object
       properties:
         currentConfig:
-          $ref: "#/components/schemas/SslEnforcements"
+          $ref: '#/components/schemas/SslEnforcements'
         appliedSuccessfully:
           type: boolean
       required:
@@ -3810,7 +3810,7 @@ components:
       type: object
       properties:
         requestedConfig:
-          $ref: "#/components/schemas/SslEnforcements"
+          $ref: '#/components/schemas/SslEnforcements'
       required:
         - requestedConfig
     TypescriptResponse:
@@ -3858,7 +3858,7 @@ components:
       type: object
       properties:
         release_channel:
-          $ref: "#/components/schemas/ReleaseChannel"
+          $ref: '#/components/schemas/ReleaseChannel'
         target_version:
           type: string
       required:
@@ -3875,9 +3875,9 @@ components:
       type: object
       properties:
         postgres_version:
-          $ref: "#/components/schemas/PostgresEngine"
+          $ref: '#/components/schemas/PostgresEngine'
         release_channel:
-          $ref: "#/components/schemas/ReleaseChannel"
+          $ref: '#/components/schemas/ReleaseChannel'
         app_version:
           type: string
       required:
@@ -3888,7 +3888,7 @@ components:
       type: object
       properties:
         current_app_version_release_channel:
-          $ref: "#/components/schemas/ReleaseChannel"
+          $ref: '#/components/schemas/ReleaseChannel'
         duration_estimate_hours:
           type: integer
         eligible:
@@ -3900,7 +3900,7 @@ components:
         target_upgrade_versions:
           type: array
           items:
-            $ref: "#/components/schemas/ProjectVersion"
+            $ref: '#/components/schemas/ProjectVersion'
         potential_breaking_changes:
           type: array
           items:
@@ -3975,7 +3975,7 @@ components:
         databaseUpgradeStatus:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/DatabaseUpgradeStatus"
+            - $ref: '#/components/schemas/DatabaseUpgradeStatus'
       required:
         - databaseUpgradeStatus
     ReadOnlyStatusResponse:
@@ -4047,8 +4047,8 @@ components:
       properties:
         info:
           oneOf:
-            - $ref: "#/components/schemas/AuthHealthResponse"
-            - $ref: "#/components/schemas/RealtimeHealthResponse"
+            - $ref: '#/components/schemas/AuthHealthResponse'
+            - $ref: '#/components/schemas/RealtimeHealthResponse'
         name:
           enum:
             - auth
@@ -4090,9 +4090,9 @@ components:
       type: object
       properties:
         imageTransformation:
-          $ref: "#/components/schemas/StorageFeatureImageTransformation"
+          $ref: '#/components/schemas/StorageFeatureImageTransformation'
         s3Protocol:
-          $ref: "#/components/schemas/StorageFeatureS3Protocol"
+          $ref: '#/components/schemas/StorageFeatureS3Protocol'
       required:
         - imageTransformation
         - s3Protocol
@@ -4103,7 +4103,7 @@ components:
           type: integer
           format: int64
         features:
-          $ref: "#/components/schemas/StorageFeatures"
+          $ref: '#/components/schemas/StorageFeatures'
       required:
         - fileSizeLimit
         - features
@@ -4116,7 +4116,7 @@ components:
           maximum: 53687091200
           format: int64
         features:
-          $ref: "#/components/schemas/StorageFeatures"
+          $ref: '#/components/schemas/StorageFeatures'
     PostgresConfigResponse:
       type: object
       properties:
@@ -5191,7 +5191,7 @@ components:
             - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
             - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
             - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~
-            - ""
+            - ''
         security_manual_linking_enabled:
           type: boolean
         security_update_password_require_reauthentication:
@@ -5470,9 +5470,9 @@ components:
         postgres_engine:
           type: string
           enum:
-            - "13"
-            - "14"
-            - "15"
+            - '13'
+            - '14'
+            - '15'
             - 17-oriole
       required:
         - version
@@ -5484,7 +5484,7 @@ components:
         available_versions:
           type: array
           items:
-            $ref: "#/components/schemas/ProjectAvailableRestoreVersion"
+            $ref: '#/components/schemas/ProjectAvailableRestoreVersion'
       required:
         - available_versions
     RestoreProjectBodyDto:
@@ -5505,7 +5505,7 @@ components:
         postgres_engine:
           type: string
           enum:
-            - "15"
+            - '15'
             - 17-oriole
           description: >-
             Postgres engine version. If not provided, the latest version from
@@ -5708,7 +5708,7 @@ components:
         keys:
           type: object
           additionalProperties:
-            $ref: "#/components/schemas/AttributeValue"
+            $ref: '#/components/schemas/AttributeValue'
       required:
         - keys
     CreateProviderBody:
@@ -5728,7 +5728,7 @@ components:
           items:
             type: string
         attribute_mapping:
-          $ref: "#/components/schemas/AttributeMapping"
+          $ref: '#/components/schemas/AttributeMapping'
       required:
         - type
     SamlDescriptor:
@@ -5743,7 +5743,7 @@ components:
         metadata_xml:
           type: string
         attribute_mapping:
-          $ref: "#/components/schemas/AttributeMapping"
+          $ref: '#/components/schemas/AttributeMapping'
       required:
         - id
         - entity_id
@@ -5766,11 +5766,11 @@ components:
         id:
           type: string
         saml:
-          $ref: "#/components/schemas/SamlDescriptor"
+          $ref: '#/components/schemas/SamlDescriptor'
         domains:
           type: array
           items:
-            $ref: "#/components/schemas/Domain"
+            $ref: '#/components/schemas/Domain'
         created_at:
           type: string
         updated_at:
@@ -5783,11 +5783,11 @@ components:
         id:
           type: string
         saml:
-          $ref: "#/components/schemas/SamlDescriptor"
+          $ref: '#/components/schemas/SamlDescriptor'
         domains:
           type: array
           items:
-            $ref: "#/components/schemas/Domain"
+            $ref: '#/components/schemas/Domain'
         created_at:
           type: string
         updated_at:
@@ -5800,7 +5800,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/Provider"
+            $ref: '#/components/schemas/Provider'
       required:
         - items
     GetProviderResponse:
@@ -5809,11 +5809,11 @@ components:
         id:
           type: string
         saml:
-          $ref: "#/components/schemas/SamlDescriptor"
+          $ref: '#/components/schemas/SamlDescriptor'
         domains:
           type: array
           items:
-            $ref: "#/components/schemas/Domain"
+            $ref: '#/components/schemas/Domain'
         created_at:
           type: string
         updated_at:
@@ -5832,18 +5832,18 @@ components:
           items:
             type: string
         attribute_mapping:
-          $ref: "#/components/schemas/AttributeMapping"
+          $ref: '#/components/schemas/AttributeMapping'
     UpdateProviderResponse:
       type: object
       properties:
         id:
           type: string
         saml:
-          $ref: "#/components/schemas/SamlDescriptor"
+          $ref: '#/components/schemas/SamlDescriptor'
         domains:
           type: array
           items:
-            $ref: "#/components/schemas/Domain"
+            $ref: '#/components/schemas/Domain'
         created_at:
           type: string
         updated_at:
@@ -5856,11 +5856,11 @@ components:
         id:
           type: string
         saml:
-          $ref: "#/components/schemas/SamlDescriptor"
+          $ref: '#/components/schemas/SamlDescriptor'
         domains:
           type: array
           items:
-            $ref: "#/components/schemas/Domain"
+            $ref: '#/components/schemas/Domain'
         created_at:
           type: string
         updated_at:
@@ -5908,9 +5908,9 @@ components:
         backups:
           type: array
           items:
-            $ref: "#/components/schemas/V1Backup"
+            $ref: '#/components/schemas/V1Backup'
         physical_backup_data:
-          $ref: "#/components/schemas/V1PhysicalBackup"
+          $ref: '#/components/schemas/V1PhysicalBackup'
       required:
         - region
         - walg_enabled
@@ -5955,7 +5955,7 @@ components:
       type: object
       properties:
         plan:
-          $ref: "#/components/schemas/BillingPlanId"
+          $ref: '#/components/schemas/BillingPlanId'
         opt_in_tags:
           type: array
           items:
@@ -5965,7 +5965,7 @@ components:
         allowed_release_channels:
           type: array
           items:
-            $ref: "#/components/schemas/ReleaseChannel"
+            $ref: '#/components/schemas/ReleaseChannel'
         id:
           type: string
         name:
