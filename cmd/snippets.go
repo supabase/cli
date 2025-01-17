@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/snippets/download"
 	"github.com/supabase/cli/internal/snippets/list"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
