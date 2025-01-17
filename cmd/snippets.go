@@ -32,9 +32,6 @@ var (
 		Long:  "Download contents of the specified SQL snippet.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !utils.UUIDPattern.MatchString(args[0]) {
-				return errors.Errorf("snippet ID %q is not a UUID", args[0])
-			}
 			return download.Run(cmd.Context(), args[0], afero.NewOsFs())
 		},
 	}
