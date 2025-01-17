@@ -43,6 +43,7 @@ type (
 		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role"`
 		SharedBuffers                 *string                 `toml:"shared_buffers"`
 		StatementTimeout              *string                 `toml:"statement_timeout"`
+		TrackActivityQuerySize        *uint                   `toml:"track_activity_query_size"`
 		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp"`
 		WalKeepSize                   *string                 `toml:"wal_keep_size"`
 		WalSenderTimeout              *string                 `toml:"wal_sender_timeout"`
