@@ -14,7 +14,7 @@ type EdgeRuntimeAPI struct {
 }
 
 type EszipBundler interface {
-	Bundle(ctx context.Context, entrypoint string, importMap string, output io.Writer) error
+	Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error
 }
 
 func NewEdgeRuntimeAPI(project string, client api.ClientWithResponses, bundler EszipBundler) EdgeRuntimeAPI {

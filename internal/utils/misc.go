@@ -74,6 +74,7 @@ var (
 		"graphql",
 		"graphql_public",
 		"net",
+		"pgmq",
 		"pgsodium",
 		"pgsodium_masks",
 		"pgtle",
