@@ -46,6 +46,9 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 		}
 		utils.CmdSuggestion = suggestIgnoreFlag(diff)
 	}
+	if err != nil {
+		return diff, err
+	}
 	repeatableMigrations, err := migration.ListRepeatableMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return nil, err
