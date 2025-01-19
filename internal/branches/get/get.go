@@ -34,7 +34,7 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 	}
 
 	config := pgconn.Config{
-		Host:     utils.GetSupabaseDbHost(resp.JSON200.DbHost),
+		Host:     resp.JSON200.DbHost,
 		Port:     cast.UIntToUInt16(cast.IntToUint(resp.JSON200.DbPort)),
 		User:     *resp.JSON200.DbUser,
 		Password: *resp.JSON200.DbPass,
