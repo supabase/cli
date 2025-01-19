@@ -12,7 +12,7 @@ import (
 )
 
 func Run(repeatable bool, migrationName string, stdin afero.File, fsys afero.Fs) error {
-	path := ""
+	var path string
 
 	if repeatable {
 		// if migration name already exists, repeatable migration will be overwritten

@@ -24,17 +24,7 @@ func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.
 		return err
 	}
 
-	err = migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys))
-	if err != nil {
-		return err
-	}
-
-	repeatableMigrations, err := migration.ListRepeatableMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
-	if err != nil {
-		return err
-	}
-
-	return migration.ApplyMigrations(ctx, repeatableMigrations, conn, afero.NewIOFS(fsys))
+	return migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys))
 }
 
 func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, fsys afero.Fs) ([]string, error) {
@@ -56,6 +46,11 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 		}
 		utils.CmdSuggestion = suggestIgnoreFlag(diff)
 	}
+	repeatableMigrations, err := migration.ListRepeatableMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
+	if err != nil {
+		return nil, err
+	}
+	diff = append(diff, repeatableMigrations...)
 	return diff, err
 }
 

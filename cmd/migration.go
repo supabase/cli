@@ -152,7 +152,7 @@ func init() {
 	migrationCmd.AddCommand(migrationFetchCmd)
 	// Build new command
 	newFlags := migrationNewCmd.Flags()
-	newFlags.BoolVarP(&repeatable, "repeatable", "r", false, "Creates a repeatable migration instead of a common migration.")
+	newFlags.BoolVarP(&repeatable, "repeatable", "r", false, "Creates a repeatable migration instead of a versioned migration.")
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
 }
