@@ -81,6 +81,7 @@ var (
 	}
 
 	createTicket bool
+	configFile   string
 
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
@@ -234,6 +235,7 @@ func init() {
 	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
+	flags.StringVar(&configFile, "config-file", "", "path to config file (default: supabase/config.toml)")
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
