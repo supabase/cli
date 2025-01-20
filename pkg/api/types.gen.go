@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -169,7 +170,26 @@ const (
 
 // Defines values for PostgresEngine.
 const (
-	PostgresEngineN15 PostgresEngine = "15"
+	PostgresEngineN15       PostgresEngine = "15"
+	PostgresEngineN17Oriole PostgresEngine = "17-oriole"
+)
+
+// Defines values for ProjectAvailableRestoreVersionPostgresEngine.
+const (
+	ProjectAvailableRestoreVersionPostgresEngineN13       ProjectAvailableRestoreVersionPostgresEngine = "13"
+	ProjectAvailableRestoreVersionPostgresEngineN14       ProjectAvailableRestoreVersionPostgresEngine = "14"
+	ProjectAvailableRestoreVersionPostgresEngineN15       ProjectAvailableRestoreVersionPostgresEngine = "15"
+	ProjectAvailableRestoreVersionPostgresEngineN17Oriole ProjectAvailableRestoreVersionPostgresEngine = "17-oriole"
+)
+
+// Defines values for ProjectAvailableRestoreVersionReleaseChannel.
+const (
+	ProjectAvailableRestoreVersionReleaseChannelAlpha     ProjectAvailableRestoreVersionReleaseChannel = "alpha"
+	ProjectAvailableRestoreVersionReleaseChannelBeta      ProjectAvailableRestoreVersionReleaseChannel = "beta"
+	ProjectAvailableRestoreVersionReleaseChannelGa        ProjectAvailableRestoreVersionReleaseChannel = "ga"
+	ProjectAvailableRestoreVersionReleaseChannelInternal  ProjectAvailableRestoreVersionReleaseChannel = "internal"
+	ProjectAvailableRestoreVersionReleaseChannelPreview   ProjectAvailableRestoreVersionReleaseChannel = "preview"
+	ProjectAvailableRestoreVersionReleaseChannelWithdrawn ProjectAvailableRestoreVersionReleaseChannel = "withdrawn"
 )
 
 // Defines values for ReleaseChannel.
@@ -178,7 +198,24 @@ const (
 	ReleaseChannelBeta      ReleaseChannel = "beta"
 	ReleaseChannelGa        ReleaseChannel = "ga"
 	ReleaseChannelInternal  ReleaseChannel = "internal"
+	ReleaseChannelPreview   ReleaseChannel = "preview"
 	ReleaseChannelWithdrawn ReleaseChannel = "withdrawn"
+)
+
+// Defines values for RestoreProjectBodyDtoPostgresEngine.
+const (
+	RestoreProjectBodyDtoPostgresEngineN15       RestoreProjectBodyDtoPostgresEngine = "15"
+	RestoreProjectBodyDtoPostgresEngineN17Oriole RestoreProjectBodyDtoPostgresEngine = "17-oriole"
+)
+
+// Defines values for RestoreProjectBodyDtoReleaseChannel.
+const (
+	RestoreProjectBodyDtoReleaseChannelAlpha     RestoreProjectBodyDtoReleaseChannel = "alpha"
+	RestoreProjectBodyDtoReleaseChannelBeta      RestoreProjectBodyDtoReleaseChannel = "beta"
+	RestoreProjectBodyDtoReleaseChannelGa        RestoreProjectBodyDtoReleaseChannel = "ga"
+	RestoreProjectBodyDtoReleaseChannelInternal  RestoreProjectBodyDtoReleaseChannel = "internal"
+	RestoreProjectBodyDtoReleaseChannelPreview   RestoreProjectBodyDtoReleaseChannel = "preview"
+	RestoreProjectBodyDtoReleaseChannelWithdrawn RestoreProjectBodyDtoReleaseChannel = "withdrawn"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -319,7 +356,8 @@ const (
 
 // Defines values for V1CreateProjectBodyDtoPostgresEngine.
 const (
-	V1CreateProjectBodyDtoPostgresEngineN15 V1CreateProjectBodyDtoPostgresEngine = "15"
+	V1CreateProjectBodyDtoPostgresEngineN15       V1CreateProjectBodyDtoPostgresEngine = "15"
+	V1CreateProjectBodyDtoPostgresEngineN17Oriole V1CreateProjectBodyDtoPostgresEngine = "17-oriole"
 )
 
 // Defines values for V1CreateProjectBodyDtoRegion.
@@ -350,6 +388,7 @@ const (
 	V1CreateProjectBodyDtoReleaseChannelBeta      V1CreateProjectBodyDtoReleaseChannel = "beta"
 	V1CreateProjectBodyDtoReleaseChannelGa        V1CreateProjectBodyDtoReleaseChannel = "ga"
 	V1CreateProjectBodyDtoReleaseChannelInternal  V1CreateProjectBodyDtoReleaseChannel = "internal"
+	V1CreateProjectBodyDtoReleaseChannelPreview   V1CreateProjectBodyDtoReleaseChannel = "preview"
 	V1CreateProjectBodyDtoReleaseChannelWithdrawn V1CreateProjectBodyDtoReleaseChannel = "withdrawn"
 )
 
@@ -449,6 +488,18 @@ const (
 	V1GetServicesHealthParamsServicesRealtime V1GetServicesHealthParamsServices = "realtime"
 	V1GetServicesHealthParamsServicesRest     V1GetServicesHealthParamsServices = "rest"
 	V1GetServicesHealthParamsServicesStorage  V1GetServicesHealthParamsServices = "storage"
+)
+
+// Defines values for V1ListAllSnippetsParamsSortBy.
+const (
+	InsertedAt V1ListAllSnippetsParamsSortBy = "inserted_at"
+	Name       V1ListAllSnippetsParamsSortBy = "name"
+)
+
+// Defines values for V1ListAllSnippetsParamsSortOrder.
+const (
+	Asc  V1ListAllSnippetsParamsSortOrder = "asc"
+	Desc V1ListAllSnippetsParamsSortOrder = "desc"
 )
 
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
@@ -715,31 +766,33 @@ type BranchDetailResponse struct {
 // BranchDetailResponseStatus defines model for BranchDetailResponse.Status.
 type BranchDetailResponseStatus string
 
-// BranchResetResponse defines model for BranchResetResponse.
-type BranchResetResponse struct {
-	Message       string `json:"message"`
-	WorkflowRunId string `json:"workflow_run_id"`
-}
-
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt        string               `json:"created_at"`
-	GitBranch        *string              `json:"git_branch,omitempty"`
-	Id               string               `json:"id"`
-	IsDefault        bool                 `json:"is_default"`
-	LatestCheckRunId *int64               `json:"latest_check_run_id,omitempty"`
+	CreatedAt string  `json:"created_at"`
+	GitBranch *string `json:"git_branch,omitempty"`
+	Id        string  `json:"id"`
+	IsDefault bool    `json:"is_default"`
+
+	// LatestCheckRunId This field is deprecated and will not be populated.
+	// Deprecated:
+	LatestCheckRunId *float32             `json:"latest_check_run_id,omitempty"`
 	Name             string               `json:"name"`
 	ParentProjectRef string               `json:"parent_project_ref"`
 	Persistent       bool                 `json:"persistent"`
 	PrNumber         *int32               `json:"pr_number,omitempty"`
 	ProjectRef       string               `json:"project_ref"`
-	ResetOnPush      bool                 `json:"reset_on_push"`
 	Status           BranchResponseStatus `json:"status"`
 	UpdatedAt        string               `json:"updated_at"`
 }
 
 // BranchResponseStatus defines model for BranchResponse.Status.
 type BranchResponseStatus string
+
+// BranchUpdateResponse defines model for BranchUpdateResponse.
+type BranchUpdateResponse struct {
+	Message       string `json:"message"`
+	WorkflowRunId string `json:"workflow_run_id"`
+}
 
 // CfResponse defines model for CfResponse.
 type CfResponse struct {
@@ -907,6 +960,11 @@ type FunctionSlugResponse struct {
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
 type FunctionSlugResponseStatus string
 
+// GetProjectAvailableRestoreVersionsResponse defines model for GetProjectAvailableRestoreVersionsResponse.
+type GetProjectAvailableRestoreVersionsResponse struct {
+	AvailableVersions []ProjectAvailableRestoreVersion `json:"available_versions"`
+}
+
 // GetProviderResponse defines model for GetProviderResponse.
 type GetProviderResponse struct {
 	CreatedAt *string         `json:"created_at,omitempty"`
@@ -945,6 +1003,13 @@ type NetworkRestrictionsResponseEntitlement string
 
 // NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
 type NetworkRestrictionsResponseStatus string
+
+// OAuthRevokeTokenBodyDto defines model for OAuthRevokeTokenBodyDto.
+type OAuthRevokeTokenBodyDto struct {
+	ClientId     openapi_types.UUID `json:"client_id"`
+	ClientSecret string             `json:"client_secret"`
+	RefreshToken string             `json:"refresh_token"`
+}
 
 // OAuthTokenBody defines model for OAuthTokenBody.
 type OAuthTokenBody struct {
@@ -1009,6 +1074,7 @@ type PostgresConfigResponse struct {
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
+	TrackActivityQuerySize        *string                                       `json:"track_activity_query_size,omitempty"`
 	TrackCommitTimestamp          *bool                                         `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                       `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                       `json:"wal_sender_timeout,omitempty"`
@@ -1031,6 +1097,19 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	JwtSecret *string `json:"jwt_secret,omitempty"`
 	MaxRows   int     `json:"max_rows"`
 }
+
+// ProjectAvailableRestoreVersion defines model for ProjectAvailableRestoreVersion.
+type ProjectAvailableRestoreVersion struct {
+	PostgresEngine ProjectAvailableRestoreVersionPostgresEngine `json:"postgres_engine"`
+	ReleaseChannel ProjectAvailableRestoreVersionReleaseChannel `json:"release_channel"`
+	Version        string                                       `json:"version"`
+}
+
+// ProjectAvailableRestoreVersionPostgresEngine defines model for ProjectAvailableRestoreVersion.PostgresEngine.
+type ProjectAvailableRestoreVersionPostgresEngine string
+
+// ProjectAvailableRestoreVersionReleaseChannel defines model for ProjectAvailableRestoreVersion.ReleaseChannel.
+type ProjectAvailableRestoreVersionReleaseChannel string
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
 type ProjectUpgradeEligibilityResponse struct {
@@ -1093,6 +1172,21 @@ type RemoveReadReplicaBody struct {
 	DatabaseIdentifier string `json:"database_identifier"`
 }
 
+// RestoreProjectBodyDto defines model for RestoreProjectBodyDto.
+type RestoreProjectBodyDto struct {
+	// PostgresEngine Postgres engine version. If not provided, the latest version from the given release channel will be used.
+	PostgresEngine *RestoreProjectBodyDtoPostgresEngine `json:"postgres_engine,omitempty"`
+
+	// ReleaseChannel Release channel version. If not provided, GeneralAvailability will be used.
+	ReleaseChannel *RestoreProjectBodyDtoReleaseChannel `json:"release_channel,omitempty"`
+}
+
+// RestoreProjectBodyDtoPostgresEngine Postgres engine version. If not provided, the latest version from the given release channel will be used.
+type RestoreProjectBodyDtoPostgresEngine string
+
+// RestoreProjectBodyDtoReleaseChannel Release channel version. If not provided, GeneralAvailability will be used.
+type RestoreProjectBodyDtoReleaseChannel string
+
 // SamlDescriptor defines model for SamlDescriptor.
 type SamlDescriptor struct {
 	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
@@ -1126,12 +1220,13 @@ type SnippetContent struct {
 
 // SnippetList defines model for SnippetList.
 type SnippetList struct {
-	Data []SnippetMeta `json:"data"`
+	Cursor *string       `json:"cursor,omitempty"`
+	Data   []SnippetMeta `json:"data"`
 }
 
 // SnippetMeta defines model for SnippetMeta.
 type SnippetMeta struct {
-	Description *string               `json:"description,omitempty"`
+	Description *string               `json:"description"`
 	Id          string                `json:"id"`
 	InsertedAt  string                `json:"inserted_at"`
 	Name        string                `json:"name"`
@@ -1158,7 +1253,7 @@ type SnippetProject struct {
 // SnippetResponse defines model for SnippetResponse.
 type SnippetResponse struct {
 	Content     SnippetContent            `json:"content"`
-	Description *string                   `json:"description,omitempty"`
+	Description *string                   `json:"description"`
 	Id          string                    `json:"id"`
 	InsertedAt  string                    `json:"inserted_at"`
 	Name        string                    `json:"name"`
@@ -1216,9 +1311,15 @@ type StorageFeatureImageTransformation struct {
 	Enabled bool `json:"enabled"`
 }
 
+// StorageFeatureS3Protocol defines model for StorageFeatureS3Protocol.
+type StorageFeatureS3Protocol struct {
+	Enabled bool `json:"enabled"`
+}
+
 // StorageFeatures defines model for StorageFeatures.
 type StorageFeatures struct {
 	ImageTransformation StorageFeatureImageTransformation `json:"imageTransformation"`
+	S3Protocol          StorageFeatureS3Protocol          `json:"s3Protocol"`
 }
 
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
@@ -1449,9 +1550,12 @@ type UpdateAuthConfigBodyPasswordRequiredCharacters string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
-	BranchName  *string                 `json:"branch_name,omitempty"`
-	GitBranch   *string                 `json:"git_branch,omitempty"`
-	Persistent  *bool                   `json:"persistent,omitempty"`
+	BranchName *string `json:"branch_name,omitempty"`
+	GitBranch  *string `json:"git_branch,omitempty"`
+	Persistent *bool   `json:"persistent,omitempty"`
+
+	// ResetOnPush This field is deprecated and will be ignored. Use v1-reset-a-branch endpoint directly instead.
+	// Deprecated:
 	ResetOnPush *bool                   `json:"reset_on_push,omitempty"`
 	Status      *UpdateBranchBodyStatus `json:"status,omitempty"`
 }
@@ -1500,6 +1604,7 @@ type UpdatePostgresConfigBody struct {
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
 	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
+	TrackActivityQuerySize        *string                                         `json:"track_activity_query_size,omitempty"`
 	TrackCommitTimestamp          *bool                                           `json:"track_commit_timestamp,omitempty"`
 	WalKeepSize                   *string                                         `json:"wal_keep_size,omitempty"`
 	WalSenderTimeout              *string                                         `json:"wal_sender_timeout,omitempty"`
@@ -1567,6 +1672,34 @@ type UpgradeDatabaseBody struct {
 	TargetVersion  string         `json:"target_version"`
 }
 
+// V1AnalyticsResponse defines model for V1AnalyticsResponse.
+type V1AnalyticsResponse struct {
+	Error  *V1AnalyticsResponse_Error `json:"error,omitempty"`
+	Result *[]map[string]interface{}  `json:"result,omitempty"`
+}
+
+// V1AnalyticsResponseError0 defines model for .
+type V1AnalyticsResponseError0 struct {
+	Code   *float32 `json:"code,omitempty"`
+	Errors *[]struct {
+		Domain       *string `json:"domain,omitempty"`
+		Location     *string `json:"location,omitempty"`
+		LocationType *string `json:"locationType,omitempty"`
+		Message      *string `json:"message,omitempty"`
+		Reason       *string `json:"reason,omitempty"`
+	} `json:"errors,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Status  *string `json:"status,omitempty"`
+}
+
+// V1AnalyticsResponseError1 defines model for .
+type V1AnalyticsResponseError1 = string
+
+// V1AnalyticsResponse_Error defines model for V1AnalyticsResponse.Error.
+type V1AnalyticsResponse_Error struct {
+	union json.RawMessage
+}
+
 // V1Backup defines model for V1Backup.
 type V1Backup struct {
 	InsertedAt       string         `json:"inserted_at"`
@@ -1605,7 +1738,7 @@ type V1CreateProjectBodyDto struct {
 	// Deprecated:
 	KpsEnabled *bool `json:"kps_enabled,omitempty"`
 
-	// Name Name of your project, should not contain dots
+	// Name Name of your project
 	Name string `json:"name"`
 
 	// OrganizationId Slug of your organization
@@ -1850,6 +1983,13 @@ type V1AuthorizeUserParamsResponseType string
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
 
+// GetLogsParams defines parameters for GetLogs.
+type GetLogsParams struct {
+	IsoTimestampEnd   *string `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
+	IsoTimestampStart *string `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	Sql               *string `form:"sql,omitempty" json:"sql,omitempty"`
+}
+
 // V1GetProjectApiKeysParams defines parameters for V1GetProjectApiKeys.
 type V1GetProjectApiKeysParams struct {
 	Reveal bool `form:"reveal" json:"reveal"`
@@ -1924,11 +2064,24 @@ type V1GetPostgresUpgradeStatusParams struct {
 
 // V1ListAllSnippetsParams defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParams struct {
-	ProjectRef *string `form:"project_ref,omitempty" json:"project_ref,omitempty"`
+	Cursor     *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit      *string                           `form:"limit,omitempty" json:"limit,omitempty"`
+	SortBy     *V1ListAllSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
+	SortOrder  *V1ListAllSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
+	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
 }
+
+// V1ListAllSnippetsParamsSortBy defines parameters for V1ListAllSnippets.
+type V1ListAllSnippetsParamsSortBy string
+
+// V1ListAllSnippetsParamsSortOrder defines parameters for V1ListAllSnippets.
+type V1ListAllSnippetsParamsSortOrder string
 
 // V1UpdateABranchConfigJSONRequestBody defines body for V1UpdateABranchConfig for application/json ContentType.
 type V1UpdateABranchConfigJSONRequestBody = UpdateBranchBody
+
+// V1RevokeTokenJSONRequestBody defines body for V1RevokeToken for application/json ContentType.
+type V1RevokeTokenJSONRequestBody = OAuthRevokeTokenBodyDto
 
 // V1ExchangeOauthTokenFormdataRequestBody defines body for V1ExchangeOauthToken for application/x-www-form-urlencoded ContentType.
 type V1ExchangeOauthTokenFormdataRequestBody = OAuthTokenBody
@@ -2001,6 +2154,9 @@ type V1RemoveAReadReplicaJSONRequestBody = RemoveReadReplicaBody
 
 // V1SetupAReadReplicaJSONRequestBody defines body for V1SetupAReadReplica for application/json ContentType.
 type V1SetupAReadReplicaJSONRequestBody = SetUpReadReplicaBody
+
+// V1RestoreAProjectJSONRequestBody defines body for V1RestoreAProject for application/json ContentType.
+type V1RestoreAProjectJSONRequestBody = RestoreProjectBodyDto
 
 // V1BulkDeleteSecretsJSONRequestBody defines body for V1BulkDeleteSecrets for application/json ContentType.
 type V1BulkDeleteSecretsJSONRequestBody = V1BulkDeleteSecretsJSONBody
@@ -2130,6 +2286,68 @@ func (t AttributeValue_Default) MarshalJSON() ([]byte, error) {
 }
 
 func (t *AttributeValue_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1AnalyticsResponseError0 returns the union data inside the V1AnalyticsResponse_Error as a V1AnalyticsResponseError0
+func (t V1AnalyticsResponse_Error) AsV1AnalyticsResponseError0() (V1AnalyticsResponseError0, error) {
+	var body V1AnalyticsResponseError0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1AnalyticsResponseError0 overwrites any union data inside the V1AnalyticsResponse_Error as the provided V1AnalyticsResponseError0
+func (t *V1AnalyticsResponse_Error) FromV1AnalyticsResponseError0(v V1AnalyticsResponseError0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1AnalyticsResponseError0 performs a merge with any union data inside the V1AnalyticsResponse_Error, using the provided V1AnalyticsResponseError0
+func (t *V1AnalyticsResponse_Error) MergeV1AnalyticsResponseError0(v V1AnalyticsResponseError0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1AnalyticsResponseError1 returns the union data inside the V1AnalyticsResponse_Error as a V1AnalyticsResponseError1
+func (t V1AnalyticsResponse_Error) AsV1AnalyticsResponseError1() (V1AnalyticsResponseError1, error) {
+	var body V1AnalyticsResponseError1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1AnalyticsResponseError1 overwrites any union data inside the V1AnalyticsResponse_Error as the provided V1AnalyticsResponseError1
+func (t *V1AnalyticsResponse_Error) FromV1AnalyticsResponseError1(v V1AnalyticsResponseError1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1AnalyticsResponseError1 performs a merge with any union data inside the V1AnalyticsResponse_Error, using the provided V1AnalyticsResponseError1
+func (t *V1AnalyticsResponse_Error) MergeV1AnalyticsResponseError1(v V1AnalyticsResponseError1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1AnalyticsResponse_Error) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1AnalyticsResponse_Error) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
