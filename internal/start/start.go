@@ -883,6 +883,10 @@ EOF
 					"IMGPROXY_BIND=:5001",
 					"IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
 					"IMGPROXY_USE_ETAG=/",
+					"IMGPROXY_MAX_SRC_RESOLUTION=50",
+					"IMGPROXY_MAX_SRC_FILE_SIZE=25000000",
+					"IMGPROXY_MAX_ANIMATION_FRAMES=60",
+					"IMGPROXY_ENABLE_WEBP_DETECTION=true",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "imgproxy", "health"},
