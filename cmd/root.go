@@ -81,7 +81,6 @@ var (
 	}
 
 	createTicket bool
-	configFile   string
 
 	rootCmd = &cobra.Command{
 		Use:     "supabase",
@@ -227,16 +226,16 @@ func init() {
 		viper.AutomaticEnv()
 	})
 
-	flags := rootCmd.PersistentFlags()
-	flags.Bool("debug", false, "output debug logs to stderr")
-	flags.String("workdir", "", "path to a Supabase project directory")
-	flags.Bool("experimental", false, "enable experimental features")
-	flags.String("network-id", "", "use the specified docker network instead of a generated one")
-	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
-	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
-	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
-	flags.StringVar(&configFile, "config-file", "", "path to config file (default: supabase/config.toml)")
-	cobra.CheckErr(viper.BindPFlags(flags))
+	f := rootCmd.PersistentFlags()
+	f.Bool("debug", false, "output debug logs to stderr")
+	f.String("workdir", "", "path to a Supabase project directory")
+	f.Bool("experimental", false, "enable experimental features")
+	f.String("network-id", "", "use the specified docker network instead of a generated one")
+	f.StringVar(&flags.ConfigFile, "config-file", "", "path to config file (default: supabase/config.toml)")
+	f.Var(&utils.OutputFormat, "output", "output format of status variables")
+	f.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
+	f.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
+	cobra.CheckErr(viper.BindPFlags(f))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.AddGroup(&cobra.Group{ID: groupQuickStart, Title: "Quick Start:"})
