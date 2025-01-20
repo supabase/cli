@@ -103,3 +103,7 @@ func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
 	}
 	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
 }
+
+func LoadRepeatableMigrations(fsys afero.Fs) ([]string, error) {
+	return migration.ListRepeatableMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
+}
