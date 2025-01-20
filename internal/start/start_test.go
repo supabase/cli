@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
@@ -88,6 +89,90 @@ func TestStartCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("loads custom config path", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		customPath := "custom/path/config.toml"
+		projectId := "test_project"
+		
+		// Create directories and required files
+		require.NoError(t, fsys.MkdirAll("custom/path", 0755))
+		require.NoError(t, fsys.MkdirAll("supabase", 0755))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/seed.sql", []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/roles.sql", []byte(""), 0644))
+		
+		// Store original values
+		originalDbId := utils.DbId
+		originalConfigFile := flags.ConfigFile
+		
+		// Restore original values after test
+		t.Cleanup(func() {
+			utils.DbId = originalDbId
+			flags.ConfigFile = originalConfigFile
+			gock.Off()
+		})
+		
+		// Write config file
+		require.NoError(t, afero.WriteFile(fsys, customPath, []byte(`# Test configuration
+project_id = "`+projectId+`"
+
+[api]
+enabled = true
+port = 54331
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54332
+shadow_port = 54330
+major_version = 15
+
+[studio]
+port = 54333
+
+[inbucket]
+port = 54334
+
+[storage]
+file_size_limit = "50MiB"
+
+[auth]
+site_url = "http://localhost:54331"
+additional_redirect_urls = ["http://localhost:54331"]
+jwt_expiry = 3600
+enable_signup = true`), 0644))
+		
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		
+		// Mock container list check
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]types.Container{})
+
+		// Mock container checks
+		utils.DbId = "supabase_db_" + projectId
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Times(2).
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
+				State: &types.ContainerState{
+					Running: true,
+					Health: &types.Health{Status: types.Healthy},
+				},
+			}})
+
+		// Set the custom config path
+		flags.ConfigFile = customPath
+		// Run test
+		err := Run(context.Background(), fsys, []string{}, false)
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
