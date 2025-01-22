@@ -81,7 +81,7 @@ begin
     select *
     from pg_publication p
     where
-      p.pubname != 'supabase_realtime'
+      p.pubname not like 'supabase_realtime%'
   loop
     execute format('drop publication if exists %I', rec.pubname);
   end loop;
