@@ -771,7 +771,7 @@ func (c *config) Validate(fsys fs.FS) error {
 
 func assertEnvLoaded(s string) error {
 	if matches := envPattern.FindStringSubmatch(s); len(matches) > 1 {
-		return errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, matches[1])
+		fmt.Fprintln(os.Stderr, "WARN: environment variable is unset:", matches[1])
 	}
 	return nil
 }
