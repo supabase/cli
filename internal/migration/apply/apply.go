@@ -15,11 +15,6 @@ func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys af
 	if err != nil {
 		return err
 	}
-	repeatableMigrations, err := list.LoadRepeatableMigrations(fsys)
-	if err != nil {
-		return err
-	}
-	migrations = append(migrations, repeatableMigrations...)
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}

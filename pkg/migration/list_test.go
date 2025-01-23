@@ -73,6 +73,7 @@ func TestLocalMigrations(t *testing.T) {
 		fsys := fs.MapFS{
 			"20211208000000_init.sql":   &fs.MapFile{},
 			"20211208000001_invalid.ts": &fs.MapFile{},
+			"r_invalid.ts":              &fs.MapFile{},
 		}
 		// Run test
 		versions, err := ListLocalMigrations(".", fsys)
@@ -86,47 +87,6 @@ func TestLocalMigrations(t *testing.T) {
 		fsys := fs.MapFS{"migrations": &fs.MapFile{}}
 		// Run test
 		_, err := ListLocalMigrations("migrations", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "failed to read directory:")
-	})
-}
-
-func TestRepeatableMigrations(t *testing.T) {
-	t.Run("loads repeatable migrations", func(t *testing.T) {
-		// Setup in-memory fs
-		files := []string{
-			"r_test_view.sql",
-			"r_test_function.sql",
-		}
-		fsys := fs.MapFS{}
-		for _, name := range files {
-			fsys[name] = &fs.MapFile{}
-		}
-		// Run test
-		versions, err := ListRepeatableMigrations(".", fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.ElementsMatch(t, files, versions)
-	})
-
-	t.Run("ignores files without 'r_' prefix", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := fs.MapFS{
-			"20211208000000_init.sql": &fs.MapFile{},
-			"r_invalid.ts":            &fs.MapFile{},
-		}
-		// Run test
-		versions, err := ListRepeatableMigrations(".", fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, versions)
-	})
-
-	t.Run("throws error on open failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := fs.MapFS{"migrations": &fs.MapFile{}}
-		// Run test
-		_, err := ListRepeatableMigrations("migrations", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "failed to read directory:")
 	})
