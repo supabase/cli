@@ -119,7 +119,7 @@ var (
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
 	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
+	TempDir               = filepath.Join(SupabaseDirPath, "tomp")
 	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
 	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
 	PoolerUrlPath         = filepath.Join(TempDir, "pooler-url")
