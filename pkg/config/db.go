@@ -54,6 +54,7 @@ type (
 		Image        string   `toml:"-"`
 		Port         uint16   `toml:"port"`
 		ShadowPort   uint16   `toml:"shadow_port"`
+		ShadowHost   string   `toml:"shadow_host"`
 		MajorVersion uint     `toml:"major_version"`
 		Password     string   `toml:"-"`
 		RootKey      string   `toml:"-" mapstructure:"root_key"`

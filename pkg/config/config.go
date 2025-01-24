@@ -291,6 +291,8 @@ func NewConfig(editors ...ConfigEditor) config {
 				Enabled:      true,
 				GlobPatterns: []string{"./seed.sql"},
 			},
+			ShadowHost: "127.0.0.1",
+			ShadowPort: 54320,
 		},
 		Realtime: realtime{
 			Image:           realtimeImage,
