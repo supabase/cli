@@ -81,7 +81,7 @@ begin
     select *
     from pg_publication p
     where
-      p.pubname not like 'supabase_realtime%'
+      p.pubname not like 'supabase_realtime%' and p.pubname not like 'realtime_messages%'
   loop
     execute format('drop publication if exists %I', rec.pubname);
   end loop;
