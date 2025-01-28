@@ -60,7 +60,10 @@ type (
 		Pooler       pooler   `toml:"pooler"`
 		Seed         seed     `toml:"seed"`
 		Settings     settings `toml:"settings"`
+		Vault        vault    `toml:"vault"`
 	}
+
+	vault map[string]Secret
 
 	seed struct {
 		Enabled      bool     `toml:"enabled"`

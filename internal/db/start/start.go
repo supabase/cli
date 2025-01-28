@@ -368,9 +368,24 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
+const CREATE_VAULT_SECRET = "SELECT vault.create_secret($1, $2)"
+
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
+	}
+	// Create vault secrets first so roles.sql can reference them
+	batch := pgx.Batch{}
+	for k, v := range utils.Config.Db.Vault {
+		if len(v.SHA256) > 0 {
+			batch.Queue(CREATE_VAULT_SECRET, v.Value, k)
+		}
+	}
+	if batch.Len() > 0 {
+		fmt.Fprintln(os.Stderr, "Updating vault secrets...")
+		if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+			return errors.Errorf("failed to update migration history: %w", err)
+		}
 	}
 	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
 	if errors.Is(err, os.ErrNotExist) {
