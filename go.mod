@@ -41,7 +41,7 @@ require (
 	github.com/slack-go/slack v0.15.0
 	github.com/spf13/afero v1.12.0
 	github.com/spf13/cobra v1.8.1
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
 	github.com/stripe/pg-schema-diff v0.8.0
