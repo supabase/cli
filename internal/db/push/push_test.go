@@ -105,7 +105,7 @@ func TestMigrationPush(t *testing.T) {
 		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
-		assert.ErrorContains(t, err, "At statement 0: "+migration.INSERT_MIGRATION_VERSION)
+		assert.ErrorContains(t, err, "At statement 0:\n"+migration.INSERT_MIGRATION_VERSION)
 	})
 }
 

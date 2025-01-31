@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SET_LOCK_TIMEOUT         = "SET LOCAL lock_timeout = '4s'"
+	SET_LOCK_TIMEOUT         = "SET lock_timeout = '4s'"
 	CREATE_VERSION_SCHEMA    = "CREATE SCHEMA IF NOT EXISTS supabase_migrations"
 	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
 	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
