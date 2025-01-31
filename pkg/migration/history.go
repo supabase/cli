@@ -58,7 +58,7 @@ func CreateSeedTable(ctx context.Context, conn *pgx.Conn) error {
 	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_SEED_TABLE, nil, nil, nil, nil)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
+		return errors.Errorf("failed to create seed table: %w", err)
 	}
 	return nil
 }
