@@ -98,24 +98,24 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		customPath := "custom/path/config.toml"
 		projectId := "test_project"
-		
+
 		// Create directories and required files
 		require.NoError(t, fsys.MkdirAll("custom/path", 0755))
 		require.NoError(t, fsys.MkdirAll("supabase", 0755))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seed.sql", []byte(""), 0644))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/roles.sql", []byte(""), 0644))
-		
+
 		// Store original values
 		originalDbId := utils.DbId
 		originalConfigFile := flags.ConfigFile
-		
+
 		// Restore original values after test
 		t.Cleanup(func() {
 			utils.DbId = originalDbId
 			flags.ConfigFile = originalConfigFile
 			gock.Off()
 		})
-		
+
 		// Write config file
 		require.NoError(t, afero.WriteFile(fsys, customPath, []byte(`# Test configuration
 		project_id = "`+projectId+`"
@@ -146,10 +146,10 @@ func TestStartCommand(t *testing.T) {
 		additional_redirect_urls = ["http://localhost:54331"]
 		jwt_expiry = 3600
 		enable_signup = true`), 0644))
-		
+
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
-		
+
 		// Mock container list check
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -165,7 +165,7 @@ func TestStartCommand(t *testing.T) {
 			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
 				State: &types.ContainerState{
 					Running: true,
-					Health: &types.Health{Status: types.Healthy},
+					Health:  &types.Health{Status: types.Healthy},
 				},
 			}})
 
