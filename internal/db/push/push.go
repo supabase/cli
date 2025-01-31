@@ -14,6 +14,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/vault"
 )
 
 func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -81,6 +82,9 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 				return err
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
+			}
+			if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
+				return err
 			}
 			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err

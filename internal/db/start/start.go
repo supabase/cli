@@ -25,7 +25,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/pgxv5"
+	"github.com/supabase/cli/pkg/vault"
 )
 
 var (
@@ -374,7 +374,7 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 		return err
 	}
 	// Create vault secrets first so roles.sql can reference them
-	if err := upsertVaultSecrets(ctx, conn); err != nil {
+	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
 	}
 	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
@@ -382,52 +382,4 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 		return nil
 	}
 	return err
-}
-
-const (
-	CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)"
-	READ_VAULT_KV   = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)"
-	UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)"
-)
-
-type VaultTable struct {
-	Id   string
-	Name string
-}
-
-func upsertVaultSecrets(ctx context.Context, conn *pgx.Conn) error {
-	var keys []string
-	toInsert := map[string]string{}
-	for k, v := range utils.Config.Db.Vault {
-		if len(v.SHA256) > 0 {
-			keys = append(keys, k)
-			toInsert[k] = v.Value
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	fmt.Fprintln(os.Stderr, "Updating vault secrets...")
-	rows, err := conn.Query(ctx, READ_VAULT_KV, keys)
-	if err != nil {
-		return errors.Errorf("failed to query rows: %w", err)
-	}
-	toUpdate, err := pgxv5.CollectRows[VaultTable](rows)
-	if err != nil {
-		return err
-	}
-	batch := pgx.Batch{}
-	for _, r := range toUpdate {
-		secret := utils.Config.Db.Vault[r.Name]
-		batch.Queue(UPDATE_VAULT_KV, r.Id, secret.Value)
-		delete(toInsert, r.Name)
-	}
-	// Remaining secrets should be created
-	for k, v := range toInsert {
-		batch.Queue(CREATE_VAULT_KV, v, k)
-	}
-	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
-		return errors.Errorf("failed to update vault secrets: %w", err)
-	}
-	return nil
 }

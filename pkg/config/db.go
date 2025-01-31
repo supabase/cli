@@ -51,19 +51,17 @@ type (
 	}
 
 	db struct {
-		Image        string   `toml:"-"`
-		Port         uint16   `toml:"port"`
-		ShadowPort   uint16   `toml:"shadow_port"`
-		MajorVersion uint     `toml:"major_version"`
-		Password     string   `toml:"-"`
-		RootKey      string   `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler   `toml:"pooler"`
-		Seed         seed     `toml:"seed"`
-		Settings     settings `toml:"settings"`
-		Vault        vault    `toml:"vault"`
+		Image        string            `toml:"-"`
+		Port         uint16            `toml:"port"`
+		ShadowPort   uint16            `toml:"shadow_port"`
+		MajorVersion uint              `toml:"major_version"`
+		Password     string            `toml:"-"`
+		RootKey      string            `toml:"-" mapstructure:"root_key"`
+		Pooler       pooler            `toml:"pooler"`
+		Seed         seed              `toml:"seed"`
+		Settings     settings          `toml:"settings"`
+		Vault        map[string]Secret `toml:"vault"`
 	}
-
-	vault map[string]Secret
 
 	seed struct {
 		Enabled      bool     `toml:"enabled"`
