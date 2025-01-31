@@ -90,24 +90,28 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
-			lines := strings.Split(stat, "\n")
-			pos := int(pgErr.Position)
-			for j, r := range lines {
-				if c := len(r); pos > c {
-					pos -= c + 1
-					continue
-				}
-				if pos > 0 {
-					caret := append(bytes.Repeat([]byte{' '}, pos-1), '^')
-					lines = append(lines[:j+1], string(caret))
-				}
-				break
-			}
-			stat = strings.Join(lines, "\n")
+			stat = markError(stat, int(pgErr.Position))
 		}
 		return errors.Errorf("%w\nAt statement %d:\n%s", err, i, stat)
 	}
 	return nil
+}
+
+func markError(stat string, pos int) string {
+	lines := strings.Split(stat, "\n")
+	for j, r := range lines {
+		if c := len(r); pos > c {
+			pos -= c + 1
+			continue
+		}
+		// Show a caret below the error position
+		if pos > 0 {
+			caret := append(bytes.Repeat([]byte{' '}, pos-1), '^')
+			lines = append(lines[:j+1], string(caret))
+		}
+		break
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
