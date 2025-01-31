@@ -118,34 +118,34 @@ func TestStartCommand(t *testing.T) {
 		
 		// Write config file
 		require.NoError(t, afero.WriteFile(fsys, customPath, []byte(`# Test configuration
-project_id = "`+projectId+`"
+		project_id = "`+projectId+`"
 
-[api]
-enabled = true
-port = 54331
-schemas = ["public", "storage", "graphql_public"]
-extra_search_path = ["public", "extensions"]
-max_rows = 1000
+		[api]
+		enabled = true
+		port = 54331
+		schemas = ["public", "storage", "graphql_public"]
+		extra_search_path = ["public", "extensions"]
+		max_rows = 1000
 
-[db]
-port = 54332
-shadow_port = 54330
-major_version = 15
+		[db]
+		port = 54332
+		shadow_port = 54330
+		major_version = 15
 
-[studio]
-port = 54333
+		[studio]
+		port = 54333
 
-[inbucket]
-port = 54334
+		[inbucket]
+		port = 54334
 
-[storage]
-file_size_limit = "50MiB"
+		[storage]
+		file_size_limit = "50MiB"
 
-[auth]
-site_url = "http://localhost:54331"
-additional_redirect_urls = ["http://localhost:54331"]
-jwt_expiry = 3600
-enable_signup = true`), 0644))
+		[auth]
+		site_url = "http://localhost:54331"
+		additional_redirect_urls = ["http://localhost:54331"]
+		jwt_expiry = 3600
+		enable_signup = true`), 0644))
 		
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
