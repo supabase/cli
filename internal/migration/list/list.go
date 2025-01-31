@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/go-errors/errors"
@@ -68,6 +69,40 @@ func makeTable(remoteMigrations, localMigrations []string) string {
 			j++
 		}
 	}
+
+	for i, j := 0, 0; i < len(remoteMigrations) || j < len(localMigrations); {
+		if i < len(remoteMigrations) && !strings.HasPrefix(remoteMigrations[i], "r_") {
+			i++
+			continue
+		}
+
+		if j < len(localMigrations) && !strings.HasPrefix(localMigrations[j], "r_") {
+			j++
+			continue
+		}
+
+		// Append repeatable migrations to table
+		if i >= len(remoteMigrations) {
+			table += fmt.Sprintf("|`%s`|` `|` `|\n", localMigrations[j])
+			j++
+		} else if j >= len(localMigrations) {
+			table += fmt.Sprintf("|` `|`%s`|` `|\n", remoteMigrations[i])
+			i++
+		} else {
+			if localMigrations[j] < remoteMigrations[i] {
+				table += fmt.Sprintf("|`%s`|` `|` `|\n", localMigrations[j])
+				j++
+			} else if remoteMigrations[i] < localMigrations[j] {
+				table += fmt.Sprintf("|` `|`%s`|` `|\n", remoteMigrations[i])
+				i++
+			} else {
+				table += fmt.Sprintf("|`%s`|`%s`|` `|\n", localMigrations[j], remoteMigrations[i])
+				i++
+				j++
+			}
+		}
+	}
+
 	return table
 }
 
@@ -99,7 +134,7 @@ func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 
 func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
 	filter := func(v string) bool {
-		return version == "" || v <= version
+		return version == "" || strings.HasPrefix(version, "r_") || v <= version
 	}
 	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
 }

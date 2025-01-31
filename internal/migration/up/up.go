@@ -23,6 +23,7 @@ func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.
 	if err != nil {
 		return err
 	}
+
 	return migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys))
 }
 

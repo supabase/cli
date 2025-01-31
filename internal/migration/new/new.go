@@ -11,8 +11,16 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
-	path := GetMigrationPath(utils.GetCurrentTimestamp(), migrationName)
+func Run(repeatable bool, migrationName string, stdin afero.File, fsys afero.Fs) error {
+	var path string
+
+	if repeatable {
+		// if migration name already exists, repeatable migration will be overwritten
+		path = GetRepeatableMigrationPath(migrationName)
+	} else {
+		path = GetMigrationPath(utils.GetCurrentTimestamp(), migrationName)
+	}
+
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -30,6 +38,11 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 
 func GetMigrationPath(timestamp, name string) string {
 	fullName := fmt.Sprintf("%s_%s.sql", timestamp, name)
+	return filepath.Join(utils.MigrationsDir, fullName)
+}
+
+func GetRepeatableMigrationPath(name string) string {
+	fullName := fmt.Sprintf("r_%s.sql", name)
 	return filepath.Join(utils.MigrationsDir, fullName)
 }
 

@@ -73,6 +73,7 @@ func TestLocalMigrations(t *testing.T) {
 		fsys := fs.MapFS{
 			"20211208000000_init.sql":   &fs.MapFile{},
 			"20211208000001_invalid.ts": &fs.MapFile{},
+			"r_invalid.ts":              &fs.MapFile{},
 		}
 		// Run test
 		versions, err := ListLocalMigrations(".", fsys)

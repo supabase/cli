@@ -23,7 +23,7 @@ type MigrationFile struct {
 	Statements []string
 }
 
-var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+var migrateFilePattern = regexp.MustCompile(`^([0-9]+|r)_(.*)\.sql$`)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	lines, err := parseFile(path, fsys)
@@ -37,6 +37,10 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	if len(matches) > 2 {
 		file.Version = matches[1]
 		file.Name = matches[2]
+	}
+	// Repeatable migration version => r_name
+	if file.Version == "r" {
+		file.Version += "_" + file.Name
 	}
 	return &file, nil
 }

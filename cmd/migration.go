@@ -39,12 +39,14 @@ var (
 		},
 	}
 
+	repeatable bool
+
 	migrationNewCmd = &cobra.Command{
 		Use:   "new <migration name>",
 		Short: "Create an empty migration script",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new.Run(args[0], os.Stdin, afero.NewOsFs())
+			return new.Run(repeatable, args[0], os.Stdin, afero.NewOsFs())
 		},
 	}
 
@@ -149,6 +151,8 @@ func init() {
 	migrationFetchCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationFetchCmd)
 	// Build new command
+	newFlags := migrationNewCmd.Flags()
+	newFlags.BoolVarP(&repeatable, "repeatable", "r", false, "Creates a repeatable migration instead of a versioned migration.")
 	migrationCmd.AddCommand(migrationNewCmd)
 	rootCmd.AddCommand(migrationCmd)
 }

@@ -47,12 +47,16 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 		}
 		matches := migrateFilePattern.FindStringSubmatch(filename)
 		if len(matches) == 0 {
-			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
+			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\" or \"r_name.sql\")\n", filename)
 			continue
 		}
 		path := filepath.Join(migrationsDir, filename)
 		for _, keep := range filter {
-			if version := matches[1]; keep(version) {
+			version := matches[1]
+			if version == "r" && len(matches) > 2 {
+				version += "_" + matches[2]
+			}
+			if keep(version) {
 				clean = append(clean, path)
 			}
 		}
