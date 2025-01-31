@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
+	flagsutils "github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
 )
 
@@ -104,12 +104,12 @@ var (
 				}
 				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
-					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
+					if err := flagsutils.ParseProjectRef(ctx, fsys); err != nil {
 						return err
 					}
 				}
 			}
-			if err := flags.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
+			if err := flagsutils.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
 				return err
 			}
 			// Prepare context
@@ -231,6 +231,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.String("network-id", "", "use the specified docker network instead of a generated one")
+	flags.StringVar(&flagsutils.ConfigFile, "config-file", "", "path to config file (default: supabase/config.toml)")
 	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
@@ -263,6 +264,6 @@ func addSentryScope(scope *sentry.Scope) {
 	scope.SetContext("Services", imageToVersion)
 	scope.SetContext("Config", map[string]interface{}{
 		"Image Registry": utils.GetRegistry(),
-		"Project ID":     flags.ProjectRef,
+		"Project ID":     flagsutils.ProjectRef,
 	})
 }
