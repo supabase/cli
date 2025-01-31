@@ -42,6 +42,9 @@ default_pool_size = 20
 # Maximum number of client connections allowed.
 max_client_conn = 100
 
+[db.vault]
+test_key = "test_value"
+
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
