@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -86,7 +88,24 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Statements) {
 			stat = m.Statements[i]
 		}
-		return errors.Errorf("%w\nAt statement %d: %s", err, i, stat)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			lines := strings.Split(stat, "\n")
+			pos := int(pgErr.Position)
+			for j, r := range lines {
+				if c := len(r); pos > c {
+					pos -= c + 1
+					continue
+				}
+				if pos > 0 {
+					caret := append(bytes.Repeat([]byte{' '}, pos-1), '^')
+					lines = append(lines[:j+1], string(caret))
+				}
+				break
+			}
+			stat = strings.Join(lines, "\n")
+		}
+		return errors.Errorf("%w\nAt statement %d:\n%s", err, i, stat)
 	}
 	return nil
 }

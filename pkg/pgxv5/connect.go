@@ -2,8 +2,11 @@ package pgxv5
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 )
 
@@ -13,6 +16,9 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	config, err := pgx.ParseConfig(connString)
 	if err != nil {
 		return nil, errors.Errorf("failed to parse connection string: %w", err)
+	}
+	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
+		fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
 	}
 	// Apply config overrides
 	for _, op := range options {
