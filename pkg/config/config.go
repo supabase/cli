@@ -398,13 +398,14 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 
 // Used to improve config parsing errors into a more contextual and actionable
 // error message
-func wrapTomlError(err error) error {
+func viperWrapTomlError(err error) error {
 	if err == nil {
 		return nil
 	}
+	errMsg := err.Error()
 	// Check for array-style functions config and unknown functions fields errors error
-	if strings.Contains(err.Error(), "'functions[") && strings.Contains(err.Error(), "expected a map") ||
-		strings.Contains(err.Error(), "Unknown config field: [functions") {
+	if strings.Contains(errMsg, "'functions[") && strings.Contains(errMsg, "expected a map") ||
+		strings.Contains(errMsg, "Unknown config field: [functions") {
 		return errors.Errorf(`Invalid functions config format. Functions should be configured as:
 
 [functions.<function-name>]
@@ -415,12 +416,45 @@ Example:
 verify_jwt = true
 `)
 	}
+
 	return err
 }
 
+func wrapTomlUnmarshalError(err toml.ParseError, content *string) error {
+	// Check for invalid use of `env.VALUE` instead of `"env(VALUE)"` syntax
+	if strings.Contains(err.Message, "expected value but found \"env\" instead") {
+		// Extract the line containing the error
+		lines := strings.Split(*content, "\n")
+		if err.Position.Line > 0 && err.Position.Line <= len(lines) {
+			line := lines[err.Position.Line-1]
+
+			// Extract the env variable name using regex
+			envVarPattern := regexp.MustCompile(`env\.([A-Za-z0-9_]+)`)
+			if matches := envVarPattern.FindStringSubmatch(line); len(matches) > 1 {
+				varName := matches[1]
+				return errors.Errorf(`Invalid environment variable syntax. Use "env(%s)" instead of 'env.%s'.`, varName, varName)
+			}
+		}
+	}
+	// Return nil if we can't make a custom error and leave the error message to viper TOML parsing instead
+	return nil
+}
+
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
-	if err := v.MergeConfig(r); err != nil {
-		return errors.Errorf("failed to merge config: %w", err)
+	// Read the content first
+	content, err := io.ReadAll(r)
+	if err != nil {
+		return errors.Errorf("failed to read config: %w", err)
+	}
+	contentStr := string(content)
+	var tmp map[string]interface{}
+	if err := toml.Unmarshal(content, &tmp); err != nil {
+		if parseErr, ok := err.(toml.ParseError); ok && wrapTomlUnmarshalError(parseErr, &contentStr) != nil {
+			return wrapTomlUnmarshalError(parseErr, &contentStr)
+		}
+	}
+	if err := v.MergeConfig(bytes.NewReader(content)); err != nil {
+		return errors.Errorf("failed to merge config: %w", viperWrapTomlError(err))
 	}
 	// Find [remotes.*] block to override base config
 	baseId := v.GetString("project_id")
@@ -452,7 +486,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.ZeroFields = true
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
 	}); err != nil {
-		return errors.Errorf("failed to parse config: %w", wrapTomlError(err))
+		return errors.Errorf("failed to parse config: %w", viperWrapTomlError(err))
 	}
 	return nil
 }

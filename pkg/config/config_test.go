@@ -495,3 +495,22 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		assert.Contains(t, err.Error(), "Invalid functions config format. Functions should be configured as:\n\n[functions.<function-name>]\nfield = value\n\nExample:\n[functions.hello]\nverify_jwt = true\n")
 	})
 }
+
+func TestConfigParsingErrorMessages(t *testing.T) {
+	t.Run("returns helpful error for incorrect env variable syntax", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[studio]
+			openai_api_key = env.OPENAI_API_KEY
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error contains helpful messages for all env vars
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "Invalid environment variable syntax. Use \"env(OPENAI_API_KEY)\" instead of 'env.OPENAI_API_KEY'.")
+	})
+
+}
