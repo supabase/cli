@@ -16,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -352,7 +351,6 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
-	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
@@ -396,28 +394,6 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	return c.loadFromReader(v, f)
 }
 
-// Used to improve config parsing errors into a more contextual and actionable
-// error message
-func wrapTomlError(err error) error {
-	if err == nil {
-		return nil
-	}
-	// Check for array-style functions config and unknown functions fields errors error
-	if strings.Contains(err.Error(), "'functions[") && strings.Contains(err.Error(), "expected a map") ||
-		strings.Contains(err.Error(), "Unknown config field: [functions") {
-		return errors.Errorf(`Invalid functions config format. Functions should be configured as:
-
-[functions.<function-name>]
-field = value
-
-Example:
-[functions.hello]
-verify_jwt = true
-`)
-	}
-	return err
-}
-
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	if err := v.MergeConfig(r); err != nil {
 		return errors.Errorf("failed to merge config: %w", err)
@@ -450,9 +426,9 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.TagName = "toml"
 		dc.Squash = true
 		dc.ZeroFields = true
-		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHookFunc)
 	}); err != nil {
-		return errors.Errorf("failed to parse config: %w", wrapTomlError(err))
+		return errors.Errorf("failed to parse config: %w", err)
 	}
 	return nil
 }
@@ -796,19 +772,6 @@ func assertEnvLoaded(s string) error {
 		fmt.Fprintln(os.Stderr, "WARN: environment variable is unset:", matches[1])
 	}
 	return nil
-}
-
-func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String {
-		return data, nil
-	}
-	value := data.(string)
-	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if env := os.Getenv(matches[1]); len(env) > 0 {
-			value = env
-		}
-	}
-	return value, nil
 }
 
 func truncateText(text string, maxLen int) string {
