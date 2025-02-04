@@ -479,7 +479,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing \"not-a-bool\"")
 	})
-	t.Run("returns error for unkown function fields", func(t *testing.T) {
+	t.Run("returns error for unknown function fields", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
