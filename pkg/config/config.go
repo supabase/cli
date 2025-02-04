@@ -16,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -352,7 +351,6 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
-	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
@@ -396,65 +394,9 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	return c.loadFromReader(v, f)
 }
 
-// Used to improve config parsing errors into a more contextual and actionable
-// error message
-func viperWrapTomlError(err error) error {
-	if err == nil {
-		return nil
-	}
-	errMsg := err.Error()
-	// Check for array-style functions config and unknown functions fields errors error
-	if strings.Contains(errMsg, "'functions[") && strings.Contains(errMsg, "expected a map") ||
-		strings.Contains(errMsg, "Unknown config field: [functions") {
-		return errors.Errorf(`Invalid functions config format. Functions should be configured as:
-
-[functions.<function-name>]
-field = value
-
-Example:
-[functions.hello]
-verify_jwt = true
-`)
-	}
-
-	return err
-}
-
-func wrapTomlUnmarshalError(err toml.ParseError, content *string) error {
-	// Check for invalid use of `env.VALUE` instead of `"env(VALUE)"` syntax
-	if strings.Contains(err.Message, "expected value but found \"env\" instead") {
-		// Extract the line containing the error
-		lines := strings.Split(*content, "\n")
-		if err.Position.Line > 0 && err.Position.Line <= len(lines) {
-			line := lines[err.Position.Line-1]
-
-			// Extract the env variable name using regex
-			envVarPattern := regexp.MustCompile(`env\.([A-Za-z0-9_]+)`)
-			if matches := envVarPattern.FindStringSubmatch(line); len(matches) > 1 {
-				varName := matches[1]
-				return errors.Errorf(`Invalid environment variable syntax. Use "env(%s)" instead of 'env.%s'.`, varName, varName)
-			}
-		}
-	}
-	// Return nil if we can't make a custom error and leave the error message to viper TOML parsing instead
-	return nil
-}
-
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
-	// Read the content first
-	content, err := io.ReadAll(r)
-	if err != nil {
-		return errors.Errorf("failed to read config: %w", err)
-	}
-	contentStr := string(content)
-	var tmp map[string]interface{}
-	if err := toml.Unmarshal(content, &tmp); err != nil {
-		if parseErr, ok := err.(toml.ParseError); ok && wrapTomlUnmarshalError(parseErr, &contentStr) != nil {
-			return wrapTomlUnmarshalError(parseErr, &contentStr)
-		}
-	}
-	if err := v.MergeConfig(bytes.NewReader(content)); err != nil {
-		return errors.Errorf("failed to merge config: %w", viperWrapTomlError(err))
+	if err := v.MergeConfig(r); err != nil {
+		return errors.Errorf("failed to merge config: %w", err)
 	}
 	// Find [remotes.*] block to override base config
 	baseId := v.GetString("project_id")
@@ -484,9 +426,9 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.TagName = "toml"
 		dc.Squash = true
 		dc.ZeroFields = true
-		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
-		return errors.Errorf("failed to parse config: %w", viperWrapTomlError(err))
+		return errors.Errorf("failed to parse config: %w", err)
 	}
 	return nil
 }
@@ -830,19 +772,6 @@ func assertEnvLoaded(s string) error {
 		fmt.Fprintln(os.Stderr, "WARN: environment variable is unset:", matches[1])
 	}
 	return nil
-}
-
-func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String {
-		return data, nil
-	}
-	value := data.(string)
-	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if env := os.Getenv(matches[1]); len(env) > 0 {
-			value = env
-		}
-	}
-	return value, nil
 }
 
 func truncateText(text string, maxLen int) string {

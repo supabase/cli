@@ -447,7 +447,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Invalid functions config format. Functions should be configured as:\n\n[functions.<function-name>]\nfield = value\n\nExample:\n[functions.hello]\nverify_jwt = true\n")
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
 	})
 	t.Run("returns error with function slug for invalid non-existent field", func(t *testing.T) {
 		config := NewConfig()
@@ -479,7 +479,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing \"not-a-bool\"")
 	})
-	t.Run("returns error for unkown function fields", func(t *testing.T) {
+	t.Run("returns error for unknown function fields", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
@@ -492,7 +492,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Invalid functions config format. Functions should be configured as:\n\n[functions.<function-name>]\nfield = value\n\nExample:\n[functions.hello]\nverify_jwt = true\n")
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
 	})
 }
 
