@@ -10,6 +10,15 @@ import (
 
 var envPattern = regexp.MustCompile(`^env\((.*)\)$`)
 
+const invalidFunctionsConfigFormat = `Invalid functions config format. Functions should be configured as:
+
+[functions.<function-name>]
+field = value
+
+Example:
+[functions.hello]
+verify_jwt = true`
+
 // LoadEnvHook is a mapstructure decode hook that loads environment variables
 // from strings formatted as env(VAR_NAME).
 func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
@@ -25,8 +34,8 @@ func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{},
 	return value, nil
 }
 
-// ValidateFunctionsHookFunc is a mapstructure decode hook that validates the functions config format.
-func ValidateFunctionsHookFunc(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
+// ValidateFunctionsHook is a mapstructure decode hook that validates the functions config format.
+func ValidateFunctionsHook(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
 	// Only handle FunctionConfig type
 	if t != reflect.TypeOf(FunctionConfig{}) {
 		return data, nil
@@ -34,15 +43,7 @@ func ValidateFunctionsHookFunc(f reflect.Type, t reflect.Type, data interface{})
 
 	// Check if source is not a map
 	if f.Kind() != reflect.Map {
-		return nil, errors.New(`Invalid functions config format. Functions should be configured as:
-
-[functions.<function-name>]
-field = value
-
-Example:
-[functions.hello]
-verify_jwt = true
-`)
+		return nil, errors.New(invalidFunctionsConfigFormat)
 	}
 
 	// Check if any fields are defined directly under [functions] instead of [functions.<name>]
@@ -58,15 +59,7 @@ verify_jwt = true
 			}
 			// If the value is not a map, it means it's defined directly under [functions]
 			if _, isMap := value.(map[string]interface{}); !isMap {
-				return nil, errors.New(`Invalid functions config format. Functions should be configured as:
-
-[functions.<function-name>]
-field = value
-
-Example:
-[functions.hello]
-verify_jwt = true
-`)
+				return nil, errors.New(invalidFunctionsConfigFormat)
 			}
 		}
 	}

@@ -426,7 +426,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.TagName = "toml"
 		dc.Squash = true
 		dc.ZeroFields = true
-		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHookFunc)
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
