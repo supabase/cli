@@ -447,7 +447,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Invalid functions config format. Functions should be configured as:\n\n[functions.<function-name>]\nfield = value\n\nExample:\n[functions.hello]\nverify_jwt = true\n")
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
 	})
 	t.Run("returns error with function slug for invalid non-existent field", func(t *testing.T) {
 		config := NewConfig()
@@ -492,6 +492,6 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Invalid functions config format. Functions should be configured as:\n\n[functions.<function-name>]\nfield = value\n\nExample:\n[functions.hello]\nverify_jwt = true\n")
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
 	})
 }
