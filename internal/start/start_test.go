@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"regexp"
 	"testing"
 
@@ -25,12 +24,7 @@ import (
 )
 
 func TestStartCommand(t *testing.T) {
-	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), afero.NewMemMapFs(), []string{}, false)
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-
-	t.Run("throws error on invalid config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))

@@ -29,14 +29,14 @@ var dbConfig = pgconn.Config{
 }
 
 func TestPullCommand(t *testing.T) {
-	t.Run("throws error on missing config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
 
 	t.Run("throws error on connect failure", func(t *testing.T) {
