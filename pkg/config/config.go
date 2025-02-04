@@ -394,8 +394,40 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	return c.loadFromReader(v, f)
 }
 
+func wrapTomlUnmarshalError(err toml.ParseError, content *string) error {
+	// Check for invalid use of `env.VALUE` instead of `"env(VALUE)"` syntax
+	if strings.Contains(err.Message, "expected value but found \"env\" instead") {
+		// Extract the line containing the error
+		lines := strings.Split(*content, "\n")
+		if err.Position.Line > 0 && err.Position.Line <= len(lines) {
+			line := lines[err.Position.Line-1]
+
+			// Extract the env variable name using regex
+			envVarPattern := regexp.MustCompile(`env\.([A-Za-z0-9_]+)`)
+			if matches := envVarPattern.FindStringSubmatch(line); len(matches) > 1 {
+				varName := matches[1]
+				return errors.Errorf(`Invalid environment variable syntax. Use "env(%s)" instead of 'env.%s'.`, varName, varName)
+			}
+		}
+	}
+	// Return nil if we can't make a custom error and leave the error message to viper TOML parsing instead
+	return nil
+}
+
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
-	if err := v.MergeConfig(r); err != nil {
+	// Read the content first
+	content, err := io.ReadAll(r)
+	if err != nil {
+		return errors.Errorf("failed to read config: %w", err)
+	}
+	contentStr := string(content)
+	var tmp map[string]interface{}
+	if err := toml.Unmarshal(content, &tmp); err != nil {
+		if parseErr, ok := err.(toml.ParseError); ok && wrapTomlUnmarshalError(parseErr, &contentStr) != nil {
+			return wrapTomlUnmarshalError(parseErr, &contentStr)
+		}
+	}
+	if err := v.MergeConfig(bytes.NewReader(content)); err != nil {
 		return errors.Errorf("failed to merge config: %w", err)
 	}
 	// Find [remotes.*] block to override base config
