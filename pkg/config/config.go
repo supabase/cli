@@ -396,6 +396,28 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	return c.loadFromReader(v, f)
 }
 
+// Used to improve config parsing errors into a more contextual and actionable
+// error message
+func wrapTomlError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Check for array-style functions config and unknown functions fields errors error
+	if strings.Contains(err.Error(), "'functions[") && strings.Contains(err.Error(), "expected a map") ||
+		strings.Contains(err.Error(), "Unknown config field: [functions") {
+		return errors.Errorf(`Invalid functions config format. Functions should be configured as:
+
+[functions.<function-name>]
+field = value
+
+Example:
+[functions.hello]
+verify_jwt = true
+`)
+	}
+	return err
+}
+
 func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	if err := v.MergeConfig(r); err != nil {
 		return errors.Errorf("failed to merge config: %w", err)
@@ -430,7 +452,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.ZeroFields = true
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
 	}); err != nil {
-		return errors.Errorf("failed to parse config: %w", err)
+		return errors.Errorf("failed to parse config: %w", wrapTomlError(err))
 	}
 	return nil
 }
