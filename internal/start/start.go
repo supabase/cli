@@ -585,6 +585,15 @@ EOF
 			)
 		}
 
+		if captcha := utils.Config.Auth.Captcha; captcha != nil {
+			env = append(
+				env,
+				fmt.Sprintf("GOTRUE_SECURITY_CAPTCHA_ENABLED=%v", captcha.Enabled),
+				fmt.Sprintf("GOTRUE_SECURITY_CAPTCHA_PROVIDER=%v", captcha.Provider),
+				fmt.Sprintf("GOTRUE_SECURITY_CAPTCHA_SECRET=%v", captcha.Secret.Value),
+			)
+		}
+
 		if hook := utils.Config.Auth.Hook.MFAVerificationAttempt; hook != nil && hook.Enabled {
 			env = append(
 				env,

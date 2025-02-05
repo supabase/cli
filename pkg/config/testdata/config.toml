@@ -122,6 +122,12 @@ minimum_password_length = 6
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
 
+# Configure one of the supported captcha providers: `hcaptcha`, `turnstile`.
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "env(HCAPTCHA_SECRET)"
+
 [auth.email]
 # Allow/disallow new user signups via email to your project.
 enable_signup = true

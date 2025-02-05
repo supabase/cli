@@ -117,6 +117,98 @@ func TestAuthDiff(t *testing.T) {
 	})
 }
 
+func TestCaptchaDiff(t *testing.T) {
+	t.Run("local and remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Captcha = &captcha{
+			Enabled:  true,
+			Provider: HCaptchaProvider,
+			Secret: Secret{
+				Value:  "test-secret",
+				SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+			},
+		}
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			SecurityCaptchaEnabled:  cast.Ptr(true),
+			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
+			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local disabled remote enabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Captcha = &captcha{
+			Enabled:  false,
+			Provider: TurnstileProvider,
+			Secret: Secret{
+				Value:  "test-key",
+				SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
+			},
+		}
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			SecurityCaptchaEnabled:  cast.Ptr(true),
+			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
+			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("local enabled remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Captcha = &captcha{
+			Enabled:  true,
+			Provider: TurnstileProvider,
+			Secret: Secret{
+				Value:  "test-key",
+				SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
+			},
+		}
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			SecurityCaptchaEnabled:  cast.Ptr(false),
+			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
+			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("local and remote disabled", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Captcha = &captcha{
+			Enabled: false,
+		}
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			SecurityCaptchaEnabled: cast.Ptr(false),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("ignores undefined config", func(t *testing.T) {
+		c := newWithDefaults()
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			SecurityCaptchaEnabled:  cast.Ptr(true),
+			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
+			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
