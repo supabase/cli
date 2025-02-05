@@ -43,6 +43,13 @@ func NewPasswordRequirement(c v1API.UpdateAuthConfigBodyPasswordRequiredCharacte
 	return NoRequirements
 }
 
+type CaptchaProvider string
+
+const (
+	HCaptchaProvider  CaptchaProvider = "hcaptcha"
+	TurnstileProvider CaptchaProvider = "turnstile"
+)
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
@@ -59,6 +66,7 @@ type (
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
+		Captcha  *captcha `toml:"captcha"`
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
 		Sessions sessions `toml:"sessions"`
@@ -142,6 +150,12 @@ type (
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
+	}
+
+	captcha struct {
+		Enabled  bool            `toml:"enabled"`
+		Provider CaptchaProvider `toml:"provider"`
+		Secret   Secret          `toml:"secret"`
 	}
 
 	hook struct {
@@ -231,6 +245,10 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
 		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
+	// When local config is not set, we assume platform defaults should not change
+	if a.Captcha != nil {
+		a.Captcha.toAuthConfigBody(&body)
+	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
 	a.Sessions.toAuthConfigBody(&body)
@@ -252,12 +270,37 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
 	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
+	a.Captcha.fromAuthConfig(remoteConfig)
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
 	a.Sessions.fromAuthConfig(remoteConfig)
 	a.Email.fromAuthConfig(remoteConfig)
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
+}
+
+func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if body.SecurityCaptchaEnabled = &c.Enabled; c.Enabled {
+		body.SecurityCaptchaProvider = cast.Ptr(string(c.Provider))
+		if len(c.Secret.SHA256) > 0 {
+			body.SecurityCaptchaSecret = &c.Secret.Value
+		}
+	}
+}
+
+func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	// When local config is not set, we assume platform defaults should not change
+	if c == nil {
+		return
+	}
+	// Ignore disabled captcha fields to minimise config diff
+	if c.Enabled {
+		c.Provider = CaptchaProvider(cast.Val(remoteConfig.SecurityCaptchaProvider, ""))
+		if len(c.Secret.SHA256) > 0 {
+			c.Secret.SHA256 = cast.Val(remoteConfig.SecurityCaptchaSecret, "")
+		}
+	}
+	c.Enabled = cast.Val(remoteConfig.SecurityCaptchaEnabled, false)
 }
 
 func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {

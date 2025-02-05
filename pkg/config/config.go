@@ -219,11 +219,16 @@ func (f function) IsEnabled() bool {
 
 func (a *auth) Clone() auth {
 	copy := *a
+	if copy.Captcha != nil {
+		capt := *a.Captcha
+		copy.Captcha = &capt
+	}
 	copy.External = maps.Clone(a.External)
 	if a.Email.Smtp != nil {
 		mailer := *a.Email.Smtp
 		copy.Email.Smtp = &mailer
 	}
+	copy.Email.Template = maps.Clone(a.Email.Template)
 	if a.Hook.MFAVerificationAttempt != nil {
 		hook := *a.Hook.MFAVerificationAttempt
 		copy.Hook.MFAVerificationAttempt = &hook
@@ -244,7 +249,6 @@ func (a *auth) Clone() auth {
 		hook := *a.Hook.SendEmail
 		copy.Hook.SendEmail = &hook
 	}
-	copy.Email.Template = maps.Clone(a.Email.Template)
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
 }
@@ -709,6 +713,18 @@ func (c *config) Validate(fsys fs.FS) error {
 		allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
 		if !sliceContains(allowed, c.Auth.PasswordRequirements) {
 			return errors.Errorf("Invalid config for auth.password_requirements. Must be one of: %v", allowed)
+		}
+		if c.Auth.Captcha != nil && c.Auth.Captcha.Enabled {
+			allowed := []CaptchaProvider{HCaptchaProvider, TurnstileProvider}
+			if !sliceContains(allowed, c.Auth.Captcha.Provider) {
+				return errors.Errorf("Invalid config for auth.captcha.provider. Must be one of: %v", allowed)
+			}
+			if len(c.Auth.Captcha.Secret.Value) == 0 {
+				return errors.Errorf("Missing required field in config: auth.captcha.secret")
+			}
+			if err := assertEnvLoaded(c.Auth.Captcha.Secret.Value); err != nil {
+				return err
+			}
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
