@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -18,6 +19,14 @@ const (
 	LowerUpperLettersDigits        PasswordRequirements = "lower_upper_letters_digits"
 	LowerUpperLettersDigitsSymbols PasswordRequirements = "lower_upper_letters_digits_symbols"
 )
+
+func (r *PasswordRequirements) UnmarshalText(text []byte) error {
+	allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
+	if *r = PasswordRequirements(text); !sliceContains(allowed, *r) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 func (r PasswordRequirements) ToChar() v1API.UpdateAuthConfigBodyPasswordRequiredCharacters {
 	switch r {
@@ -49,6 +58,14 @@ const (
 	HCaptchaProvider  CaptchaProvider = "hcaptcha"
 	TurnstileProvider CaptchaProvider = "turnstile"
 )
+
+func (p *CaptchaProvider) UnmarshalText(text []byte) error {
+	allowed := []CaptchaProvider{HCaptchaProvider, TurnstileProvider}
+	if *p = CaptchaProvider(text); !sliceContains(allowed, *p) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 type (
 	auth struct {
