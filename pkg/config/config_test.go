@@ -431,3 +431,67 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		assert.Equal(t, "supabase/custom_import_map.json", config.Functions["hello"].ImportMap)
 	})
 }
+
+func TestLoadFunctionErrorMessageParsing(t *testing.T) {
+	t.Run("returns error for array-style function config", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[[functions]]
+			name = "hello"
+			verify_jwt = true
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error contains both decode errors
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+	})
+	t.Run("returns error with function slug for invalid non-existent field", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			unknown_field = true
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error contains both decode errors
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "'functions[hello]' has invalid keys: unknown_field")
+	})
+	t.Run("returns error with function slug for invalid field value", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			verify_jwt = "not-a-bool"
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check error contains both decode errors
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing \"not-a-bool\"")
+	})
+	t.Run("returns error for unknown function fields", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions]
+			name = "hello"
+			verify_jwt = true
+			`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+	})
+}
