@@ -16,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -352,7 +351,6 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
-	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
@@ -428,7 +426,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.TagName = "toml"
 		dc.Squash = true
 		dc.ZeroFields = true
-		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
@@ -774,19 +772,6 @@ func assertEnvLoaded(s string) error {
 		fmt.Fprintln(os.Stderr, "WARN: environment variable is unset:", matches[1])
 	}
 	return nil
-}
-
-func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String {
-		return data, nil
-	}
-	value := data.(string)
-	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if env := os.Getenv(matches[1]); len(env) > 0 {
-			value = env
-		}
-	}
-	return value, nil
 }
 
 func truncateText(text string, maxLen int) string {
